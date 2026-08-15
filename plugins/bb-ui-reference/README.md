@@ -30,7 +30,7 @@ bb plugin dev ./plugins/bb-ui-reference
 ## Verify
 
 ```sh
-npm run typecheck --workspace @phosphor/bb-plugin-bb-ui-reference
-npm run test --workspace @phosphor/bb-plugin-bb-ui-reference
-npm run build --workspace @phosphor/bb-plugin-bb-ui-reference
+npm run typecheck --workspace bb-plugin-bb-ui-reference
+npm run test --workspace bb-plugin-bb-ui-reference
+npm run build --workspace bb-plugin-bb-ui-reference
 ```

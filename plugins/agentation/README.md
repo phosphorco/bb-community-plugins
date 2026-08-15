@@ -48,7 +48,7 @@ Install the independently versioned plugin from this monorepo:
 git clone https://github.com/phosphorco/bb-community-plugins.git
 cd bb-community-plugins
 npm install
-npm run build --workspace @phosphor/bb-plugin-agentation
+npm run build --workspace bb-plugin-agentation
 bb plugin install path:. --plugin agentation
 ```
 
@@ -147,7 +147,7 @@ which rebuilds and reloads the plugin on every edit:
 
 ```sh
 bb plugin dev plugins/agentation
-npm run test --workspace @phosphor/bb-plugin-agentation
+npm run test --workspace bb-plugin-agentation
 ```
 
 This plugin is derived from Scott Sunarto's Agentation plugin at upstream

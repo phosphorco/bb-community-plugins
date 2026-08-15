@@ -1,5 +1,5 @@
 {
-  "name": "@phosphor/bb-plugin-sticky-notes",
+  "name": "bb-plugin-sticky-notes",
   "version": "0.1.0",
   "type": "module",
   "license": "MIT",

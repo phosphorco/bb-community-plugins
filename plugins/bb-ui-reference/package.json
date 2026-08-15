@@ -1,5 +1,5 @@
 {
-  "name": "@phosphor/bb-plugin-bb-ui-reference",
+  "name": "bb-plugin-bb-ui-reference",
   "version": "0.1.0",
   "type": "module",
   "license": "MIT",

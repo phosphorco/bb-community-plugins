@@ -1,5 +1,5 @@
 {
-  "name": "@phosphor/bb-plugins",
+  "name": "bb-community-plugins",
   "version": "0.0.0",
   "private": true,
   "type": "module",
