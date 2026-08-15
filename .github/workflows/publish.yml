@@ -1,0 +1,73 @@
+name: Publish npm package
+
+on:
+  push:
+    tags:
+      - "agentation/v*"
+      - "perspectives/v*"
+      - "sticky-notes/v*"
+      - "bb-ui-reference/v*"
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: npm-publish-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    if: github.repository == 'phosphorco/bb-community-plugins'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the release
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - name: Set up Node and npm
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: "24"
+          registry-url: "https://registry.npmjs.org"
+          package-manager-cache: false
+
+      - name: Select and verify the tagged package
+        id: release
+        shell: bash
+        run: |
+          case "$GITHUB_REF_NAME" in
+            agentation/v*) workspace="@phosphorco/bb-plugin-agentation" ;;
+            perspectives/v*) workspace="@phosphorco/bb-plugin-perspectives" ;;
+            sticky-notes/v*) workspace="@phosphorco/bb-plugin-sticky-notes" ;;
+            bb-ui-reference/v*) workspace="@phosphorco/bb-plugin-bb-ui-reference" ;;
+            *) echo "Unsupported release tag: $GITHUB_REF_NAME" >&2; exit 1 ;;
+          esac
+          tagged_version="${GITHUB_REF_NAME#*/v}"
+          package_version="$(npm pkg get version --workspace "$workspace" | node -e 'let input=""; process.stdin.on("data", chunk => input += chunk); process.stdin.on("end", () => console.log(Object.values(JSON.parse(input))[0]))')"
+          test "$tagged_version" = "$package_version" || {
+            echo "Tag version $tagged_version does not match $workspace@$package_version" >&2
+            exit 1
+          }
+          echo "workspace=$workspace" >> "$GITHUB_OUTPUT"
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: Test
+        run: npm run test --workspace "${{ steps.release.outputs.workspace }}"
+
+      - name: Typecheck
+        run: npm run typecheck --workspace "${{ steps.release.outputs.workspace }}"
+
+      - name: Build BB artifacts
+        run: npm run build --workspace "${{ steps.release.outputs.workspace }}"
+
+      - name: Inspect package contents
+        run: npm pack --dry-run --ignore-scripts --workspace "${{ steps.release.outputs.workspace }}"
+
+      - name: Publish public package
+        run: npm publish --ignore-scripts --workspace "${{ steps.release.outputs.workspace }}"
+        env:
+          # Required for the first release. Once npm trusted publishing is
+          # configured, npm uses GitHub OIDC before falling back to this token.
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

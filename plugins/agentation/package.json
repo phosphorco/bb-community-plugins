@@ -12,6 +12,7 @@
     "url": "git+https://github.com/phosphorco/bb-community-plugins.git",
     "directory": "plugins/agentation"
   },
+  "publishConfig": { "access": "public", "registry": "https://registry.npmjs.org" },
   "keywords": ["bb", "bb-plugin", "agentation", "annotations", "visual-feedback", "afs"],
   "engines": { "bb": ">=0.37", "bbPluginSdk": "^0.4.1" },
   "bb": {

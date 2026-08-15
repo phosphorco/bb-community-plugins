@@ -8,6 +8,7 @@
   "homepage": "https://github.com/phosphorco/bb-community-plugins/tree/main/plugins/sticky-notes#readme",
   "bugs": { "url": "https://github.com/phosphorco/bb-community-plugins/issues" },
   "repository": { "type": "git", "url": "git+https://github.com/phosphorco/bb-community-plugins.git", "directory": "plugins/sticky-notes" },
+  "publishConfig": { "access": "public", "registry": "https://registry.npmjs.org" },
   "keywords": ["bb", "bb-plugin", "sticky-notes", "threads", "collaboration", "async"],
   "engines": { "bb": ">=0.37", "bbPluginSdk": "^0.4.1" },
   "bb": {

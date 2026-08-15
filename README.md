@@ -15,16 +15,24 @@
 
 ## Install directly
 
-Each plugin is released independently from this monorepo:
+Each plugin is published independently to npm by its prefixed release tag:
 
 ```sh
-bb plugin install git:https://github.com/phosphorco/bb-community-plugins.git@^0.1.0 --plugin agentation --tag-prefix agentation/
-bb plugin install git:https://github.com/phosphorco/bb-community-plugins.git@^0.1.0 --plugin perspectives --tag-prefix perspectives/
-bb plugin install git:https://github.com/phosphorco/bb-community-plugins.git@^0.1.0 --plugin sticky-notes --tag-prefix sticky-notes/
-bb plugin install git:https://github.com/phosphorco/bb-community-plugins.git@^0.1.0 --plugin bb-ui-reference --tag-prefix bb-ui-reference/
+bb plugin install npm:@phosphorco/bb-plugin-agentation@^0.1.0
+bb plugin install npm:@phosphorco/bb-plugin-perspectives@^0.1.0
+bb plugin install npm:@phosphorco/bb-plugin-sticky-notes@^0.1.0
+bb plugin install npm:@phosphorco/bb-plugin-bb-ui-reference@^0.1.0
 ```
 
 The plugins are also submitted to the BB Community marketplace for installation from bb.
+
+## Release
+
+Push an immutable `<plugin-id>/vX.Y.Z` tag whose version matches that plugin's
+manifest. GitHub Actions tests, typechecks, builds, inspects, and publishes only
+the tagged workspace. The first release uses the repository's `NPM_TOKEN`;
+after trusted publishing is configured for each npm package, releases use OIDC
+with automatic npm provenance.
 
 ## Develop
 

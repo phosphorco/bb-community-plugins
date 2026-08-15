@@ -8,6 +8,7 @@
   "homepage": "https://github.com/phosphorco/bb-community-plugins/tree/main/plugins/perspectives#readme",
   "bugs": { "url": "https://github.com/phosphorco/bb-community-plugins/issues" },
   "repository": { "type": "git", "url": "git+https://github.com/phosphorco/bb-community-plugins.git", "directory": "plugins/perspectives" },
+  "publishConfig": { "access": "public", "registry": "https://registry.npmjs.org" },
   "keywords": ["bb", "bb-plugin", "perspectives", "agents", "experts", "orchestration"],
   "engines": { "bb": ">=0.37", "bbPluginSdk": "^0.4.1" },
   "bb": {
