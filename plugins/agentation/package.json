@@ -5,11 +5,11 @@
   "license": "MIT AND PolyForm-Shield-1.0.0",
   "description": "Point at any part of the bb UI and turn it into structured feedback that bb agents can read, answer, and resolve.",
   "author": "Phosphor, derived from work by Scott Sunarto",
-  "homepage": "https://github.com/phosphorco/bb-plugins/tree/main/plugins/agentation#readme",
-  "bugs": { "url": "https://github.com/phosphorco/bb-plugins/issues" },
+  "homepage": "https://github.com/phosphorco/bb-community-plugins/tree/main/plugins/agentation#readme",
+  "bugs": { "url": "https://github.com/phosphorco/bb-community-plugins/issues" },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/phosphorco/bb-plugins.git",
+    "url": "git+https://github.com/phosphorco/bb-community-plugins.git",
     "directory": "plugins/agentation"
   },
   "keywords": ["bb", "bb-plugin", "agentation", "annotations", "visual-feedback", "afs"],

@@ -5,9 +5,9 @@
   "license": "MIT",
   "description": "Compare BB's detailed plugin surface map with compact semantic color demonstrations.",
   "author": "Phosphor",
-  "homepage": "https://github.com/phosphorco/bb-plugins/tree/main/plugins/bb-ui-reference#readme",
-  "bugs": { "url": "https://github.com/phosphorco/bb-plugins/issues" },
-  "repository": { "type": "git", "url": "git+https://github.com/phosphorco/bb-plugins.git", "directory": "plugins/bb-ui-reference" },
+  "homepage": "https://github.com/phosphorco/bb-community-plugins/tree/main/plugins/bb-ui-reference#readme",
+  "bugs": { "url": "https://github.com/phosphorco/bb-community-plugins/issues" },
+  "repository": { "type": "git", "url": "git+https://github.com/phosphorco/bb-community-plugins.git", "directory": "plugins/bb-ui-reference" },
   "keywords": ["bb", "bb-plugin", "ui-reference", "design-system", "theme-tokens"],
   "engines": { "bb": ">=0.37", "bbPluginSdk": "^0.4.1" },
   "bb": {

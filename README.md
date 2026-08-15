@@ -18,10 +18,10 @@
 Each plugin is released independently from this monorepo:
 
 ```sh
-bb plugin install git:https://github.com/phosphorco/bb-plugins.git@^0.1.0 --plugin agentation --tag-prefix agentation/
-bb plugin install git:https://github.com/phosphorco/bb-plugins.git@^0.1.0 --plugin perspectives --tag-prefix perspectives/
-bb plugin install git:https://github.com/phosphorco/bb-plugins.git@^0.1.0 --plugin sticky-notes --tag-prefix sticky-notes/
-bb plugin install git:https://github.com/phosphorco/bb-plugins.git@^0.1.0 --plugin bb-ui-reference --tag-prefix bb-ui-reference/
+bb plugin install git:https://github.com/phosphorco/bb-community-plugins.git@^0.1.0 --plugin agentation --tag-prefix agentation/
+bb plugin install git:https://github.com/phosphorco/bb-community-plugins.git@^0.1.0 --plugin perspectives --tag-prefix perspectives/
+bb plugin install git:https://github.com/phosphorco/bb-community-plugins.git@^0.1.0 --plugin sticky-notes --tag-prefix sticky-notes/
+bb plugin install git:https://github.com/phosphorco/bb-community-plugins.git@^0.1.0 --plugin bb-ui-reference --tag-prefix bb-ui-reference/
 ```
 
 The plugins are also submitted to the BB Community marketplace for installation from bb.

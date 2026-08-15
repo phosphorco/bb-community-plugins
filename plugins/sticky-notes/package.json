@@ -5,9 +5,9 @@
   "license": "MIT",
   "description": "Leave shared, movable sticky notes on bb threads for asynchronous collaboration.",
   "author": "Phosphor",
-  "homepage": "https://github.com/phosphorco/bb-plugins/tree/main/plugins/sticky-notes#readme",
-  "bugs": { "url": "https://github.com/phosphorco/bb-plugins/issues" },
-  "repository": { "type": "git", "url": "git+https://github.com/phosphorco/bb-plugins.git", "directory": "plugins/sticky-notes" },
+  "homepage": "https://github.com/phosphorco/bb-community-plugins/tree/main/plugins/sticky-notes#readme",
+  "bugs": { "url": "https://github.com/phosphorco/bb-community-plugins/issues" },
+  "repository": { "type": "git", "url": "git+https://github.com/phosphorco/bb-community-plugins.git", "directory": "plugins/sticky-notes" },
   "keywords": ["bb", "bb-plugin", "sticky-notes", "threads", "collaboration", "async"],
   "engines": { "bb": ">=0.37", "bbPluginSdk": "^0.4.1" },
   "bb": {
