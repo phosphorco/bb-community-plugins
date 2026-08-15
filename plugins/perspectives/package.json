@@ -1,5 +1,5 @@
 {
-  "name": "bb-plugin-perspectives",
+  "name": "@phosphorco/bb-plugin-perspectives",
   "version": "0.1.0",
   "type": "module",
   "license": "MIT",

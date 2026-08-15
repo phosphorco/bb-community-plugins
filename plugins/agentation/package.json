@@ -1,5 +1,5 @@
 {
-  "name": "bb-plugin-agentation",
+  "name": "@phosphorco/bb-plugin-agentation",
   "version": "0.1.0",
   "type": "module",
   "license": "MIT AND PolyForm-Shield-1.0.0",
