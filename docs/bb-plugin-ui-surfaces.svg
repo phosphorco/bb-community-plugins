@@ -1,0 +1,193 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1000" viewBox="0 0 1600 1000" role="img" aria-labelledby="title description">
+  <title id="title">BB plugin UI surface map</title>
+  <desc id="description">Four annotated wireframes show the BB app shell, thread workspace, composer, and plugin-owned layouts. Read the companion legend for the surface classifications.</desc>
+  <defs>
+    <style>
+      .canvas { fill: #f6f7fb; }
+      .panel { fill: #ffffff; stroke: #cbd5e1; stroke-width: 2; }
+      .host { fill: #f1f5f9; stroke: #94a3b8; stroke-width: 1.5; }
+      .host-dark { fill: #e2e8f0; stroke: #94a3b8; stroke-width: 1.5; }
+      .plugin { fill: #e8f2ff; stroke: #3b82f6; stroke-width: 2; }
+      .replace { fill: #f1eafe; stroke: #8b5cf6; stroke-width: 2; }
+      .trusted { fill: none; stroke: #f59e0b; stroke-width: 3; stroke-dasharray: 9 7; }
+      .line { stroke: #64748b; stroke-width: 1.5; fill: none; }
+      .title { font: 700 32px ui-sans-serif, system-ui, sans-serif; fill: #0f172a; }
+      .subtitle { font: 400 16px ui-sans-serif, system-ui, sans-serif; fill: #475569; }
+      .view-title { font: 700 21px ui-sans-serif, system-ui, sans-serif; fill: #0f172a; }
+      .label { font: 650 14px ui-sans-serif, system-ui, sans-serif; fill: #0f172a; }
+      .small { font: 500 12px ui-sans-serif, system-ui, sans-serif; fill: #475569; }
+      .tiny { font: 500 11px ui-sans-serif, system-ui, sans-serif; fill: #64748b; }
+      .code { font: 600 11px ui-monospace, SFMono-Regular, Menlo, monospace; fill: #1d4ed8; }
+      .code-purple { font: 600 11px ui-monospace, SFMono-Regular, Menlo, monospace; fill: #6d28d9; }
+      .code-orange { font: 600 11px ui-monospace, SFMono-Regular, Menlo, monospace; fill: #b45309; }
+      .white { fill: #ffffff; }
+    </style>
+    <marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+      <path d="M0,0 L8,4 L0,8 Z" fill="#64748b"/>
+    </marker>
+  </defs>
+
+  <rect class="canvas" width="1600" height="1000"/>
+  <g transform="translate(0 -92)">
+
+  <!-- App shell -->
+  <g aria-label="App shell view">
+    <rect class="panel" x="40" y="112" width="740" height="430" rx="14"/>
+    <text class="view-title" x="64" y="145">1 · App shell</text>
+    <rect class="host-dark" x="64" y="164" width="174" height="350" rx="9"/>
+    <text class="label" x="80" y="190">App sidebar</text>
+    <rect class="host" x="78" y="204" width="146" height="34" rx="6"/>
+    <text class="small" x="91" y="225">New thread + Search</text>
+    <rect class="replace" x="78" y="248" width="146" height="144" rx="7"/>
+    <text class="label" x="91" y="273">Thread list</text>
+    <text class="code-purple" x="91" y="293">experimental_threadList</text>
+    <text class="tiny" x="91" y="313">exclusive replacement;</text>
+    <text class="tiny" x="91" y="329">host falls back safely</text>
+    <rect class="plugin" x="78" y="402" width="146" height="46" rx="6"/>
+    <text class="label" x="91" y="422">Plugin navigation row</text>
+    <text class="code" x="91" y="439">navPanel</text>
+    <rect class="plugin" x="78" y="458" width="146" height="42" rx="6"/>
+    <text class="label" x="91" y="477">Footer action</text>
+    <text class="code" x="91" y="493">sidebarFooterAction</text>
+
+    <rect class="host" x="252" y="164" width="504" height="350" rx="9"/>
+    <rect class="host-dark" x="252" y="164" width="504" height="52" rx="9"/>
+    <text class="label" x="270" y="188">Shared app header</text>
+    <rect class="plugin" x="590" y="174" width="152" height="32" rx="6"/>
+    <text class="label" x="602" y="189">Header content</text>
+    <text class="code" x="602" y="202">navPanel.headerContent</text>
+    <rect class="plugin" x="270" y="232" width="468" height="128" rx="8"/>
+    <text class="label" x="288" y="258">Plugin route body</text>
+    <text class="code" x="288" y="278">navPanel</text>
+    <text class="small" x="288" y="300">Owns /plugins/&lt;plugin-id&gt;/&lt;path&gt;/*</text>
+    <text class="small" x="288" y="322">Full-bleed body; plugin owns layout and scrolling.</text>
+    <rect class="plugin" x="270" y="376" width="222" height="72" rx="7"/>
+    <text class="label" x="286" y="400">Home insertion</text>
+    <text class="code" x="286" y="420">homepageSection</text>
+    <text class="tiny" x="286" y="437">additive section on compose home</text>
+    <rect class="plugin" x="506" y="376" width="232" height="72" rx="7"/>
+    <text class="label" x="522" y="400">Plugin settings insertion</text>
+    <text class="code" x="522" y="420">settingsSection</text>
+    <text class="tiny" x="522" y="437">below host-rendered settings</text>
+    <rect class="trusted" x="258" y="222" width="492" height="278" rx="10"/>
+    <rect x="532" y="476" width="206" height="24" rx="5" fill="#fff7ed" stroke="#f59e0b"/>
+    <text class="label" x="542" y="493">Trusted page overlay</text>
+    <text class="code-orange" x="656" y="493">contentScripts</text>
+  </g>
+
+  <!-- Thread workspace -->
+  <g aria-label="Thread workspace view">
+    <rect class="panel" x="820" y="112" width="740" height="430" rx="14"/>
+    <text class="view-title" x="844" y="145">2 · Thread workspace</text>
+    <rect class="host" x="844" y="164" width="692" height="350" rx="9"/>
+    <rect class="host-dark" x="844" y="164" width="692" height="52" rx="9"/>
+    <text class="label" x="862" y="188">Thread header</text>
+    <text class="small" x="862" y="204">title · status · native actions</text>
+    <rect class="plugin" x="1304" y="174" width="218" height="32" rx="6"/>
+    <text class="label" x="1316" y="189">Thread header action</text>
+    <text class="code" x="1316" y="202">experimental_threadHeaderAction</text>
+
+    <rect class="host" x="858" y="230" width="406" height="198" rx="7"/>
+    <text class="label" x="874" y="254">Conversation timeline</text>
+    <text class="code" x="874" y="273">ThreadChat</text>
+    <rect class="plugin" x="884" y="292" width="354" height="50" rx="6"/>
+    <text class="label" x="898" y="313">Message action</text>
+    <text class="code" x="1011" y="313">messageAction</text>
+    <text class="tiny" x="898" y="330">message bar + selected-text menu</text>
+    <rect class="plugin" x="884" y="352" width="354" height="58" rx="6"/>
+    <text class="label" x="898" y="375">Message directive</text>
+    <text class="code" x="1021" y="375">messageDirective</text>
+    <text class="tiny" x="898" y="393">inline assistant-message rendering</text>
+
+    <rect class="host-dark" x="1278" y="230" width="244" height="198" rx="7"/>
+    <text class="label" x="1294" y="254">Right panel</text>
+    <rect class="plugin" x="1292" y="268" width="216" height="45" rx="6"/>
+    <text class="label" x="1306" y="287">Panel launcher</text>
+    <text class="code" x="1306" y="304">threadPanelAction.run</text>
+    <rect class="plugin" x="1292" y="321" width="216" height="45" rx="6"/>
+    <text class="label" x="1306" y="340">Plugin panel tab</text>
+    <text class="code" x="1306" y="357">threadPanelAction.component</text>
+    <rect class="plugin" x="1292" y="374" width="216" height="40" rx="6"/>
+    <text class="label" x="1306" y="392">File viewer / editor</text>
+    <text class="code" x="1306" y="407">fileOpener</text>
+
+    <rect class="host-dark" x="858" y="442" width="650" height="58" rx="8"/>
+    <text class="label" x="874" y="464">Composer region</text>
+    <text class="small" x="874" y="483">See the detailed Composer view below.</text>
+    <path class="line" d="M1044 500 L752 588" marker-end="url(#arrow)"/>
+  </g>
+
+  <!-- Composer -->
+  <g aria-label="Composer view">
+    <rect class="panel" x="40" y="570" width="740" height="510" rx="14"/>
+    <text class="view-title" x="64" y="605">3 · Composer</text>
+    <rect class="plugin" x="64" y="626" width="692" height="62" rx="8"/>
+    <text class="label" x="82" y="650">Composer banner</text>
+    <text class="code" x="82" y="670">composer.banners</text>
+    <text class="small" x="244" y="670">Additive content above the native editor.</text>
+
+    <rect class="host" x="64" y="700" width="692" height="218" rx="10"/>
+    <text class="label" x="82" y="725">Native prompt editor</text>
+    <rect class="plugin" x="82" y="742" width="430" height="62" rx="7"/>
+    <text class="label" x="98" y="766">Prompt editor rich text</text>
+    <text class="code" x="98" y="786">composer.richText</text>
+    <text class="small" x="250" y="786">paint-only effects + draft observation</text>
+    <rect class="plugin" x="82" y="816" width="430" height="62" rx="7"/>
+    <text class="label" x="98" y="840">Mention menu provider</text>
+    <text class="code" x="98" y="860">registerMentionProvider</text>
+    <text class="small" x="270" y="860">search + send-time context</text>
+    <rect class="plugin" x="528" y="742" width="210" height="56" rx="7"/>
+    <text class="label" x="544" y="765">Plus menu row</text>
+    <text class="code" x="544" y="785">composer.plusMenu</text>
+    <rect class="plugin" x="528" y="810" width="210" height="56" rx="7"/>
+    <text class="label" x="544" y="833">Prompt action</text>
+    <text class="code" x="544" y="853">composer.actions</text>
+    <rect class="host-dark" x="82" y="884" width="656" height="22" rx="5"/>
+    <text class="tiny" x="96" y="899">attachments · provider/model · permissions · voice · submit / queue / steer</text>
+
+    <text class="small" x="64" y="945">Alternate state: backend input request replaces the composer.</text>
+    <rect class="replace" x="64" y="960" width="692" height="92" rx="9"/>
+    <text class="label" x="82" y="987">Pending interaction form</text>
+    <text class="code-purple" x="82" y="1007">pendingInteraction</text>
+    <text class="small" x="224" y="1007">pairs with backend</text>
+    <text class="code-purple" x="351" y="1007">bb.ui.requestInput</text>
+    <text class="small" x="82" y="1032">Replaces the native composer until submitted or cancelled.</text>
+  </g>
+
+  <!-- Plugin-owned layouts -->
+  <g aria-label="Plugin-owned layouts view">
+    <rect class="panel" x="820" y="570" width="740" height="510" rx="14"/>
+    <text class="view-title" x="844" y="605">4 · Plugin-owned layouts</text>
+    <text class="subtitle" x="844" y="630">Plugins own the surrounding layout and can embed stable host capabilities.</text>
+
+    <rect class="plugin" x="844" y="650" width="692" height="118" rx="9"/>
+    <text class="label" x="862" y="675">Plugin route body</text>
+    <text class="code" x="862" y="695">navPanel</text>
+    <rect class="host" x="1036" y="668" width="480" height="80" rx="7"/>
+    <text class="label" x="1052" y="691">Existing-thread chat</text>
+    <text class="code" x="1052" y="711">ThreadChat</text>
+    <text class="tiny" x="1052" y="731">host timeline + composer inside plugin layout</text>
+
+    <rect class="plugin" x="844" y="782" width="692" height="118" rx="9"/>
+    <text class="label" x="862" y="807">Plugin panel tab</text>
+    <text class="code" x="862" y="827">threadPanelAction.component</text>
+    <rect class="host" x="1090" y="800" width="426" height="80" rx="7"/>
+    <text class="label" x="1106" y="823">New-thread composer</text>
+    <text class="code" x="1106" y="843">experimental_NewThreadComposer</text>
+    <text class="tiny" x="1106" y="863">plugin handles the resulting spawn request</text>
+
+    <rect class="plugin" x="844" y="914" width="334" height="112" rx="9"/>
+    <text class="label" x="862" y="940">Plugin settings insertion</text>
+    <text class="code" x="862" y="960">settingsSection</text>
+    <text class="small" x="862" y="983">Use hooks and RPC for custom settings UI.</text>
+    <text class="tiny" x="862" y="1005">Host declarative settings remain above it.</text>
+    <rect class="plugin" x="1192" y="914" width="344" height="112" rx="9"/>
+    <text class="label" x="1210" y="940">File viewer / editor</text>
+    <text class="code" x="1210" y="960">fileOpener</text>
+    <text class="small" x="1210" y="983">Owns live file content in a panel tab.</text>
+    <text class="tiny" x="1210" y="1005">Use bb.sdk.files with confinement + CAS.</text>
+
+    <text class="tiny" x="844" y="1055">Experimental names reflect bb 0.37 and may stabilize in a later SDK.</text>
+  </g>
+  </g>
+</svg>

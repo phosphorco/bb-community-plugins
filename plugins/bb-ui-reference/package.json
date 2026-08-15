@@ -1,0 +1,35 @@
+{
+  "name": "@phosphor/bb-plugin-bb-ui-reference",
+  "version": "0.1.0",
+  "type": "module",
+  "license": "MIT",
+  "description": "Compare BB's detailed plugin surface map with compact semantic color demonstrations.",
+  "author": "Phosphor",
+  "homepage": "https://github.com/phosphorco/bb-plugins/tree/main/plugins/bb-ui-reference#readme",
+  "bugs": { "url": "https://github.com/phosphorco/bb-plugins/issues" },
+  "repository": { "type": "git", "url": "git+https://github.com/phosphorco/bb-plugins.git", "directory": "plugins/bb-ui-reference" },
+  "keywords": ["bb", "bb-plugin", "ui-reference", "design-system", "theme-tokens"],
+  "engines": { "bb": ">=0.37", "bbPluginSdk": "^0.4.1" },
+  "bb": {
+    "name": "BB UI Reference",
+    "description": "Open a movable surface-map viewer with live semantic color demonstrations.",
+    "branding": { "icon": "CircleQuestion" },
+    "server": "./server.ts",
+    "app": "./app.tsx",
+    "skills": []
+  },
+  "files": ["dist/", "assets/", "README.md", "LICENSE", "server.ts", "app.tsx", "app.css", "ui-reference.ts"],
+  "dependencies": {},
+  "devDependencies": {
+    "@types/node": "^22",
+    "@types/react": "19.2.2",
+    "react": "19.2.1",
+    "typescript": "^5.9.3"
+  },
+  "scripts": {
+    "build": "bb plugin build .",
+    "dev": "bb plugin dev .",
+    "test": "node --test --experimental-strip-types test/*.test.ts",
+    "typecheck": "tsc --noEmit"
+  }
+}

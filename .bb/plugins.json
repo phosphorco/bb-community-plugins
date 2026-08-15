@@ -1,0 +1,11 @@
+{
+  "$schema": "https://getbb.app/schemas/plugins.schema.json",
+  "schemaVersion": 1,
+  "name": "phosphor-bb-plugins",
+  "plugins": [
+    { "name": "agentation", "source": "./plugins/agentation" },
+    { "name": "perspectives", "source": "./plugins/perspectives" },
+    { "name": "sticky-notes", "source": "./plugins/sticky-notes" },
+    { "name": "bb-ui-reference", "source": "./plugins/bb-ui-reference" }
+  ]
+}

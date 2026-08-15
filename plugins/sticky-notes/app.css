@@ -1,0 +1,220 @@
+.bb-sticky-notes-action {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  border-radius: 0.375rem;
+  color: var(--muted-foreground);
+  cursor: pointer;
+  display: inline-flex;
+  height: 1.75rem;
+  justify-content: center;
+  padding: 0;
+  width: 1.75rem;
+  touch-action: none;
+}
+
+.bb-sticky-notes-action:hover:not(:disabled) {
+  background: color-mix(in oklab, var(--foreground) 8%, transparent);
+  color: var(--foreground);
+}
+
+.bb-sticky-notes-action:focus-visible,
+.bb-sticky-note-grab:focus-visible,
+.bb-sticky-note textarea:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
+.bb-sticky-notes-action:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+
+.bb-sticky-notes-controller-anchor {
+  height: 0;
+  pointer-events: none;
+  position: absolute;
+  width: 0;
+}
+
+.bb-sticky-notes-overlay {
+  overflow: visible;
+  pointer-events: none;
+  position: fixed;
+  z-index: 45;
+}
+
+.bb-sticky-note {
+  background:
+    linear-gradient(
+      180deg,
+      color-mix(in oklab, var(--sticky-note-foreground) 5%, transparent) 0%,
+      transparent 34%
+    ),
+    var(--sticky-note-background);
+  border: 1px solid color-mix(in oklab, var(--sticky-note-foreground) 18%, transparent);
+  box-shadow: 0 14px 28px color-mix(in oklab, var(--foreground) 18%, transparent), 0 2px 5px color-mix(in oklab, var(--foreground) 14%, transparent);
+  clip-path: polygon(0 0, calc(100% - 18px) 0, 100% 18px, 100% 100%, 0 100%);
+  color: var(--sticky-note-foreground);
+  display: flex;
+  flex-direction: column;
+  pointer-events: auto;
+  position: absolute;
+  transform-origin: center;
+  transition: box-shadow 140ms ease, filter 140ms ease, opacity 140ms ease, transform 90ms ease-out;
+}
+
+.bb-sticky-note[data-positioning="true"] {
+  background:
+    linear-gradient(
+      180deg,
+      color-mix(in oklab, var(--sticky-note-foreground) 2%, transparent) 0%,
+      transparent 24%,
+      color-mix(in oklab, var(--sticky-note-foreground) 1.5%, transparent) 100%
+    ),
+    var(--sticky-note-background);
+}
+
+.bb-sticky-note::after {
+  border-bottom: 18px solid color-mix(in oklab, var(--sticky-note-foreground) 12%, transparent);
+  border-right: 18px solid transparent;
+  content: "";
+  pointer-events: none;
+  position: absolute;
+  right: 0;
+  top: 0;
+}
+
+.bb-sticky-note[data-discarding="true"] {
+  border: 2px dashed var(--destructive);
+  filter: saturate(0.45);
+  opacity: 0.68;
+}
+
+.bb-sticky-note-drag-preview {
+  opacity: 0.82;
+  pointer-events: none;
+}
+
+.bb-sticky-note-drag-preview[data-valid="false"] {
+  border: 2px dashed var(--destructive);
+  filter: saturate(0.45);
+  opacity: 0.58;
+}
+
+.bb-sticky-note-grab {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  color: inherit;
+  cursor: grab;
+  display: flex;
+  flex: 0 0 28px;
+  justify-content: center;
+  padding: 0 22px 0 8px;
+  touch-action: none;
+  width: 100%;
+}
+
+.bb-sticky-note-grab:active {
+  cursor: grabbing;
+}
+
+.bb-sticky-note-grab span,
+.bb-sticky-note-grab span::before,
+.bb-sticky-note-grab span::after {
+  background: currentColor;
+  border-radius: 999px;
+  display: block;
+  height: 2px;
+  opacity: 0.22;
+  width: 22px;
+}
+
+.bb-sticky-note-grab span {
+  position: relative;
+}
+
+.bb-sticky-note-grab span::before,
+.bb-sticky-note-grab span::after {
+  content: "";
+  left: 0;
+  position: absolute;
+}
+
+.bb-sticky-note-grab span::before { top: -5px; }
+.bb-sticky-note-grab span::after { top: 5px; }
+
+.bb-sticky-note textarea {
+  background: transparent;
+  border: 0;
+  color: inherit;
+  flex: 1 1 auto;
+  font-family: "Gaegu", ui-rounded, "SF Pro Rounded", cursive;
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 1.4;
+  min-height: 0;
+  outline: none;
+  overflow: auto;
+  padding: 6px 16px 16px;
+  resize: none;
+  overflow-wrap: anywhere;
+  text-wrap-mode: wrap;
+  text-wrap-style: auto;
+  white-space: pre-wrap;
+  word-break: normal;
+}
+
+.bb-sticky-note textarea[data-wrap-style="stable"] { text-wrap-style: stable; }
+.bb-sticky-note textarea[data-wrap-style="balance"] { text-wrap-style: balance; }
+.bb-sticky-note textarea[data-wrap-style="pretty"] { text-wrap-style: pretty; }
+
+.bb-sticky-note textarea::placeholder {
+  color: color-mix(in oklab, currentColor 48%, transparent);
+}
+
+.bb-sticky-note-discard {
+  background: var(--destructive);
+  border-radius: 999px;
+  bottom: 12px;
+  color: var(--destructive-foreground);
+  font-size: 12px;
+  font-weight: 650;
+  left: 50%;
+  padding: 5px 9px;
+  pointer-events: none;
+  position: absolute;
+  transform: translateX(-50%);
+  white-space: nowrap;
+}
+
+.bb-sticky-notes-error {
+  background: var(--popover);
+  border: 1px solid var(--destructive);
+  border-radius: 999px;
+  color: var(--popover-foreground);
+  font-size: 12px;
+  left: 50%;
+  padding: 5px 10px;
+  pointer-events: none;
+  position: absolute;
+  top: 8px;
+  transform: translateX(-50%);
+  z-index: 100;
+}
+
+.bb-sticky-note-sr-only {
+  height: 1px;
+  margin: -1px;
+  overflow: hidden;
+  padding: 0;
+  position: absolute;
+  width: 1px;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bb-sticky-note { transition: none; }
+}

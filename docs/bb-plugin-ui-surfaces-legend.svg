@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="96" viewBox="0 0 800 96" role="img" aria-labelledby="title description">
+  <title id="title">BB plugin UI surface map legend</title>
+  <desc id="description">Gray represents native BB UI, blue represents additive plugin surfaces, purple represents replaceable regions, and orange represents trusted page code.</desc>
+  <defs>
+    <style>
+      .canvas { fill: #f6f7fb; }
+      .host { fill: #f1f5f9; stroke: #94a3b8; stroke-width: 1.5; }
+      .plugin { fill: #e8f2ff; stroke: #3b82f6; stroke-width: 2; }
+      .replace { fill: #f1eafe; stroke: #8b5cf6; stroke-width: 2; }
+      .trusted { fill: none; stroke: #f59e0b; stroke-width: 3; stroke-dasharray: 9 7; }
+      .title { font: 700 18px ui-sans-serif, system-ui, sans-serif; fill: #0f172a; }
+      .subtitle { font: 400 11px ui-sans-serif, system-ui, sans-serif; fill: #475569; }
+      .label { font: 600 12px ui-sans-serif, system-ui, sans-serif; fill: #334155; }
+    </style>
+  </defs>
+  <rect class="canvas" width="800" height="96" rx="10"/>
+  <text class="title" x="24" y="34">BB plugin UI surfaces</text>
+  <text class="subtitle" x="24" y="55">Native chrome and the regions plugins can extend.</text>
+  <g aria-label="Surface classifications">
+    <rect class="host" x="390" y="17" width="24" height="18" rx="4"/>
+    <text class="label" x="424" y="31">Native BB UI</text>
+    <rect class="plugin" x="590" y="17" width="24" height="18" rx="4"/>
+    <text class="label" x="624" y="31">Additive plugin surface</text>
+    <rect class="replace" x="390" y="57" width="24" height="18" rx="4"/>
+    <text class="label" x="424" y="71">Replaceable region</text>
+    <rect class="trusted" x="590" y="57" width="24" height="18" rx="4"/>
+    <text class="label" x="624" y="71">Trusted page code</text>
+  </g>
+</svg>

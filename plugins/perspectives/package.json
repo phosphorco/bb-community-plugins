@@ -1,0 +1,29 @@
+{
+  "name": "@phosphor/bb-plugin-perspectives",
+  "version": "0.1.0",
+  "type": "module",
+  "license": "MIT",
+  "description": "Independent expert help and phase-bounded perspective synthesis for bb agents.",
+  "author": "Phosphor",
+  "homepage": "https://github.com/phosphorco/bb-plugins/tree/main/plugins/perspectives#readme",
+  "bugs": { "url": "https://github.com/phosphorco/bb-plugins/issues" },
+  "repository": { "type": "git", "url": "git+https://github.com/phosphorco/bb-plugins.git", "directory": "plugins/perspectives" },
+  "keywords": ["bb", "bb-plugin", "perspectives", "agents", "experts", "orchestration"],
+  "engines": { "bb": ">=0.37", "bbPluginSdk": "^0.4.1" },
+  "bb": {
+    "name": "Perspectives",
+    "description": "Independent expert help and phase-bounded perspective synthesis for bb agents.",
+    "branding": { "icon": "Users" },
+    "server": "./server.ts",
+    "skills": []
+  },
+  "files": ["dist/", "README.md", "LICENSE", "server.ts", "Perspectives.ts"],
+  "dependencies": { "zod": "4.3.6" },
+  "devDependencies": { "@types/node": "^22", "typescript": "^5.9.3" },
+  "scripts": {
+    "build": "bb plugin build .",
+    "dev": "bb plugin dev .",
+    "test": "node --test --experimental-strip-types test/*.test.ts",
+    "typecheck": "tsc --noEmit"
+  }
+}
