@@ -1,5 +1,7 @@
 # Support image icons in plugin mention providers
 
+![Whiteboard diagram showing a plugin avatar URL rendered across BB's mention UI but excluded from agent-visible content](./plugin-mention-image-icons.png)
+
 ## Concrete need
 
 Plugin mention providers can represent people, repositories, services, and
