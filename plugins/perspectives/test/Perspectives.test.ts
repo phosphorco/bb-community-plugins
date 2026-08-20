@@ -19,6 +19,16 @@ function perspectiveTable(rows: readonly (readonly [string, string, string])[]):
   ].join("\n");
 }
 
+function callerExecution() {
+  return {
+    providerId: "provider",
+    model: "model",
+    serviceTier: "default",
+    reasoningLevel: "medium",
+    permissionMode: "auto",
+  } as const;
+}
+
 test("help keeps expert construction outside the caller thread", async () => {
   const spawnCalls: Array<Record<string, unknown>> = [];
   let nextThread = 0;
@@ -27,7 +37,7 @@ test("help keeps expert construction outside the caller thread", async () => {
     sdk: {
       threads: {
         get: async () => ({ environmentId: "environment", providerId: "provider" }),
-        defaultExecutionOptions: async () => null,
+        defaultExecutionOptions: async () => callerExecution(),
         spawn: async (input: Record<string, unknown>) => {
           spawnCalls.push(input);
           nextThread += 1;
@@ -85,7 +95,7 @@ test("gather_perspectives exposes only the final synthesis thread", async () => 
         },
         defaultExecutionOptions: async () => {
           executionReads += 1;
-          return null;
+          return callerExecution();
         },
         spawn: async ({ title, prompt }: { title: string; prompt: string }) => {
           nextThread += 1;
@@ -140,7 +150,7 @@ test("gather_perspectives synthesizes complete, partial, and failed worker outco
     sdk: {
       threads: {
         get: async () => ({ environmentId: "environment", providerId: "provider" }),
-        defaultExecutionOptions: async () => null,
+        defaultExecutionOptions: async () => callerExecution(),
         spawn: async ({ title, prompt }: { title: string; prompt: string }) => {
           nextThread += 1;
           const threadId = `thread-${nextThread}`;
@@ -212,7 +222,7 @@ test("gather_perspectives degrades one launch failure without cancelling the pan
     sdk: {
       threads: {
         get: async () => ({ environmentId: "environment", providerId: "provider" }),
-        defaultExecutionOptions: async () => null,
+        defaultExecutionOptions: async () => callerExecution(),
         spawn: async ({ title, prompt }: { title: string; prompt: string }) => {
           if (title.includes("two")) throw new Error("provider refused launch");
           nextThread += 1;
@@ -262,7 +272,7 @@ test("gather_perspectives returns preserved answers when synthesis cannot launch
     sdk: {
       threads: {
         get: async () => ({ environmentId: "environment", providerId: "provider" }),
-        defaultExecutionOptions: async () => null,
+        defaultExecutionOptions: async () => callerExecution(),
         spawn: async ({ title }: { title: string }) => {
           if (title === "Perspective synthesis") throw new Error("synthesis provider unavailable");
           nextThread += 1;
@@ -308,7 +318,7 @@ test("gather_perspectives falls back to caller lenses when planning fails", asyn
     sdk: {
       threads: {
         get: async () => ({ environmentId: "environment", providerId: "provider" }),
-        defaultExecutionOptions: async () => null,
+        defaultExecutionOptions: async () => callerExecution(),
         spawn: async ({ title, prompt }: { title: string; prompt: string }) => {
           nextThread += 1;
           const threadId = `thread-${nextThread}`;

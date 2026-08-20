@@ -34,9 +34,43 @@ interface SpawnContext {
   readonly callerThreadId: string;
   readonly signal: AbortSignal;
   readonly environment: Parameters<Threads["spawn"]>[0]["environment"];
-  readonly providerId: string;
-  readonly execution: Awaited<ReturnType<Threads["defaultExecutionOptions"]>>;
+  readonly execution: ResolvedExecution;
 }
+
+type CallerExecution = NonNullable<Awaited<ReturnType<Threads["defaultExecutionOptions"]>>>;
+type ReasoningLevel = CallerExecution["reasoningLevel"];
+type PermissionMode = CallerExecution["permissionMode"];
+type ServiceTier = CallerExecution["serviceTier"];
+
+interface ResolvedExecution {
+  readonly providerId: string;
+  readonly model: string;
+  readonly serviceTier?: ServiceTier;
+  readonly reasoningLevel: ReasoningLevel;
+  readonly permissionMode: PermissionMode;
+}
+
+export interface PhaseExecutionSettings {
+  readonly providerId?: string;
+  readonly model?: string;
+  readonly reasoningLevel?: ReasoningLevel;
+  readonly permissionMode?: PermissionMode;
+}
+
+export interface PerspectivesExecutionSettings {
+  readonly planner: PhaseExecutionSettings;
+  readonly worker: PhaseExecutionSettings;
+}
+
+interface SpawnContexts {
+  readonly planner: SpawnContext;
+  readonly worker: SpawnContext;
+}
+
+const INHERIT_EXECUTION_SETTINGS: PerspectivesExecutionSettings = {
+  planner: {},
+  worker: {},
+};
 
 interface SpawnedAgent {
   readonly threadId: string;
@@ -405,15 +439,13 @@ async function spawnAgent(
   deadline: number,
 ): Promise<SpawnedAgent> {
   throwIfAborted(context.signal);
-  const executionInputSources = context.execution
-    ? {
-        providerId: "explicit" as const,
-        model: "explicit" as const,
-        serviceTier: "explicit" as const,
-        reasoningLevel: "explicit" as const,
-        permissionMode: "explicit" as const,
-      }
-    : undefined;
+  const executionInputSources = {
+    providerId: "explicit" as const,
+    model: "explicit" as const,
+    ...(context.execution.serviceTier ? { serviceTier: "explicit" as const } : {}),
+    reasoningLevel: "explicit" as const,
+    permissionMode: "explicit" as const,
+  };
 
   const thread = await bb.sdk.threads.spawn({
     projectId: context.projectId,
@@ -421,16 +453,12 @@ async function spawnAgent(
     title,
     prompt,
     visibility: "hidden",
-    providerId: context.providerId,
-    ...(context.execution
-      ? {
-          model: context.execution.model,
-          serviceTier: context.execution.serviceTier,
-          reasoningLevel: context.execution.reasoningLevel,
-          permissionMode: context.execution.permissionMode,
-          executionInputSources,
-        }
-      : {}),
+    providerId: context.execution.providerId,
+    model: context.execution.model,
+    ...(context.execution.serviceTier ? { serviceTier: context.execution.serviceTier } : {}),
+    reasoningLevel: context.execution.reasoningLevel,
+    permissionMode: context.execution.permissionMode,
+    executionInputSources,
   });
 
   const localController = new AbortController();
@@ -522,23 +550,151 @@ async function spawnAgent(
   };
 }
 
-async function createSpawnContext(
+function configurationError(message: string): Error {
+  return Object.assign(new Error(message), { name: "NeedsConfigurationError" });
+}
+
+function hasOverrides(settings: PhaseExecutionSettings): boolean {
+  return Boolean(
+    clean(settings.providerId) ||
+      clean(settings.model) ||
+      settings.reasoningLevel ||
+      settings.permissionMode,
+  );
+}
+
+const permissionRank: Record<PermissionMode, number> = {
+  "accept-edits": 0,
+  auto: 1,
+  full: 2,
+};
+
+async function createSpawnContexts(
   bb: BbPluginApi,
   toolContext: PluginAgentToolContext,
-): Promise<SpawnContext> {
+  settings: PerspectivesExecutionSettings,
+): Promise<SpawnContexts> {
   const [caller, execution] = await Promise.all([
     bb.sdk.threads.get({ threadId: toolContext.threadId, signal: toolContext.signal }),
     bb.sdk.threads.defaultExecutionOptions({ threadId: toolContext.threadId, signal: toolContext.signal }),
   ]);
-  return {
+  if (!execution) {
+    throw configurationError(
+      "Perspectives could not resolve the caller's execution defaults. Choose a provider and model in the calling thread, then retry.",
+    );
+  }
+
+  const inheritedExecution: ResolvedExecution = {
+    providerId: caller.providerId,
+    model: execution.model,
+    serviceTier: execution.serviceTier,
+    reasoningLevel: execution.reasoningLevel,
+    permissionMode: execution.permissionMode,
+  };
+
+  const environment = caller.environmentId
+    ? { type: "reuse" as const, environmentId: caller.environmentId }
+    : { type: "project-default" as const };
+  const routing = caller.environmentId ? { environmentId: caller.environmentId } : {};
+  let providersPromise: ReturnType<typeof bb.sdk.providers.list> | undefined;
+  const modelPromises = new Map<string, ReturnType<typeof bb.sdk.providers.models>>();
+
+  const providers = () =>
+    providersPromise ??= bb.sdk.providers.list({ ...routing, signal: toolContext.signal });
+  const models = (providerId: string) => {
+    let promise = modelPromises.get(providerId);
+    if (!promise) {
+      promise = bb.sdk.providers.models({
+        ...routing,
+        providerId,
+        signal: toolContext.signal,
+      });
+      modelPromises.set(providerId, promise);
+    }
+    return promise;
+  };
+
+  const resolvePhase = async (
+    phase: "planner" | "worker",
+    configured: PhaseExecutionSettings,
+  ): Promise<ResolvedExecution> => {
+    if (!hasOverrides(configured)) return inheritedExecution;
+
+    const providerId = clean(configured.providerId) || inheritedExecution.providerId;
+    const provider = (await providers()).find((candidate) => candidate.id === providerId);
+    if (!provider?.available) {
+      throw configurationError(
+        `Configured ${phase} provider ${JSON.stringify(providerId)} is unavailable on the caller's environment host.`,
+      );
+    }
+
+    const options = await models(providerId);
+    const availableModels = [...options.models, ...options.selectedOnlyModels];
+    const requestedModel = clean(configured.model);
+    const inheritedModel = providerId === inheritedExecution.providerId
+      ? inheritedExecution.model
+      : "";
+    const model = requestedModel
+      ? availableModels.find(
+          (candidate) => candidate.id === requestedModel || candidate.model === requestedModel,
+        )
+      : availableModels.find((candidate) => candidate.model === inheritedModel) ??
+        availableModels.find((candidate) => candidate.isDefault);
+    if (!model) {
+      const detail = requestedModel
+        ? `model ${JSON.stringify(requestedModel)}`
+        : "a default model";
+      throw configurationError(
+        `Configured ${phase} provider ${JSON.stringify(providerId)} does not expose ${detail}.`,
+      );
+    }
+
+    const reasoningLevel = configured.reasoningLevel ??
+      (providerId === inheritedExecution.providerId && model.model === inheritedExecution.model
+        ? inheritedExecution.reasoningLevel
+        : model.defaultReasoningEffort);
+    if (!model.supportedReasoningEfforts.some((item) => item.reasoningEffort === reasoningLevel)) {
+      throw configurationError(
+        `Configured ${phase} reasoning level ${JSON.stringify(reasoningLevel)} is unavailable for ${providerId}/${model.model}.`,
+      );
+    }
+
+    const permissionMode = configured.permissionMode ?? inheritedExecution.permissionMode;
+    if (!provider.capabilities.permissionModes.includes(permissionMode)) {
+      throw configurationError(
+        `Configured ${phase} permission mode ${JSON.stringify(permissionMode)} is unavailable for provider ${JSON.stringify(providerId)}.`,
+      );
+    }
+    if (permissionRank[permissionMode] > permissionRank[options.permissionCeiling]) {
+      throw configurationError(
+        `Configured ${phase} permission mode ${JSON.stringify(permissionMode)} exceeds the current host ceiling ${JSON.stringify(options.permissionCeiling)}.`,
+      );
+    }
+
+    return {
+      providerId,
+      model: model.model,
+      serviceTier: provider.capabilities.supportsServiceTier
+        ? inheritedExecution.serviceTier ?? "default"
+        : undefined,
+      reasoningLevel,
+      permissionMode,
+    };
+  };
+
+  const [plannerExecution, workerExecution] = await Promise.all([
+    resolvePhase("planner", settings.planner),
+    resolvePhase("worker", settings.worker),
+  ]);
+  const common = {
     projectId: toolContext.projectId,
     callerThreadId: toolContext.threadId,
     signal: toolContext.signal,
-    environment: caller.environmentId
-      ? { type: "reuse", environmentId: caller.environmentId }
-      : { type: "project-default" },
-    providerId: caller.providerId,
-    execution,
+    environment,
+  };
+  return {
+    planner: { ...common, execution: plannerExecution },
+    worker: { ...common, execution: workerExecution },
   };
 }
 
@@ -713,18 +869,19 @@ export async function runHelp(
   bb: BbPluginApi,
   input: { question: string; context?: string },
   toolContext: PluginAgentToolContext,
+  executionSettings: PerspectivesExecutionSettings = INHERIT_EXECUTION_SETTINGS,
 ): Promise<string> {
   const question = clean(input.question);
   const sharedContext = clean(input.context);
   if (!question) throw new Error("help requires a non-empty question.");
 
-  const context = await createSpawnContext(bb, toolContext);
+  const contexts = await createSpawnContexts(bb, toolContext, executionSettings);
   const plannerDeadline = Date.now() + PLANNER_PHASE_TIMEOUT_MS;
-  const plan = await generatePlan(bb, context, question, sharedContext, null, plannerDeadline);
+  const plan = await generatePlan(bb, contexts.planner, question, sharedContext, null, plannerDeadline);
   const [perspective] = plan.perspectives;
   const helper = await spawnAgent(
     bb,
-    context,
+    contexts.worker,
     `Help: ${perspective!.name}`,
     workerPrompt(
       question,
@@ -753,14 +910,15 @@ export async function runGatherPerspectives(
   bb: BbPluginApi,
   input: { question: string; context?: string; lenses: readonly string[] },
   toolContext: PluginAgentToolContext,
+  executionSettings: PerspectivesExecutionSettings = INHERIT_EXECUTION_SETTINGS,
 ): Promise<string> {
   const question = clean(input.question);
   const sharedContext = clean(input.context);
   if (!question) throw new Error("gather_perspectives requires a non-empty question.");
 
-  const context = await createSpawnContext(bb, toolContext);
+  const contexts = await createSpawnContexts(bb, toolContext, executionSettings);
   const plannerDeadline = Date.now() + PLANNER_PHASE_TIMEOUT_MS;
-  const plan = await generatePlan(bb, context, question, sharedContext, input.lenses, plannerDeadline);
+  const plan = await generatePlan(bb, contexts.planner, question, sharedContext, input.lenses, plannerDeadline);
   const panelDeadline = Date.now() + PANEL_PHASE_TIMEOUT_MS;
   const launched = await Promise.allSettled(
     plan.perspectives.map(async (perspective, index) => ({
@@ -769,7 +927,7 @@ export async function runGatherPerspectives(
         perspective,
         ...(await spawnAgent(
           bb,
-          context,
+          contexts.worker,
           `Perspective ${index + 1}: ${perspective.name}`,
           workerPrompt(question, sharedContext, perspective),
           perspective,
@@ -799,7 +957,7 @@ export async function runGatherPerspectives(
   });
   const synthesis = await synthesize(
     bb,
-    context,
+    contexts.planner,
     question,
     sharedContext,
     results,

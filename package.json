@@ -13,6 +13,6 @@
     "typecheck": "npm run typecheck --workspaces --if-present"
   },
   "devDependencies": {
-    "bb-app": "0.38.0"
+    "bb-app": "0.39.0"
   }
 }

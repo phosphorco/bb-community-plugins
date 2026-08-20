@@ -1,6 +1,6 @@
 {
   "name": "@phosphorco/bb-plugin-bb-ui-reference",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "type": "module",
   "license": "MIT",
   "description": "Compare BB's detailed plugin surface map with compact semantic color demonstrations.",
@@ -14,7 +14,10 @@
   "bb": {
     "name": "BB UI Reference",
     "description": "Open a movable surface-map viewer with live semantic color demonstrations.",
-    "branding": { "icon": "CircleQuestion" },
+    "branding": {
+      "icon": "CircleQuestion",
+      "logo": { "light": "./assets/icon-32.png" }
+    },
     "server": "./server.ts",
     "app": "./app.tsx",
     "skills": []

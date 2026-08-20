@@ -1,0 +1,44 @@
+name: Validate pull request
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the candidate
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - name: Set up Node and npm
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: "24"
+          package-manager-cache: false
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: Test
+        run: npm run test
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Build BB artifacts
+        run: npm run build
+
+      - name: Inspect Agentation Mentions package
+        run: npm pack --dry-run --ignore-scripts --workspace @phosphorco/bb-plugin-agentation-mentions
+
+      - name: Inspect Perspectives package
+        run: npm pack --dry-run --ignore-scripts --workspace @phosphorco/bb-plugin-perspectives
+
+      - name: Inspect Sticky Notes package
+        run: npm pack --dry-run --ignore-scripts --workspace @phosphorco/bb-plugin-sticky-notes
+
+      - name: Inspect BB UI Reference package
+        run: npm pack --dry-run --ignore-scripts --workspace @phosphorco/bb-plugin-bb-ui-reference

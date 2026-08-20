@@ -5,6 +5,43 @@ Adds two native tools to bb agents:
 - `help` accepts a question and context, generates the expert prompt in a separate hidden planner, and asks one hidden helper for a concise read-only answer.
 - `gather_perspectives` accepts 3-7 caller-supplied lenses—specific aspects or analytical angles such as `"v8 performance characteristics"`, `"big-O complexity"`, and `"duplicate work"`—generates a bespoke expert prompt for each lens, launches the panel concurrently, and synthesizes every usable complete or partial outcome.
 
+One `help` call creates a hidden planner and one hidden expert. One
+`gather_perspectives` call creates one hidden planner, 3-7 concurrent hidden
+workers, and one hidden synthesis thread; a malformed planner response can
+consume one bounded retry. Each thread is a model invocation and carries the
+cost and provider limits of its resolved execution tuple.
+
+## Execution settings
+
+Settings expose separate phase tuples:
+
+| Setting group | Applied to |
+|---|---|
+| Planner provider/model/reasoning/permission | Prompt planner and final synthesis |
+| Worker provider/model/reasoning/permission | `help` expert and every panel worker |
+
+Blank provider/model values and `inherit` selectors are explicit defaults. If
+the provider is unchanged, they copy the caller's resolved tuple. If a different
+provider is configured and model remains blank, Perspectives uses that
+provider's declared default model; the model's default reasoning is used unless
+reasoning is configured. Permission inheritance keeps the caller's permission
+mode. The plugin resolves and validates both phase tuples against the caller's
+environment host before it creates any hidden thread. An unavailable provider,
+model, reasoning level, permission mode, or host ceiling returns a configuration
+error with no partially launched panel.
+
+Every spawn records the resolved fields as explicit inputs so bb does not
+re-derive a different model mid-panel. Settings affect later calls immediately;
+they do not mutate existing hidden threads.
+
+Workers, planners, and synthesis are instructed to perform read-only advisory
+work and not mutate files or external systems. bb 0.39 has no `read-only`
+permission mode, so that instruction is a policy, not a technical sandbox: the
+configured/inherited permission setting remains the thread's real authority
+envelope and should be chosen accordingly. The plugin itself stores no result
+data and contacts no external service, but the selected model/provider and its
+available tools may perform network or read-only source inspection.
+
 The panel does not stop when a majority finishes. Each worker gets the full
 panel phase. Unfinished workers receive a late wrap-up request, then their
 final or partial output is recovered at the phase boundary. One failed worker
@@ -68,8 +105,8 @@ Example:
 }
 ```
 
-All plugin-owned threads reuse a single snapshot of the caller's project,
-environment, provider, and execution options. They are hidden root threads,
+All plugin-owned threads reuse one snapshot of the caller's project and
+environment plus the prevalidated phase tuple described above. They are hidden root threads,
 not children or forks, so they neither inherit the caller's provider
 conversation nor report every completion and blocker into it. BB's current
 `parentThreadId` contract is agent delegation: setting it at spawn reports
@@ -99,7 +136,11 @@ recursive panels.
   `logo.dark`). Logo assets must be relative `.svg`, `.png`, or
   `.webp` files.
 - `engines.bb` — supported bb app version range.
-- `engines.bbPluginSdk` — supported plugin SDK range (scaffold: `^0.4.1`).
+- `engines.bbPluginSdk` — supported plugin SDK floor (`>=0.4.8` here).
+
+The rich in-plugin logo and marketplace icon are Cole-approved PE02-A. The
+package preserves the generated 1254px RGB source and the verified RGB24
+nearest-neighbor 16/24/32px derivatives byte-for-byte under `assets/`.
 
 Run `bb plugin build` before publishing git/npm installs. It writes
 `dist/server.js` + `server.meta.json` (and, with `bb.app`, `app.js` /
