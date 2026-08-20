@@ -8,13 +8,13 @@ on:
         required: true
         type: choice
         options:
-          - agentation
+          - agentation-mentions
           - perspectives
           - sticky-notes
           - bb-ui-reference
   push:
     tags:
-      - "agentation/v*"
+      - "agentation-mentions/v*"
       - "perspectives/v*"
       - "sticky-notes/v*"
       - "bb-ui-reference/v*"
@@ -52,7 +52,7 @@ jobs:
         run: |
           plugin="${REQUESTED_PLUGIN:-${GITHUB_REF_NAME%%/*}}"
           case "$plugin" in
-            agentation) workspace="@phosphorco/bb-plugin-agentation" ;;
+            agentation-mentions) workspace="@phosphorco/bb-plugin-agentation-mentions" ;;
             perspectives) workspace="@phosphorco/bb-plugin-perspectives" ;;
             sticky-notes) workspace="@phosphorco/bb-plugin-sticky-notes" ;;
             bb-ui-reference) workspace="@phosphorco/bb-plugin-bb-ui-reference" ;;

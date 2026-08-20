@@ -1,6 +1,6 @@
 {
   "name": "@phosphorco/bb-plugin-sticky-notes",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "type": "module",
   "license": "MIT",
   "description": "Leave shared, movable sticky notes on bb threads for asynchronous collaboration.",
@@ -14,12 +14,15 @@
   "bb": {
     "name": "Sticky Notes",
     "description": "Leave shared, movable sticky notes on bb threads for asynchronous collaboration.",
-    "branding": { "icon": "Note" },
+    "branding": {
+      "icon": "Note",
+      "logo": { "light": "./assets/icon-32.png" }
+    },
     "server": "./server.ts",
     "app": "./app.tsx",
     "skills": []
   },
-  "files": ["dist/", "README.md", "LICENSE", "server.ts", "app.tsx", "app.css", "geometry.ts", "note-state.ts", "notes.ts", "overlay-bounds.ts", "save-queue.ts", "typography.ts"],
+  "files": ["dist/", "assets/", "README.md", "LICENSE", "server.ts", "app.tsx", "app.css", "geometry.ts", "note-state.ts", "notes.ts", "overlay-bounds.ts", "save-queue.ts", "typography.ts"],
   "dependencies": { "zod": "4.3.6" },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.12",

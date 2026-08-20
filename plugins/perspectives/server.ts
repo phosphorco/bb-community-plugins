@@ -1,7 +1,12 @@
 import type { BbPluginApi } from "@bb/plugin-sdk";
 import { z } from "zod";
 
-import { runGatherPerspectives, runHelp } from "./Perspectives.ts";
+import {
+  runGatherPerspectives,
+  runHelp,
+  type PerspectivesExecutionSettings,
+  type PhaseExecutionSettings,
+} from "./Perspectives.ts";
 
 const LENS_EXAMPLES = [
   ["v8 performance characteristics", "big-O complexity", "duplicate work"],
@@ -39,7 +44,111 @@ function toolError(error: unknown) {
   };
 }
 
+const reasoningOptions = [
+  "inherit",
+  "none",
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "ultracode",
+  "max",
+  "ultra",
+] as const;
+const permissionOptions = ["inherit", "accept-edits", "auto", "full"] as const;
+
+function phaseSettings(
+  providerId: string,
+  model: string,
+  reasoningLevel: string,
+  permissionMode: string,
+): PhaseExecutionSettings {
+  return {
+    ...(providerId.trim() ? { providerId: providerId.trim() } : {}),
+    ...(model.trim() ? { model: model.trim() } : {}),
+    ...(reasoningLevel !== "inherit"
+      ? { reasoningLevel: reasoningLevel as PhaseExecutionSettings["reasoningLevel"] }
+      : {}),
+    ...(permissionMode !== "inherit"
+      ? { permissionMode: permissionMode as PhaseExecutionSettings["permissionMode"] }
+      : {}),
+  };
+}
+
 export default function plugin(bb: BbPluginApi): void {
+  const settings = bb.settings.define({
+    plannerProvider: {
+      type: "string",
+      label: "Planner provider ID",
+      description: "Blank inherits the caller provider. Also applies to final synthesis.",
+      default: "",
+    },
+    plannerModel: {
+      type: "string",
+      label: "Planner model ID",
+      description: "Blank inherits the caller model, or the configured provider's default model.",
+      default: "",
+    },
+    plannerReasoning: {
+      type: "select",
+      label: "Planner reasoning",
+      description: "Inheritance uses the caller value when the model is unchanged; another model uses its default.",
+      options: [...reasoningOptions],
+      default: "inherit",
+    },
+    plannerPermission: {
+      type: "select",
+      label: "Planner permission",
+      description: "The authority envelope for planner and synthesis threads. Prompt instructions remain read-only.",
+      options: [...permissionOptions],
+      default: "inherit",
+    },
+    workerProvider: {
+      type: "string",
+      label: "Worker provider ID",
+      description: "Blank inherits the caller provider. Applies to help and every panel worker.",
+      default: "",
+    },
+    workerModel: {
+      type: "string",
+      label: "Worker model ID",
+      description: "Blank inherits the caller model, or the configured provider's default model.",
+      default: "",
+    },
+    workerReasoning: {
+      type: "select",
+      label: "Worker reasoning",
+      description: "Inheritance uses the caller value when the model is unchanged; another model uses its default.",
+      options: [...reasoningOptions],
+      default: "inherit",
+    },
+    workerPermission: {
+      type: "select",
+      label: "Worker permission",
+      description: "The authority envelope for expert threads. Prompt instructions prohibit mutation.",
+      options: [...permissionOptions],
+      default: "inherit",
+    },
+  });
+
+  async function readExecutionSettings(): Promise<PerspectivesExecutionSettings> {
+    const values = await settings.get();
+    return {
+      planner: phaseSettings(
+        values.plannerProvider,
+        values.plannerModel,
+        values.plannerReasoning,
+        values.plannerPermission,
+      ),
+      worker: phaseSettings(
+        values.workerProvider,
+        values.workerModel,
+        values.workerReasoning,
+        values.workerPermission,
+      ),
+    };
+  }
+
   bb.agents.registerTool({
     name: "help",
     description: "Ask one independently generated, question-specific expert for a concise, source-cited read-only answer.",
@@ -54,7 +163,7 @@ export default function plugin(bb: BbPluginApi): void {
     }).strict(),
     async execute(input, context) {
       try {
-        return await runHelp(bb, input, context);
+        return await runHelp(bb, input, context, await readExecutionSettings());
       } catch (error) {
         return toolError(error);
       }
@@ -76,7 +185,7 @@ export default function plugin(bb: BbPluginApi): void {
     }).strict(),
     async execute(input, context) {
       try {
-        return await runGatherPerspectives(bb, input, context);
+        return await runGatherPerspectives(bb, input, context, await readExecutionSettings());
       } catch (error) {
         return toolError(error);
       }

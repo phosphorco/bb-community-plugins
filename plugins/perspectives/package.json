@@ -1,6 +1,6 @@
 {
   "name": "@phosphorco/bb-plugin-perspectives",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "type": "module",
   "license": "MIT",
   "description": "Independent expert help and phase-bounded perspective synthesis for bb agents.",
@@ -10,15 +10,18 @@
   "repository": { "type": "git", "url": "git+https://github.com/phosphorco/bb-community-plugins.git", "directory": "plugins/perspectives" },
   "publishConfig": { "access": "public", "registry": "https://registry.npmjs.org" },
   "keywords": ["bb", "bb-plugin", "perspectives", "agents", "experts", "orchestration"],
-  "engines": { "bb": ">=0.37", "bbPluginSdk": "^0.4.1" },
+  "engines": { "bb": ">=0.39.0 <1.0.0", "bbPluginSdk": ">=0.4.8" },
   "bb": {
     "name": "Perspectives",
     "description": "Independent expert help and phase-bounded perspective synthesis for bb agents.",
-    "branding": { "icon": "Users" },
+    "branding": {
+      "icon": "Search",
+      "logo": { "light": "./assets/icon-32.png" }
+    },
     "server": "./server.ts",
     "skills": []
   },
-  "files": ["dist/", "README.md", "LICENSE", "server.ts", "Perspectives.ts"],
+  "files": ["dist/", "assets/", "README.md", "LICENSE", "server.ts", "Perspectives.ts"],
   "dependencies": { "zod": "4.3.6" },
   "devDependencies": { "@types/node": "^22", "typescript": "^5.9.3" },
   "scripts": {

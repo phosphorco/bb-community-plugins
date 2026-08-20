@@ -7,9 +7,20 @@ import plugin from "../server.ts";
 describe("plugin registration", () => {
   test("exposes tools to ordinary agents and excludes them from its own workers", () => {
     const tools: Array<{ name: string; parameters: { safeParse(input: unknown): { success: boolean } } }> = [];
+    let settingDescriptors: Record<string, any> = {};
     let configure!: (context: any) => { tools: string[]; skills: string[] };
     const bb = {
       pluginId: "perspectives",
+      settings: {
+        define: (descriptors: Record<string, any>) => {
+          settingDescriptors = descriptors;
+          return {
+            get: async () => Object.fromEntries(
+              Object.entries(descriptors).map(([key, descriptor]) => [key, descriptor.default]),
+            ),
+          };
+        },
+      },
       agents: {
         registerTool: (registration: typeof tools[number]) => tools.push(registration),
         configure: (provider: typeof configure) => {
@@ -24,6 +35,25 @@ describe("plugin registration", () => {
     expect(tools.map((tool) => tool.name)).toEqual(["help", "gather_perspectives"]);
     expect(configure({ origin: { pluginId: null } }).tools).toEqual(["help", "gather_perspectives"]);
     expect(configure({ origin: { pluginId: "perspectives" } }).tools).toEqual([]);
+    expect(Object.keys(settingDescriptors)).toEqual([
+      "plannerProvider",
+      "plannerModel",
+      "plannerReasoning",
+      "plannerPermission",
+      "workerProvider",
+      "workerModel",
+      "workerReasoning",
+      "workerPermission",
+    ]);
+    expect(settingDescriptors.plannerProvider.default).toBe("");
+    expect(settingDescriptors.workerModel.default).toBe("");
+    expect(settingDescriptors.plannerReasoning.default).toBe("inherit");
+    expect(settingDescriptors.workerPermission.options).toEqual([
+      "inherit",
+      "accept-edits",
+      "auto",
+      "full",
+    ]);
 
     const help = tools.find((tool) => tool.name === "help")!;
     expect((help as any).instructions).toContain("only the returned expert-consultation thread");
