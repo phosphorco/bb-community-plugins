@@ -14,6 +14,9 @@ export function expect(actual: any) {
     toContain(expected: any) {
       assert.ok(actual.includes(expected));
     },
+    toBeDefined() {
+      assert.notEqual(actual, undefined);
+    },
     toThrow(expected: string | RegExp) {
       assert.throws(actual, expected instanceof RegExp ? expected : new RegExp(expected));
     },

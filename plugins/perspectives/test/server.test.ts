@@ -70,9 +70,13 @@ describe("plugin registration", () => {
     expect(gather.instructions).toContain("big-O complexity");
     expect(gather.instructions).toContain("over-labeling/structure, IA, and visual cues");
     expect(gather.instructions.match(/, \.\.\.\]/g)).toHaveLength(2);
-    expect(gather.instructions).toContain("only the returned final-synthesis thread");
+    expect(gather.instructions).toContain("only the final-synthesis thread named in the result");
     expect(gather.instructions).toContain("do not enumerate planner, worker, or pipeline threads");
     expect(gather.instructions).toContain("synthesis preserves those citations");
+    expect(gather.instructions).toContain("returns a launch receipt immediately");
+    expect(gather.instructions).toContain("Do not wait, poll, or re-invoke");
+    expect(gather.instructions).toContain('later message beginning "Perspectives panel result"');
+    expect(gather.description).toContain("hard-caps the run at 25 minutes");
     expect(gatherJsonSchema.properties.lenses.description).toContain("duplicate work");
     expect(gatherJsonSchema.properties.lenses.description).toContain("for every action, there is a reversal implemented");
     expect(gatherJsonSchema.properties.lenses.description.match(/, \.\.\.\]/g)).toHaveLength(2);

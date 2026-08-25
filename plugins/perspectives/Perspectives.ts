@@ -2,12 +2,66 @@ import type { BbPluginApi, PluginAgentToolContext } from "@bb/plugin-sdk";
 import { z } from "zod";
 
 const PLANNER_PHASE_TIMEOUT_MS = 15_000;
-const PANEL_PHASE_TIMEOUT_MS = 205_000;
-const PANEL_WRAP_UP_REMAINING_MS = 45_000;
-const SYNTHESIS_PHASE_TIMEOUT_MS = 50_000;
+const PANEL_WRAP_UP_AFTER_MS = 20 * 60_000;
+const RUN_HARD_CAP_MS = 25 * 60_000;
+const SYNTHESIS_RESERVE_MS = 120_000;
+const SYNTHESIS_PHASE_TIMEOUT_MS = 90_000;
+const SPAWN_TIMEOUT_MS = 60_000;
 const HELPER_PHASE_TIMEOUT_MS = 250_000;
 const MAX_SYNTHESIS_EVIDENCE_CHARS = 240_000;
 const INTERNAL_REQUEST_GRACE_MS = 2_000;
+
+/**
+ * Test seams for the gather pipeline's wall-clock budgets. Production always
+ * uses the defaults: wrap-up steer after 20 minutes of continuous panel work
+ * and a hard cap of 25 minutes on the whole run, after which every remaining
+ * agent is stopped and whatever was gathered is synthesized and delivered.
+ */
+export interface GatherTiming {
+  readonly plannerTimeoutMs?: number;
+  readonly wrapUpAfterMs?: number;
+  readonly hardCapMs?: number;
+  readonly synthesisTimeoutMs?: number;
+  readonly synthesisReserveMs?: number;
+  readonly spawnTimeoutMs?: number;
+}
+
+interface ResolvedGatherTiming {
+  readonly plannerTimeoutMs: number;
+  readonly wrapUpAfterMs: number;
+  readonly hardCapMs: number;
+  readonly synthesisTimeoutMs: number;
+  readonly synthesisReserveMs: number;
+  readonly spawnTimeoutMs: number;
+}
+
+export function resolveGatherTiming(timing?: GatherTiming): ResolvedGatherTiming {
+  const duration = (value: number | undefined, fallback: number): number =>
+    value !== undefined && Number.isFinite(value) && value > 0
+      ? Math.max(1, Math.floor(value))
+      : fallback;
+  const hardCapMs = duration(timing?.hardCapMs, RUN_HARD_CAP_MS);
+  return {
+    plannerTimeoutMs: Math.min(
+      duration(timing?.plannerTimeoutMs, PLANNER_PHASE_TIMEOUT_MS),
+      hardCapMs,
+    ),
+    wrapUpAfterMs: Math.min(
+      duration(timing?.wrapUpAfterMs, PANEL_WRAP_UP_AFTER_MS),
+      hardCapMs,
+    ),
+    hardCapMs,
+    synthesisTimeoutMs: Math.min(
+      duration(timing?.synthesisTimeoutMs, SYNTHESIS_PHASE_TIMEOUT_MS),
+      hardCapMs,
+    ),
+    synthesisReserveMs: Math.min(
+      duration(timing?.synthesisReserveMs, SYNTHESIS_RESERVE_MS),
+      Math.max(0, hardCapMs - 1),
+    ),
+    spawnTimeoutMs: Math.min(duration(timing?.spawnTimeoutMs, SPAWN_TIMEOUT_MS), hardCapMs),
+  };
+}
 
 const perspectiveSchema = z.object({
   name: z.string().trim().min(1).max(80),
@@ -33,6 +87,7 @@ interface SpawnContext {
   readonly projectId: string;
   readonly callerThreadId: string;
   readonly signal: AbortSignal;
+  readonly spawnTimeoutMs: number;
   readonly environment: Parameters<Threads["spawn"]>[0]["environment"];
   readonly execution: ResolvedExecution;
 }
@@ -430,6 +485,45 @@ async function readAgentOutput(threads: Threads, threadId: string): Promise<stri
   }
 }
 
+/**
+ * threads.spawn is a raw RPC with no abort or timeout of its own; racing it
+ * keeps one hung spawn from stalling the whole run. A spawn that resolves
+ * after the race was lost is stopped so it cannot linger as a zombie.
+ */
+async function spawnThreadWithin(
+  threads: Threads,
+  args: Parameters<Threads["spawn"]>[0],
+  timeoutMs: number,
+  signal: AbortSignal,
+): Promise<{ id: string }> {
+  const spawned = threads.spawn(args);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let abort: (() => void) | undefined;
+  try {
+    const outcome = await Promise.race([
+      spawned.then((thread) => ({ kind: "spawned" as const, thread })),
+      new Promise<{ kind: "timeout" }>((resolve) => {
+        timer = setTimeout(() => resolve({ kind: "timeout" }), timeoutMs);
+      }),
+      new Promise<{ kind: "aborted" }>((resolve) => {
+        abort = () => resolve({ kind: "aborted" });
+        signal.addEventListener("abort", abort, { once: true });
+        if (signal.aborted) abort();
+      }),
+    ]);
+    if (outcome.kind === "spawned") return outcome.thread;
+    void spawned.then(
+      (thread) => settleWithin(threads.stop({ threadId: thread.id }), INTERNAL_REQUEST_GRACE_MS),
+      () => undefined,
+    );
+    if (outcome.kind === "aborted") throw abortError();
+    throw new Error(`Spawning an agent thread timed out after ${timeoutMs}ms.`);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+    if (abort) signal.removeEventListener("abort", abort);
+  }
+}
+
 async function spawnAgent(
   bb: BbPluginApi,
   context: SpawnContext,
@@ -447,19 +541,24 @@ async function spawnAgent(
     permissionMode: "explicit" as const,
   };
 
-  const thread = await bb.sdk.threads.spawn({
-    projectId: context.projectId,
-    environment: context.environment,
-    title,
-    prompt,
-    visibility: "hidden",
-    providerId: context.execution.providerId,
-    model: context.execution.model,
-    ...(context.execution.serviceTier ? { serviceTier: context.execution.serviceTier } : {}),
-    reasoningLevel: context.execution.reasoningLevel,
-    permissionMode: context.execution.permissionMode,
-    executionInputSources,
-  });
+  const thread = await spawnThreadWithin(
+    bb.sdk.threads,
+    {
+      projectId: context.projectId,
+      environment: context.environment,
+      title,
+      prompt,
+      visibility: "hidden",
+      providerId: context.execution.providerId,
+      model: context.execution.model,
+      ...(context.execution.serviceTier ? { serviceTier: context.execution.serviceTier } : {}),
+      reasoningLevel: context.execution.reasoningLevel,
+      permissionMode: context.execution.permissionMode,
+      executionInputSources,
+    },
+    Math.min(context.spawnTimeoutMs, remainingMilliseconds(deadline)),
+    context.signal,
+  );
 
   const localController = new AbortController();
   let stopPromise: Promise<void> | undefined;
@@ -569,14 +668,21 @@ const permissionRank: Record<PermissionMode, number> = {
   full: 2,
 };
 
+/**
+ * The run signal, not the tool-call request signal, governs the pipeline:
+ * gather_perspectives keeps working after its tool call has already returned,
+ * when the request (and its signal) may be long gone.
+ */
 async function createSpawnContexts(
   bb: BbPluginApi,
   toolContext: PluginAgentToolContext,
   settings: PerspectivesExecutionSettings,
+  signal: AbortSignal,
+  spawnTimeoutMs: number,
 ): Promise<SpawnContexts> {
   const [caller, execution] = await Promise.all([
-    bb.sdk.threads.get({ threadId: toolContext.threadId, signal: toolContext.signal }),
-    bb.sdk.threads.defaultExecutionOptions({ threadId: toolContext.threadId, signal: toolContext.signal }),
+    bb.sdk.threads.get({ threadId: toolContext.threadId, signal }),
+    bb.sdk.threads.defaultExecutionOptions({ threadId: toolContext.threadId, signal }),
   ]);
   if (!execution) {
     throw configurationError(
@@ -600,14 +706,14 @@ async function createSpawnContexts(
   const modelPromises = new Map<string, ReturnType<typeof bb.sdk.providers.models>>();
 
   const providers = () =>
-    providersPromise ??= bb.sdk.providers.list({ ...routing, signal: toolContext.signal });
+    providersPromise ??= bb.sdk.providers.list({ ...routing, signal });
   const models = (providerId: string) => {
     let promise = modelPromises.get(providerId);
     if (!promise) {
       promise = bb.sdk.providers.models({
         ...routing,
         providerId,
-        signal: toolContext.signal,
+        signal,
       });
       modelPromises.set(providerId, promise);
     }
@@ -689,7 +795,8 @@ async function createSpawnContexts(
   const common = {
     projectId: toolContext.projectId,
     callerThreadId: toolContext.threadId,
-    signal: toolContext.signal,
+    signal,
+    spawnTimeoutMs,
     environment,
   };
   return {
@@ -875,7 +982,13 @@ export async function runHelp(
   const sharedContext = clean(input.context);
   if (!question) throw new Error("help requires a non-empty question.");
 
-  const contexts = await createSpawnContexts(bb, toolContext, executionSettings);
+  const contexts = await createSpawnContexts(
+    bb,
+    toolContext,
+    executionSettings,
+    toolContext.signal,
+    SPAWN_TIMEOUT_MS,
+  );
   const plannerDeadline = Date.now() + PLANNER_PHASE_TIMEOUT_MS;
   const plan = await generatePlan(bb, contexts.planner, question, sharedContext, null, plannerDeadline);
   const [perspective] = plan.perspectives;
@@ -906,63 +1019,159 @@ export async function runHelp(
   );
 }
 
+export const GATHER_RESULT_HEADER = "Perspectives panel result";
+export const GATHER_FAILURE_HEADER = "Perspectives panel failed";
+
+function questionExcerpt(question: string): string {
+  const normalized = question.replace(/\s+/g, " ").trim();
+  return normalized.length > 200 ? `${normalized.slice(0, 200)}…` : normalized;
+}
+
+async function sendToCaller(bb: BbPluginApi, threadId: string, text: string): Promise<void> {
+  await bb.sdk.threads.send({
+    threadId,
+    mode: "auto",
+    input: [{ type: "text", text, mentions: [], visibility: "agent-only" }],
+  });
+}
+
+function launchReceipt(lensCount: number, timing: ResolvedGatherTiming): string {
+  const wrapUpMinutes = Math.round(timing.wrapUpAfterMs / 60_000);
+  const hardCapMinutes = Math.round(timing.hardCapMs / 60_000);
+  return `Perspective panel launched for ${lensCount} lenses; it runs in the background. Unfinished perspectives are asked to wrap up after ~${wrapUpMinutes} minutes and the run is hard-capped at ${hardCapMinutes} minutes, after which partial findings are synthesized. The synthesized result will arrive in this thread as a later message beginning "${GATHER_RESULT_HEADER}". Do not wait or poll for it: continue with other work or end the turn now, telling the user the panel is running. When the result message arrives, answer with it.`;
+}
+
+/**
+ * Launch the panel and return immediately. The pipeline continues detached
+ * from the tool call so a long panel never holds the caller's turn open;
+ * results come back to the caller thread as a message when synthesis lands.
+ */
 export async function runGatherPerspectives(
   bb: BbPluginApi,
   input: { question: string; context?: string; lenses: readonly string[] },
   toolContext: PluginAgentToolContext,
   executionSettings: PerspectivesExecutionSettings = INHERIT_EXECUTION_SETTINGS,
+  timing?: GatherTiming,
 ): Promise<string> {
+  const question = clean(input.question);
+  if (!question) throw new Error("gather_perspectives requires a non-empty question.");
+
+  void deliverGatherPerspectives(bb, input, toolContext, executionSettings, timing).catch((error) => {
+    bb.log.warn(
+      `gather_perspectives pipeline failed for thread ${toolContext.threadId}: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+  });
+  return launchReceipt(input.lenses.length, resolveGatherTiming(timing));
+}
+
+/**
+ * The full detached pipeline: plan, panel, synthesis, and delivery of the
+ * result to the caller thread. Every phase deadline is derived from one run
+ * deadline enforced by the hard-cap abort, so the pipeline provably
+ * terminates and always attempts a delivery, even on unexpected failure.
+ */
+export async function deliverGatherPerspectives(
+  bb: BbPluginApi,
+  input: { question: string; context?: string; lenses: readonly string[] },
+  toolContext: PluginAgentToolContext,
+  executionSettings: PerspectivesExecutionSettings = INHERIT_EXECUTION_SETTINGS,
+  timing?: GatherTiming,
+): Promise<string> {
+  const resolved = resolveGatherTiming(timing);
   const question = clean(input.question);
   const sharedContext = clean(input.context);
   if (!question) throw new Error("gather_perspectives requires a non-empty question.");
 
-  const contexts = await createSpawnContexts(bb, toolContext, executionSettings);
-  const plannerDeadline = Date.now() + PLANNER_PHASE_TIMEOUT_MS;
-  const plan = await generatePlan(bb, contexts.planner, question, sharedContext, input.lenses, plannerDeadline);
-  const panelDeadline = Date.now() + PANEL_PHASE_TIMEOUT_MS;
-  const launched = await Promise.allSettled(
-    plan.perspectives.map(async (perspective, index) => ({
-      index,
-      agent: {
-        perspective,
-        ...(await spawnAgent(
-          bb,
-          contexts.worker,
-          `Perspective ${index + 1}: ${perspective.name}`,
-          workerPrompt(question, sharedContext, perspective),
-          perspective,
-          panelDeadline,
-        )),
-      } satisfies PanelAgent,
-    })),
-  );
-  const agents = launched.flatMap((result) => result.status === "fulfilled" ? [result.value.agent] : []);
+  const runController = new AbortController();
+  const capTimer = setTimeout(() => runController.abort(), resolved.hardCapMs);
+  let deliveryStarted = false;
+  try {
+    const runDeadline = Date.now() + resolved.hardCapMs;
+    const contexts = await createSpawnContexts(
+      bb,
+      toolContext,
+      executionSettings,
+      runController.signal,
+      resolved.spawnTimeoutMs,
+    );
+    const plannerDeadline = Math.min(Date.now() + resolved.plannerTimeoutMs, runDeadline);
+    const plan = await generatePlan(
+      bb,
+      contexts.planner,
+      question,
+      sharedContext,
+      input.lenses,
+      plannerDeadline,
+    );
 
-  const completed = await collectPanelResults(
-    agents,
-    panelDeadline - PANEL_WRAP_UP_REMAINING_MS,
-  );
-  const completedByThread = new Map(completed.map((result) => [result.threadId, result]));
-  const results = launched.map((launch, index): PerspectiveResult => {
-    if (launch.status === "fulfilled") return completedByThread.get(launch.value.agent.threadId)!;
-    return {
-      perspective: plan.perspectives[index]!,
-      threadId: "",
-      status: "failed",
-      output: "",
-      error: `Agent could not be launched: ${
-        launch.reason instanceof Error ? launch.reason.message : String(launch.reason)
-      }`,
-    };
-  });
-  const synthesis = await synthesize(
-    bb,
-    contexts.planner,
-    question,
-    sharedContext,
-    results,
-    plan.threadIds,
-    Date.now() + SYNTHESIS_PHASE_TIMEOUT_MS,
-  );
-  return withResultThread(synthesis.output, "Final synthesis", synthesis.threadId);
+    const panelStart = Date.now();
+    const panelDeadline = Math.max(panelStart + 1, runDeadline - resolved.synthesisReserveMs);
+    const launched = await Promise.allSettled(
+      plan.perspectives.map(async (perspective, index) => ({
+        index,
+        agent: {
+          perspective,
+          ...(await spawnAgent(
+            bb,
+            contexts.worker,
+            `Perspective ${index + 1}: ${perspective.name}`,
+            workerPrompt(question, sharedContext, perspective),
+            perspective,
+            panelDeadline,
+          )),
+        } satisfies PanelAgent,
+      })),
+    );
+    const agents = launched.flatMap((result) => result.status === "fulfilled" ? [result.value.agent] : []);
+
+    const completed = await collectPanelResults(
+      agents,
+      Math.min(panelStart + resolved.wrapUpAfterMs, panelDeadline),
+    );
+    const completedByThread = new Map(completed.map((result) => [result.threadId, result]));
+    const results = launched.map((launch, index): PerspectiveResult => {
+      if (launch.status === "fulfilled") return completedByThread.get(launch.value.agent.threadId)!;
+      return {
+        perspective: plan.perspectives[index]!,
+        threadId: "",
+        status: "failed",
+        output: "",
+        error: `Agent could not be launched: ${
+          launch.reason instanceof Error ? launch.reason.message : String(launch.reason)
+        }`,
+      };
+    });
+    const synthesis = await synthesize(
+      bb,
+      contexts.planner,
+      question,
+      sharedContext,
+      results,
+      plan.threadIds,
+      Math.min(Date.now() + resolved.synthesisTimeoutMs, runDeadline),
+    );
+    const result = withResultThread(synthesis.output, "Final synthesis", synthesis.threadId);
+    deliveryStarted = true;
+    await sendToCaller(
+      bb,
+      toolContext.threadId,
+      `${GATHER_RESULT_HEADER} for: ${questionExcerpt(question)}\n\n${result}`,
+    );
+    return result;
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    if (!deliveryStarted) {
+      deliveryStarted = true;
+      await sendToCaller(
+        bb,
+        toolContext.threadId,
+        `${GATHER_FAILURE_HEADER} for: ${questionExcerpt(question)}\n\nThe panel could not produce a result: ${reason}`,
+      ).catch(() => undefined);
+    }
+    throw error;
+  } finally {
+    clearTimeout(capTimer);
+  }
 }

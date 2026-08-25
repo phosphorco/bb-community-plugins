@@ -2,8 +2,8 @@
 
 Adds two native tools to bb agents:
 
-- `help` accepts a question and context, generates the expert prompt in a separate hidden planner, and asks one hidden helper for a concise read-only answer.
-- `gather_perspectives` accepts 3-7 caller-supplied lenses—specific aspects or analytical angles such as `"v8 performance characteristics"`, `"big-O complexity"`, and `"duplicate work"`—generates a bespoke expert prompt for each lens, launches the panel concurrently, and synthesizes every usable complete or partial outcome.
+- `help` accepts a question and context, generates the expert prompt in a separate hidden planner, and asks one hidden helper for a concise read-only answer. It is synchronous: the answer is the tool result.
+- `gather_perspectives` accepts 3-7 caller-supplied lenses—specific aspects or analytical angles such as `"v8 performance characteristics"`, `"big-O complexity"`, and `"duplicate work"`—generates a bespoke expert prompt for each lens, launches the panel concurrently, and synthesizes every usable complete or partial outcome. It is asynchronous: the tool call returns a launch receipt immediately, the panel keeps working in the background, and the synthesized result is delivered to the calling thread as a later message beginning `Perspectives panel result` (or `Perspectives panel failed`).
 
 One `help` call creates a hidden planner and one hidden expert. One
 `gather_perspectives` call creates one hidden planner, 3-7 concurrent hidden
@@ -47,8 +47,8 @@ panel phase. Unfinished workers receive a late wrap-up request, then their
 final or partial output is recovered at the phase boundary. One failed worker
 or launch does not cancel productive peers. Synthesis is still attempted when
 only partial evidence is available; if synthesis itself cannot finish, the
-tool returns its partial synthesis (if any) plus the bounded raw perspective
-outputs instead of discarding them.
+later delivery contains its partial synthesis (if any) plus the bounded raw
+perspective outputs instead of discarding them.
 
 Only the final-result thread is referenced in a successful tool response:
 the synthesis thread for `gather_perspectives`, or the expert thread for
@@ -65,31 +65,34 @@ verified facts. The synthesizer preserves and deduplicates those citations,
 does not invent missing citations, and reports unsupported claims as evidence
 gaps.
 
-## Transport compatibility
+## Run lifetime and budgets
 
-The current bb dynamic-tool path waits for one HTTP response from the plugin
-and applies a 300,000 ms response-body timeout. Because a synchronous tool call
-does not emit a body until it returns, that behaves like a five-minute
-end-to-end ceiling even though it is implemented as a transport timeout.
-
-The plugin stays inside that ceiling with separate compatibility budgets:
+`gather_perspectives` does not hold its tool call open while the panel runs.
+The bb dynamic-tool path keeps one HTTP round-trip open per tool call with no
+abort or timeout of its own, so a long synchronous call couples the panel's
+lifetime to a fragile transport and holds the caller's turn — and its provider
+session — hostage for the duration. Instead the tool returns a launch receipt
+within seconds and the pipeline continues detached inside the plugin host,
+governed by its own run budgets rather than the request's lifetime:
 
 - planner: 15 seconds total, including one retry;
-- concurrent panel: 205 seconds, with wrap-up requested when 45 seconds remain;
-- synthesis: 50 seconds;
-- unallocated host forwarding, transport, and serialization margin: about 30 seconds.
+- panel: unfinished workers are asked to wrap up after 20 minutes of
+  continuous work;
+- hard cap: 25 minutes for the whole run, enforced by a run-wide abort that
+  stops every remaining agent;
+- synthesis: 90 seconds, reserved inside the hard cap so partial evidence is
+  still synthesized;
+- every `threads.spawn` is raced against a 60-second timeout so one hung RPC
+  cannot stall the run.
 
 These are phase boundaries, not a quorum policy. A timed-out worker's partial
 output remains evidence, its status is disclosed to the synthesizer, and the
-synthesis phase is reserved rather than skipped.
-
-The long-term bb-core direction should remove the transport connection as the
-owner of a tool's lifetime. A durable long-running tool operation could return
-an operation ID immediately, publish progress or heartbeats, survive client
-reconnection, retain partial output, and expose explicit cancellation. Making
-the existing body timeout configurable or larger would be a useful smaller
-core fix, but it would only move the ceiling and would not make long-running
-tools durable.
+synthesis phase is reserved rather than skipped. Whatever happens — including
+the hard cap firing or an unexpected pipeline failure — the run ends with one
+delivery message to the calling thread, sent with `mode: "auto"` so it steers
+an active turn or starts a new one. If that single delivery attempt itself
+fails, the plugin logs the transport failure; it does not send a second,
+misleading panel-failure message after the result may already have arrived.
 
 Example:
 

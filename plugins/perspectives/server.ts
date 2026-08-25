@@ -172,11 +172,11 @@ export default function plugin(bb: BbPluginApi): void {
 
   bb.agents.registerTool({
     name: "gather_perspectives",
-    description: `Generate expert prompts for caller-supplied lenses. ${LENSES_EXAMPLE_TEXT} Gather their source-cited read-only perspectives concurrently, ask unfinished workers to wrap up near the panel boundary, preserve partial outcomes, and synthesize all usable evidence.`,
-    instructions: `Use gather_perspectives for consequential questions where specific independent lenses can reveal tradeoffs or disagreement. Supply the question, relevant facts, and constraints, and 3-7 short lens names. ${LENSES_EXAMPLE_TEXT} The tool generates each expert identity and prompt in a separate context. Each perspective cites primary evidence for material factual claims; synthesis preserves those citations and flags unsupported inferences. Answer with the synthesized result. If retaining an inspectable reference, use only the returned final-synthesis thread; do not enumerate planner, worker, or pipeline threads.`,
+    description: `Launch a background expert panel for caller-supplied lenses and return immediately. ${LENSES_EXAMPLE_TEXT} The panel gathers source-cited read-only perspectives concurrently, asks unfinished workers to wrap up after ~20 minutes, hard-caps the run at 25 minutes, and delivers the synthesized result to this thread as a later message beginning "Perspectives panel result".`,
+    instructions: `Use gather_perspectives for consequential questions where specific independent lenses can reveal tradeoffs or disagreement. Supply the question, relevant facts, and constraints, and 3-7 short lens names. ${LENSES_EXAMPLE_TEXT} The tool generates each expert identity and prompt in a separate context and returns a launch receipt immediately; the panel keeps working in the background. Do not wait, poll, or re-invoke the tool for the result: continue with other work or end the turn, telling the user the panel is running. The synthesized result arrives in this thread as a later message beginning "Perspectives panel result"; when it arrives, answer with it. Each perspective cites primary evidence for material factual claims; synthesis preserves those citations and flags unsupported inferences. If retaining an inspectable reference, use only the final-synthesis thread named in the result; do not enumerate planner, worker, or pipeline threads.`,
     experimental_statusLabels: {
-      pending: "Gathering expert perspectives",
-      completed: "Gathered expert perspectives",
+      pending: "Launching an expert perspective panel",
+      completed: "Launched an expert perspective panel",
     },
     parameters: z.object({
       question: z.string().trim().min(1),
@@ -199,7 +199,7 @@ export default function plugin(bb: BbPluginApi): void {
     return {
       tools: ["help", "gather_perspectives"],
       skills: [],
-      instructions: `Perspectives tools generate expert identities and prompts in separate hidden contexts. Callers provide the question, relevant facts, and constraints; gather_perspectives also requires specific lenses. ${LENSES_EXAMPLE_TEXT} Workers are advisory and instructed not to modify state. They cite primary evidence for material factual claims and distinguish sourced facts from analysis; synthesis preserves those citations. Completed and partial worker outcomes are retained for synthesis, while unavailable perspectives are reported as confidence limits. Return the result itself and, when useful, only its single final-result thread reference; never enumerate internal planner or worker threads.`,
+      instructions: `Perspectives tools generate expert identities and prompts in separate hidden contexts. Callers provide the question, relevant facts, and constraints; gather_perspectives also requires specific lenses. ${LENSES_EXAMPLE_TEXT} Workers are advisory and instructed not to modify state. They cite primary evidence for material factual claims and distinguish sourced facts from analysis; synthesis preserves those citations. Completed and partial worker outcomes are retained for synthesis, while unavailable perspectives are reported as confidence limits. gather_perspectives returns a launch receipt immediately and delivers its synthesized result to the calling thread as a later message beginning "Perspectives panel result"; never wait or poll for it, and answer with the result message when it arrives. help returns its expert answer directly. Return the result itself and, when useful, only its single final-result thread reference; never enumerate internal planner or worker threads.`,
     };
   });
 

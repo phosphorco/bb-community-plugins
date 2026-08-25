@@ -55,6 +55,7 @@ import {
 } from "./toolbar-sync.ts";
 import type { rpcContract } from "../server.ts";
 import { readCurrentIdentityId } from "./identity.ts";
+import { createLocationOverrides, replaceCopiedLocations } from "./location.ts";
 
 /** How often to re-read `location`; bb navigates without a full page load. */
 const ROUTE_POLL_MS = 400;
@@ -229,6 +230,7 @@ export async function mountAnnotationToolbar(
   let reconcileDeferred = false;
   let lastTarget: Element | null = null;
   let localMutationRevision = 0;
+  const locationOverrides = createLocationOverrides();
 
   // Queued work carries the page it was made on. bb can navigate between a
   // toolbar callback and the debounced flush that follows it, and an annotation
@@ -260,23 +262,29 @@ export async function mountAnnotationToolbar(
     };
   }
 
-  function enqueueUpsert(annotation: Annotation): void {
+  function enqueueUpsert(annotation: Annotation, target: Element | null = null): void {
+    const locationAwareAnnotation = target
+      ? locationOverrides.capture(annotation, target)
+      : locationOverrides.apply(annotation);
     // Agentation has already updated its React state when this callback runs,
     // but its localStorage effect runs later. Mirror the authoritative local
     // delta now so a fast server echo cannot reconcile against the old row.
     saveAnnotations(
       meta.route,
-      upsertLocalAnnotation(loadAnnotations<Annotation>(meta.route), annotation),
+      upsertLocalAnnotation(
+        locationOverrides.applyAll(loadAnnotations<Annotation>(meta.route)),
+        locationAwareAnnotation,
+      ),
     );
     localMutationRevision += 1;
-    latestRevisionById.set(annotation.id, localMutationRevision);
-    upsertQueue.set(annotation.id, {
-      annotation: withoutBundleSource(annotation),
+    latestRevisionById.set(locationAwareAnnotation.id, localMutationRevision);
+    upsertQueue.set(locationAwareAnnotation.id, {
+      annotation: withoutBundleSource(locationAwareAnnotation),
       bb: contextForNewAnnotation(),
       page: meta,
       revision: localMutationRevision,
     });
-    deleteQueue.delete(annotation.id);
+    deleteQueue.delete(locationAwareAnnotation.id);
     scheduleFlush();
   }
 
@@ -296,7 +304,19 @@ export async function mountAnnotationToolbar(
       page: meta,
       revision: localMutationRevision,
     });
+    locationOverrides.delete(annotation.id);
     scheduleFlush();
+  }
+
+  function onCopy(output: string): void {
+    const annotations = locationOverrides.applyAll(
+      loadAnnotations<Annotation>(meta.route),
+    );
+    if (typeof navigator !== "undefined" && navigator.clipboard) {
+      void navigator.clipboard
+        .writeText(replaceCopiedLocations(output, annotations))
+        .catch(() => undefined);
+    }
   }
 
   function scheduleFlush(delayMs = FLUSH_DEBOUNCE_MS): void {
@@ -542,7 +562,7 @@ export async function mountAnnotationToolbar(
     const open = annotations.filter(
       (annotation) => annotation.status !== "resolved" && annotation.status !== "dismissed",
     );
-    const local = loadAnnotations<Annotation>(route);
+    const local = locationOverrides.applyAll(loadAnnotations<Annotation>(route));
 
     // Anything local the server has never accepted is feedback in flight, not
     // feedback the agent resolved. Overwriting storage with the server's view
@@ -603,14 +623,17 @@ export async function mountAnnotationToolbar(
       createElement(Toolbar, {
         key: `${meta.route}#${mountKey}`,
         className: "bb-agentation-toolbar",
-        onAnnotationAdd: enqueueUpsert,
+        onAnnotationAdd: (annotation) => enqueueUpsert(annotation, lastTarget),
         onAnnotationUpdate: enqueueUpsert,
         onAnnotationDelete: enqueueDelete,
+        copyToClipboard: false,
+        onCopy,
         onAnnotationsClear: () => {
           // Upstream delays storage cleanup for its staggered clear animation.
           // The callback is the committed local action, so publish the empty
           // projection immediately and let its internal animation continue.
           saveAnnotations(meta.route, []);
+          locationOverrides.clear();
           void clearOnServer();
         },
       }),
@@ -764,6 +787,7 @@ export async function mountAnnotationToolbar(
     cursor.reset();
     reconcileDeferred = false;
     lastTarget = null;
+    locationOverrides.clear();
     render();
     // Queued work carries the page it belongs to, so it does not have to be
     // drained before the switch — it will still reach the right session.
@@ -797,6 +821,7 @@ export async function mountAnnotationToolbar(
 
   return () => {
     disposed = true;
+    locationOverrides.clear();
     if (flushTimer !== null) clearTimeout(flushTimer);
     if (pollTimer !== null) clearTimeout(pollTimer);
     if (routeTimer !== null) clearInterval(routeTimer);

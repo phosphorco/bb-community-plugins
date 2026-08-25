@@ -1,10 +1,13 @@
+import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 
 import { expect } from "./expect.ts";
 
 import {
   collectPanelResults,
+  deliverGatherPerspectives,
   parsePerspectivePlan,
+  resolveGatherTiming,
   runGatherPerspectives,
   runHelp,
   type Perspective,
@@ -124,7 +127,7 @@ test("gather_perspectives exposes only the final synthesis thread", async () => 
     },
   };
 
-  const result = await runGatherPerspectives(
+  const result = await deliverGatherPerspectives(
     bb as any,
     { question: "Which implementation is best?", lenses: ["runtime", "complexity", "duplication"] },
     { projectId: "project", threadId: "caller", signal: new AbortController().signal } as any,
@@ -194,7 +197,7 @@ test("gather_perspectives synthesizes complete, partial, and failed worker outco
     },
   };
 
-  const result = await runGatherPerspectives(
+  const result = await deliverGatherPerspectives(
     bb as any,
     { question: "What should we do?", lenses: ["complete", "partial", "failed"] },
     { projectId: "project", threadId: "caller", signal: new AbortController().signal } as any,
@@ -253,7 +256,7 @@ test("gather_perspectives degrades one launch failure without cancelling the pan
     },
   };
 
-  const result = await runGatherPerspectives(
+  const result = await deliverGatherPerspectives(
     bb as any,
     { question: "What should we do?", lenses: ["one", "two", "three"] },
     { projectId: "project", threadId: "caller", signal: new AbortController().signal } as any,
@@ -298,7 +301,7 @@ test("gather_perspectives returns preserved answers when synthesis cannot launch
     },
   };
 
-  const result = await runGatherPerspectives(
+  const result = await deliverGatherPerspectives(
     bb as any,
     { question: "What should we do?", lenses: ["one", "two", "three"] },
     { projectId: "project", threadId: "caller", signal: new AbortController().signal } as any,
@@ -340,7 +343,7 @@ test("gather_perspectives falls back to caller lenses when planning fails", asyn
     },
   };
 
-  const result = await runGatherPerspectives(
+  const result = await deliverGatherPerspectives(
     bb as any,
     { question: "What should we do?", lenses: ["one", "two", "three"] },
     { projectId: "project", threadId: "caller", signal: new AbortController().signal } as any,
@@ -414,6 +417,370 @@ function agent(name: string) {
     },
   };
 }
+
+function abortError(): Error {
+  const error = new Error("aborted");
+  error.name = "AbortError";
+  return error;
+}
+
+function waitHonoringAbort({ signal }: { signal?: AbortSignal }): Promise<never> {
+  return new Promise((_, reject) => {
+    if (signal?.aborted) {
+      reject(abortError());
+      return;
+    }
+    signal?.addEventListener("abort", () => reject(abortError()), { once: true });
+  });
+}
+
+describe("asynchronous gather_perspectives", () => {
+  test("returns a launch receipt before the panel finishes, then delivers the result", async () => {
+    let nextThread = 0;
+    const outputs = new Map<string, string>();
+    const plannerRelease = deferred<void>();
+    const sends: Array<Record<string, unknown>> = [];
+    const delivered = deferred<Record<string, unknown>>();
+    const bb = {
+      log: { warn: () => undefined },
+      sdk: {
+        threads: {
+          get: async () => ({ environmentId: "environment", providerId: "provider" }),
+          defaultExecutionOptions: async () => callerExecution(),
+          spawn: async ({ title }: { title: string }) => {
+            nextThread += 1;
+            const threadId = `thread-${nextThread}`;
+            if (title.startsWith("Perspective planner")) {
+              outputs.set(threadId, perspectiveTable(
+                ["one", "two", "three"].map((name) => [
+                  name,
+                  `${name} matters.`,
+                  `You are the ${name} expert with a distinct investigative focus and evidence standard.`,
+                ]),
+              ));
+            } else if (title === "Perspective synthesis") {
+              outputs.set(threadId, "Unified panel answer.");
+            } else {
+              outputs.set(threadId, `${title} answer.`);
+            }
+            return { id: threadId };
+          },
+          wait: async ({ threadId }: { threadId: string }) => {
+            if (threadId === "thread-1") await plannerRelease.promise;
+            return {};
+          },
+          output: async ({ threadId }: { threadId: string }) => ({ output: outputs.get(threadId) }),
+          send: async (args: Record<string, unknown>) => {
+            sends.push(args);
+            delivered.resolve(args);
+          },
+          stop: async () => undefined,
+        },
+      },
+    };
+
+    const receipt = await runGatherPerspectives(
+      bb as any,
+      { question: "Which implementation is best?", lenses: ["one", "two", "three"] },
+      { projectId: "project", threadId: "caller", signal: new AbortController().signal } as any,
+    );
+
+    expect(receipt).toContain("Perspective panel launched");
+    expect(receipt).toContain("later message");
+    expect(receipt).not.toContain("Unified panel answer.");
+    expect(sends).toHaveLength(0);
+
+    plannerRelease.resolve(undefined);
+    const send = await delivered.promise;
+
+    expect(send.threadId).toBe("caller");
+    expect(send.mode).toBe("auto");
+    const [segment] = send.input as Array<{ text: string; visibility?: string }>;
+    expect(segment!.text).toContain("Unified panel answer.");
+    expect(segment!.text).toContain("Final synthesis: @thread:thread-5");
+    expect(segment!.visibility).toBe("agent-only");
+  });
+
+  test("asks unfinished workers to wrap up after the wrap-up window", async () => {
+    let nextThread = 0;
+    const outputs = new Map<string, string>();
+    const titles = new Map<string, string>();
+    const wrapUps: string[] = [];
+    const workerRelease = new Map<string, Deferred<void>>();
+    const bb = {
+      log: { warn: () => undefined },
+      sdk: {
+        threads: {
+          get: async () => ({ environmentId: "environment", providerId: "provider" }),
+          defaultExecutionOptions: async () => callerExecution(),
+          spawn: async ({ title }: { title: string }) => {
+            nextThread += 1;
+            const threadId = `thread-${nextThread}`;
+            titles.set(threadId, title);
+            if (title.startsWith("Perspective planner")) {
+              outputs.set(threadId, perspectiveTable(
+                ["fast", "slow"].map((name) => [
+                  name,
+                  `${name} matters.`,
+                  `You are the ${name} expert with a distinct investigative focus and evidence standard.`,
+                ]),
+              ));
+            } else if (title === "Perspective synthesis") {
+              outputs.set(threadId, "Synthesis after wrap-up.");
+            } else {
+              outputs.set(threadId, `${title} answer.`);
+              if (title.includes("slow")) workerRelease.set(threadId, deferred<void>());
+            }
+            return { id: threadId };
+          },
+          wait: async ({ threadId }: { threadId: string }) => {
+            await workerRelease.get(threadId)?.promise;
+            return {};
+          },
+          output: async ({ threadId }: { threadId: string }) => ({ output: outputs.get(threadId) }),
+          send: async ({ threadId, input }: { threadId: string; input: Array<{ text: string }> }) => {
+            if (input[0]!.text.includes("Wrap up now")) {
+              wrapUps.push(titles.get(threadId) ?? threadId);
+              workerRelease.get(threadId)?.resolve(undefined);
+            }
+          },
+          stop: async () => undefined,
+        },
+      },
+    };
+
+    const result = await deliverGatherPerspectives(
+      bb as any,
+      { question: "What should we do?", lenses: ["fast", "slow"] },
+      { projectId: "project", threadId: "caller", signal: new AbortController().signal } as any,
+      { planner: {}, worker: {} },
+      { wrapUpAfterMs: 20, hardCapMs: 5_000, synthesisReserveMs: 1_000 },
+    );
+
+    expect(result).toContain("Synthesis after wrap-up.");
+    expect(wrapUps).toEqual(["Perspective 2: slow"]);
+  });
+
+  test("hard cap stops stalled workers and still delivers what was gathered", async () => {
+    let nextThread = 0;
+    const outputs = new Map<string, string>();
+    const titles = new Map<string, string>();
+    const stopped: string[] = [];
+    const sends: Array<{ threadId: string; text: string }> = [];
+    const bb = {
+      log: { warn: () => undefined },
+      sdk: {
+        threads: {
+          get: async () => ({ environmentId: "environment", providerId: "provider" }),
+          defaultExecutionOptions: async () => callerExecution(),
+          spawn: async ({ title }: { title: string }) => {
+            nextThread += 1;
+            const threadId = `thread-${nextThread}`;
+            titles.set(threadId, title);
+            if (title.startsWith("Perspective planner")) {
+              outputs.set(threadId, perspectiveTable(
+                ["done", "stalled"].map((name) => [
+                  name,
+                  `${name} matters.`,
+                  `You are the ${name} expert with a distinct investigative focus and evidence standard.`,
+                ]),
+              ));
+            } else if (title.includes("done")) {
+              outputs.set(threadId, "Done answer.");
+            }
+            return { id: threadId };
+          },
+          wait: async (args: { threadId: string; signal?: AbortSignal }) => {
+            const title = titles.get(args.threadId) ?? "";
+            if (title.includes("stalled") || title === "Perspective synthesis") {
+              return waitHonoringAbort(args);
+            }
+            return {};
+          },
+          output: async ({ threadId }: { threadId: string }) => ({ output: outputs.get(threadId) }),
+          send: async ({ threadId, input }: { threadId: string; input: Array<{ text: string }> }) => {
+            sends.push({ threadId, text: input[0]!.text });
+          },
+          stop: async ({ threadId }: { threadId: string }) => {
+            stopped.push(titles.get(threadId) ?? threadId);
+          },
+        },
+      },
+    };
+
+    const result = await deliverGatherPerspectives(
+      bb as any,
+      { question: "What should we do?", lenses: ["done", "stalled"] },
+      { projectId: "project", threadId: "caller", signal: new AbortController().signal } as any,
+      { planner: {}, worker: {} },
+      { wrapUpAfterMs: 30, hardCapMs: 120, synthesisReserveMs: 40 },
+    );
+
+    expect(result).toContain("Done answer.");
+    expect(stopped).toContain("Perspective 2: stalled");
+    const delivery = sends.find((send) => send.threadId === "caller");
+    expect(delivery).toBeDefined();
+    expect(delivery!.text).toContain("Done answer.");
+  });
+
+  test("a hung spawn cannot stall the run", async () => {
+    const sends: Array<{ threadId: string; text: string }> = [];
+    const never = new Promise<never>(() => undefined);
+    const bb = {
+      log: { warn: () => undefined },
+      sdk: {
+        threads: {
+          get: async () => ({ environmentId: "environment", providerId: "provider" }),
+          defaultExecutionOptions: async () => callerExecution(),
+          spawn: () => never,
+          wait: async () => ({}),
+          output: async () => ({ output: "" }),
+          send: async ({ threadId, input }: { threadId: string; input: Array<{ text: string }> }) => {
+            sends.push({ threadId, text: input[0]!.text });
+          },
+          stop: async () => undefined,
+        },
+      },
+    };
+
+    const result = await deliverGatherPerspectives(
+      bb as any,
+      { question: "What should we do?", lenses: ["one", "two", "three"] },
+      { projectId: "project", threadId: "caller", signal: new AbortController().signal } as any,
+      { planner: {}, worker: {} },
+      { plannerTimeoutMs: 20, wrapUpAfterMs: 30, hardCapMs: 150, synthesisReserveMs: 40, spawnTimeoutMs: 25 },
+    );
+
+    expect(result).toContain("## Synthesis unavailable");
+    const delivery = sends.find((send) => send.threadId === "caller");
+    expect(delivery).toBeDefined();
+    expect(delivery!.text).toContain("## Synthesis unavailable");
+  });
+
+  test("a spawn that finishes after its timeout is stopped", async () => {
+    let nextThread = 0;
+    const lateSpawn = deferred<{ id: string }>();
+    const stopped: string[] = [];
+    const outputs = new Map<string, string>();
+    const bb = {
+      log: { warn: () => undefined },
+      sdk: {
+        threads: {
+          get: async () => ({ environmentId: "environment", providerId: "provider" }),
+          defaultExecutionOptions: async () => callerExecution(),
+          spawn: ({ title }: { title: string }) => {
+            nextThread += 1;
+            if (nextThread === 1) return lateSpawn.promise;
+            const id = `thread-${nextThread}`;
+            outputs.set(
+              id,
+              title.startsWith("Perspective planner")
+                ? perspectiveTable([
+                    ["one", "One matters.", "You are the first evidence-focused expert for this decision."],
+                    ["two", "Two matters.", "You are the second evidence-focused expert for this decision."],
+                    ["three", "Three matters.", "You are the third evidence-focused expert for this decision."],
+                  ])
+                : title === "Perspective synthesis"
+                  ? "Recovered after a late spawn."
+                  : `${title} answer.`,
+            );
+            return Promise.resolve({ id });
+          },
+          wait: async () => ({}),
+          output: async ({ threadId }: { threadId: string }) => ({ output: outputs.get(threadId) }),
+          send: async () => undefined,
+          stop: async ({ threadId }: { threadId: string }) => {
+            stopped.push(threadId);
+          },
+        },
+      },
+    };
+
+    const result = await deliverGatherPerspectives(
+      bb as any,
+      { question: "Can this recover?", lenses: ["one", "two", "three"] },
+      { projectId: "project", threadId: "caller", signal: new AbortController().signal } as any,
+      { planner: {}, worker: {} },
+      { plannerTimeoutMs: 80, spawnTimeoutMs: 10, hardCapMs: 500, synthesisReserveMs: 100 },
+    );
+    expect(result).toContain("Recovered after a late spawn.");
+
+    lateSpawn.resolve({ id: "late-thread" });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(stopped).toContain("late-thread");
+  });
+
+  test("a failed result delivery is not followed by a misleading failure delivery", async () => {
+    let nextThread = 0;
+    let callerDeliveries = 0;
+    let attemptedText = "";
+    const outputs = new Map<string, string>();
+    const bb = {
+      log: { warn: () => undefined },
+      sdk: {
+        threads: {
+          get: async () => ({ environmentId: "environment", providerId: "provider" }),
+          defaultExecutionOptions: async () => callerExecution(),
+          spawn: async ({ title }: { title: string }) => {
+            nextThread += 1;
+            const id = `thread-${nextThread}`;
+            outputs.set(
+              id,
+              title.startsWith("Perspective planner")
+                ? perspectiveTable([
+                    ["one", "One matters.", "You are the first evidence-focused expert for this decision."],
+                    ["two", "Two matters.", "You are the second evidence-focused expert for this decision."],
+                    ["three", "Three matters.", "You are the third evidence-focused expert for this decision."],
+                  ])
+                : title === "Perspective synthesis"
+                  ? "One final result."
+                  : `${title} answer.`,
+            );
+            return { id };
+          },
+          wait: async () => ({}),
+          output: async ({ threadId }: { threadId: string }) => ({ output: outputs.get(threadId) }),
+          send: async ({ threadId, input }: { threadId: string; input: Array<{ text: string }> }) => {
+            if (threadId !== "caller") return;
+            callerDeliveries += 1;
+            attemptedText = input[0]!.text;
+            throw new Error("delivery transport failed");
+          },
+          stop: async () => undefined,
+        },
+      },
+    };
+
+    await assert.rejects(
+      deliverGatherPerspectives(
+        bb as any,
+        { question: "What\nshould we do?", lenses: ["one", "two", "three"] },
+        { projectId: "project", threadId: "caller", signal: new AbortController().signal } as any,
+      ),
+      /delivery transport failed/,
+    );
+    expect(callerDeliveries).toBe(1);
+    expect(attemptedText).toContain("Perspectives panel result for: What should we do?");
+    expect(attemptedText).not.toContain("Perspectives panel failed");
+  });
+
+  test("invalid and contradictory timing values are clamped", () => {
+    const timing = resolveGatherTiming({
+      plannerTimeoutMs: -1,
+      wrapUpAfterMs: Number.NaN,
+      hardCapMs: 10,
+      synthesisTimeoutMs: Number.POSITIVE_INFINITY,
+      synthesisReserveMs: 100,
+      spawnTimeoutMs: 50,
+    });
+    expect(timing.hardCapMs).toBe(10);
+    expect(timing.plannerTimeoutMs).toBe(10);
+    expect(timing.wrapUpAfterMs).toBe(10);
+    expect(timing.synthesisTimeoutMs).toBe(10);
+    expect(timing.synthesisReserveMs).toBe(9);
+    expect(timing.spawnTimeoutMs).toBe(10);
+  });
+});
 
 describe("perspective plans", () => {
   test("requires a separately generated expert prompt for every perspective", () => {

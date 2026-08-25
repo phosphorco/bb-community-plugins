@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { runGatherPerspectives } from "../Perspectives.ts";
+import { deliverGatherPerspectives } from "../Perspectives.ts";
 
 function perspectiveTable(): string {
   return [
@@ -91,7 +91,7 @@ test("configured planner and worker tuples are applied to their complete phases"
     },
   };
 
-  await runGatherPerspectives(
+  await deliverGatherPerspectives(
     bb as any,
     {
       question: "Which implementation is best?",
@@ -165,7 +165,7 @@ test("an unavailable configured provider fails before any hidden thread is creat
   };
 
   await assert.rejects(
-    runGatherPerspectives(
+    deliverGatherPerspectives(
       bb as any,
       { question: "What matters?", lenses: ["one", "two", "three"] },
       { projectId: "project", threadId: "caller", signal: new AbortController().signal } as any,

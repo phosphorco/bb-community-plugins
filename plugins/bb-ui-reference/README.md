@@ -5,6 +5,8 @@ semantic palette with the real application. Click the question-mark button in th
 **Footer action** surface to open or close it, then drag its title bar anywhere
 in the window.
 
+![BB UI Reference overlay showing the plugin surface map and semantic color palette](assets/bb-ui-reference.png)
+
 The frame contains:
 
 - independently framed views of the researched BB plugin UI surface map, fitted
