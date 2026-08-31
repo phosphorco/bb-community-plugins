@@ -43,6 +43,7 @@ import {
 import { intersectPaneBounds, type OverlayBounds } from "./overlay-bounds.ts"
 import { reconcileAcknowledgedPatch, reconcileNoteSnapshot } from "./note-state.ts"
 import { ConfirmedTextSaveQueue } from "./save-queue.ts"
+import { createClickSuppression, type CreateClickSource } from "./create-gesture.ts"
 
 type NewNotePreview = {
   placement: AbsolutePlacement
@@ -51,7 +52,7 @@ type NewNotePreview = {
 }
 type SurfaceController = {
   bounds: OverlayBounds | null
-  click(): void
+  click(source: CreateClickSource): void
   beginCreateDrag(event: ReactPointerEvent<HTMLButtonElement>): void
 }
 type SurfaceControllerHandle = { current: SurfaceController | null }
@@ -580,7 +581,7 @@ function StickyNotesSurface() {
   const [newNotePreview, setNewNotePreview] = useState<NewNotePreview | null>(null)
   const newNotePreviewRef = useRef<NewNotePreview | null>(null)
   const cleanupCreateDragRef = useRef<(() => void) | null>(null)
-  const suppressClickRef = useRef(false)
+  const clickSuppressionRef = useRef(createClickSuppression())
   const controllerRef = useRef<SurfaceController | null>(null)
   const refreshGenerationRef = useRef(0)
   const threadIdRef = useRef(threadId)
@@ -695,6 +696,7 @@ function StickyNotesSurface() {
 
   const beginCreateDrag = (event: ReactPointerEvent<HTMLButtonElement>) => {
     if (event.button !== 0 || !bounds || view.run.isSubmitting) return
+    clickSuppressionRef.current.beginPointerGesture()
     cleanupCreateDragRef.current?.()
     const pointerId = event.pointerId
     const captureTarget = event.currentTarget
@@ -730,10 +732,7 @@ function StickyNotesSurface() {
       if (pointerEvent.pointerId !== pointerId) return
       cleanup()
       if (!dragged) return
-      suppressClickRef.current = true
-      window.setTimeout(() => {
-        suppressClickRef.current = false
-      }, 0)
+      clickSuppressionRef.current.suppressNextButtonClick()
       const preview = newNotePreviewRef.current
       setPreview(null)
       if (preview?.valid) void createNoteAt(preview.placement, preview.hueIndex)
@@ -762,9 +761,8 @@ function StickyNotesSurface() {
     setPreview(null)
   }, [bounds?.left, bounds?.top, bounds?.width, bounds?.height])
 
-  const click = () => {
-    if (suppressClickRef.current) {
-      suppressClickRef.current = false
+  const click = (source: CreateClickSource) => {
+    if (source === "button" && clickSuppressionRef.current.consumeButtonClick()) {
       return
     }
     createNote()
@@ -858,7 +856,7 @@ function StickyNotesPromptAction() {
       title="Add sticky note · drag to place"
       disabled={view.run.isSubmitting}
       onPointerDown={(event) => resolveController()?.beginCreateDrag(event)}
-      onClick={() => resolveController()?.click()}
+      onClick={() => resolveController()?.click("button")}
     >
       <StickyNoteIcon />
     </button>
@@ -877,7 +875,7 @@ export default definePluginApp((app) => {
       icon: "Note",
       description: "Add a shared note to this thread",
       run({ view }) {
-        if (view.scope.kind === "thread") controllerFor(view.scope.threadId)?.click()
+        if (view.scope.kind === "thread") controllerFor(view.scope.threadId)?.click("plus-menu")
       },
     }],
   })
