@@ -1,0 +1,271 @@
+<svg xmlns="http://www.w3.org/2000/svg">
+  <symbol id="thread-chat" viewBox="0 0 80 40">
+    <rect x="8" y="7" width="49" height="25" rx="9" fill="currentColor" opacity=".14"/>
+    <path d="m20 32-3 5 9-5M20 16h24M20 22h16" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="2" opacity=".65"/>
+    <path d="m67 7 1.5 4 4 1.5-4 1.5-1.5 4-1.5-4-4-1.5 4-1.5z" fill="currentColor"/>
+  </symbol>
+  <symbol id="markdown" viewBox="0 0 80 40">
+    <path d="M19 4h29l11 11v21H19z" fill="currentColor" opacity=".12"/>
+    <path d="M48 4v12h11M26 22h25M26 28h18" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="2" opacity=".7"/>
+    <path d="m27 15 4 4 4-4M27 15v7" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"/>
+  </symbol>
+  <symbol id="new-thread-composer" viewBox="0 0 80 40">
+    <rect x="7" y="9" width="66" height="23" rx="9" fill="currentColor" opacity=".12"/>
+    <path d="M17 20h25" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="2" opacity=".5"/>
+    <circle cx="16" cy="20" r="2" fill="currentColor"/>
+    <path d="m57 16 7 4-7 4z" fill="currentColor"/>
+  </symbol>
+  <symbol id="provider-model-picker" viewBox="0 0 80 40">
+    <rect x="8" y="8" width="64" height="24" rx="8" fill="currentColor" opacity=".13"/>
+    <circle cx="19" cy="20" r="4" fill="currentColor" opacity=".8"/>
+    <path d="M28 17h20M28 23h14M59 17l4 3-4 3" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" opacity=".7"/>
+  </symbol>
+  <symbol id="permission-mode-picker" viewBox="0 0 80 40">
+    <path d="M40 5 60 12v11c0 8-8 13-20 17-12-4-20-9-20-17V12z" fill="currentColor" opacity=".14"/>
+    <path d="m32 21 5 5 11-12" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="3"/>
+    <circle cx="64" cy="11" r="4" fill="currentColor" opacity=".55"/>
+  </symbol>
+  <symbol id="source-code" viewBox="0 0 80 40">
+    <rect x="12" y="6" width="56" height="28" rx="7" fill="currentColor" opacity=".1"/>
+    <path d="m32 14-7 6 7 6M48 14l7 6-7 6M43 11l-6 18" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5"/>
+  </symbol>
+  <symbol id="diff" viewBox="0 0 80 40">
+    <rect x="7" y="7" width="31" height="26" rx="6" fill="currentColor" opacity=".12"/>
+    <rect x="42" y="7" width="31" height="26" rx="6" fill="currentColor" opacity=".2"/>
+    <path d="M14 15h15M14 21h11M14 27h17M49 15h18M49 21h12M49 27h15" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="2" opacity=".65"/>
+    <path d="M39 12v16" stroke="currentColor" stroke-linecap="round" stroke-width="2"/>
+  </symbol>
+  <symbol id="file-link" viewBox="0 0 80 40">
+    <path d="M16 5h24l9 9v21H16z" fill="currentColor" opacity=".13"/>
+    <path d="M40 5v10h9M24 23h12" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="2" opacity=".65"/>
+    <path d="m50 24 3-3a5 5 0 0 1 7 7l-3 3M56 21l-3 3a5 5 0 0 1-7-7l3-3" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="2"/>
+  </symbol>
+  <symbol id="url-link" viewBox="0 0 80 40">
+    <circle cx="29" cy="20" r="13" fill="currentColor" opacity=".12"/>
+    <path d="M16 20h26M29 7c4 4 6 8 6 13s-2 9-6 13M29 7c-4 4-6 8-6 13s2 9 6 13" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="2" opacity=".7"/>
+    <path d="m48 20 7-6 10 6-10 6z" fill="currentColor" opacity=".75"/>
+  </symbol>
+
+  <symbol id="button" viewBox="0 0 80 40">
+    <rect x="14" y="9" width="52" height="22" rx="8" fill="currentColor" opacity=".2"/>
+    <path d="M28 20h24" stroke="currentColor" stroke-linecap="round" stroke-width="2" opacity=".7"/>
+    <circle cx="21" cy="15" r="2" fill="currentColor" opacity=".55"/>
+  </symbol>
+  <symbol id="checkbox" viewBox="0 0 80 40">
+    <rect x="25" y="8" width="24" height="24" rx="6" fill="currentColor" opacity=".15"/>
+    <path d="m31 20 5 5 9-10" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="3"/>
+  </symbol>
+  <symbol id="form" viewBox="0 0 80 40">
+    <path d="M14 9h14M14 19h14M14 29h14" stroke="currentColor" stroke-linecap="round" stroke-width="2" opacity=".6"/>
+    <rect x="34" y="6" width="32" height="7" rx="3" fill="currentColor" opacity=".14"/>
+    <rect x="34" y="16" width="32" height="7" rx="3" fill="currentColor" opacity=".2"/>
+    <rect x="34" y="26" width="24" height="7" rx="3" fill="currentColor" opacity=".14"/>
+  </symbol>
+  <symbol id="input" viewBox="0 0 80 40">
+    <rect x="9" y="9" width="62" height="22" rx="7" fill="currentColor" opacity=".1"/>
+    <path d="M19 16h20M19 24h13M47 14v12" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="2" opacity=".7"/>
+  </symbol>
+  <symbol id="input-otp" viewBox="0 0 80 40">
+    <rect x="12" y="10" width="12" height="20" rx="4" fill="currentColor" opacity=".14"/>
+    <rect x="27" y="10" width="12" height="20" rx="4" fill="currentColor" opacity=".2"/>
+    <rect x="42" y="10" width="12" height="20" rx="4" fill="currentColor" opacity=".14"/>
+    <rect x="57" y="10" width="12" height="20" rx="4" fill="currentColor" opacity=".14"/>
+    <circle cx="33" cy="20" r="2" fill="currentColor"/>
+  </symbol>
+  <symbol id="label" viewBox="0 0 80 40">
+    <path d="M16 13h23M16 20h17M16 27h29" stroke="currentColor" stroke-linecap="round" stroke-width="2"/>
+    <path d="M53 13h11M53 20h7M53 27h14" stroke="currentColor" stroke-linecap="round" stroke-width="2" opacity=".35"/>
+  </symbol>
+  <symbol id="radio-group" viewBox="0 0 80 40">
+    <circle cx="19" cy="12" r="5" fill="currentColor" opacity=".15"/>
+    <circle cx="19" cy="20" r="5" fill="currentColor" opacity=".2"/>
+    <circle cx="19" cy="28" r="5" fill="currentColor" opacity=".15"/>
+    <circle cx="19" cy="20" r="2" fill="currentColor"/>
+    <path d="M30 12h31M30 20h24M30 28h28" stroke="currentColor" stroke-linecap="round" stroke-width="2" opacity=".65"/>
+  </symbol>
+  <symbol id="select" viewBox="0 0 80 40">
+    <rect x="10" y="9" width="60" height="22" rx="7" fill="currentColor" opacity=".13"/>
+    <path d="M20 20h23M53 17l4 4 4-4" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" opacity=".7"/>
+  </symbol>
+  <symbol id="slider" viewBox="0 0 80 40">
+    <path d="M13 20h54" stroke="currentColor" stroke-linecap="round" stroke-width="4" opacity=".17"/>
+    <path d="M13 20h31" stroke="currentColor" stroke-linecap="round" stroke-width="4" opacity=".7"/>
+    <circle cx="44" cy="20" r="7" fill="currentColor" opacity=".9"/>
+  </symbol>
+  <symbol id="switch" viewBox="0 0 80 40">
+    <rect x="12" y="10" width="56" height="20" rx="10" fill="currentColor" opacity=".2"/>
+    <circle cx="55" cy="20" r="7" fill="currentColor"/>
+    <path d="M22 20h17" stroke="currentColor" stroke-linecap="round" stroke-width="2" opacity=".45"/>
+  </symbol>
+  <symbol id="textarea" viewBox="0 0 80 40">
+    <rect x="9" y="6" width="62" height="28" rx="7" fill="currentColor" opacity=".1"/>
+    <path d="M18 14h37M18 20h29M18 26h35" stroke="currentColor" stroke-linecap="round" stroke-width="2" opacity=".62"/>
+  </symbol>
+  <symbol id="toggle" viewBox="0 0 80 40">
+    <rect x="25" y="8" width="30" height="24" rx="7" fill="currentColor" opacity=".2"/>
+    <path d="M34 20h12M40 14v12" stroke="currentColor" stroke-linecap="round" stroke-width="2" opacity=".7"/>
+  </symbol>
+  <symbol id="toggle-group" viewBox="0 0 80 40">
+    <rect x="12" y="9" width="56" height="22" rx="7" fill="currentColor" opacity=".12"/>
+    <path d="M31 9v22M49 9v22" stroke="currentColor" stroke-width="2" opacity=".35"/>
+    <rect x="32" y="11" width="16" height="18" rx="4" fill="currentColor" opacity=".3"/>
+  </symbol>
+
+  <symbol id="alert-dialog" viewBox="0 0 80 40">
+    <rect x="8" y="5" width="64" height="30" rx="7" fill="currentColor" opacity=".08"/>
+    <rect x="20" y="9" width="40" height="23" rx="6" fill="currentColor" opacity=".2"/>
+    <circle cx="29" cy="17" r="3" fill="currentColor"/>
+    <path d="M36 16h15M27 24h24" stroke="currentColor" stroke-linecap="round" stroke-width="2" opacity=".58"/>
+  </symbol>
+  <symbol id="command" viewBox="0 0 80 40">
+    <rect x="10" y="5" width="60" height="30" rx="8" fill="currentColor" opacity=".14"/>
+    <rect x="17" y="10" width="46" height="7" rx="3" fill="currentColor" opacity=".25"/>
+    <circle cx="22" cy="13.5" r="2" fill="currentColor"/>
+    <path d="M19 23h35M19 28h25" stroke="currentColor" stroke-linecap="round" stroke-width="2" opacity=".62"/>
+  </symbol>
+  <symbol id="context-menu" viewBox="0 0 80 40">
+    <path d="m20 8 13 16-7 1 4 8-4 2-4-8-5 5z" fill="currentColor" opacity=".75"/>
+    <rect x="38" y="9" width="29" height="22" rx="5" fill="currentColor" opacity=".16"/>
+    <path d="M45 16h15M45 22h11M45 28h14" stroke="currentColor" stroke-linecap="round" stroke-width="2" opacity=".6"/>
+  </symbol>
+  <symbol id="dialog" viewBox="0 0 80 40">
+    <rect x="8" y="5" width="64" height="30" rx="8" fill="currentColor" opacity=".08"/>
+    <rect x="17" y="8" width="46" height="25" rx="6" fill="currentColor" opacity=".18"/>
+    <path d="M25 16h20M25 22h27M25 28h16M53 14l5 5M58 14l-5 5" stroke="currentColor" stroke-linecap="round" stroke-width="2" opacity=".62"/>
+  </symbol>
+  <symbol id="drawer" viewBox="0 0 80 40">
+    <path d="M8 8h64v24H8z" fill="currentColor" opacity=".07"/>
+    <path d="M18 17h44v15H18z" fill="currentColor" opacity=".22"/>
+    <path d="M33 22h14M36 26h8" stroke="currentColor" stroke-linecap="round" stroke-width="2" opacity=".65"/>
+  </symbol>
+  <symbol id="dropdown-menu" viewBox="0 0 80 40">
+    <rect x="14" y="6" width="27" height="10" rx="4" fill="currentColor" opacity=".2"/>
+    <path d="M23 11h10" stroke="currentColor" stroke-linecap="round" stroke-width="2" opacity=".7"/>
+    <path d="M25 17h39v18H25z" fill="currentColor" opacity=".13"/>
+    <path d="M32 23h22M32 29h16" stroke="currentColor" stroke-linecap="round" stroke-width="2" opacity=".62"/>
+  </symbol>
+  <symbol id="hover-card" viewBox="0 0 80 40">
+    <rect x="19" y="12" width="44" height="21" rx="6" fill="currentColor" opacity=".2"/>
+    <path d="M26 19h25M26 25h18" stroke="currentColor" stroke-linecap="round" stroke-width="2" opacity=".62"/>
+    <path d="m13 7 7 14-5-2-3 5-3-2 3-5-5-2z" fill="currentColor" opacity=".7"/>
+  </symbol>
+  <symbol id="menubar" viewBox="0 0 80 40">
+    <rect x="8" y="10" width="64" height="20" rx="7" fill="currentColor" opacity=".12"/>
+    <path d="M17 20h9M34 20h11M51 20h12" stroke="currentColor" stroke-linecap="round" stroke-width="2" opacity=".7"/>
+    <circle cx="20" cy="14" r="2" fill="currentColor"/>
+  </symbol>
+  <symbol id="popover" viewBox="0 0 80 40">
+    <path d="M28 29 35 35l7-6" fill="currentColor" opacity=".18"/>
+    <rect x="16" y="6" width="48" height="24" rx="7" fill="currentColor" opacity=".16"/>
+    <path d="M25 15h28M25 22h20" stroke="currentColor" stroke-linecap="round" stroke-width="2" opacity=".65"/>
+  </symbol>
+  <symbol id="sheet" viewBox="0 0 80 40">
+    <path d="M8 7h64v26H8z" fill="currentColor" opacity=".07"/>
+    <path d="M40 7h32v26H40z" fill="currentColor" opacity=".22"/>
+    <path d="M48 15h16M48 21h12M48 27h17" stroke="currentColor" stroke-linecap="round" stroke-width="2" opacity=".62"/>
+  </symbol>
+  <symbol id="tooltip" viewBox="0 0 80 40">
+    <path d="m36 28 5 6 5-6" fill="currentColor" opacity=".18"/>
+    <rect x="20" y="7" width="42" height="22" rx="7" fill="currentColor" opacity=".18"/>
+    <path d="M29 17h24M29 23h15" stroke="currentColor" stroke-linecap="round" stroke-width="2" opacity=".65"/>
+  </symbol>
+
+  <symbol id="accordion" viewBox="0 0 80 40">
+    <path d="M14 10h52M14 20h52M14 30h52" stroke="currentColor" stroke-linecap="round" stroke-width="2" opacity=".3"/>
+    <path d="m22 17 4 4 4-4M51 17l4 4 4-4" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"/>
+    <path d="M34 24h24" stroke="currentColor" stroke-linecap="round" stroke-width="2" opacity=".65"/>
+  </symbol>
+  <symbol id="aspect-ratio" viewBox="0 0 80 40">
+    <rect x="14" y="6" width="52" height="28" rx="5" fill="currentColor" opacity=".12"/>
+    <path d="M22 14h10M22 14v7M58 26H48M58 26v-7" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="2.5"/>
+  </symbol>
+  <symbol id="breadcrumb" viewBox="0 0 80 40">
+    <path d="M12 20h15M35 20h12M55 20h13" stroke="currentColor" stroke-linecap="round" stroke-width="3" opacity=".5"/>
+    <path d="m30 16 4 4-4 4M50 16l4 4-4 4" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"/>
+  </symbol>
+  <symbol id="card" viewBox="0 0 80 40">
+    <rect x="10" y="6" width="60" height="28" rx="7" fill="currentColor" opacity=".14"/>
+    <path d="M10 16h60M20 22h28M20 28h20" stroke="currentColor" stroke-linecap="round" stroke-width="2" opacity=".65"/>
+  </symbol>
+  <symbol id="collapsible" viewBox="0 0 80 40">
+    <rect x="12" y="8" width="56" height="24" rx="6" fill="currentColor" opacity=".12"/>
+    <path d="m22 17 4 4 4-4M36 17h20M22 27h35" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" opacity=".7"/>
+  </symbol>
+  <symbol id="navigation-menu" viewBox="0 0 80 40">
+    <path d="M12 12h56M12 20h40M12 28h28" stroke="currentColor" stroke-linecap="round" stroke-width="3" opacity=".6"/>
+    <circle cx="61" cy="20" r="6" fill="currentColor" opacity=".2"/>
+    <path d="m59 20 2 2 4-4" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"/>
+  </symbol>
+  <symbol id="resizable" viewBox="0 0 80 40">
+    <rect x="9" y="7" width="29" height="26" rx="5" fill="currentColor" opacity=".13"/>
+    <rect x="42" y="7" width="29" height="26" rx="5" fill="currentColor" opacity=".2"/>
+    <path d="M40 14v12M38 17h4M38 23h4" stroke="currentColor" stroke-linecap="round" stroke-width="2" opacity=".75"/>
+  </symbol>
+  <symbol id="scroll-area" viewBox="0 0 80 40">
+    <rect x="12" y="6" width="50" height="28" rx="6" fill="currentColor" opacity=".1"/>
+    <path d="M21 14h28M21 20h23M21 26h28" stroke="currentColor" stroke-linecap="round" stroke-width="2" opacity=".57"/>
+    <rect x="55" y="11" width="3" height="13" rx="1.5" fill="currentColor" opacity=".75"/>
+  </symbol>
+  <symbol id="separator" viewBox="0 0 80 40">
+    <path d="M12 20h56" stroke="currentColor" stroke-linecap="round" stroke-width="3" opacity=".55"/>
+    <circle cx="40" cy="20" r="4" fill="currentColor" opacity=".2"/>
+  </symbol>
+  <symbol id="tabs" viewBox="0 0 80 40">
+    <path d="M12 13h17M34 13h16M54 13h14" stroke="currentColor" stroke-linecap="round" stroke-width="3" opacity=".45"/>
+    <path d="M12 28h56" stroke="currentColor" stroke-linecap="round" stroke-width="2" opacity=".25"/>
+    <path d="M12 28h17" stroke="currentColor" stroke-linecap="round" stroke-width="3"/>
+  </symbol>
+
+  <symbol id="alert" viewBox="0 0 80 40">
+    <rect x="9" y="9" width="62" height="22" rx="7" fill="currentColor" opacity=".14"/>
+    <circle cx="20" cy="20" r="4" fill="currentColor"/>
+    <path d="M30 17h30M30 23h22" stroke="currentColor" stroke-linecap="round" stroke-width="2" opacity=".62"/>
+  </symbol>
+  <symbol id="avatar" viewBox="0 0 80 40">
+    <circle cx="40" cy="20" r="14" fill="currentColor" opacity=".16"/>
+    <circle cx="40" cy="16" r="4" fill="currentColor" opacity=".7"/>
+    <path d="M31 28c2-5 5-7 9-7s7 2 9 7" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="2"/>
+  </symbol>
+  <symbol id="badge" viewBox="0 0 80 40">
+    <rect x="17" y="10" width="46" height="20" rx="10" fill="currentColor" opacity=".2"/>
+    <path d="M30 20h20" stroke="currentColor" stroke-linecap="round" stroke-width="2" opacity=".7"/>
+    <circle cx="25" cy="20" r="2" fill="currentColor"/>
+  </symbol>
+  <symbol id="calendar" viewBox="0 0 80 40">
+    <rect x="13" y="7" width="54" height="27" rx="6" fill="currentColor" opacity=".13"/>
+    <path d="M13 15h54M24 5v6M56 5v6" stroke="currentColor" stroke-linecap="round" stroke-width="2" opacity=".7"/>
+    <path d="M23 21h5M34 21h5M45 21h5M23 27h5M34 27h5" stroke="currentColor" stroke-linecap="round" stroke-width="2" opacity=".55"/>
+  </symbol>
+  <symbol id="carousel" viewBox="0 0 80 40">
+    <rect x="12" y="7" width="56" height="25" rx="7" fill="currentColor" opacity=".13"/>
+    <path d="m23 20 7-6v12zM57 20l-7-6v12z" fill="currentColor" opacity=".65"/>
+    <circle cx="34" cy="36" r="2" fill="currentColor" opacity=".35"/>
+    <circle cx="40" cy="36" r="2" fill="currentColor"/>
+    <circle cx="46" cy="36" r="2" fill="currentColor" opacity=".35"/>
+  </symbol>
+  <symbol id="chart" viewBox="0 0 80 40">
+    <path d="M13 31V10M13 31h55" stroke="currentColor" stroke-linecap="round" stroke-width="2" opacity=".5"/>
+    <path d="m20 26 10-8 8 4 12-11 11 6" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="3"/>
+    <circle cx="60" cy="17" r="3" fill="currentColor"/>
+  </symbol>
+  <symbol id="pagination" viewBox="0 0 80 40">
+    <path d="m19 20 5-5M19 20l5 5M61 20l-5-5M61 20l-5 5" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="2" opacity=".55"/>
+    <rect x="28" y="12" width="10" height="16" rx="4" fill="currentColor" opacity=".2"/>
+    <path d="M45 16h3M45 24h3" stroke="currentColor" stroke-linecap="round" stroke-width="2" opacity=".65"/>
+  </symbol>
+  <symbol id="progress" viewBox="0 0 80 40">
+    <rect x="10" y="15" width="60" height="10" rx="5" fill="currentColor" opacity=".15"/>
+    <rect x="10" y="15" width="37" height="10" rx="5" fill="currentColor" opacity=".72"/>
+    <circle cx="57" cy="20" r="3" fill="currentColor"/>
+  </symbol>
+  <symbol id="skeleton" viewBox="0 0 80 40">
+    <rect x="12" y="8" width="56" height="8" rx="4" fill="currentColor" opacity=".16"/>
+    <rect x="12" y="20" width="42" height="8" rx="4" fill="currentColor" opacity=".1"/>
+    <circle cx="63" cy="24" r="4" fill="currentColor" opacity=".18"/>
+  </symbol>
+  <symbol id="table" viewBox="0 0 80 40">
+    <rect x="10" y="7" width="60" height="27" rx="5" fill="currentColor" opacity=".1"/>
+    <path d="M10 16h60M10 25h60M28 7v27M50 7v27" stroke="currentColor" stroke-width="2" opacity=".48"/>
+    <path d="M16 12h7M34 12h9M56 12h8" stroke="currentColor" stroke-linecap="round" stroke-width="2" opacity=".72"/>
+  </symbol>
+</svg>

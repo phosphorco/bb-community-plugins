@@ -58,4 +58,16 @@ export default function uiReferencePlugin(bb: BbPluginApi): void {
       return new Response("Surface legend unavailable", { status: 404 });
     }
   });
+  bb.http.route("GET", "/native-ui-icons", async () => {
+    try {
+      return new Response(await readAsset("bb-native-ui-icons.svg"), {
+        headers: {
+          "cache-control": "no-cache",
+          "content-type": "image/svg+xml; charset=utf-8",
+        },
+      });
+    } catch {
+      return new Response("Native UI illustrations unavailable", { status: 404 });
+    }
+  });
 }

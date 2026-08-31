@@ -1,11 +1,19 @@
 import "./app.css";
 import { definePluginApp } from "@bb/plugin-sdk/app";
-import { buildThemeTokens, discoverThemeTokenVariables, groupThemeTokens, SURFACE_MAP_SECTIONS } from "./ui-reference.ts";
+import {
+  buildThemeTokens,
+  discoverThemeTokenVariables,
+  groupThemeTokens,
+  NATIVE_UI_GROUPS,
+  SURFACE_MAP_SECTIONS,
+} from "./ui-reference.ts";
 
 const TOGGLE_EVENT = "bb-ui-reference:toggle";
 const POSITION_KEY = "bb-ui-reference:position";
 const SURFACE_MAP_URL = "/api/v1/plugins/bb-ui-reference/http/surface-map";
 const SURFACE_LEGEND_URL = "/api/v1/plugins/bb-ui-reference/http/surface-legend";
+const NATIVE_UI_ICONS_URL = "/api/v1/plugins/bb-ui-reference/http/native-ui-icons";
+const SVG_NAMESPACE = "http://www.w3.org/2000/svg";
 
 function element<K extends keyof HTMLElementTagNameMap>(
   tag: K,
@@ -67,6 +75,22 @@ function readableStyleSheetCss(): string[] {
   return cssTexts;
 }
 
+function nativeUiIllustration(entry: { icon: string; kind: string; experimental?: boolean }): SVGSVGElement {
+  const svg = document.createElementNS(SVG_NAMESPACE, "svg");
+  svg.classList.add(
+    "bb-ui-reference-native-illustration",
+    `is-${entry.kind}`,
+    ...(entry.experimental ? ["is-experimental"] : []),
+  );
+  svg.setAttribute("viewBox", "0 0 80 40");
+  svg.setAttribute("aria-hidden", "true");
+  svg.setAttribute("focusable", "false");
+  const use = document.createElementNS(SVG_NAMESPACE, "use");
+  use.setAttribute("href", `${NATIVE_UI_ICONS_URL}#${entry.icon}`);
+  svg.append(use);
+  return svg;
+}
+
 function mountReferenceFrame({ signal }: { signal: AbortSignal }): () => void {
   const frame = element("section", "bb-ui-reference-frame");
   frame.setAttribute("role", "dialog");
@@ -79,7 +103,7 @@ function mountReferenceFrame({ signal }: { signal: AbortSignal }): () => void {
   heading.append(element("strong", "", "BB UI reference"), headerHint);
   const sectionNav = element("div", "bb-ui-reference-section-nav");
   sectionNav.setAttribute("role", "tablist");
-  sectionNav.setAttribute("aria-label", "Surface map section");
+  sectionNav.setAttribute("aria-label", "Reference section");
   const sectionButtons: HTMLButtonElement[] = [];
   const close = element("button", "bb-ui-reference-close", "×");
   close.type = "button";
@@ -91,6 +115,7 @@ function mountReferenceFrame({ signal }: { signal: AbortSignal }): () => void {
   mapLegend.src = SURFACE_LEGEND_URL;
   mapLegend.alt = "Legend: gray is native BB UI, blue is an additive plugin surface, purple is a replaceable region, and orange is trusted page code";
   mapLegend.draggable = false;
+  let mapLegendUnavailable = false;
 
   const mapViewport = element("figure", "bb-ui-reference-map-viewport");
   mapViewport.id = "bb-ui-reference-map-view";
@@ -105,22 +130,89 @@ function mountReferenceFrame({ signal }: { signal: AbortSignal }): () => void {
   mapError.hidden = true;
   mapViewport.append(mapImage, mapError);
 
+  const nativePanel = element("section", "bb-ui-reference-native-panel");
+  nativePanel.id = "bb-ui-reference-native-ui";
+  nativePanel.setAttribute("role", "tabpanel");
+  nativePanel.tabIndex = 0;
+  nativePanel.hidden = true;
+  const nativeHeading = element("div", "bb-ui-reference-native-heading");
+  const nativeHeadingCopy = element("div");
+  nativeHeadingCopy.append(
+    element("strong", "", "Reusable BB UI"),
+    element("small", "", "Choose a host capability or vendor a version-matched registry component."),
+  );
+  const nativeUiCount = NATIVE_UI_GROUPS.reduce((count, group) => count + group.entries.length, 0);
+  nativeHeading.append(nativeHeadingCopy, element("span", "bb-ui-reference-token-count", `${nativeUiCount} pieces`));
+  const nativeIntro = element("p", "bb-ui-reference-native-intro", "Host-owned entries preserve BB behavior and lifecycle. Registry entries copy BB-themed source into your plugin, where you own future edits.");
+  const nativeGroups = element("div", "bb-ui-reference-native-groups");
+  for (const group of NATIVE_UI_GROUPS) {
+    const groupSection = element("section", "bb-ui-reference-native-group");
+    const groupHeading = element("header", "bb-ui-reference-native-group-heading");
+    groupHeading.append(
+      element("strong", "", group.title),
+      element("small", "", group.description),
+    );
+    groupSection.append(groupHeading);
+
+    for (const entry of group.entries) {
+      const copyValue = entry.kind === "registry"
+        ? `npx shadcn add ${entry.target}`
+        : `import { ${entry.name} } from "${entry.target}";`;
+      const entryButton = element("button", "bb-ui-reference-native-entry");
+      entryButton.type = "button";
+      entryButton.title = `Copy ${copyValue}`;
+      const entryCopy = element("span", "bb-ui-reference-native-entry-copy");
+      const entryName = element("strong", "", entry.name);
+      const entryKind = element(
+        "span",
+        `bb-ui-reference-native-kind is-${entry.kind}${entry.experimental ? " is-experimental" : ""}`,
+        entry.experimental ? "Experimental" : entry.kind === "host" ? "SDK" : "Registry",
+      );
+      const entryNameLine = element("span", "bb-ui-reference-native-name");
+      entryNameLine.append(entryName, entryKind);
+      entryCopy.append(
+        entryNameLine,
+        element("code", "", entry.target),
+        element("small", "", entry.description),
+      );
+      entryButton.append(nativeUiIllustration(entry), entryCopy);
+      entryButton.addEventListener("click", () => {
+        void copyText(copyValue)
+          .then(() => showStatus(`Copied ${entry.name}`))
+          .catch(() => showStatus("Copy unavailable"));
+      }, { signal });
+      groupSection.append(entryButton);
+    }
+    nativeGroups.append(groupSection);
+  }
+  nativePanel.append(nativeHeading, nativeIntro, nativeGroups);
+
   let currentSection: (typeof SURFACE_MAP_SECTIONS)[number] = SURFACE_MAP_SECTIONS[0];
   const resetHeaderHint = () => {
     headerHint.textContent = `${currentSection.title} · fitted view · drag to compare`;
   };
-  const selectSection = (sectionId: number) => {
-    const section = SURFACE_MAP_SECTIONS.find((item) => item.id === sectionId) ?? SURFACE_MAP_SECTIONS[0];
-    currentSection = section;
-    mapViewport.dataset.section = String(section.id);
-    mapImage.src = `${SURFACE_MAP_URL}-${section.id}`;
-    resetHeaderHint();
+  const selectReferenceSection = (sectionId: number | "native-ui") => {
+    const native = sectionId === "native-ui";
+    mapLegend.hidden = native || mapLegendUnavailable;
+    mapViewport.hidden = native;
+    nativePanel.hidden = !native;
+    if (native) {
+      headerHint.textContent = "Native UI · reusable pieces · click to copy";
+      nativePanel.setAttribute("aria-labelledby", "bb-ui-reference-native-ui-tab");
+    }
+    if (!native) {
+      const section = SURFACE_MAP_SECTIONS.find((item) => item.id === sectionId) ?? SURFACE_MAP_SECTIONS[0];
+      currentSection = section;
+      mapViewport.dataset.section = String(section.id);
+      mapImage.src = `${SURFACE_MAP_URL}-${section.id}`;
+      mapViewport.setAttribute("aria-labelledby", `bb-ui-reference-section-${section.id}`);
+      resetHeaderHint();
+    }
     for (const button of sectionButtons) {
-      const selected = Number(button.dataset.section) === section.id;
+      const selected = button.dataset.section === String(sectionId);
       button.classList.toggle("is-active", selected);
       button.setAttribute("aria-selected", String(selected));
       button.tabIndex = selected ? 0 : -1;
-      if (selected) mapViewport.setAttribute("aria-labelledby", button.id);
     }
   };
 
@@ -131,22 +223,41 @@ function mountReferenceFrame({ signal }: { signal: AbortSignal }): () => void {
     button.setAttribute("role", "tab");
     button.setAttribute("aria-controls", mapViewport.id);
     button.dataset.section = String(section.id);
-    button.addEventListener("click", () => selectSection(section.id), { signal });
+    button.addEventListener("click", () => selectReferenceSection(section.id), { signal });
     button.addEventListener("keydown", (event) => {
       const currentIndex = sectionButtons.indexOf(button);
       const direction = event.key === "ArrowRight" ? 1 : event.key === "ArrowLeft" ? -1 : 0;
       if (direction === 0) return;
       event.preventDefault();
-      const nextButton = sectionButtons[(currentIndex + direction + SURFACE_MAP_SECTIONS.length) % SURFACE_MAP_SECTIONS.length];
+      const nextButton = sectionButtons[(currentIndex + direction + sectionButtons.length) % sectionButtons.length];
       if (nextButton == null) return;
-      selectSection(Number(nextButton.dataset.section));
+      selectReferenceSection(nextButton.dataset.section === "native-ui" ? "native-ui" : Number(nextButton.dataset.section));
       nextButton.focus();
     }, { signal });
     sectionButtons.push(button);
     sectionNav.append(button);
   }
-  selectSection(1);
-  mapPanel.append(mapLegend, mapViewport);
+  const nativeButton = element("button", "", "Native UI");
+  nativeButton.type = "button";
+  nativeButton.id = "bb-ui-reference-native-ui-tab";
+  nativeButton.setAttribute("role", "tab");
+  nativeButton.setAttribute("aria-controls", nativePanel.id);
+  nativeButton.dataset.section = "native-ui";
+  nativeButton.addEventListener("click", () => selectReferenceSection("native-ui"), { signal });
+  nativeButton.addEventListener("keydown", (event) => {
+    const currentIndex = sectionButtons.indexOf(nativeButton);
+    const direction = event.key === "ArrowRight" ? 1 : event.key === "ArrowLeft" ? -1 : 0;
+    if (direction === 0) return;
+    event.preventDefault();
+    const nextButton = sectionButtons[(currentIndex + direction + sectionButtons.length) % sectionButtons.length];
+    if (nextButton == null) return;
+    selectReferenceSection(nextButton.dataset.section === "native-ui" ? "native-ui" : Number(nextButton.dataset.section));
+    nextButton.focus();
+  }, { signal });
+  sectionButtons.push(nativeButton);
+  sectionNav.append(nativeButton);
+  selectReferenceSection(1);
+  mapPanel.append(mapLegend, mapViewport, nativePanel);
 
   const palettePanel = element("section", "bb-ui-reference-palette-panel");
   const paletteHeading = element("div", "bb-ui-reference-palette-heading");
@@ -165,7 +276,8 @@ function mountReferenceFrame({ signal }: { signal: AbortSignal }): () => void {
     window.setTimeout(() => {
       if (status.textContent === message) {
         status.textContent = "";
-        resetHeaderHint();
+        if (nativePanel.hidden) resetHeaderHint();
+        else headerHint.textContent = "Native UI · reusable pieces · click to copy";
       }
     }, 1200);
   };
@@ -230,6 +342,7 @@ function mountReferenceFrame({ signal }: { signal: AbortSignal }): () => void {
     mapViewport.classList.add("has-error");
   }, { signal });
   mapLegend.addEventListener("error", () => {
+    mapLegendUnavailable = true;
     mapLegend.hidden = true;
   }, { signal });
 

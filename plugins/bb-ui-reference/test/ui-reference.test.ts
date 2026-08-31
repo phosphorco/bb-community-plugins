@@ -7,6 +7,7 @@ import {
   discoverThemeTokenVariables,
   frameSurfaceMap,
   groupThemeTokens,
+  NATIVE_UI_GROUPS,
   PUBLIC_THEME_TOKEN_VARIABLES,
   SURFACE_MAP_SECTIONS,
 } from "../ui-reference.ts";
@@ -61,6 +62,32 @@ test("the detailed surface map exposes one jump target per quadrant", () => {
     "24 462 772 542",
     "804 462 772 542",
   ]);
+});
+
+test("the native UI catalog distinguishes host capabilities from registry source", () => {
+  assert.deepEqual(NATIVE_UI_GROUPS.map((group) => group.title), [
+    "Host-owned experiences",
+    "Controls & fields",
+    "Menus & overlays",
+    "Layout & navigation",
+    "Content & feedback",
+  ]);
+  const entries = NATIVE_UI_GROUPS.flatMap((group) => group.entries);
+  assert.equal(entries.filter((entry) => entry.kind === "host").length, 9);
+  assert.equal(entries.filter((entry) => entry.kind === "registry").length, 44);
+  assert.ok(entries.some((entry) => entry.name === "experimental_NewThreadComposer" && entry.experimental));
+  assert.ok(entries.some((entry) => entry.name === "DropdownMenu" && entry.target === "@bb/dropdown-menu"));
+  assert.ok(entries.some((entry) => entry.name === "Button" && entry.target === "@bb/button"));
+  assert.ok(entries.every((entry) => entry.description.length > 0));
+});
+
+test("each native UI entry has one 80 by 40 SVG illustration", () => {
+  const entries = NATIVE_UI_GROUPS.flatMap((group) => group.entries);
+  const sprite = readFileSync(new URL("../assets/bb-native-ui-icons.svg", import.meta.url), "utf8");
+  assert.equal(new Set(entries.map((entry) => entry.icon)).size, entries.length);
+  for (const entry of entries) {
+    assert.match(sprite, new RegExp(`<symbol id="${entry.icon}" viewBox="0 0 80 40">`));
+  }
 });
 
 test("surface-map framing replaces sprite dimensions with an independent view", () => {

@@ -16,6 +16,205 @@ export interface ThemeTokenGroup {
   readonly tokens: readonly ThemeToken[];
 }
 
+export type NativeUiEntryKind = "host" | "registry";
+
+export interface NativeUiEntry {
+  readonly name: string;
+  readonly target: string;
+  readonly icon: string;
+  readonly description: string;
+  readonly kind: NativeUiEntryKind;
+  readonly experimental?: boolean;
+}
+
+export interface NativeUiGroup {
+  readonly id: string;
+  readonly title: string;
+  readonly description: string;
+  readonly entries: readonly NativeUiEntry[];
+}
+
+/**
+ * Public BB UI pieces that plugin authors can reuse. Host entries retain BB's
+ * product behavior; registry entries are source-vendored and become owned by
+ * the plugin after `npx shadcn add @bb/<name>`.
+ */
+export const NATIVE_UI_GROUPS: readonly NativeUiGroup[] = [
+  {
+    id: "host-experiences",
+    title: "Host-owned experiences",
+    description: "Import from @get-bb/plugin-sdk/app; BB owns their behavior and lifecycle.",
+    entries: [
+      {
+        name: "ThreadChat",
+        target: "@get-bb/plugin-sdk/app",
+        icon: "thread-chat",
+        description: "Existing-thread timeline, composer, streaming, and read tracking.",
+        kind: "host",
+      },
+      {
+        name: "Markdown",
+        target: "@get-bb/plugin-sdk/app",
+        icon: "markdown",
+        description: "BB's chat-message Markdown renderer.",
+        kind: "host",
+      },
+      {
+        name: "experimental_NewThreadComposer",
+        target: "@get-bb/plugin-sdk/app",
+        icon: "new-thread-composer",
+        description: "New-thread prompt, attachments, execution, and project controls.",
+        kind: "host",
+        experimental: true,
+      },
+      {
+        name: "experimental_ProviderModelPicker",
+        target: "@get-bb/plugin-sdk/app",
+        icon: "provider-model-picker",
+        description: "Controlled provider, model, reasoning, and service-tier selection.",
+        kind: "host",
+        experimental: true,
+      },
+      {
+        name: "experimental_PermissionModePicker",
+        target: "@get-bb/plugin-sdk/app",
+        icon: "permission-mode-picker",
+        description: "Controlled permission selection with the routed machine ceiling.",
+        kind: "host",
+        experimental: true,
+      },
+      {
+        name: "experimental_SourceCode",
+        target: "@get-bb/plugin-sdk/app",
+        icon: "source-code",
+        description: "Source viewer with BB syntax highlighting, gutters, and theme.",
+        kind: "host",
+        experimental: true,
+      },
+      {
+        name: "experimental_Diff",
+        target: "@get-bb/plugin-sdk/app",
+        icon: "diff",
+        description: "Normalized unified or split diff viewer with BB code theme.",
+        kind: "host",
+        experimental: true,
+      },
+      {
+        name: "experimental_FileLink",
+        target: "@get-bb/plugin-sdk/app",
+        icon: "file-link",
+        description: "Live workspace, host, or thread-storage file link.",
+        kind: "host",
+        experimental: true,
+      },
+      {
+        name: "experimental_UrlLink",
+        target: "@get-bb/plugin-sdk/app",
+        icon: "url-link",
+        description: "URL link that honors BB's browser preference.",
+        kind: "host",
+        experimental: true,
+      },
+    ],
+  },
+  {
+    id: "controls-fields",
+    title: "Controls & fields",
+    description: "Version-matched registry source for forms and interactive controls.",
+    entries: [
+      "button",
+      "checkbox",
+      "form",
+      "input",
+      "input-otp",
+      "label",
+      "radio-group",
+      "select",
+      "slider",
+      "switch",
+      "textarea",
+      "toggle",
+      "toggle-group",
+    ].map((name) => ({
+      name: name === "input-otp" ? "InputOTP" : name.replace(/(?:^|-)([a-z])/gu, (_, letter: string) => letter.toUpperCase()),
+      target: `@bb/${name}`,
+      icon: name,
+      description: "BB-themed, plugin-owned component source.",
+      kind: "registry" as const,
+    })),
+  },
+  {
+    id: "menus-overlays",
+    title: "Menus & overlays",
+    description: "Dropdowns, pickers, dialogs, and responsive overlay building blocks.",
+    entries: [
+      "alert-dialog",
+      "command",
+      "context-menu",
+      "dialog",
+      "drawer",
+      "dropdown-menu",
+      "hover-card",
+      "menubar",
+      "popover",
+      "sheet",
+      "tooltip",
+    ].map((name) => ({
+      name: name.replace(/(?:^|-)([a-z])/gu, (_, letter: string) => letter.toUpperCase()),
+      target: `@bb/${name}`,
+      icon: name,
+      description: "BB-themed, plugin-owned component source.",
+      kind: "registry" as const,
+    })),
+  },
+  {
+    id: "layout-navigation",
+    title: "Layout & navigation",
+    description: "Structure, navigation, scrolling, and view organization.",
+    entries: [
+      "accordion",
+      "aspect-ratio",
+      "breadcrumb",
+      "card",
+      "collapsible",
+      "navigation-menu",
+      "resizable",
+      "scroll-area",
+      "separator",
+      "tabs",
+    ].map((name) => ({
+      name: name.replace(/(?:^|-)([a-z])/gu, (_, letter: string) => letter.toUpperCase()),
+      target: `@bb/${name}`,
+      icon: name,
+      description: "BB-themed, plugin-owned component source.",
+      kind: "registry" as const,
+    })),
+  },
+  {
+    id: "content-feedback",
+    title: "Content & feedback",
+    description: "Status, content framing, progress, and data presentation.",
+    entries: [
+      "alert",
+      "avatar",
+      "badge",
+      "calendar",
+      "carousel",
+      "chart",
+      "pagination",
+      "progress",
+      "skeleton",
+      "table",
+    ].map((name) => ({
+      name: name.replace(/(?:^|-)([a-z])/gu, (_, letter: string) => letter.toUpperCase()),
+      target: `@bb/${name}`,
+      icon: name,
+      description: "BB-themed, plugin-owned component source.",
+      kind: "registry" as const,
+    })),
+  },
+] as const;
+
 /**
  * Complete snapshot of BB 0.37's public plugin color bridge. Runtime discovery
  * supplements this list so newly added host tokens appear without a plugin
