@@ -12,6 +12,7 @@
 | [Perspectives](plugins/perspectives/) | Consult independent expert agents and synthesize evidence across caller-selected lenses. |
 | [Sticky Notes](plugins/sticky-notes/) | Leave shared, movable notes directly on bb threads. |
 | [BB UI Reference](plugins/bb-ui-reference/) | Explore BB's plugin surfaces and active semantic theme palette. |
+| [Analytics](plugins/analytics/) | Explore fast, code-authored dashboards for agent tool reliability and performance. |
 | [Restart Resume](plugins/restart-resume/) | Resume threads left interrupted by a host daemon restart, with project-specific recovery messages. |
 
 ## Install directly
@@ -23,6 +24,7 @@ bb plugin install npm:@phosphorco/bb-plugin-agentation-mentions@^0.1.0
 bb plugin install npm:@phosphorco/bb-plugin-perspectives@^0.2.0
 bb plugin install npm:@phosphorco/bb-plugin-sticky-notes@^0.1.1
 bb plugin install npm:@phosphorco/bb-plugin-bb-ui-reference@^0.1.1
+bb plugin install npm:@phosphorco/bb-plugin-analytics@^0.1.0
 bb plugin install npm:@phosphorco/bb-plugin-restart-resume@^0.1.0
 ```
 

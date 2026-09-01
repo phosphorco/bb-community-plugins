@@ -1,0 +1,62 @@
+{
+  "name": "@phosphorco/bb-plugin-analytics",
+  "version": "0.1.0",
+  "type": "module",
+  "license": "MIT",
+  "description": "Explore fast, code-authored analytics dashboards for agent tool reliability.",
+  "author": "Phosphor",
+  "homepage": "https://github.com/phosphorco/bb-community-plugins/tree/main/plugins/analytics#readme",
+  "bugs": { "url": "https://github.com/phosphorco/bb-community-plugins/issues" },
+  "repository": { "type": "git", "url": "git+https://github.com/phosphorco/bb-community-plugins.git", "directory": "plugins/analytics" },
+  "publishConfig": { "access": "public", "registry": "https://registry.npmjs.org" },
+  "keywords": ["bb", "bb-plugin", "analytics", "duckdb", "echarts", "agent-tools"],
+  "engines": { "bb": ">=0.39.0 <1.0.0", "bbPluginSdk": ">=0.4.8" },
+  "bb": {
+    "name": "Analytics",
+    "description": "Understand which agent capabilities are slow, unreliable, or repeatedly attempted.",
+    "branding": { "icon": "ChartNoAxesColumnIncreasing" },
+    "server": "./server.ts",
+    "app": "./app.tsx",
+    "skills": []
+  },
+  "files": [
+    "dist/",
+    "README.md",
+    "LICENSE",
+    "THIRD_PARTY_NOTICES.md",
+    "server.ts",
+    "app.tsx",
+    "app.css",
+    "chart-painting-animation.tsx",
+    "echarts-figure.tsx",
+    "echarts-options.ts",
+    "browser-engine.ts",
+    "bundle-contract.ts",
+    "builtin-bundles.ts",
+    "fact-projection.ts",
+    "rpc-contract.ts",
+    "store.ts",
+    "test/"
+  ],
+  "dependencies": {
+    "@duckdb/duckdb-wasm": "1.33.1-dev57.0",
+    "echarts": "6.1.0",
+    "zod": "4.3.6"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.12",
+    "@types/node": "^22",
+    "@types/react": "19.2.2",
+    "@types/react-dom": "19.2.2",
+    "better-sqlite3": "^12.0.0",
+    "react": "19.2.1",
+    "react-dom": "19.2.1",
+    "typescript": "^5.9.3"
+  },
+  "scripts": {
+    "build": "bb plugin build .",
+    "dev": "bb plugin dev .",
+    "test": "node --test --experimental-strip-types test/*.test.ts",
+    "typecheck": "tsc --noEmit"
+  }
+}
