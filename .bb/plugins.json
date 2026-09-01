@@ -5,6 +5,7 @@
   "plugins": [
     { "name": "agentation-mentions", "source": "./plugins/agentation-mentions" },
     { "name": "perspectives", "source": "./plugins/perspectives" },
+    { "name": "machine-monitor", "source": "./plugins/machine-monitor" },
     { "name": "sticky-notes", "source": "./plugins/sticky-notes" },
     { "name": "bb-ui-reference", "source": "./plugins/bb-ui-reference" }
   ]

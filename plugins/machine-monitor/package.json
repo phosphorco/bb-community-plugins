@@ -1,0 +1,76 @@
+{
+  "name": "@phosphorco/bb-plugin-machine-monitor",
+  "version": "0.1.0",
+  "type": "module",
+  "license": "MIT",
+  "description": "A small, local-only health monitor for the BB deployment machine.",
+  "author": "Phosphor",
+  "homepage": "https://github.com/phosphorco/bb-community-plugins/tree/main/plugins/machine-monitor#readme",
+  "bugs": {
+    "url": "https://github.com/phosphorco/bb-community-plugins/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/phosphorco/bb-community-plugins.git",
+    "directory": "plugins/machine-monitor"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org"
+  },
+  "keywords": [
+    "bb",
+    "bb-plugin",
+    "monitoring",
+    "health",
+    "machine",
+    "echarts"
+  ],
+  "engines": {
+    "bb": ">=0.39.0 <1.0.0",
+    "bbPluginSdk": ">=0.4.15"
+  },
+  "bb": {
+    "name": "Machine Monitor",
+    "description": "Monitor CPU, memory, disk, and load on the BB deployment machine.",
+    "branding": {
+      "icon": "Activity"
+    },
+    "server": "./server.ts",
+    "app": "./app.tsx",
+    "skills": []
+  },
+  "files": [
+    "dist/",
+    "README.md",
+    "LICENSE",
+    "server.ts",
+    "app.tsx",
+    "app.css",
+    "monitor.ts",
+    "store.ts",
+    "rpc-contract.ts",
+    "test/"
+  ],
+  "dependencies": {
+    "echarts": "6.1.0",
+    "zod": "4.3.6"
+  },
+  "devDependencies": {
+    "@get-bb/plugin-sdk": "0.4.15",
+    "@types/better-sqlite3": "^7.6.12",
+    "@types/node": "^22",
+    "@types/react": "19.2.2",
+    "@types/react-dom": "19.2.2",
+    "better-sqlite3": "^12.0.0",
+    "react": "19.2.1",
+    "react-dom": "19.2.1",
+    "typescript": "^5.9.3"
+  },
+  "scripts": {
+    "build": "bb plugin build .",
+    "dev": "bb plugin dev .",
+    "test": "node --test --experimental-strip-types test/*.test.ts",
+    "typecheck": "tsc --noEmit"
+  }
+}
