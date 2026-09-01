@@ -291,10 +291,11 @@ export function memoryPressureActive(diagnostic: MemoryDiagnostics): boolean {
   return (diagnostic.pressureSomePercent ?? 0) >= 0.1 || (diagnostic.pressureFullPercent ?? 0) > 0;
 }
 
-export async function collectMemoryDiagnostics(previous: MemoryDiagnosticState | null, collectedAt = Date.now(), signal?: AbortSignal, options: { includeProcesses?: boolean } = {}): Promise<{ diagnostics: MemoryDiagnostics; state: MemoryDiagnosticState }> {
+export async function collectMemoryDiagnostics(previous: MemoryDiagnosticState | null, collectedAt = Date.now(), signal?: AbortSignal, options: { includeProcesses?: boolean; includeProcessDetails?: boolean } = {}): Promise<{ diagnostics: MemoryDiagnostics; state: MemoryDiagnosticState }> {
   throwIfAborted(signal);
   const intervalMs = previous == null ? null : Math.max(0, collectedAt - previous.collectedAt);
   const includeProcesses = options.includeProcesses ?? true;
+  const includeProcessDetails = options.includeProcessDetails ?? true;
   const [pressureSource, vmstatSource, cgroupBytes, entries] = await Promise.all([
     readFile("/proc/pressure/memory", { encoding: "utf8", signal }).catch(() => null),
     readFile("/proc/vmstat", { encoding: "utf8", signal }).catch(() => null),
@@ -327,12 +328,12 @@ export async function collectMemoryDiagnostics(previous: MemoryDiagnosticState |
   const largest = [...ranked].sort((left, right) => right.rssBytes - left.rssBytes).slice(0, 8);
   const faulting = [...ranked].sort((left, right) => (right.majorFaultsPerSecond ?? -1) - (left.majorFaultsPerSecond ?? -1));
   const reported = [...largest, ...faulting].filter((process, index, list) => list.findIndex((entry) => entry.pid === process.pid && entry.startTime === process.startTime) === index).slice(0, MAX_REPORTED_PROCESSES);
-  const enrichedProcesses = includeProcesses ? await Promise.all(reported.map((process) => enrichProcessWorkload(process, signal))) : previous?.reportedProcesses ?? [];
+  const enrichedProcesses = !includeProcesses ? includeProcessDetails ? previous?.reportedProcesses ?? [] : [] : !includeProcessDetails ? [] : await Promise.all(reported.map((process) => enrichProcessWorkload(process, signal)));
   throwIfAborted(signal);
   const priorSystem = previous?.system;
   const diagnostics: MemoryDiagnostics = {
     collectedAt,
-    processDetailsCollectedAt: includeProcesses ? collectedAt : previous?.processDetailsCollectedAt ?? null,
+    processDetailsCollectedAt: includeProcessDetails ? includeProcesses ? collectedAt : previous?.processDetailsCollectedAt ?? null : null,
     sampleIntervalMs: intervalMs,
     pressureSomePercent: pressure.some,
     pressureFullPercent: pressure.full,

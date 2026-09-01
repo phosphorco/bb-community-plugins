@@ -35,6 +35,7 @@ export const machineMonitorMigrations = [
   )`,
   `CREATE INDEX IF NOT EXISTS memory_diagnostics_collected_at ON memory_diagnostics(collected_at)`,
   `ALTER TABLE memory_diagnostics ADD COLUMN process_details_collected_at INTEGER`,
+  `UPDATE memory_diagnostics SET processes_json = '[]'`,
 ];
 
 export class MachineMonitorStore {

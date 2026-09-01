@@ -52,6 +52,8 @@ export default function machineMonitorPlugin(bb: BbPluginApi) {
   let cpu: CpuCounters | null = null;
   let memoryState: MemoryDiagnosticState | null = null;
   let lastError: string | null = null;
+  let processDetailsEnabled = false;
+  void settings.get().then((configured) => { processDetailsEnabled = configured.showProcessDetails; });
 
   const percentage = (used: number | null, total: number | null) => used == null || total == null || total <= 0 ? null : used / total * 100;
   const configuredThresholds = async () => {
@@ -143,7 +145,10 @@ export default function machineMonitorPlugin(bb: BbPluginApi) {
     };
   };
   bb.rpc.register(rpcContract, { health, snapshot: ({ rangeHours }) => snapshot(rangeHours) });
-  settings.onChange(() => bb.realtime.publish("machine-monitor-sample", { settingsChanged: true }));
+  settings.onChange(async () => {
+    processDetailsEnabled = (await settings.get()).showProcessDetails;
+    bb.realtime.publish("machine-monitor-sample", { settingsChanged: true });
+  });
 
   bb.background.service("machine-monitor-core", {
     start: async (signal) => {
@@ -192,7 +197,7 @@ export default function machineMonitorPlugin(bb: BbPluginApi) {
         const startedAt = Date.now();
         try {
           const includeProcesses = startedAt - lastProcessRankingAt >= MEMORY_DIAGNOSTICS_INTERVAL_MS;
-          const result = await collectMemoryDiagnostics(memoryState, startedAt, signal, { includeProcesses });
+          const result = await collectMemoryDiagnostics(memoryState, startedAt, signal, { includeProcesses, includeProcessDetails: processDetailsEnabled });
           memoryState = result.state;
           if (includeProcesses) lastProcessRankingAt = startedAt;
           store.insertMemoryDiagnostics(result.diagnostics);
