@@ -231,7 +231,7 @@ function chartTooltip(params: unknown, dimensions: string[], percentChart: boole
 
 function readTheme(target: HTMLElement): ChartTheme {
   const probe = document.createElement("i"); probe.className = "machine-monitor__theme"; target.append(probe);
-  const style = getComputedStyle(probe); const theme = { foreground: style.color, muted: style.borderTopColor, border: style.borderRightColor, surface: style.backgroundColor, cpu: style.borderBottomColor, memory: style.outlineColor, disk: style.textDecorationColor, load: style.boxShadow.split(" ").at(-1) ?? style.borderBottomColor, warning: style.borderLeftColor }; probe.remove(); return theme;
+  const style = getComputedStyle(probe); const theme = { foreground: style.color, muted: style.borderTopColor, border: style.borderRightColor, surface: style.backgroundColor, cpu: style.borderBottomColor, memory: style.outlineColor, disk: style.textDecorationColor, load: style.caretColor, warning: style.borderLeftColor }; probe.remove(); return theme;
 }
 function percent(value: number | null | undefined): string { return value == null || !Number.isFinite(value) ? "—" : `${value.toFixed(1)}%`; }
 function percentNumber(part: number | null | undefined, whole: number | null | undefined): number | null { return part == null || whole == null || whole <= 0 ? null : Math.max(0, Math.min(100, part / whole * 100)); }
