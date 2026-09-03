@@ -4,6 +4,12 @@ Machine Monitor is a deliberately small BB community plugin that records CPU, me
 
 It samples CPU/RAM/root disk locally every 30 seconds and cache directories every 15 minutes, retains 30 days in the plugin SQLite database, and aggregates each requested range to no more than 720 ECharts points. A separate Linux memory diagnostic samples kernel pressure/reclaim counters every minute and increases only those lightweight measurements to five seconds while the kernel reports memory stalls. A bounded process ranking remains at once per minute, retaining seven days or at most 20,000 compact snapshots. The panel shows root disk and per-directory average growth per day over the selected history. It has no foreground polling: it refreshes only on an emitted local sample.
 
+## Screenshots
+
+| Mobile dashboard | Plugin settings |
+| --- | --- |
+| <img src="./assets/machine-monitor-mobile.png" alt="Machine Monitor mobile dashboard showing utilization and load charts with cache usage" width="360"> | <img src="./assets/machine-monitor-settings-mobile.png" alt="Machine Monitor mobile settings showing warning thresholds and process attribution" width="360"> |
+
 ## Warning thresholds
 
 Configure CPU, RAM, and root-disk warnings in **Extensions → Plugins → Machine Monitor**. Each threshold offers 70%, 80%, 90%, or 95%.
