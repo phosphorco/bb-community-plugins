@@ -1,4 +1,4 @@
-import type { BbPluginApi, PluginAgentToolContext } from "@bb/plugin-sdk";
+import type { BbPluginApi, PluginAgentToolContext } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 
 const PLANNER_PHASE_TIMEOUT_MS = 15_000;

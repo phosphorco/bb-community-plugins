@@ -25,6 +25,7 @@
   "files": ["dist/", "assets/", "README.md", "LICENSE", "server.ts", "app.tsx", "app.css", "ui-reference.ts"],
   "dependencies": {},
   "devDependencies": {
+    "@get-bb/plugin-sdk": "0.4.47",
     "@types/node": "^22",
     "@types/react": "19.2.2",
     "react": "19.2.1",

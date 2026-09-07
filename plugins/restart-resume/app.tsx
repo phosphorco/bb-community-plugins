@@ -1,7 +1,7 @@
 import "./app.css";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { definePluginApp, useRealtime, useRpc } from "@bb/plugin-sdk/app";
+import { definePluginApp, useRealtime, useRpc } from "@get-bb/plugin-sdk/app";
 
 import type { rpcContract } from "./rpc-contract.ts";
 

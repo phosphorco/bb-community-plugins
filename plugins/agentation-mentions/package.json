@@ -14,7 +14,7 @@
   },
   "publishConfig": { "access": "public", "registry": "https://registry.npmjs.org" },
   "keywords": ["bb", "bb-plugin", "agentation", "mentions", "queued-delivery", "identity-tags", "annotations", "visual-feedback", "afs"],
-  "engines": { "bb": ">=0.39.0 <1.0.0", "bbPluginSdk": ">=0.4.8" },
+  "engines": { "bb": ">=0.39.0 <1.0.0", "bbPluginSdk": "^0.4.47" },
   "bb": {
     "name": "Agentation → Mentions",
     "description": "Based on Agentation by Scott Sunarto; adds bb mentions, queued delivery, and verified identity tags to visual feedback.",
@@ -49,6 +49,7 @@
     "zod": "4.3.6"
   },
   "devDependencies": {
+    "@get-bb/plugin-sdk": "0.4.47",
     "@types/better-sqlite3": "^7.6.12",
     "@types/node": "^22",
     "@types/react": "19.2.2",

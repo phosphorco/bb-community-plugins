@@ -1,4 +1,4 @@
-import type { BbPluginApi } from "@bb/plugin-sdk";
+import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 
 export const IDENTITY_BOUNDARIES_PLUGIN_ID = "identity-boundaries";

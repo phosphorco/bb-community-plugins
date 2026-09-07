@@ -25,6 +25,7 @@
   "files": ["dist/", "assets/", "README.md", "LICENSE", "server.ts", "app.tsx", "app.css", "create-gesture.ts", "geometry.ts", "note-state.ts", "notes.ts", "overlay-bounds.ts", "save-queue.ts", "typography.ts"],
   "dependencies": { "zod": "4.3.6" },
   "devDependencies": {
+    "@get-bb/plugin-sdk": "0.4.47",
     "@types/better-sqlite3": "^7.6.12",
     "@types/node": "^22",
     "@types/react": "19.2.2",
