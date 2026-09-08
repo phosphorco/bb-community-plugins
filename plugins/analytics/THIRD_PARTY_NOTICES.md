@@ -5,7 +5,7 @@ apply to those components in addition to the plugin's own [MIT license](LICENSE)
 
 | Component | Version | Included in | License |
 | --- | ---: | --- | --- |
-| [DuckDB-Wasm](https://www.npmjs.com/package/@duckdb/duckdb-wasm) | 1.33.1-dev57.0 | frontend query worker and WebAssembly engine | MIT |
+| [DuckDB-Wasm](https://www.npmjs.com/package/@duckdb/duckdb-wasm) | 1.33.1-dev57.0 | isolated Analytics Node child and WebAssembly engine | MIT |
 | [Apache ECharts](https://www.npmjs.com/package/echarts) | 6.1.0 | frontend chart renderer | Apache-2.0 |
 | [ZRender](https://www.npmjs.com/package/zrender) | 6.1.0 | ECharts SVG rendering dependency | BSD-3-Clause |
 | [tslib](https://www.npmjs.com/package/tslib) | 2.3.0 and 2.8.1 | transitive runtime dependency | 0BSD |

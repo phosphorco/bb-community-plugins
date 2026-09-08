@@ -6,6 +6,7 @@ import {
   NOTE_HEIGHT,
   NOTE_WIDTH,
   noteLayoutSchema,
+  stickyNoteLinkSchema,
   stickyNotePatchSchema,
   stickyNoteSchema,
   type StickyNote,
@@ -15,6 +16,7 @@ type StoredNoteRow = {
   id: string
   thread_id: string
   text: string
+  links_json: string
   hue_index: number
   horizontal_anchor: "left" | "right"
   vertical_anchor: "top" | "bottom"
@@ -52,13 +54,30 @@ export const rpcContract = defineRpcContract({
     input: threadInput.extend({ id: z.string().min(1) }).strict(),
     output: z.object({ deleted: z.boolean() }),
   },
+  resolveThreadLink: {
+    input: z.object({
+      url: z.string().url().max(4_096),
+      currentHost: z.string().min(1).max(253),
+    }).strict(),
+    output: z.object({ title: z.string().max(300).nullable() }),
+  },
 })
+
+function linksFromJson(value: string): StickyNote["links"] {
+  try {
+    const parsed = z.array(stickyNoteLinkSchema).max(50).safeParse(JSON.parse(value))
+    return parsed.success ? parsed.data : []
+  } catch {
+    return []
+  }
+}
 
 function fromRow(row: StoredNoteRow): StickyNote {
   return {
     id: row.id,
     threadId: row.thread_id,
     text: row.text,
+    links: linksFromJson(row.links_json),
     hueIndex: row.hue_index,
     horizontalAnchor: row.horizontal_anchor,
     verticalAnchor: row.vertical_anchor,
@@ -95,19 +114,22 @@ export default function stickyNotesPlugin(bb: BbPluginApi) {
     `UPDATE sticky_notes
       SET width = ${NOTE_WIDTH}, height = ${NOTE_HEIGHT}
       WHERE width <> ${NOTE_WIDTH} OR height <> ${NOTE_HEIGHT};`,
+    `ALTER TABLE sticky_notes
+      ADD COLUMN links_json TEXT NOT NULL DEFAULT '[]';`,
   ])
 
   const readOne = db.prepare("SELECT * FROM sticky_notes WHERE id = ? AND thread_id = ?")
   const readThread = db.prepare("SELECT * FROM sticky_notes WHERE thread_id = ? ORDER BY created_at ASC")
   const insert = db.prepare(`INSERT INTO sticky_notes (
-    id, thread_id, text, hue_index, horizontal_anchor, vertical_anchor,
+    id, thread_id, text, links_json, hue_index, horizontal_anchor, vertical_anchor,
     offset_x, offset_y, width, height, rotation, created_at, updated_at
   ) VALUES (
-    @id, @thread_id, @text, @hue_index, @horizontal_anchor, @vertical_anchor,
+    @id, @thread_id, @text, @links_json, @hue_index, @horizontal_anchor, @vertical_anchor,
     @offset_x, @offset_y, @width, @height, @rotation, @created_at, @updated_at
   )`)
   const update = db.prepare(`UPDATE sticky_notes SET
     text = @text,
+    links_json = @links_json,
     horizontal_anchor = @horizontal_anchor,
     vertical_anchor = @vertical_anchor,
     offset_x = @offset_x,
@@ -132,6 +154,7 @@ export default function stickyNotesPlugin(bb: BbPluginApi) {
         id: crypto.randomUUID(),
         thread_id: threadId,
         text: "",
+        links_json: "[]",
         hue_index: hueIndex ?? Math.floor(Math.random() * HUE_COUNT),
         horizontal_anchor: layout.horizontalAnchor,
         vertical_anchor: layout.verticalAnchor,
@@ -153,6 +176,7 @@ export default function stickyNotesPlugin(bb: BbPluginApi) {
       const row: StoredNoteRow = {
         ...existing,
         text: patch.text ?? existing.text,
+        links_json: patch.links === undefined ? existing.links_json : JSON.stringify(patch.links),
         horizontal_anchor: patch.horizontalAnchor ?? existing.horizontal_anchor,
         vertical_anchor: patch.verticalAnchor ?? existing.vertical_anchor,
         offset_x: patch.offsetX ?? existing.offset_x,
@@ -170,6 +194,23 @@ export default function stickyNotesPlugin(bb: BbPluginApi) {
       const deleted = remove.run(id, threadId).changes > 0
       if (deleted) publish(threadId)
       return { deleted }
+    },
+    async resolveThreadLink({ url: rawUrl, currentHost }) {
+      let url: URL
+      try {
+        url = new URL(rawUrl)
+      } catch {
+        return { title: null }
+      }
+      if (url.host !== currentHost) return { title: null }
+      const match = url.pathname.match(/^\/projects\/(proj_[a-z0-9]+)\/threads\/(thr_[a-z0-9]+)(?:\/|$)/iu)
+      if (!match) return { title: null }
+      try {
+        const thread = await bb.sdk.threads.get({ threadId: match[2]! })
+        return { title: thread.projectId === match[1] ? thread.title?.slice(0, 300) || "Thread" : null }
+      } catch {
+        return { title: null }
+      }
     },
   })
 

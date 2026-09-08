@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 
-import { ConfirmedTextSaveQueue } from "../save-queue.ts"
+import { ConfirmedNoteContentSaveQueue, ConfirmedTextSaveQueue } from "../save-queue.ts"
 
 test("a rejected text save remains retryable", async () => {
   const queue = new ConfirmedTextSaveQueue("old")
@@ -33,4 +33,19 @@ test("text saves are serialized in enqueue order", async () => {
   assert.equal(await first, "first")
   assert.equal(await second, "second")
   assert.deepEqual(started, ["first", "second"])
+})
+
+test("citation conversion persists text and links in one ordered mutation", async () => {
+  const queue = new ConfirmedNoteContentSaveQueue({ text: "Look at (1.)\nhttps://example.com", links: [] })
+  const writes: Array<{ text: string; links: number }> = []
+  const result = await queue.enqueue({
+    text: "Look at (1.)\n",
+    links: [{ url: "https://example.com/", domain: "example.com", title: null }],
+  }, async (content) => {
+    writes.push({ text: content.text, links: content.links.length })
+    return true
+  })
+  assert.deepEqual(writes, [{ text: "Look at (1.)\n", links: 1 }])
+  assert.equal(result.text, "Look at (1.)\n")
+  assert.equal(result.links.length, 1)
 })

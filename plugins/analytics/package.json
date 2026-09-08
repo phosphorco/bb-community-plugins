@@ -6,15 +6,36 @@
   "description": "Explore fast, code-authored analytics dashboards for agent tool reliability.",
   "author": "Phosphor",
   "homepage": "https://github.com/phosphorco/bb-community-plugins/tree/main/plugins/analytics#readme",
-  "bugs": { "url": "https://github.com/phosphorco/bb-community-plugins/issues" },
-  "repository": { "type": "git", "url": "git+https://github.com/phosphorco/bb-community-plugins.git", "directory": "plugins/analytics" },
-  "publishConfig": { "access": "public", "registry": "https://registry.npmjs.org" },
-  "keywords": ["bb", "bb-plugin", "analytics", "duckdb", "echarts", "agent-tools"],
-  "engines": { "bb": ">=0.39.0 <1.0.0", "bbPluginSdk": ">=0.4.8" },
+  "bugs": {
+    "url": "https://github.com/phosphorco/bb-community-plugins/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/phosphorco/bb-community-plugins.git",
+    "directory": "plugins/analytics"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org"
+  },
+  "keywords": [
+    "bb",
+    "bb-plugin",
+    "analytics",
+    "duckdb",
+    "echarts",
+    "agent-tools"
+  ],
+  "engines": {
+    "bb": ">=0.39.0 <1.0.0",
+    "bbPluginSdk": ">=0.4.8"
+  },
   "bb": {
     "name": "Analytics",
     "description": "Understand which agent capabilities are slow, unreliable, or repeatedly attempted.",
-    "branding": { "icon": "ChartNoAxesColumnIncreasing" },
+    "branding": {
+      "icon": "ChartNoAxesColumnIncreasing"
+    },
     "server": "./server.ts",
     "app": "./app.tsx",
     "skills": []
@@ -30,10 +51,24 @@
     "chart-painting-animation.tsx",
     "echarts-figure.tsx",
     "echarts-options.ts",
+    "echarts-registry.ts",
+    "echarts-update-policy.ts",
+    "analytics-model.ts",
+    "analytics-verifier.ts",
+    "execution-contract.ts",
+    "analytics-reference.ts",
+    "analytics-status.ts",
+    "analytics-export.ts",
+    "query-runtime/",
+    "chart-environment.ts",
+    "formatting.ts",
+    "sql-policy.ts",
     "browser-engine.ts",
     "bundle-contract.ts",
     "builtin-bundles.ts",
+    "command-signature.ts",
     "fact-projection.ts",
+    "fact-schema.ts",
     "rpc-contract.ts",
     "store.ts",
     "test/"
@@ -55,8 +90,8 @@
     "typescript": "^5.9.3"
   },
   "scripts": {
-    "build": "bb plugin build .",
-    "dev": "bb plugin dev .",
+    "build": "node ../../tools/bb-target-cli.mjs plugin build .",
+    "dev": "node ../../tools/bb-target-cli.mjs plugin dev .",
     "test": "node --test --experimental-strip-types test/*.test.ts",
     "typecheck": "tsc --noEmit"
   }

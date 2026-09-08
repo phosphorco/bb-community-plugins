@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import Database from "better-sqlite3";
 
-import type { Annotation, BbContext } from "../lib/afs.ts";
+import type { Annotation, AnnotationAuthor, BbContext } from "../lib/afs.ts";
 import {
   appendThreadMessage,
   clearSession,
@@ -50,7 +50,15 @@ function annotation(overrides: Partial<Annotation> = {}): Annotation {
   } as Annotation;
 }
 
-function seed(db: Database.Database, authorIdentityId: string | null = null) {
+const coleAuthor: AnnotationAuthor = {
+  kind: "captured",
+  identity: { kind: "person", key: "tailnet:cole", issuer: "tailnet", subject: "cole" },
+  presentation: { displayName: "Cole", handle: "cole", avatarUrl: null },
+  evidence: "provider-verified",
+  capturedAt: "2026-09-06T12:00:00.000Z",
+};
+
+function seed(db: Database.Database, author: AnnotationAuthor | null = null) {
   const session = openSession(db, {
     url: "http://localhost:5173/threads/thr_abc",
     route: "/threads/thr_abc",
@@ -62,23 +70,58 @@ function seed(db: Database.Database, authorIdentityId: string | null = null) {
     sessionId: session.id,
     annotation: annotation(),
     bb: bbContext(),
-    authorIdentityId,
+    author,
   });
   return { session, stored };
 }
 
 test("annotation authorship is captured once and cannot be claimed by an editor", () => {
   const db = freshDb();
-  const { session, stored } = seed(db, "cole%40example.com");
+  const { session, stored } = seed(db, coleAuthor);
 
   const edited = upsertAnnotation(db, {
     sessionId: session.id,
     annotation: annotation({ id: stored.id, comment: "Edited feedback" }),
     bb: bbContext(),
-    authorIdentityId: "alex%40example.com",
+    author: {
+      ...coleAuthor,
+      identity: { kind: "person", key: "tailnet:alex", issuer: "tailnet", subject: "alex" },
+    },
   });
 
+  assert.deepEqual(edited.author, coleAuthor);
+});
+
+test("a public host-relative avatar snapshot persists unchanged", () => {
+  const db = freshDb();
+  const author: AnnotationAuthor = {
+    ...coleAuthor,
+    presentation: { ...coleAuthor.presentation, avatarUrl: "/avatars/cole.jpg" },
+  };
+  const { stored } = seed(db, author);
+
+  assert.deepEqual(stored.author, author);
+  assert.deepEqual(getAnnotation(db, stored.id)?.author, author);
+});
+
+test("legacy author marker stays exact and cannot become the current author", () => {
+  const db = freshDb();
+  const { session, stored } = seed(db);
+  const row = db.prepare("SELECT payload FROM annotations WHERE id = ?").get(stored.id) as { payload: string };
+  const legacyPayload = JSON.parse(row.payload) as Record<string, unknown>;
+  delete legacyPayload.author;
+  db.prepare("UPDATE annotations SET payload = ? WHERE id = ?").run(
+    JSON.stringify({ ...legacyPayload, authorIdentityId: "cole%40example.com" }),
+    stored.id,
+  );
+  const edited = upsertAnnotation(db, {
+    sessionId: session.id,
+    annotation: annotation({ comment: "edited" }),
+    bb: bbContext(),
+    author: coleAuthor,
+  });
   assert.equal(edited.authorIdentityId, "cole%40example.com");
+  assert.equal(edited.author, undefined);
 });
 
 test("a second visit to the same route joins the existing session", () => {

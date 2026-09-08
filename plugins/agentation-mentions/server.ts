@@ -11,6 +11,7 @@
 //   bb agentation-mentions  the same loop for agents that prefer a shell
 
 import { defineRpcContract, type BbPluginApi } from "@get-bb/plugin-sdk";
+import { bindBbIdentity } from "@phosphorco/bb-identity/bb";
 import { z } from "zod";
 
 import {
@@ -61,10 +62,14 @@ import {
   restageAnnotation as restageStoredAnnotation,
 } from "./lib/staging.ts";
 import {
-  getIdentityProfile,
+  annotationAuthor,
+  authorGroupKey,
+  captureAnnotationAuthor,
+  decodeCapturedAuthorMention,
+  unavailableAnnotationAuthor,
   wrapAgentationContent,
   type AgentationPromptInput,
-  type IdentityProfile,
+  type AuthorAttribution,
 } from "./lib/identity.ts";
 import {
   deliverAnnotationInput,
@@ -72,6 +77,7 @@ import {
 } from "./lib/delivery.ts";
 import {
   AGENTATION_MENTION_PROVIDER,
+  CAPTURED_AUTHOR_MENTION_PROVIDER,
   decodeAgentationAttachment,
 } from "./lib/attachment.ts";
 
@@ -108,7 +114,6 @@ export const rpcContract = defineRpcContract({
           z.object({
             annotation: annotationSchema,
             bb: bbContextSchema,
-            authorIdentityId: z.string().max(256).nullable(),
           }),
         ),
         deletedIds: z.array(z.string()),
@@ -219,7 +224,33 @@ export const rpcContract = defineRpcContract({
   },
 });
 
+const { pushAnnotations, ...ordinaryRpcContract } = rpcContract;
+const identityRpcContract = defineRpcContract({ pushAnnotations });
+
+function groupByAuthor(
+  annotations: readonly z.infer<typeof storedAnnotationSchema>[],
+): Array<{
+  author: AuthorAttribution;
+  annotations: z.infer<typeof storedAnnotationSchema>[];
+}> {
+  const groups = new Map<
+    string,
+    { author: AuthorAttribution; annotations: z.infer<typeof storedAnnotationSchema>[] }
+  >();
+  for (const annotation of annotations) {
+    const author = annotationAuthor(annotation);
+    const key = authorGroupKey(author);
+    const group = groups.get(key);
+    if (group) group.annotations.push(annotation);
+    else groups.set(key, { author, annotations: [annotation] });
+  }
+  return [...groups.values()];
+}
+
 export default async function plugin(bb: BbPluginApi) {
+  const identityResult = bindBbIdentity(bb);
+  if (!identityResult.ok) throw new Error(identityResult.error.message);
+  const identity = identityResult.value;
   const settings = bb.settings.define({
     retentionDays: {
       type: "string",
@@ -314,32 +345,33 @@ export default async function plugin(bb: BbPluginApi) {
         return annotation;
       });
       const sessions = listSessions(db, {});
-      const byAuthor = new Map<string | null, typeof annotations>();
-      for (const annotation of annotations) {
-        const authorId = annotation.authorIdentityId ?? null;
-        const bucket = byAuthor.get(authorId);
-        if (bucket) bucket.push(annotation);
-        else byAuthor.set(authorId, [annotation]);
-      }
-
       const sections: string[] = [];
-      for (const [identityId, authorAnnotations] of byAuthor) {
-        const markdown = renderAnnotations(authorAnnotations, {
+      for (const group of groupByAuthor(annotations)) {
+        const markdown = renderAnnotations(group.annotations, {
           title: "bb UI feedback from Agentation",
           sessions,
         });
-        const profile = identityId
-          ? await getIdentityProfile(bb, identityId)
-          : null;
         sections.push(
-          profile
-            ? `[from=${profile.tag}]\nThis feedback was authored by ${profile.displayName} (${profile.login}).\n\n${markdown}\n[/from=${profile.tag}]`
-            : markdown,
+          wrapAgentationContent(markdown, group.author, bb.pluginId)
+            .map((part) => part.text)
+            .join(""),
         );
       }
 
       return {
         context: `${sections.join("\n\n")}\n\nResolve each item with the \`agentation_mentions_resolve\` tool once it is fixed.`,
+      };
+    },
+  });
+
+  bb.ui.registerMentionProvider({
+    id: CAPTURED_AUTHOR_MENTION_PROVIDER,
+    label: "Captured feedback author",
+    search: () => [],
+    resolve(itemId) {
+      const author = decodeCapturedAuthorMention(itemId);
+      return {
+        context: `Captured feedback author: ${author.presentation.displayName}. This is historical source evidence captured at ${author.capturedAt}, not a live authenticated request.`,
       };
     },
   });
@@ -422,36 +454,13 @@ export default async function plugin(bb: BbPluginApi) {
     broadcast({ type: "routing", sessionId: null });
 
     const sessions = listSessions(db, {});
-    const byAuthor = new Map<string | null, typeof claim.dispatch.annotations>();
-    for (const annotation of claim.dispatch.annotations) {
-      const authorId = annotation.authorIdentityId ?? null;
-      const bucket = byAuthor.get(authorId);
-      if (bucket) bucket.push(annotation);
-      else byAuthor.set(authorId, [annotation]);
-    }
-
-    const profiles = new Map<string, IdentityProfile | null>();
-    await Promise.all(
-      [...byAuthor.keys()].flatMap((identityId) =>
-        identityId
-          ? [
-              getIdentityProfile(bb, identityId).then((profile) => {
-                profiles.set(identityId, profile);
-              }),
-            ]
-          : [],
-      ),
-    );
-
     const input: AgentationPromptInput[] = [];
-    for (const [identityId, annotations] of byAuthor) {
-      const markdown = renderAnnotations(annotations, {
+    for (const group of groupByAuthor(claim.dispatch.annotations)) {
+      const markdown = renderAnnotations(group.annotations, {
         title: "bb UI feedback from Agentation",
         sessions,
       });
-      const profile = identityId ? profiles.get(identityId) ?? null : null;
-      if (profile) input.push(...wrapAgentationContent(markdown, profile));
-      else input.push({ type: "text", text: markdown, mentions: [] });
+      input.push(...wrapAgentationContent(markdown, group.author, bb.pluginId));
     }
     input.push({
       type: "text",
@@ -492,7 +501,42 @@ export default async function plugin(bb: BbPluginApi) {
   // rpc
   // -------------------------------------------------------------------------
 
-  bb.rpc.register(rpcContract, {
+  const identityRpc = identity.rpc.register(identityRpcContract, {
+    pushAnnotations: {
+      origin: "interactive-user",
+      async handle(input, invocation) {
+        if (!getSession(db, input.sessionId)) {
+          throw new Error(`unknown session ${input.sessionId}`);
+        }
+        const session = await identity.server.session(invocation);
+        const author = session.status === "ready"
+          ? captureAnnotationAuthor(session.actor)
+          : unavailableAnnotationAuthor(session.status);
+        for (const item of input.upserts) {
+          upsertAnnotation(db, {
+            sessionId: input.sessionId,
+            annotation: item.annotation,
+            bb: item.bb,
+            author,
+          });
+        }
+        if (input.deletedIds.length > 0) deleteAnnotations(db, input.deletedIds);
+        if (input.upserts.length > 0 || input.deletedIds.length > 0) {
+          broadcast({ type: "annotations", sessionId: input.sessionId });
+        }
+        return sanitizeJson({
+          cursor: sessionCursor(db, input.sessionId),
+          annotations: listAnnotations(db, { sessionId: input.sessionId, limit: null }),
+        });
+      },
+    },
+  });
+  if (!identityRpc.ok) {
+    identity.dispose();
+    throw new Error(identityRpc.error.message);
+  }
+
+  bb.rpc.register(ordinaryRpcContract, {
     async openSession(input) {
       const session = openSession(db, {
         url: input.url,
@@ -509,38 +553,6 @@ export default async function plugin(bb: BbPluginApi) {
         }),
         cursor: sessionCursor(db, session.id),
         config: await readConfig(),
-      });
-    },
-
-    pushAnnotations(input) {
-      // A long-lived bb window caches its session id. The nightly prune can
-      // remove an empty session out from under it, and there is no foreign key
-      // to stop the write — the annotations would land against a session that
-      // no longer exists and disappear from annotation history. Fail instead, so
-      // the client drops the stale id and opens a fresh session.
-      if (!getSession(db, input.sessionId)) {
-        throw new Error(`unknown session ${input.sessionId}`);
-      }
-      for (const item of input.upserts) {
-        upsertAnnotation(db, {
-          sessionId: input.sessionId,
-          annotation: item.annotation,
-          bb: item.bb,
-          authorIdentityId: item.authorIdentityId,
-        });
-      }
-      if (input.deletedIds.length > 0) {
-        deleteAnnotations(db, input.deletedIds);
-      }
-      if (input.upserts.length > 0 || input.deletedIds.length > 0) {
-        broadcast({ type: "annotations", sessionId: input.sessionId });
-      }
-      return sanitizeJson({
-        cursor: sessionCursor(db, input.sessionId),
-        annotations: listAnnotations(db, {
-          sessionId: input.sessionId,
-          limit: null,
-        }),
       });
     },
 
@@ -1245,6 +1257,7 @@ export default async function plugin(bb: BbPluginApi) {
   });
 
   bb.onDispose(() => {
+    identity.dispose();
     disposed = true;
     for (const timer of heartbeats.values()) clearInterval(timer);
     heartbeats.clear();

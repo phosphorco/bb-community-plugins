@@ -18,10 +18,14 @@ plugin.
   mention resolves the current annotation bodies when the prompt is submitted.
 - `bb agentation-mentions send --queue` uses bb's durable queued-message API;
   omitting `--queue` sends immediately.
-- When Identity Boundaries is present, capture stores the author's identity ID
-  and delivery verifies its current profile before adding the standard
-  `[from=<tag>] ... [/from=<tag>]` identity frame. Feedback still works without
-  that optional plugin and is then left unattributed.
+- At annotation admission, the plugin uses the public bb-identity request
+  boundary to capture the authenticated actor's verified presentation and
+  evidence as an immutable historical snapshot. Delivery preserves the visible
+  per-author source frame and an Agentation → Mentions captured-author mention;
+  it does not impersonate that person or turn a later queued send into a native
+  person-authored contribution. If the enhanced provider is unavailable, the
+  frame says so explicitly and feedback remains usable without a guessed
+  fallback identity.
 - Every agent tool and CLI surface uses the distinct `agentation_mentions_*`
   / `bb agentation-mentions` identity, so it can coexist with canonical
   Agentation without tool or command collisions.
@@ -76,12 +80,16 @@ bb agentation-mentions toolbar [on|off]
 
 ## Data, network, and authority
 
-- Annotation bodies, routing, replies, identity IDs, and retention state are
+- Annotation bodies, routing, replies, captured-author snapshots, and retention state are
   stored locally in this plugin's bb database/KV namespace.
 - The toolbar and review panel use bb's plugin RPC, realtime, and same-origin
   event stream. The plugin contacts no third-party service of its own.
 - Delivery mutates only the target bb thread: immediate mode sends a prompt;
-  queue mode adds a queued prompt. Identity lookup is read-only and optional.
+  queue mode adds a queued prompt. Captured attribution is source-labelled
+  provenance, not native accepted authorship. Older rows retain their exact
+  legacy identity ID but are shown as unresolved unless an explicit, separately
+  verified recovery path is introduced; the plugin never rewrites them to the
+  current actor.
 - Agent tools can change annotation status and replies. They do not edit source
   code themselves; the calling agent's normal permissions govern any fix.
 

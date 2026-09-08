@@ -1,12 +1,14 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   definePluginApp,
+  useComposer,
   useRealtime,
   useRealtimeConnectionState,
   useRpc,
 } from "@get-bb/plugin-sdk/app";
+import type { PluginRealtimeConnectionState } from "@get-bb/plugin-sdk/app";
 
-import type { AnalyticsFormat, AnalyticsVisualization } from "./bundle-contract.ts";
+import type { AnalyticsBundle, AnalyticsVisualization } from "./bundle-contract.ts";
 import {
   getBrowserAnalyticsEngine,
   type BrowserDashboardResult,
@@ -15,19 +17,17 @@ import {
 import type { AnalyticsBundleResponse, AnalyticsCatalogResponse, rpcContract } from "./rpc-contract.ts";
 import { ChartPaintingAnimation } from "./chart-painting-animation.tsx";
 import { EChartsFigure } from "./echarts-figure.tsx";
+import { compileEChartsFigure, type AnalyticsCompiledFigure } from "./echarts-options.ts";
+import { useAnalyticsChartEnvironment } from "./chart-environment.ts";
+import { downloadDataUrl, downloadText, rowsToCsv } from "./analytics-export.ts";
+import { formatAnalyticsValue } from "./formatting.ts";
+import { describeIndexStatus } from "./analytics-status.ts";
+import type { ChartIntent, FigureRuntimeController, InteractiveDatumMeta } from "./analytics-model.ts";
 import "./app.css";
 
 type AnalyticsDashboard = AnalyticsBundleResponse & BrowserDashboardResult;
 type QueryResult = BrowserQueryResult;
 type QueryRow = QueryResult["rows"][number];
-type IndexMetadata = {
-  generationId?: number | null;
-  snapshotUpdatedAt?: number | null;
-  lastFullReconciliationAt?: number | null;
-  degraded?: boolean;
-  lastError?: string | null;
-  error?: string | null;
-};
 
 const RANGE_OPTIONS = [
   { value: 1, label: "24 hours" },
@@ -74,7 +74,7 @@ function AnalyticsPanel() {
       const selected = await rpc.call("getBundle", { bundleId: selectedBundleId });
       const engine = await getBrowserAnalyticsEngine();
       const result = await engine.loadAndRun(selected.bundle, selectedRangeDays, {
-        generationId: indexGeneration(selectedIndex),
+        generationId: selectedIndex?.generationId ?? null,
         asOf: indexAsOf(selectedIndex),
         signal: controller.signal,
       });
@@ -165,7 +165,7 @@ function AnalyticsPanel() {
   return (
     <main className="analytics-shell">
       <div className="analytics-toolbar">
-        <label>
+        <label className="analytics-field">
           <span>Dashboard</span>
           <select value={bundleId} onChange={(event) => selectBundle(event.target.value)}>
             {(catalog?.bundles ?? []).map((bundle) => (
@@ -173,14 +173,21 @@ function AnalyticsPanel() {
             ))}
           </select>
         </label>
-        <label>
+        <label className="analytics-field">
           <span>Range</span>
           <select value={rangeDays} onChange={(event) => selectRange(Number(event.target.value))}>
             {RANGE_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
           </select>
         </label>
-        <button type="button" className="analytics-refresh" disabled={indexRefreshing} onClick={() => void refreshIndex()}>
-          {indexRefreshing ? "Refreshing…" : "Refresh data"}
+        <button
+          type="button"
+          className="analytics-refresh"
+          disabled={indexRefreshing}
+          aria-busy={indexRefreshing}
+          onClick={() => void refreshIndex()}
+        >
+          <RefreshIcon spinning={indexRefreshing} />
+          <span>Refresh</span>
         </button>
       </div>
 
@@ -219,6 +226,10 @@ function AnalyticsPanel() {
 }
 
 const Dashboard = memo(function Dashboard({ dashboard, loading, refreshing }: { dashboard: AnalyticsDashboard; loading: boolean; refreshing: boolean }) {
+  const rpc = useRpc<typeof rpcContract>();
+  const composer = useComposer();
+  const chartEnvironment = useAnalyticsChartEnvironment();
+  const [figureMenu, setFigureMenu] = useState<FigureMenuState | null>(null);
   const resultsById = useMemo(
     () => new Map(dashboard.results.map((result) => [result.id, result])),
     [dashboard.results],
@@ -227,9 +238,34 @@ const Dashboard = memo(function Dashboard({ dashboard, loading, refreshing }: { 
     () => new Map(dashboard.bundle.visualizations.map((visualization) => [visualization.id, visualization])),
     [dashboard.bundle.visualizations],
   );
+  const queriesById = useMemo(
+    () => new Map(dashboard.bundle.queries.map((query) => [query.id, query])),
+    [dashboard.bundle.queries],
+  );
+
+  const createReference = useCallback(async (state: FigureMenuState) => rpc.call("createReference", {
+    bundleId: dashboard.bundle.id,
+    queryId: state.visualization.queryId,
+    visualizationId: state.visualization.id,
+    resultGeneration: state.result.generation,
+    snapshotGenerationId: dashboard.generationId,
+    snapshotUpdatedAt: dashboard.asOf,
+    rangeDays: dashboard.rangeDays,
+    coverage: state.result.extent,
+    selection: state.datum == null ? null : {
+      datumKey: state.datum.datumKey,
+      label: state.datum.label,
+      row: {
+        [state.visualization.x]: state.datum.row[state.visualization.x] ?? null,
+        [state.visualization.y]: state.datum.row[state.visualization.y] ?? null,
+      },
+      predicate: state.datum.predicate,
+    },
+  }), [dashboard, rpc]);
 
   return (
     <div className="analytics-dashboard" aria-busy={loading}>
+      <span ref={chartEnvironment.probeRef} className="analytics-echart-theme-probe" aria-hidden="true" />
       <header className="analytics-dashboard-heading">
         <div>
           <div className="analytics-title-line">
@@ -255,7 +291,11 @@ const Dashboard = memo(function Dashboard({ dashboard, loading, refreshing }: { 
               key={visualization.id}
               visualization={visualization}
               result={resultsById.get(visualization.queryId) ?? null}
+              query={queriesById.get(visualization.queryId) ?? null}
               width={item.width}
+              chartTheme={chartEnvironment.theme}
+              reducedMotion={chartEnvironment.reducedMotion}
+              onOpenMenu={setFigureMenu}
             />
           );
         })}
@@ -274,6 +314,33 @@ const Dashboard = memo(function Dashboard({ dashboard, loading, refreshing }: { 
           ))}
         </div>
       </details>
+      {figureMenu != null && (
+        <FigureContextMenu
+          state={figureMenu}
+          lineage={{
+            bundleId: dashboard.bundle.id,
+            snapshotGenerationId: dashboard.generationId,
+            snapshotUpdatedAt: dashboard.asOf,
+            rangeDays: dashboard.rangeDays,
+          }}
+          onClose={() => setFigureMenu(null)}
+          onCopyReference={async () => {
+            const reference = await createReference(figureMenu);
+            await navigator.clipboard.writeText(reference.token);
+            return `Copied ${reference.token}`;
+          }}
+          onAddToChat={async () => {
+            const reference = await createReference(figureMenu);
+            composer.insertMention({
+              provider: "analytics-reference",
+              id: reference.id,
+              label: `Analytics: ${reference.label}`,
+            });
+            composer.focus();
+            setFigureMenu(null);
+          }}
+        />
+      )}
     </div>
   );
 });
@@ -281,13 +348,47 @@ const Dashboard = memo(function Dashboard({ dashboard, loading, refreshing }: { 
 const VisualizationCard = memo(function VisualizationCard({
   visualization,
   result,
+  query,
   width,
+  chartTheme,
+  reducedMotion,
+  onOpenMenu,
 }: {
   visualization: AnalyticsVisualization;
   result: QueryResult | null;
+  query: AnalyticsBundle["queries"][number] | null;
   width: "third" | "half" | "full";
+  chartTheme: ReturnType<typeof useAnalyticsChartEnvironment>["theme"];
+  reducedMotion: boolean;
+  onOpenMenu: (menu: FigureMenuState) => void;
 }) {
   const rows = result?.rows ?? [];
+  const chartVisualization = visualization.kind === "bar" || visualization.kind === "line" ? visualization : null;
+  const compilation = useMemo(() => {
+    if (chartVisualization == null || result == null) return { figure: null, error: null };
+    try {
+      return { figure: compileEChartsFigure(chartVisualization, result, chartTheme, reducedMotion), error: null };
+    } catch (cause) {
+      return { figure: null, error: cause instanceof Error ? cause.message : "This result cannot be plotted." };
+    }
+  },
+  [chartTheme, chartVisualization, reducedMotion, result]);
+  const figure = compilation.figure;
+  const controller = useRef<FigureRuntimeController | null>(null);
+  const openMenu = useCallback((intent: ChartIntent, restoreTo?: HTMLElement | null) => {
+    if (figure == null || result == null || query == null) return;
+    onOpenMenu({
+      figure,
+      result,
+      visualization: figure.visualization,
+      query,
+      datum: intent.target.kind === "datum" ? intent.target.datum : null,
+      clientX: intent.clientX,
+      clientY: intent.clientY,
+      controller: controller.current,
+      restoreTo: restoreTo ?? null,
+    });
+  }, [figure, onOpenMenu, query, result]);
   return (
     <section className="analytics-card" data-width={width}>
       {visualization.kind === "metric" ? (
@@ -296,14 +397,40 @@ const VisualizationCard = memo(function VisualizationCard({
         <>
           <header>
             <h2>{visualization.title}</h2>
-            {result != null && <span>{result.cached ? "reused" : `${result.elapsedMs.toLocaleString()} ms`}</span>}
+            <div className="analytics-card-heading-actions">
+              {figure != null && result != null && query != null && (
+                <button
+                  type="button"
+                  aria-label={`Actions for ${visualization.title}`}
+                  onClick={(event) => {
+                    const bounds = event.currentTarget.getBoundingClientRect();
+                    openMenu({
+                      kind: "open-context-menu",
+                      figureId: visualization.id,
+                      clientX: bounds.right,
+                      clientY: bounds.bottom,
+                      target: { kind: "figure" },
+                      source: "keyboard",
+                    }, event.currentTarget);
+                  }}
+                >•••</button>
+              )}
+              {result != null && <span>{result.cached ? "reused" : `${result.elapsedMs.toLocaleString()} ms`}</span>}
+            </div>
           </header>
-          {rows.length === 0 ? (
+          {compilation.error != null ? (
+            <p className="analytics-card-empty">{compilation.error}</p>
+          ) : rows.length === 0 ? (
             <p className="analytics-card-empty">No matching activity in this range.</p>
           ) : visualization.kind === "table" ? (
-            <ResultTable visualization={visualization} rows={rows} />
+            result != null && <ResultTable visualization={visualization} result={result} />
           ) : (
-            <EChartsFigure visualization={visualization} rows={rows} />
+            figure != null && (
+              <>
+                <EChartsFigure figure={figure} onIntent={openMenu} onController={(next) => { controller.current = next; }} />
+                <ChartDataDisclosure figure={figure} onOpenMenu={openMenu} />
+              </>
+            )
           )}
         </>
       )}
@@ -318,7 +445,7 @@ function Metric({ visualization, row }: {
   return (
     <div className="analytics-metric">
       <span>{visualization.title}</span>
-      <strong>{formatValue(row?.[visualization.value] ?? null, visualization.format)}</strong>
+      <strong>{formatAnalyticsValue(row?.[visualization.value] ?? null, visualization.format)}</strong>
       {visualization.detail != null && <small>{String(row?.[visualization.detail] ?? "")}</small>}
     </div>
   );
@@ -326,11 +453,14 @@ function Metric({ visualization, row }: {
 
 function ResultTable({
   visualization,
-  rows,
+  result,
 }: {
   visualization: Extract<AnalyticsVisualization, { kind: "table" }>;
-  rows: QueryRow[];
+  result: QueryResult;
 }) {
+  if (visualization.id === "native-command-outcomes-table") {
+    return <CommandOutcomesTable result={result} />;
+  }
   return (
     <div className="analytics-table-scroll">
       <table>
@@ -338,10 +468,10 @@ function ResultTable({
           <tr>{visualization.columns.map((column) => <th key={column.field} scope="col">{column.label}</th>)}</tr>
         </thead>
         <tbody>
-          {rows.map((row, index) => (
-            <tr key={`${String(row[visualization.columns[0]?.field ?? ""] ?? "row")}:${index}`}>
+          {result.rows.map((row, index) => (
+            <tr key={result.datumKeys[index]}>
               {visualization.columns.map((column) => (
-                <td key={column.field}>{formatValue(row[column.field] ?? null, column.format)}</td>
+                <td key={column.field}>{formatAnalyticsValue(row[column.field] ?? null, column.format)}</td>
               ))}
             </tr>
           ))}
@@ -351,32 +481,477 @@ function ResultTable({
   );
 }
 
+type CommandInvestigationLevel = "binary" | "argument-1" | "signature";
+type CommandInvestigationSlice = "all" | "eligible" | "help" | "observed-not-attributed" | "shell-wrapped" | "composite";
+type CommandInvestigationSort = "calls" | "eligible" | "attributed" | "rate" | "help" | "observed" | "notAttributed";
+
+type CommandInvestigationRow = Readonly<{
+  key: string;
+  label: string;
+  calls: number;
+  eligible: number;
+  attributed: number;
+  help: number;
+  observed: number;
+  notAttributed: number;
+  shellWrapped: number;
+  composite: number;
+}>;
+
+const COMMAND_LEVEL_LABELS: Readonly<Record<CommandInvestigationLevel, string>> = {
+  binary: "Binary",
+  "argument-1": "Binary + argument 1",
+  signature: "Full safe signature",
+};
+
+const COMMAND_SLICE_LABELS: Readonly<Record<CommandInvestigationSlice, string>> = {
+  all: "All executions",
+  eligible: "Eligible direct",
+  help: "Contains --help",
+  "observed-not-attributed": "Observed, not attributed",
+  "shell-wrapped": "Shell wrapped",
+  composite: "Composite or unparsed",
+};
+
+const COMMAND_SORT_LABELS: Readonly<Record<CommandInvestigationSort, string>> = {
+  calls: "Calls",
+  eligible: "Eligible direct",
+  attributed: "Attributed failures",
+  rate: "Attributed rate",
+  help: "Help",
+  observed: "Observed failed/nonzero",
+  notAttributed: "Observed, not attributed",
+};
+
+function CommandOutcomesTable({ result }: { result: QueryResult }) {
+  const [level, setLevel] = useState<CommandInvestigationLevel>("signature");
+  const [slice, setSlice] = useState<CommandInvestigationSlice>("all");
+  const [search, setSearch] = useState("");
+  const [sort, setSort] = useState<CommandInvestigationSort>("calls");
+  const [direction, setDirection] = useState<"ascending" | "descending">("descending");
+  const rows = useMemo(() => commandInvestigationRows(result.rows, level), [level, result.rows]);
+  const displayedRows = useMemo(() => {
+    const normalizedSearch = search.trim().toLocaleLowerCase();
+    return rows
+      .filter((row) => {
+        if (normalizedSearch !== "" && !row.label.toLocaleLowerCase().includes(normalizedSearch)) return false;
+        if (slice === "eligible") return row.eligible > 0;
+        if (slice === "help") return row.help > 0;
+        if (slice === "observed-not-attributed") return row.notAttributed > 0;
+        if (slice === "shell-wrapped") return row.shellWrapped > 0;
+        if (slice === "composite") return row.composite > 0;
+        return true;
+      })
+      .toSorted((left, right) => {
+        const order = direction === "descending" ? -1 : 1;
+        const delta = commandSortValue(left, sort) - commandSortValue(right, sort);
+        return delta === 0 ? left.label.localeCompare(right.label) : order * delta;
+      });
+  }, [direction, rows, search, slice, sort]);
+  const setSortColumn = useCallback((next: CommandInvestigationSort) => {
+    if (next === sort) setDirection((current) => current === "descending" ? "ascending" : "descending");
+    else {
+      setSort(next);
+      setDirection("descending");
+    }
+  }, [sort]);
+  const reset = useCallback(() => {
+    setLevel("signature");
+    setSlice("all");
+    setSearch("");
+    setSort("calls");
+    setDirection("descending");
+  }, []);
+  const resultScope = result.extent.kind === "exact"
+    ? `${result.extent.rows.toLocaleString()} signature rows`
+    : `the first ${result.rows.length.toLocaleString()} of at least ${result.extent.rows.toLocaleString()} signature rows`;
+
+  return (
+    <div className="analytics-command-investigation">
+      <p className="analytics-command-investigation__description">
+        Frequency-first investigation index. Attributed rates use only eligible, direct executions; composite, wrapped, help, and unparsed failures are observed but not attributed to the displayed first segment.
+      </p>
+      <div className="analytics-command-investigation__controls">
+        <label>
+          <span>Group by</span>
+          <select value={level} onChange={(event) => setLevel(event.target.value as CommandInvestigationLevel)}>
+            {Object.entries(COMMAND_LEVEL_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+          </select>
+        </label>
+        <label>
+          <span>Slice</span>
+          <select value={slice} onChange={(event) => setSlice(event.target.value as CommandInvestigationSlice)}>
+            {Object.entries(COMMAND_SLICE_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+          </select>
+        </label>
+        <label className="analytics-command-investigation__search">
+          <span>Find binary or safe argument</span>
+          <input value={search} onChange={(event) => setSearch(event.target.value)} type="search" placeholder="e.g. rg or --help" />
+        </label>
+        <button type="button" onClick={reset}>Reset</button>
+      </div>
+      <div className="analytics-table-scroll">
+        <table>
+          <caption>Showing {displayedRows.length.toLocaleString()} grouped rows from {resultScope}; source ranking is Calls descending.</caption>
+          <thead>
+            <tr>
+              <th scope="col">{COMMAND_LEVEL_LABELS[level]}</th>
+              <CommandSortHeader column="calls" active={sort} direction={direction} onSort={setSortColumn} />
+              <CommandSortHeader column="eligible" active={sort} direction={direction} onSort={setSortColumn} />
+              <CommandSortHeader column="attributed" active={sort} direction={direction} onSort={setSortColumn} />
+              <CommandSortHeader column="rate" active={sort} direction={direction} onSort={setSortColumn} />
+              <CommandSortHeader column="help" active={sort} direction={direction} onSort={setSortColumn} />
+              <CommandSortHeader column="observed" active={sort} direction={direction} onSort={setSortColumn} />
+              <CommandSortHeader column="notAttributed" active={sort} direction={direction} onSort={setSortColumn} />
+              <th scope="col">Context</th>
+            </tr>
+          </thead>
+          <tbody>
+            {displayedRows.map((row) => (
+              <tr key={row.key}>
+                <th scope="row">{row.label}</th>
+                <td>{formatAnalyticsValue(row.calls, "integer")}</td>
+                <td>{formatAnalyticsValue(row.eligible, "integer")}</td>
+                <td>{row.eligible === 0 ? "—" : `${formatAnalyticsValue(row.attributed, "integer")} / ${formatAnalyticsValue(row.eligible, "integer")}`}</td>
+                <td>{row.eligible === 0 ? "—" : formatAnalyticsValue(100 * row.attributed / row.eligible, "percent")}</td>
+                <td>{formatAnalyticsValue(row.help, "integer")}</td>
+                <td>{formatAnalyticsValue(row.observed, "integer")}</td>
+                <td>{formatAnalyticsValue(row.notAttributed, "integer")}</td>
+                <td>{commandContext(row)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function CommandSortHeader({
+  column,
+  active,
+  direction,
+  onSort,
+}: {
+  column: CommandInvestigationSort;
+  active: CommandInvestigationSort;
+  direction: "ascending" | "descending";
+  onSort: (column: CommandInvestigationSort) => void;
+}) {
+  const isActive = column === active;
+  return (
+    <th scope="col" aria-sort={isActive ? direction : "none"}>
+      <button type="button" onClick={() => onSort(column)}>
+        {COMMAND_SORT_LABELS[column]}{isActive ? direction === "descending" ? " ↓" : " ↑" : ""}
+      </button>
+    </th>
+  );
+}
+
+function commandInvestigationRows(source: readonly QueryRow[], level: CommandInvestigationLevel): CommandInvestigationRow[] {
+  const groups = new Map<string, CommandInvestigationRow>();
+  for (const row of source) {
+    const binary = commandText(row.command_binary);
+    const argument1 = commandText(row.command_argument_1);
+    const argument2 = commandText(row.command_argument_2);
+    const label = level === "binary"
+      ? binary
+      : level === "argument-1"
+        ? `${binary} ${argument1}`
+        : `${binary} ${argument1}${argument2 === "—" ? "" : ` ${argument2}`}`;
+    const existing = groups.get(label);
+    const next: CommandInvestigationRow = existing ?? {
+      key: label,
+      label,
+      calls: 0,
+      eligible: 0,
+      attributed: 0,
+      help: 0,
+      observed: 0,
+      notAttributed: 0,
+      shellWrapped: 0,
+      composite: 0,
+    };
+    const merged = {
+      ...next,
+      calls: next.calls + commandNumber(row.calls),
+      eligible: next.eligible + commandNumber(row.eligible_executions),
+      attributed: next.attributed + commandNumber(row.attributed_actual_failures),
+      help: next.help + commandNumber(row.contains_help_calls),
+      observed: next.observed + commandNumber(row.observed_failed_or_nonzero_executions),
+      notAttributed: next.notAttributed + commandNumber(row.observed_not_attributed_executions),
+      shellWrapped: next.shellWrapped + commandNumber(row.shell_wrapped_executions),
+      composite: next.composite + commandNumber(row.composite_or_unparsed_executions),
+    };
+    groups.set(label, merged);
+  }
+  return [...groups.values()];
+}
+
+function commandSortValue(row: CommandInvestigationRow, sort: CommandInvestigationSort): number {
+  if (sort === "calls") return row.calls;
+  if (sort === "eligible") return row.eligible;
+  if (sort === "attributed") return row.attributed;
+  if (sort === "rate") return row.eligible === 0 ? -1 : row.attributed / row.eligible;
+  if (sort === "help") return row.help;
+  if (sort === "observed") return row.observed;
+  return row.notAttributed;
+}
+
+function commandContext(row: CommandInvestigationRow): string {
+  const context = [
+    row.eligible === row.calls ? "direct eligible" : null,
+    row.help > 0 ? `${row.help} help` : null,
+    row.shellWrapped > 0 ? `${row.shellWrapped} shell wrapped` : null,
+    row.composite > 0 ? `${row.composite} composite/unparsed` : null,
+  ].filter((value): value is string => value != null);
+  return context.length === 0 ? "—" : context.join(" · ");
+}
+
+function commandText(value: QueryRow[string]): string {
+  return typeof value === "string" && value !== "" ? value : "—";
+}
+
+function commandNumber(value: QueryRow[string]): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
+type FigureMenuState = {
+  figure: AnalyticsCompiledFigure;
+  result: QueryResult;
+  visualization: Extract<AnalyticsVisualization, { kind: "bar" | "line" }>;
+  query: AnalyticsBundle["queries"][number];
+  datum: InteractiveDatumMeta | null;
+  clientX: number;
+  clientY: number;
+  controller: FigureRuntimeController | null;
+  restoreTo: HTMLElement | null;
+};
+
+function ChartDataDisclosure({
+  figure,
+  onOpenMenu,
+}: {
+  figure: AnalyticsCompiledFigure;
+  onOpenMenu: (intent: ChartIntent, restoreTo?: HTMLElement | null) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const total = figure.total.kind === "exact"
+    ? `${figure.total.rows.toLocaleString()}`
+    : `at least ${figure.total.rows.toLocaleString()}`;
+  return (
+    <details className="analytics-chart-data" onToggle={(event) => setOpen(event.currentTarget.open)}>
+      <summary>Exact plotted data · showing {figure.plottedCount.toLocaleString()} of {total}</summary>
+      {open && <div className="analytics-table-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th scope="col">{figure.visualization.x}</th>
+              <th scope="col">{figure.visualization.y}</th>
+              <th scope="col"><span className="analytics-visually-hidden">Actions</span></th>
+            </tr>
+          </thead>
+          <tbody>
+            {figure.plottedRows.map((row, index) => {
+              const datum = figure.dataIndex.get(index);
+              return (
+                <tr key={figure.plottedDatumKeys[index]}>
+                  <td>{String(row[figure.visualization.x] ?? "—")}</td>
+                  <td>{formatAnalyticsValue(row[figure.visualization.y], figure.format)}</td>
+                  <td>
+                    {datum != null && (
+                      <button
+                        type="button"
+                        onClick={(event) => {
+                          const bounds = event.currentTarget.getBoundingClientRect();
+                          onOpenMenu({
+                            kind: "open-context-menu",
+                            figureId: figure.visualization.id,
+                            clientX: bounds.right,
+                            clientY: bounds.bottom,
+                            target: { kind: "datum", datum },
+                            source: "keyboard",
+                          }, event.currentTarget);
+                        }}
+                      >Actions</button>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>}
+    </details>
+  );
+}
+
+function FigureContextMenu({
+  state,
+  lineage,
+  onClose,
+  onCopyReference,
+  onAddToChat,
+}: {
+  state: FigureMenuState;
+  lineage: {
+    bundleId: string;
+    snapshotGenerationId: number | null;
+    snapshotUpdatedAt: number | null;
+    rangeDays: number;
+  };
+  onClose: () => void;
+  onCopyReference: () => Promise<string>;
+  onAddToChat: () => Promise<void>;
+}) {
+  const menu = useRef<HTMLDivElement | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
+  const [pending, setPending] = useState(false);
+  useEffect(() => {
+    const target = menu.current;
+    const first = target?.querySelector<HTMLButtonElement>("button:not(:disabled)");
+    first?.focus();
+    const dismiss = (event: PointerEvent) => {
+      if (target != null && !target.contains(event.target as Node)) onClose();
+    };
+    document.addEventListener("pointerdown", dismiss);
+    return () => {
+      document.removeEventListener("pointerdown", dismiss);
+      if (state.restoreTo?.isConnected) state.restoreTo.focus();
+    };
+  }, [onClose, state.restoreTo]);
+
+  const run = async (action: () => Promise<string | void>) => {
+    setPending(true);
+    setMessage(null);
+    try {
+      const next = await action();
+      if (typeof next === "string") setMessage(next);
+    } catch (cause) {
+      setMessage(cause instanceof Error ? cause.message : "That action could not be completed.");
+    } finally {
+      setPending(false);
+    }
+  };
+  const filename = safeFilename(`${state.visualization.id}-${state.datum?.label ?? "figure"}`);
+  const left = Math.max(8, Math.min(state.clientX, window.innerWidth - 248));
+  const top = Math.max(8, Math.min(state.clientY, window.innerHeight - 300));
+  return (
+    <div
+      ref={menu}
+      className="analytics-context-menu"
+      role="menu"
+      aria-label={`Actions for ${state.datum?.label ?? state.visualization.title}`}
+      style={{ left, top }}
+      onContextMenu={(event) => event.preventDefault()}
+      onKeyDown={(event) => {
+        if (event.key === "Escape") { event.preventDefault(); onClose(); return; }
+        if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
+        event.preventDefault();
+        const items = [...(menu.current?.querySelectorAll<HTMLButtonElement>("button:not(:disabled)") ?? [])];
+        const current = items.indexOf(document.activeElement as HTMLButtonElement);
+        const direction = event.key === "ArrowDown" ? 1 : -1;
+        items[(current + direction + items.length) % items.length]?.focus();
+      }}
+    >
+      <strong>{state.datum?.label ?? state.visualization.title}</strong>
+      {state.datum != null && <span>{formatAnalyticsValue(state.datum.value, state.visualization.format)}</span>}
+      <button role="menuitem" type="button" disabled={pending} onClick={() => void run(onAddToChat)}>Add reference to chat</button>
+      <button role="menuitem" type="button" disabled={pending} onClick={() => void run(onCopyReference)}>Copy reference token</button>
+      <button role="menuitem" type="button" onClick={() => {
+        downloadText(`${filename}-plotted.csv`, rowsToCsv(state.figure.accessibleData), "text/csv;charset=utf-8");
+        onClose();
+      }}>Export plotted CSV</button>
+      <button role="menuitem" type="button" onClick={() => {
+        downloadText(`${filename}-result.csv`, rowsToCsv(state.figure.exportData), "text/csv;charset=utf-8");
+        onClose();
+      }}>Export complete bounded result CSV</button>
+      <button role="menuitem" type="button" disabled={state.controller == null || pending} onClick={() => void run(async () => {
+        const svg = await state.controller?.exportSvg();
+        if (svg == null) throw new Error("The chart renderer is not ready to export.");
+        downloadDataUrl(`${filename}.svg`, svg);
+        downloadText(`${filename}-lineage.json`, JSON.stringify({
+          version: 1,
+          exportedAt: new Date().toISOString(),
+          ...lineage,
+          queryId: state.query.id,
+          querySql: state.query.sql,
+          visualizationId: state.visualization.id,
+          resultGeneration: state.result.generation,
+          coverage: state.result.extent,
+          plottedRows: state.figure.plottedCount,
+        }, null, 2), "application/json;charset=utf-8");
+        onClose();
+      })}>Export SVG + lineage</button>
+      {message != null && <p role="status">{message}</p>}
+    </div>
+  );
+}
+
+function safeFilename(value: string): string {
+  const normalized = value.toLowerCase().replace(/[^a-z0-9_-]+/g, "-").replace(/^-+|-+$/g, "");
+  return normalized.slice(0, 80) || "analytics";
+}
+
+function RefreshIcon({ spinning }: { spinning: boolean }) {
+  return (
+    <svg
+      viewBox="0 0 16 16"
+      width="14"
+      height="14"
+      aria-hidden="true"
+      className={spinning ? "analytics-refresh-icon is-spinning" : "analytics-refresh-icon"}
+    >
+      <path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.89" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+      <path d="M13.5 2.3v3.9h-3.9" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
 function IndexStatus({
   index,
   connection,
   refreshing,
 }: {
   index: AnalyticsCatalogResponse["index"] | null;
-  connection: string;
+  connection: PluginRealtimeConnectionState;
   refreshing: boolean;
 }) {
+  const [detailsOpen, setDetailsOpen] = useState(false);
   if (index == null) return null;
-  const metadata = index as AnalyticsCatalogResponse["index"] & IndexMetadata;
-  const asOf = indexAsOf(index);
-  const error = metadata.lastError ?? metadata.error ?? null;
-  const degraded = metadata.degraded === true || index.status === "error" || index.truncatedThreads > 0 || connection !== "connected";
-  const freshness = asOf == null ? "No snapshot yet" : formatAsOf(asOf);
+  const view = describeIndexStatus({
+    status: index.status,
+    refreshing,
+    degraded: index.degraded,
+    lastError: index.lastError,
+    connection,
+    freshnessLabel: formatAsOf(indexAsOf(index)),
+  });
+  const hasDetails = index.factCount > 0 || index.loadedThreads > 0 || index.lastFullReconciliationAt != null;
   return (
-    <div className="analytics-index-status" data-state={index.status} data-degraded={degraded || undefined} role={error != null ? "alert" : undefined}>
-      <span data-state={index.status} aria-hidden="true" />
-      <strong>{refreshing || index.status === "indexing" ? "Refreshing capability snapshot" : index.status === "error" ? "Capability snapshot unavailable" : freshness}</strong>
-      {(refreshing || index.status === "indexing" || index.status === "error") && <span>{freshness}</span>}
-      <span>{index.factCount.toLocaleString()} facts · {index.loadedThreads.toLocaleString()} threads</span>
-      {index.truncatedThreads > 0 && <span>{index.truncatedThreads} threads reached the 500-event coverage cap</span>}
-      {metadata.degraded && <span>Degraded snapshot coverage</span>}
-      {metadata.lastFullReconciliationAt != null && <span>Last full reconciliation: {formatAsOf(metadata.lastFullReconciliationAt)}</span>}
-      {error != null && <span>{error}</span>}
-      {connection !== "connected" && <span>Realtime disconnected</span>}
+    <div className="analytics-index-status" data-tone={view.tone} role={view.errorText != null ? "alert" : undefined}>
+      <span className="analytics-index-status-dot" data-tone={view.tone} aria-hidden="true" />
+      <strong>{view.headline}</strong>
+      {view.note != null && <span className="analytics-index-status-note">{view.note}</span>}
+      {view.errorText != null && <span className="analytics-index-status-error">{view.errorText}</span>}
+      {hasDetails && (
+        <button
+          type="button"
+          className="analytics-index-status-toggle"
+          aria-expanded={detailsOpen}
+          aria-controls="analytics-index-status-detail"
+          onClick={() => setDetailsOpen((open) => !open)}
+        >
+          {detailsOpen ? "Hide details" : "Details"}
+        </button>
+      )}
+      {hasDetails && detailsOpen && (
+        <div id="analytics-index-status-detail" className="analytics-index-status-detail">
+          <span>{index.factCount.toLocaleString()} facts · {index.loadedThreads.toLocaleString()} threads</span>
+          {index.truncatedThreads > 0 && <span>{index.truncatedThreads.toLocaleString()} threads capped at 500 events</span>}
+          {index.lastFullReconciliationAt != null && <span>Last full reconciliation {formatAsOf(index.lastFullReconciliationAt)}</span>}
+        </div>
+      )}
     </div>
   );
 }
@@ -401,35 +976,14 @@ function LoadingState({ title, detail }: { title: string; detail: string }) {
   );
 }
 
-function formatValue(value: string | number | boolean | null, format: AnalyticsFormat): string {
-  if (value == null || value === "") return "—";
-  if (format === "text") return String(value);
-  const number = typeof value === "number" ? value : Number(value);
-  if (!Number.isFinite(number)) return String(value);
-  if (format === "integer") return Math.round(number).toLocaleString();
-  if (format === "percent") return `${number.toFixed(number >= 10 ? 1 : 2)}%`;
-  if (format === "duration") {
-    if (number < 1_000) return `${Math.round(number)} ms`;
-    if (number < 60_000) return `${(number / 1_000).toFixed(1)} s`;
-    return `${(number / 60_000).toFixed(1)} min`;
-  }
-  return number.toLocaleString(undefined, { maximumFractionDigits: 2 });
-}
-
 function formatBytes(bytes: number): string {
   if (bytes < 1_024) return `${bytes.toLocaleString()} B`;
   if (bytes < 1_048_576) return `${(bytes / 1_024).toFixed(1)} KiB`;
   return `${(bytes / 1_048_576).toFixed(1)} MiB`;
 }
 
-function indexGeneration(index: AnalyticsCatalogResponse["index"] | null | undefined): number | null {
-  const generationId = (index as (AnalyticsCatalogResponse["index"] & IndexMetadata) | null | undefined)?.generationId;
-  return generationId != null && Number.isSafeInteger(generationId) && generationId >= 0 ? generationId : null;
-}
-
 function indexAsOf(index: AnalyticsCatalogResponse["index"] | null | undefined): number | null {
-  const metadata = index as (AnalyticsCatalogResponse["index"] & IndexMetadata) | null | undefined;
-  return metadata?.snapshotUpdatedAt ?? index?.completedAt ?? null;
+  return index?.snapshotUpdatedAt ?? index?.completedAt ?? null;
 }
 
 function formatAsOf(timestamp: number | null): string {

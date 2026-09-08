@@ -1,6 +1,15 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
 
+import { describeCommandExecution, type CommandExecutionShape } from "./command-signature.ts";
+
+export const FACT_PROJECTION_VERSION = 4;
+
+export interface TurnTiming {
+  startedAtMs: number;
+  completedAtMs: number;
+}
+
 export interface ToolExecutionFact {
   sourceEventId: string;
   threadId: string;
@@ -9,6 +18,8 @@ export interface ToolExecutionFact {
   projectId: string;
   providerId: string;
   createdAtMs: number;
+  turnStartedAtMs: number | null;
+  turnCompletedAtMs: number | null;
   capabilityKind: "tool" | "command" | "file_read";
   capabilityKey: string;
   status: "completed" | "failed" | "interrupted" | "unknown";
@@ -16,6 +27,13 @@ export interface ToolExecutionFact {
   failed: boolean;
   errorClass: string | null;
   errorSignature: string | null;
+  commandBinary: string | null;
+  commandArgument1: string | null;
+  commandArgument2: string | null;
+  commandUsesHelp: boolean;
+  commandShape: CommandExecutionShape | null;
+  commandShellWrapped: boolean;
+  commandAttributionEligible: boolean;
 }
 
 const itemSchema = z.discriminatedUnion("type", [
@@ -32,6 +50,7 @@ const itemSchema = z.discriminatedUnion("type", [
     status: z.enum(["completed", "failed", "interrupted", "pending"]),
     durationMs: z.number().nonnegative().optional(),
     exitCode: z.number().optional(),
+    command: z.string().optional(),
   }).passthrough(),
   z.object({
     type: z.literal("fileRead"),
@@ -51,6 +70,38 @@ const completedEventSchema = z.object({
   type: z.literal("item/completed"),
   data: z.object({ item: itemSchema }).passthrough(),
 }).passthrough();
+
+const turnBoundaryEventSchema = z.object({
+  createdAt: z.number(),
+  scope: z.object({ kind: z.literal("turn"), turnId: z.string() }),
+  type: z.enum(["turn/started", "turn/completed"]),
+}).passthrough();
+
+/**
+ * Retain only turns with both lifecycle boundaries. A partial event page must
+ * not turn an incomplete timing observation into a guessed turn duration.
+ */
+export function collectTurnTimings(events: readonly unknown[]): ReadonlyMap<string, TurnTiming> {
+  const partial = new Map<string, { startedAtMs?: number; completedAtMs?: number }>();
+  for (const event of events) {
+    const parsed = turnBoundaryEventSchema.safeParse(event);
+    if (!parsed.success) continue;
+    const timing = partial.get(parsed.data.scope.turnId) ?? {};
+    if (parsed.data.type === "turn/started") {
+      timing.startedAtMs = Math.min(timing.startedAtMs ?? parsed.data.createdAt, parsed.data.createdAt);
+    } else {
+      timing.completedAtMs = Math.max(timing.completedAtMs ?? parsed.data.createdAt, parsed.data.createdAt);
+    }
+    partial.set(parsed.data.scope.turnId, timing);
+  }
+
+  const complete = new Map<string, TurnTiming>();
+  for (const [turnId, timing] of partial) {
+    if (timing.startedAtMs == null || timing.completedAtMs == null || timing.completedAtMs < timing.startedAtMs) continue;
+    complete.set(turnId, { startedAtMs: timing.startedAtMs, completedAtMs: timing.completedAtMs });
+  }
+  return complete;
+}
 
 function classifyError(message: string | undefined): { errorClass: string; signature: string } | null {
   if (message == null || message.trim() === "") return null;
@@ -82,6 +133,7 @@ function classifyError(message: string | undefined): { errorClass: string; signa
 export function projectToolExecutionFact(
   input: unknown,
   dimensions: { projectId: string; providerId: string },
+  turnTimings: ReadonlyMap<string, TurnTiming> = new Map(),
 ): ToolExecutionFact | null {
   const parsed = completedEventSchema.safeParse(input);
   if (!parsed.success) return null;
@@ -94,6 +146,7 @@ export function projectToolExecutionFact(
     ? status === "failed" || (item.exitCode ?? 0) !== 0
     : status === "failed";
   const classified = item.type === "toolCall" && failed ? classifyError(item.error) : null;
+  const command = item.type === "commandExecution" ? describeCommandExecution(item.command) : null;
   const capabilityKind = item.type === "toolCall"
     ? "tool"
     : item.type === "commandExecution"
@@ -104,15 +157,19 @@ export function projectToolExecutionFact(
     : item.type === "commandExecution"
       ? "native:command_execution"
       : "native:file_read";
+  const turnId = event.scope.kind === "turn" ? event.scope.turnId : null;
+  const timing = turnId == null ? null : turnTimings.get(turnId) ?? null;
 
   return {
     sourceEventId: event.id,
     threadId: event.threadId,
-    turnId: event.scope.kind === "turn" ? event.scope.turnId : null,
+    turnId,
     sequence: event.seq,
     projectId: dimensions.projectId,
     providerId: dimensions.providerId,
     createdAtMs: event.createdAt,
+    turnStartedAtMs: timing?.startedAtMs ?? null,
+    turnCompletedAtMs: timing?.completedAtMs ?? null,
     capabilityKind,
     capabilityKey,
     status,
@@ -120,5 +177,12 @@ export function projectToolExecutionFact(
     failed,
     errorClass: classified?.errorClass ?? null,
     errorSignature: classified?.signature ?? null,
+    commandBinary: command?.binary ?? null,
+    commandArgument1: command?.argument1 ?? null,
+    commandArgument2: command?.argument2 ?? null,
+    commandUsesHelp: command?.usesHelp ?? false,
+    commandShape: command?.shape ?? null,
+    commandShellWrapped: command?.shellWrapped ?? false,
+    commandAttributionEligible: command?.attributionEligible ?? false,
   };
 }

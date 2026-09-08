@@ -6,23 +6,52 @@
   "description": "Compare BB's detailed plugin surface map with compact semantic color demonstrations.",
   "author": "Phosphor",
   "homepage": "https://github.com/phosphorco/bb-community-plugins/tree/main/plugins/bb-ui-reference#readme",
-  "bugs": { "url": "https://github.com/phosphorco/bb-community-plugins/issues" },
-  "repository": { "type": "git", "url": "git+https://github.com/phosphorco/bb-community-plugins.git", "directory": "plugins/bb-ui-reference" },
-  "publishConfig": { "access": "public", "registry": "https://registry.npmjs.org" },
-  "keywords": ["bb", "bb-plugin", "ui-reference", "design-system", "theme-tokens"],
-  "engines": { "bb": ">=0.37", "bbPluginSdk": "^0.4.1" },
+  "bugs": {
+    "url": "https://github.com/phosphorco/bb-community-plugins/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/phosphorco/bb-community-plugins.git",
+    "directory": "plugins/bb-ui-reference"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org"
+  },
+  "keywords": [
+    "bb",
+    "bb-plugin",
+    "ui-reference",
+    "design-system",
+    "theme-tokens"
+  ],
+  "engines": {
+    "bb": ">=0.37",
+    "bbPluginSdk": "^0.4.1"
+  },
   "bb": {
     "name": "BB UI Reference",
     "description": "Open a movable surface-map viewer with live semantic color demonstrations.",
     "branding": {
       "icon": "CircleQuestion",
-      "logo": { "light": "./assets/icon-32.png" }
+      "logo": {
+        "light": "./assets/icon-32.png"
+      }
     },
     "server": "./server.ts",
     "app": "./app.tsx",
     "skills": []
   },
-  "files": ["dist/", "assets/", "README.md", "LICENSE", "server.ts", "app.tsx", "app.css", "ui-reference.ts"],
+  "files": [
+    "dist/",
+    "assets/",
+    "README.md",
+    "LICENSE",
+    "server.ts",
+    "app.tsx",
+    "app.css",
+    "ui-reference.ts"
+  ],
   "dependencies": {},
   "devDependencies": {
     "@get-bb/plugin-sdk": "0.4.47",
@@ -32,8 +61,8 @@
     "typescript": "^5.9.3"
   },
   "scripts": {
-    "build": "bb plugin build .",
-    "dev": "bb plugin dev .",
+    "build": "node ../../tools/bb-target-cli.mjs plugin build .",
+    "dev": "node ../../tools/bb-target-cli.mjs plugin dev .",
     "test": "node --test --experimental-strip-types test/*.test.ts",
     "typecheck": "tsc --noEmit"
   }

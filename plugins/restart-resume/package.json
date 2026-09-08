@@ -67,8 +67,8 @@
     "typescript": "^5.9.3"
   },
   "scripts": {
-    "build": "bb plugin build .",
-    "dev": "bb plugin dev .",
+    "build": "node ../../tools/bb-target-cli.mjs plugin build .",
+    "dev": "node ../../tools/bb-target-cli.mjs plugin dev .",
     "test": "node --test --experimental-strip-types test/*.test.ts",
     "typecheck": "tsc --noEmit"
   }

@@ -3,6 +3,7 @@
   "schemaVersion": 1,
   "name": "phosphor-bb-plugins",
   "plugins": [
+    { "name": "cross-references", "source": "./plugins/cross-references" },
     { "name": "agentation-mentions", "source": "./plugins/agentation-mentions" },
     { "name": "perspectives", "source": "./plugins/perspectives" },
     { "name": "machine-monitor", "source": "./plugins/machine-monitor" },

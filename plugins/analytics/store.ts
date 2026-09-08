@@ -1,6 +1,7 @@
 import type Database from "better-sqlite3";
 
 import type { AnalyticsBundle } from "./bundle-contract.ts";
+import type { AnalyticsReferenceCapsule } from "./analytics-reference.ts";
 import type { ToolExecutionFact } from "./fact-projection.ts";
 
 export const analyticsMigrations = [
@@ -59,6 +60,22 @@ export const analyticsMigrations = [
     last_error TEXT
   ) STRICT`,
   `CREATE INDEX analytics_thread_state_membership_updated ON analytics_thread_state (membership, updated_at DESC)`,
+  `CREATE TABLE analytics_references (
+    id TEXT PRIMARY KEY NOT NULL,
+    capsule_json TEXT NOT NULL,
+    created_at INTEGER NOT NULL
+  ) STRICT`,
+  `CREATE INDEX analytics_references_created_at ON analytics_references (created_at DESC)`,
+  `ALTER TABLE tool_execution_facts_v1 ADD COLUMN command_binary TEXT`,
+  `ALTER TABLE tool_execution_facts_v1 ADD COLUMN command_argument_1 TEXT`,
+  `ALTER TABLE tool_execution_facts_v1 ADD COLUMN command_argument_2 TEXT`,
+  `ALTER TABLE tool_execution_facts_v1 ADD COLUMN command_uses_help INTEGER NOT NULL DEFAULT 0 CHECK (command_uses_help IN (0, 1))`,
+  `ALTER TABLE tool_execution_facts_v1 ADD COLUMN command_shape TEXT`,
+  `ALTER TABLE tool_execution_facts_v1 ADD COLUMN command_shell_wrapped INTEGER NOT NULL DEFAULT 0 CHECK (command_shell_wrapped IN (0, 1))`,
+  `ALTER TABLE analytics_index_state ADD COLUMN fact_projection_version INTEGER NOT NULL DEFAULT 0`,
+  `ALTER TABLE tool_execution_facts_v1 ADD COLUMN command_attribution_eligible INTEGER NOT NULL DEFAULT 0 CHECK (command_attribution_eligible IN (0, 1))`,
+  `ALTER TABLE tool_execution_facts_v1 ADD COLUMN turn_started_at_ms INTEGER`,
+  `ALTER TABLE tool_execution_facts_v1 ADD COLUMN turn_completed_at_ms INTEGER`,
 ];
 
 export interface AnalyticsIndexState {
@@ -75,6 +92,7 @@ export interface AnalyticsIndexState {
   truncatedThreads: number;
   durationMs: number | null;
   error: string | null;
+  factProjectionVersion: number;
 }
 
 interface IndexStateRow {
@@ -90,6 +108,7 @@ interface IndexStateRow {
   truncated_threads: number;
   duration_ms: number | null;
   error: string | null;
+  fact_projection_version: number;
 }
 
 export interface AnalyticsThreadState {
@@ -142,6 +161,7 @@ export interface AnalyticsSnapshotCommit {
   lastError: string | null;
   factsChanged: boolean;
   lastFullReconciliationAt?: number | null;
+  factProjectionVersion?: number;
 }
 
 export interface SnapshotFreshnessState {
@@ -225,6 +245,7 @@ export class AnalyticsStore {
       truncatedThreads: row.truncated_threads,
       durationMs: row.duration_ms,
       error: row.error,
+      factProjectionVersion: row.fact_projection_version,
     };
   }
 
@@ -273,8 +294,10 @@ export class AnalyticsStore {
       INSERT INTO tool_execution_facts_v1 (
         source_event_id, thread_id, turn_id, sequence, project_id, provider_id,
         created_at_ms, capability_kind, capability_key, status, duration_ms,
-        failed, error_class, error_signature
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        failed, error_class, error_signature, command_binary, command_argument_1,
+        command_argument_2, command_uses_help, command_shape, command_shell_wrapped,
+        command_attribution_eligible, turn_started_at_ms, turn_completed_at_ms
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
     const commit = this.db.transaction(() => {
       const selected = new Set(input.selectedThreadIds);
@@ -331,6 +354,15 @@ export class AnalyticsStore {
             fact.failed ? 1 : 0,
             fact.errorClass,
             fact.errorSignature,
+            fact.commandBinary,
+            fact.commandArgument1,
+            fact.commandArgument2,
+            fact.commandUsesHelp ? 1 : 0,
+            fact.commandShape,
+            fact.commandShellWrapped ? 1 : 0,
+            fact.commandAttributionEligible ? 1 : 0,
+            fact.turnStartedAtMs,
+            fact.turnCompletedAtMs,
           );
           upsert.run(
             thread.threadId,
@@ -378,15 +410,16 @@ export class AnalyticsStore {
         );
       }
 
-      const previous = this.db.prepare("SELECT last_full_reconciliation_at FROM analytics_index_state WHERE singleton = 1").get() as {
+      const previous = this.db.prepare("SELECT last_full_reconciliation_at, fact_projection_version FROM analytics_index_state WHERE singleton = 1").get() as {
         last_full_reconciliation_at: number | null;
+        fact_projection_version: number;
       };
       this.db.prepare(`
         UPDATE analytics_index_state
         SET status = 'ready', completed_at = ?, generation_id = generation_id + ?,
             snapshot_updated_at = ?, last_full_reconciliation_at = ?,
             loaded_threads = ?, fact_count = ?, truncated_threads = ?,
-            duration_ms = ?, degraded = ?, error = ?
+            duration_ms = ?, degraded = ?, error = ?, fact_projection_version = ?
         WHERE singleton = 1
       `).run(
         input.completedAt,
@@ -399,6 +432,7 @@ export class AnalyticsStore {
         input.durationMs,
         input.degraded ? 1 : 0,
         input.lastError?.slice(0, 2_000) ?? null,
+        input.factProjectionVersion ?? previous.fact_projection_version,
       );
     });
     commit();
@@ -428,13 +462,27 @@ export class AnalyticsStore {
     return this.db.prepare("DELETE FROM analytics_bundles WHERE id = ?").run(id).changes > 0;
   }
 
+  saveReference(capsule: AnalyticsReferenceCapsule): void {
+    this.db.prepare(`
+      INSERT INTO analytics_references (id, capsule_json, created_at)
+      VALUES (?, ?, ?)
+    `).run(capsule.id, JSON.stringify(capsule), capsule.createdAt);
+  }
+
+  getReference(id: string): AnalyticsReferenceCapsule | null {
+    const row = this.db.prepare("SELECT capsule_json FROM analytics_references WHERE id = ?").get(id) as { capsule_json: string } | undefined;
+    return row == null ? null : JSON.parse(row.capsule_json) as AnalyticsReferenceCapsule;
+  }
+
   replaceFacts(facts: readonly ToolExecutionFact[]): void {
     const insert = this.db.prepare(`
       INSERT INTO tool_execution_facts_v1 (
         source_event_id, thread_id, turn_id, sequence, project_id, provider_id,
         created_at_ms, capability_kind, capability_key, status, duration_ms,
-        failed, error_class, error_signature
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        failed, error_class, error_signature, command_binary, command_argument_1,
+        command_argument_2, command_uses_help, command_shape, command_shell_wrapped,
+        command_attribution_eligible, turn_started_at_ms, turn_completed_at_ms
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
     const replace = this.db.transaction((nextFacts: readonly ToolExecutionFact[]) => {
       this.db.prepare("DELETE FROM tool_execution_facts_v1").run();
@@ -454,6 +502,15 @@ export class AnalyticsStore {
           fact.failed ? 1 : 0,
           fact.errorClass,
           fact.errorSignature,
+          fact.commandBinary,
+          fact.commandArgument1,
+          fact.commandArgument2,
+          fact.commandUsesHelp ? 1 : 0,
+          fact.commandShape,
+          fact.commandShellWrapped ? 1 : 0,
+          fact.commandAttributionEligible ? 1 : 0,
+          fact.turnStartedAtMs,
+          fact.turnCompletedAtMs,
         );
       }
     });
@@ -465,13 +522,24 @@ export class AnalyticsStore {
     const rows = this.db.prepare(`
       SELECT source_event_id, thread_id, turn_id, sequence, project_id,
         provider_id, created_at_ms, capability_kind, capability_key, status,
-        duration_ms, failed, error_class, error_signature
+        duration_ms, failed, error_class, error_signature, command_binary,
+        command_argument_1, command_argument_2, command_uses_help,
+        command_shape, command_shell_wrapped, command_attribution_eligible,
+        turn_started_at_ms, turn_completed_at_ms
       FROM tool_execution_facts_v1
       WHERE created_at_ms >= ?
       ORDER BY created_at_ms, thread_id, sequence
     `).iterate(cutoff) as Iterable<Record<string, unknown>>;
     let output = "";
-    for (const row of rows) output += `${JSON.stringify({ ...row, failed: row.failed === 1 })}\n`;
+    for (const row of rows) {
+      output += `${JSON.stringify({
+        ...row,
+        failed: row.failed === 1,
+        command_uses_help: row.command_uses_help === 1,
+        command_shell_wrapped: row.command_shell_wrapped === 1,
+        command_attribution_eligible: row.command_attribution_eligible === 1,
+      })}\n`;
+    }
     return output;
   }
 

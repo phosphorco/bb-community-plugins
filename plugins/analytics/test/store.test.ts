@@ -3,6 +3,7 @@ import test from "node:test";
 import Database from "better-sqlite3";
 
 import type { ToolExecutionFact } from "../fact-projection.ts";
+import type { AnalyticsReferenceCapsule } from "../analytics-reference.ts";
 import {
   AnalyticsRefreshCoordinator,
   AnalyticsStore,
@@ -19,6 +20,8 @@ function facts(count: number): ToolExecutionFact[] {
     projectId: `project-${index % 4}`,
     providerId: `provider-${index % 3}`,
     createdAtMs: now - (index % 14) * 3_600_000,
+    turnStartedAtMs: now - (index % 14) * 3_600_000 - 1_000,
+    turnCompletedAtMs: now - (index % 14) * 3_600_000 + 1_000,
     capabilityKind: "tool" as const,
     capabilityKey: `bb:tool_${index % 24}`,
     status: index % 17 === 0 ? "failed" as const : "completed" as const,
@@ -26,6 +29,13 @@ function facts(count: number): ToolExecutionFact[] {
     failed: index % 17 === 0,
     errorClass: index % 17 === 0 ? "network" : null,
     errorSignature: index % 17 === 0 ? "0123456789abcdef" : null,
+    commandBinary: null,
+    commandArgument1: null,
+    commandArgument2: null,
+    commandUsesHelp: false,
+    commandShape: null,
+    commandShellWrapped: false,
+    commandAttributionEligible: false,
   }));
 }
 
@@ -46,9 +56,47 @@ test("atomically replaces and serializes a bounded 25k-fact snapshot", (context)
   assert.equal(ndjson.split("\n").length - 1, 25_000);
   assert.ok(serializeElapsed < 1_000, `25k fact serialization took ${serializeElapsed.toFixed(1)} ms`);
   assert.doesNotMatch(ndjson, /arguments|private output|free-text/);
+  const firstFact = JSON.parse(ndjson.split("\n")[0] ?? "{}");
+  assert.equal(typeof firstFact.command_uses_help, "boolean");
+  assert.equal(typeof firstFact.command_attribution_eligible, "boolean");
 
   store.replaceFacts(facts(10));
   assert.equal(store.factsAsNdjson(14).split("\n").length - 1, 10);
+});
+
+test("stores immutable analytics reference capsules independently of fact generations", (context) => {
+  const db = new Database(":memory:");
+  context.after(() => db.close());
+  for (const migration of analyticsMigrations) db.exec(migration);
+  const store = new AnalyticsStore(db);
+  const capsule: AnalyticsReferenceCapsule = {
+    version: 1,
+    id: "reference-id",
+    token: "analytics-ref:v1:reference-id",
+    createdAt: 1_000,
+    bundleId: "tool-reliability",
+    bundleTitle: "Tool reliability",
+    queryId: "problem-tools",
+    queryTitle: "Problem tools",
+    querySql: "SELECT capability_key FROM tool_execution_fact_v1",
+    visualizationId: "failures",
+    visualizationTitle: "Failures",
+    visualizationKind: "bar",
+    resultGeneration: "generation",
+    snapshotGenerationId: 2,
+    snapshotUpdatedAt: 900,
+    rangeDays: 14,
+    coverage: { kind: "exact", rows: 1 },
+    selection: {
+      datumKey: "generation:row",
+      label: "read_file",
+      row: { capability_key: "read_file", failures: 3 },
+      predicate: { field: "capability_key", operator: "eq", value: "read_file" },
+    },
+  };
+  store.saveReference(capsule);
+  assert.deepEqual(store.getReference(capsule.id), capsule);
+  assert.equal(store.getReference("missing"), null);
 });
 
 test("publishes generation, thread coverage, removals, and facts atomically", (context) => {

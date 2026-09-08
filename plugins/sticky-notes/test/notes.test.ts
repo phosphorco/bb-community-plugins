@@ -10,11 +10,22 @@ test("note updates cannot change persisted dimensions", () => {
   assert.equal(stickyNotePatchSchema.safeParse({ offsetX: 24, rotation: 2 }).success, true)
 })
 
+test("persisted links accept only normalized HTTP(S) URLs and derive their domain", () => {
+  const normalized = stickyNotePatchSchema.parse({
+    links: [{ url: "https://example.com/a#fragment", domain: "spoofed.example", title: null }],
+  })
+  assert.deepEqual(normalized.links, [{ url: "https://example.com/a", domain: "example.com", title: null }])
+  assert.equal(stickyNotePatchSchema.safeParse({
+    links: [{ url: "file:///private", domain: "private", title: null }],
+  }).success, false)
+})
+
 test("an acknowledged placement patch cannot overwrite newer local text", () => {
   const current = {
     id: "note-1",
     threadId: "thread-1",
     text: "new local text",
+    links: [],
     hueIndex: 0,
     horizontalAnchor: "left" as const,
     verticalAnchor: "top" as const,
@@ -38,6 +49,7 @@ test("a stale list response cannot replace a newer acknowledged note", () => {
     id: "note-1",
     threadId: "thread-1",
     text: "new",
+    links: [],
     hueIndex: 0,
     horizontalAnchor: "left" as const,
     verticalAnchor: "top" as const,

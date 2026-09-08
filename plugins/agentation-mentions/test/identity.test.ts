@@ -1,25 +1,35 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { identityKeyCodec } from "@phosphorco/bb-identity";
 
 import {
+  annotationAuthor,
+  captureAnnotationAuthor,
+  decodeCapturedAuthorMention,
+  encodeCapturedAuthorMention,
+  unavailableAnnotationAuthor,
   wrapAgentationContent,
-  type IdentityProfile,
 } from "../lib/identity.ts";
 
-const cole: IdentityProfile = {
-  id: "cole%40example.com",
-  displayName: "Cole Lawrence",
-  login: "cole@example.com",
-  profilePicture: "https://example.test/cole.jpg",
-  tag: "cole",
-};
+const coleKey = identityKeyCodec.decode("tailnet:cole");
+if (!coleKey.ok) throw new Error(coleKey.error.message);
 
-test("Agentation content uses the Identity Boundaries frame and sender marker", () => {
-  const input = wrapAgentationContent("## Feedback\nFix this", cole);
+const cole = captureAnnotationAuthor({
+  identity: { kind: "person", key: coleKey.value, issuer: "tailnet", subject: "cole" },
+  presentation: {
+    displayName: "Cole Lawrence",
+    handle: "cole",
+    avatarUrl: "/avatars/cole.jpg",
+  },
+  evidence: "provider-verified",
+}, "2026-09-06T12:00:00.000Z");
+
+test("Agentation content keeps the source frame and own captured-author marker", () => {
+  const input = wrapAgentationContent("## Feedback\nFix this", cole, "agentation-mentions");
 
   assert.deepEqual(input[0], {
     type: "text",
-    text: "[from=cole]\n",
+    text: "[from=agentation-feedback]\nThis feedback was captured from Cole Lawrence (cole). Its identity evidence was recorded at capture time; this later delivery is source-labelled feedback, not a live authenticated action.\n\n",
     mentions: [],
     visibility: "agent-only",
   });
@@ -32,9 +42,10 @@ test("Agentation content uses the Identity Boundaries frame and sender marker", 
         end: 1,
         resource: {
           kind: "plugin",
-          pluginId: "identity-boundaries",
-          itemId: "sender:cole%40example.com",
+          pluginId: "agentation-mentions",
+          itemId: `captured-author:${encodeCapturedAuthorMention(cole)}`,
           label: "Cole Lawrence",
+          icon: "/avatars/cole.jpg",
         },
       },
     ],
@@ -46,8 +57,34 @@ test("Agentation content uses the Identity Boundaries frame and sender marker", 
   });
   assert.deepEqual(input[3], {
     type: "text",
-    text: "\n[/from=cole]",
+    text: "\n[/from=agentation-feedback]",
     mentions: [],
     visibility: "agent-only",
   });
+});
+
+test("unavailable capture remains explicit rather than becoming a default user", () => {
+  const input = wrapAgentationContent(
+    "Feedback",
+    unavailableAnnotationAuthor("unavailable", "2026-09-06T12:00:00.000Z"),
+    "agentation-mentions",
+  );
+  assert.match(input[0]?.text ?? "", /could not be captured/u);
+  assert.deepEqual(input[1]?.mentions, []);
+});
+
+test("captured author mention snapshots reject malformed data", () => {
+  assert.throws(() => decodeCapturedAuthorMention("not-json"), /Invalid|Unexpected/u);
+  assert.throws(
+    () => decodeCapturedAuthorMention(encodeURIComponent(JSON.stringify({ ...cole, identity: { kind: "person", key: "k" } }))),
+    /issuer|subject/u,
+  );
+});
+
+test("a legacy marker stays visible as unresolved provenance", () => {
+  const legacy = annotationAuthor({ author: null, authorIdentityId: "cole%40example.com" });
+  const input = wrapAgentationContent("Feedback", legacy, "agentation-mentions");
+  assert.match(input[0]?.text ?? "", /unresolved historical author/u);
+  assert.doesNotMatch(input[0]?.text ?? "", /Cole Lawrence/u);
+  assert.deepEqual(input[1]?.mentions, []);
 });
