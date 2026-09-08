@@ -92,6 +92,14 @@ describe("plugin registration", () => {
       question: "Where is the work?",
       lenses: ["v8 performance characteristics", "big-O complexity", "duplicate work"],
     }).success).toBe(true);
+    expect(gather.parameters.safeParse({
+      question: "Where is the work?",
+      lenses: ["correctness", "operability"],
+    }).success).toBe(true);
+    expect(gather.parameters.safeParse({
+      question: "Where is the work?",
+      lenses: ["correctness"],
+    }).success).toBe(false);
     expect(gather.parameters.safeParse({ question: "Where is the work?", perspectives: 3 }).success).toBe(false);
     expect(gather.parameters.safeParse({
       question: "Where is the work?",

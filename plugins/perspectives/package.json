@@ -1,6 +1,6 @@
 {
   "name": "@phosphorco/bb-plugin-perspectives",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "type": "module",
   "license": "MIT",
   "description": "Independent expert help and phase-bounded perspective synthesis for bb agents.",
@@ -23,7 +23,7 @@
   },
   "files": ["dist/", "assets/", "README.md", "LICENSE", "server.ts", "Perspectives.ts"],
   "dependencies": { "zod": "4.3.6" },
-  "devDependencies": { "@get-bb/plugin-sdk": "0.4.47", "@types/node": "^22", "typescript": "^5.9.3" },
+  "devDependencies": { "bb-app": "0.42.0", "@get-bb/plugin-sdk": "0.4.47", "@types/node": "^22", "typescript": "^5.9.3" },
   "scripts": {
     "build": "bb plugin build .",
     "dev": "bb plugin dev .",

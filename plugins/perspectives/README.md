@@ -3,10 +3,10 @@
 Adds two native tools to bb agents:
 
 - `help` accepts a question and context, generates the expert prompt in a separate hidden planner, and asks one hidden helper for a concise read-only answer. It is synchronous: the answer is the tool result.
-- `gather_perspectives` accepts 3-7 caller-supplied lenses—specific aspects or analytical angles such as `"v8 performance characteristics"`, `"big-O complexity"`, and `"duplicate work"`—generates a bespoke expert prompt for each lens, launches the panel concurrently, and synthesizes every usable complete or partial outcome. It is asynchronous: the tool call returns a launch receipt immediately, the panel keeps working in the background, and the synthesized result is delivered to the calling thread as a later message beginning `Perspectives panel result` (or `Perspectives panel failed`).
+- `gather_perspectives` accepts 2-7 caller-supplied lenses—specific aspects or analytical angles such as `"v8 performance characteristics"`, `"big-O complexity"`, and `"duplicate work"`—generates a bespoke expert prompt for each lens, launches the panel concurrently, and synthesizes every usable complete or partial outcome. It is asynchronous: the tool call returns a launch receipt immediately, the panel keeps working in the background, and the synthesized result is delivered to the calling thread as a later message beginning `Perspectives panel result` (or `Perspectives panel failed`).
 
 One `help` call creates a hidden planner and one hidden expert. One
-`gather_perspectives` call creates one hidden planner, 3-7 concurrent hidden
+`gather_perspectives` call creates one hidden planner, 2-7 concurrent hidden
 workers, and one hidden synthesis thread; a malformed planner response can
 consume one bounded retry. Each thread is a model invocation and carries the
 cost and provider limits of its resolved execution tuple.
@@ -139,7 +139,7 @@ recursive panels.
   `logo.dark`). Logo assets must be relative `.svg`, `.png`, or
   `.webp` files.
 - `engines.bb` — supported bb app version range.
-- `engines.bbPluginSdk` — supported plugin SDK floor (`>=0.4.8` here).
+- `engines.bbPluginSdk` — supported plugin SDK floor (`^0.4.47` here).
 
 The rich in-plugin logo and marketplace icon are Cole-approved PE02-A. The
 package preserves the generated 1254px RGB source and the verified RGB24
