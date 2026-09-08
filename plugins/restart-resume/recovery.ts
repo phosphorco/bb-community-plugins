@@ -5,9 +5,6 @@ export const HOST_DAEMON_ERROR_MESSAGE =
   "Thread interrupted because the host daemon disconnected";
 export const HOST_DAEMON_RECOVERY_WINDOW_MS = 60_000;
 
-export const INTERRUPTED_TURN_RESUME_MESSAGE =
-  "The host daemon restarted while this thread was working. Continue from the last durable state. Report any material effects of the restart; if there are none, reply with a single '.'.";
-
 export interface RecoveryEvent {
   seq: number;
   type: string;
@@ -67,34 +64,6 @@ export function isWithinRecoveryWindow(
   return Math.abs(timestamp - latestTimestamp) <= windowMs;
 }
 
-export function hasInterruptedTurn(
-  events: readonly RecoveryEvent[],
-  interruptionSeq: number,
-): boolean {
-  const priorEvents = events.filter((event) => event.seq < interruptionSeq);
-  const latestError = priorEvents
-    .filter((event) => event.type === "system/error")
-    .reduce<RecoveryEvent | null>(
-      (current, event) => (current === null || event.seq > current.seq ? event : current),
-      null,
-    );
-
-  // Core emits a thread-scoped error for a restart with no active turn. A
-  // turn-scoped error is paired with the interrupted completion for that turn.
-  if (latestError?.scope?.kind === "thread") return false;
-  if (latestError?.scope?.kind !== "turn") return false;
-  const turnId = latestError.scope.turnId;
-
-  return priorEvents.some(
-    (event) =>
-      event.seq < latestError.seq &&
-      event.type === "turn/completed" &&
-      event.scope?.kind === "turn" &&
-      event.scope.turnId === turnId &&
-      recordValue(event.data)?.status === "interrupted",
-  );
-}
-
 export function hasResumeRequestAfter(
   events: readonly RecoveryEvent[],
   interruptionSeq: number,
@@ -136,12 +105,8 @@ export function normalizeProjectMessage(message: string | null | undefined): str
 
 export function resumeMessageFor(
   projectMessage: string | null | undefined,
-  interruptedTurn: boolean,
 ): string {
-  return (
-    normalizeProjectMessage(projectMessage) ??
-    (interruptedTurn ? INTERRUPTED_TURN_RESUME_MESSAGE : DEFAULT_RESUME_MESSAGE)
-  );
+  return normalizeProjectMessage(projectMessage) ?? DEFAULT_RESUME_MESSAGE;
 }
 
 function isHostRestartInterruption(event: RecoveryEvent): boolean {
