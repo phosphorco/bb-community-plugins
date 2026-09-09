@@ -1,5 +1,5 @@
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
-import type { ActorSnapshot, PersonReference } from "@phosphorco/bb-identity";
+import type { ActorReference, ActorSnapshot } from "@phosphorco/bb-identity";
 
 import type {
   AnnotationAuthor,
@@ -7,7 +7,6 @@ import type {
   StoredAnnotation,
 } from "./afs.ts";
 import { capturedAnnotationAuthorSchema } from "./afs.ts";
-import { CAPTURED_AUTHOR_MENTION_PROVIDER } from "./attachment.ts";
 
 export type AgentationPromptInput = Parameters<
   BbPluginApi["sdk"]["threads"]["send"]
@@ -15,7 +14,7 @@ export type AgentationPromptInput = Parameters<
 export type AgentationTextPromptInput = Extract<AgentationPromptInput, { type: "text" }>;
 
 /** Public binding has already decoded this request-bound actor. */
-type CapturableActor = ActorSnapshot & { readonly identity: PersonReference };
+type CapturableActor = ActorSnapshot & { readonly identity: ActorReference };
 
 export type AuthorAttribution =
   | AnnotationAuthor
@@ -76,55 +75,37 @@ export function decodeCapturedAuthorMention(itemId: string): CapturedAnnotationA
   return capturedAnnotationAuthorSchema.parse(JSON.parse(decodeURIComponent(itemId)));
 }
 
-function sourceLabel(author: AuthorAttribution): string {
-  switch (author.kind) {
-    case "captured": {
-      const handle = author.presentation.handle
-        ? ` (${author.presentation.handle})`
-        : "";
-      return `This feedback was captured from ${author.presentation.displayName}${handle}. Its identity evidence was recorded at capture time; this later delivery is source-labelled feedback, not a live authenticated action.`;
-    }
-    case "legacy-unresolved":
-      return "This feedback retains an unresolved historical author reference. It was not mapped to the current viewer or a guessed identity.";
-    case "unavailable":
-      return "Author identity could not be captured when this feedback was stored. The feedback remains usable without attribution.";
-    case "unattributed":
-      return "This feedback has no captured author attribution.";
-  }
+function escapeWrapperLabel(label: string): string {
+  return label.replace(/[\[\]\r\n%]/g, (character) => encodeURIComponent(character));
+}
+
+export function capturedAuthorLabel(author: CapturedAnnotationAuthor): string {
+  const label = author.identity.kind === "machine"
+    ? "machine:" + author.presentation.displayName
+    : author.presentation.handle ?? author.presentation.displayName;
+  return escapeWrapperLabel(label);
 }
 
 export function wrapAgentationContent(
   content: string,
   author: AuthorAttribution,
-  pluginId: string,
 ): AgentationTextPromptInput[] {
-  const tag = "agentation-feedback";
-  const marker = "\u2063";
-  const mention = author.kind === "captured"
-    ? [{
-        start: 0,
-        end: marker.length,
-        resource: {
-          kind: "plugin" as const,
-          pluginId,
-          itemId: `${CAPTURED_AUTHOR_MENTION_PROVIDER}:${encodeCapturedAuthorMention(author)}`,
-          label: author.presentation.displayName,
-          icon: author.presentation.avatarUrl,
-        },
-      }]
-    : [];
+  if (author.kind !== "captured") {
+    return [{ type: "text", text: content, mentions: [] }];
+  }
+
+  const label = capturedAuthorLabel(author);
   return [
     {
       type: "text",
-      text: `[from=${tag}]\n${sourceLabel(author)}\n\n`,
+      text: `[from=${label}]\n`,
       mentions: [],
       visibility: "agent-only",
     },
-    { type: "text", text: `${marker} `, mentions: mention },
     { type: "text", text: content, mentions: [] },
     {
       type: "text",
-      text: `\n[/from=${tag}]`,
+      text: `\n[/from=${label}]`,
       mentions: [],
       visibility: "agent-only",
     },

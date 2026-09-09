@@ -19,13 +19,13 @@ plugin.
 - `bb agentation-mentions send --queue` uses bb's durable queued-message API;
   omitting `--queue` sends immediately.
 - At annotation admission, the plugin uses the public bb-identity request
-  boundary to capture the authenticated actor's verified presentation and
-  evidence as an immutable historical snapshot. Delivery preserves the visible
-  per-author source frame and an Agentation → Mentions captured-author mention;
+  boundary to capture the request-bound actor's presentation, identity, and
+  evidence as an immutable historical snapshot. Delivery preserves a minimal
+  per-author source frame, while the captured-author snapshot remains in the
+  durable annotation and dispatch history for provenance and legacy resolution;
   it does not impersonate that person or turn a later queued send into a native
-  person-authored contribution. If the enhanced provider is unavailable, the
-  frame says so explicitly and feedback remains usable without a guessed
-  fallback identity.
+  person-authored contribution. When no person can be resolved, the stable
+  machine actor is captured and labeled explicitly.
 - Every agent tool and CLI surface uses the distinct `agentation_mentions_*`
   / `bb agentation-mentions` identity, so it can coexist with canonical
   Agentation without tool or command collisions.

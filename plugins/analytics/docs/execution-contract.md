@@ -1,5 +1,15 @@
 # Analytics execution contract
 
+> Policy update — 2026-09-09: the approved [Identities and multiplayer ADR](../../../../docs/adrs/2026-09-identities-and-multiplayer.md)
+> governs this trusted shared deployment. Use verified people when available,
+> applicable carried attribution next, and a stable machine actor otherwise;
+> missing or failed person verification must not block ordinary operations.
+> Never relabel fallback as a verified person or redirect pending personal-state
+> writes to another owner. Independent access checks and data validation remain.
+> Earlier rejection requirements below are superseded; versioned API descriptions
+> and test receipts remain historical evidence, not proof of ADR implementation.
+
+
 execution-contract.ts defines the additive v2 boundary for the Analytics
 server, isolated worker, reference service, and their tests. It is not a
 client RPC contract and does not change current consumers.
@@ -134,8 +144,9 @@ prepareExecutionReference() is the pure future-service seam. Given fresh
 host admission, a retained-record lookup outcome, the narrow locator, controlled
 time, and an issued ID, it rejects missing/expired records, execution/scope
 mismatch, unknown visualizations, and missing datum keys. It derives the
-selected row and all capsule context from the stored record. The authorized
-reference resolver interface requires fresh admission for lookup and resolution;
+selected row and all capsule context from the stored record. The reference resolver uses current host attribution, including machine fallback;
+missing verified-person evidence alone must not block lookup or resolution.
+Record, scope, and independent access validation remain required;
 storage and RPC effects remain outside this contract node.
 
 Datum keys are deterministic but opaque. They contain the validated immutable

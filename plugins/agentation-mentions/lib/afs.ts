@@ -127,6 +127,18 @@ const capturedAnnotationIdentitySchema = z.discriminatedUnion("kind", [
     key: z.string().min(1).max(512),
     instanceId: z.string().min(1).max(512),
   }).strict(),
+  z.object({
+    kind: z.literal("machine"),
+    key: z.string().min(1).max(512),
+    instanceId: z.string().min(1).max(512),
+    hostId: z.string().min(1).max(512).nullable(),
+  }).strict(),
+  z.object({
+    kind: z.literal("external"),
+    key: z.string().min(1).max(512),
+    pluginId: z.string().min(1).max(512),
+    subject: z.string().min(1).max(512),
+  }).strict(),
 ]);
 
 export const capturedAnnotationAuthorSchema = z.object({
@@ -145,6 +157,7 @@ export const capturedAnnotationAuthorSchema = z.object({
     "upstream-default",
     "integration-asserted",
     "legacy",
+    "machine",
   ]),
   capturedAt: z.string().datetime(),
 }).strict();

@@ -63,6 +63,7 @@ import {
 } from "./lib/staging.ts";
 import {
   annotationAuthor,
+  capturedAuthorLabel,
   authorGroupKey,
   captureAnnotationAuthor,
   decodeCapturedAuthorMention,
@@ -352,7 +353,7 @@ export default async function plugin(bb: BbPluginApi) {
           sessions,
         });
         sections.push(
-          wrapAgentationContent(markdown, group.author, bb.pluginId)
+          wrapAgentationContent(markdown, group.author)
             .map((part) => part.text)
             .join(""),
         );
@@ -371,7 +372,7 @@ export default async function plugin(bb: BbPluginApi) {
     resolve(itemId) {
       const author = decodeCapturedAuthorMention(itemId);
       return {
-        context: `Captured feedback author: ${author.presentation.displayName}. This is historical source evidence captured at ${author.capturedAt}, not a live authenticated request.`,
+        context: capturedAuthorLabel(author),
       };
     },
   });
@@ -460,7 +461,7 @@ export default async function plugin(bb: BbPluginApi) {
         title: "bb UI feedback from Agentation",
         sessions,
       });
-      input.push(...wrapAgentationContent(markdown, group.author, bb.pluginId));
+      input.push(...wrapAgentationContent(markdown, group.author));
     }
     input.push({
       type: "text",

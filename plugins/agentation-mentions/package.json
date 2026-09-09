@@ -85,7 +85,7 @@
     "tailwind-merge": "^3.4.0",
     "vaul": "^1.1.2",
     "zod": "4.3.6",
-    "@phosphorco/bb-identity": "file:../../../sdk-artifacts/phosphorco-bb-identity-0.1.0.7964b11db94d.tgz"
+    "@phosphorco/bb-identity": "file:../../../sdk-artifacts/phosphorco-bb-identity-0.1.0.11b0f79122ef.tgz"
   },
   "devDependencies": {
     "@get-bb/plugin-sdk": "0.4.47",

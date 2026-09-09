@@ -18,4 +18,6 @@ test("annotation admission gets attribution only from the public request boundar
   assert.match(server, /captureAnnotationAuthor\(session\.actor\)/u);
   assert.doesNotMatch(server, /identity-boundaries|current-profile|getIdentityProfile/u);
   assert.doesNotMatch(toolbar, /authorIdentityId|current-profile|identity-boundaries/u);
+  assert.match(server, /context: capturedAuthorLabel\(author\)/u);
+  assert.doesNotMatch(server, /historical source evidence|live authenticated request/u);
 });
