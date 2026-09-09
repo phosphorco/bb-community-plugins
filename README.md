@@ -8,6 +8,7 @@
 
 | Plugin | Purpose |
 |---|---|
+| [Message Timings Nerd](plugins/message-timings-nerd/) | Send times, agent turnaround, and waits between replies. |
 | [Cross References](plugins/cross-references/) | Connect and discover related resources through authority-free multipart identities. |
 | [Machine Monitor](plugins/machine-monitor/) | Monitor the deployment machine and keep exact BB thread context attached locally and discoverable from those threads. |
 | [Agentation → Mentions](plugins/agentation-mentions/) | Based on Agentation by Scott Sunarto; adds native mentions, queued delivery, and verified identity tags. |

@@ -8,6 +8,7 @@ on:
         required: true
         type: choice
         options:
+          - message-timings-nerd
           - cross-references
           - machine-monitor
           - agentation-mentions
@@ -16,6 +17,7 @@ on:
           - bb-ui-reference
   push:
     tags:
+      - "message-timings-nerd/v*"
       - "cross-references/v*"
       - "machine-monitor/v*"
       - "agentation-mentions/v*"
@@ -56,6 +58,7 @@ jobs:
         run: |
           plugin="${REQUESTED_PLUGIN:-${GITHUB_REF_NAME%%/*}}"
           case "$plugin" in
+            message-timings-nerd) workspace="@phosphorco/bb-plugin-message-timings-nerd" ;;
             cross-references) workspace="@phosphorco/bb-plugin-cross-references" ;;
             machine-monitor) workspace="@phosphorco/bb-plugin-machine-monitor" ;;
             agentation-mentions) workspace="@phosphorco/bb-plugin-agentation-mentions" ;;

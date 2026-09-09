@@ -48,3 +48,6 @@ jobs:
 
       - name: Inspect BB UI Reference package
         run: npm pack --dry-run --ignore-scripts --workspace @phosphorco/bb-plugin-bb-ui-reference
+
+      - name: Inspect Message Timings Nerd package
+        run: npm pack --dry-run --ignore-scripts --workspace @phosphorco/bb-plugin-message-timings-nerd
