@@ -10,12 +10,14 @@
   color: color-mix(in oklab, var(--timeline-accent, var(--foreground)) 75%, var(--foreground));
   font-weight: 500;
 }
-.message-timings-nerd__duration { color: var(--foreground); font-weight: 500; }
+.message-timings-nerd__duration { color: var(--muted-foreground); }
 .message-timings-nerd__age {
   color: color-mix(in oklch, var(--timeline-accent, var(--foreground)) 60%, var(--foreground));
   font-weight: 500;
 }
-.message-timings-nerd__label { color: var(--muted-foreground); }
+.message-timings-nerd__label {
+  color: color-mix(in oklab, var(--subtle-foreground, var(--muted-foreground)) 80%, var(--foreground));
+}
 .message-timings-nerd__separator { color: var(--subtle-foreground, var(--muted-foreground)); }
 .message-timings-nerd__stamp--user { text-align: end; }
 .message-timings-nerd__toggle {

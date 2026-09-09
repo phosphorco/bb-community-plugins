@@ -11,12 +11,14 @@ function TimingHeader({ threadId }: PluginThreadHeaderActionProps) {
   const rpcRef = useRef(rpc);
   rpcRef.current = rpc;
   const [enabled, setEnabled] = useState(true);
+  const [attempt, setAttempt] = useState(0);
   const [state, setState] = useState<"ready" | "partial" | "error" | "unsupported">("ready");
   const refreshRef = useRef<() => void>(() => {});
   const buttonRef = useRef<HTMLButtonElement>(null);
   useEffect(() => {
     if (!enabled) return;
     let disposed = false;
+    let failed = false;
     let busy = false;
     let pending = false;
     let consecutiveFailures = 0;
@@ -25,8 +27,13 @@ function TimingHeader({ threadId }: PluginThreadHeaderActionProps) {
     // rather than observing/scanning every other thread during streaming.
     const root = buttonRef.current ? findTimingPane(buttonRef.current) : null;
     if (!root) { setState("unsupported"); return; }
-    const decorations = createDecorations(root, request);
+    const decorations = createDecorations(root, request, () => {
+      failed = true;
+      clearTimeout(timer);
+      setState("error");
+    });
     function request() {
+      if (failed) return;
       pending = true;
       if (disposed || document.hidden || busy || timer != null) return;
       // Coalesce simultaneous row mounts and lifecycle signals. No polling.
@@ -37,13 +44,15 @@ function TimingHeader({ threadId }: PluginThreadHeaderActionProps) {
       busy = true; pending = false;
       try {
         const result = await rpcRef.current.call("timings", { threadId });
-        if (disposed) return;
+        if (disposed || failed) return;
         consecutiveFailures = 0;
-        decorations.update(result.stamps, result.coveredIds);
+        decorations.update(result.stamps, result.coveredIds, result.historyStartId);
+        if (failed) return;
         setState(result.truncated ? "partial" : "ready");
       } catch {
         if (!disposed) {
-          decorations.update([]); setState("error");
+          // A failed read must not remove stable footers or change row heights.
+          setState("error");
           // Same-bundle reloads can retain this frontend while replacing the
           // backend handle. Recover one transient read without a polling loop.
           if (++consecutiveFailures === 1) pending = true;
@@ -64,17 +73,21 @@ function TimingHeader({ threadId }: PluginThreadHeaderActionProps) {
       document.removeEventListener("visibilitychange", visible);
       refreshRef.current = () => {};
     };
-  }, [threadId, enabled]);
+  }, [threadId, enabled, attempt]);
 
   useRealtime("timings-changed", useCallback((payload: unknown) => {
     if (payload && typeof payload === "object" && "threadId" in payload && payload.threadId === threadId) refreshRef.current();
   }, [threadId]));
   const connection = useRealtimeConnectionState();
-  useEffect(() => { if (connection === "connected") refreshRef.current(); }, [connection]);
-  const title = !enabled ? "Show message timestamps" : state === "unsupported" ? "Message timestamps are unavailable in this layout." : state === "error" ? "Message timestamps unavailable. Click to retry." : state === "partial"
+  const previousConnection = useRef(connection);
+  useEffect(() => {
+    if (connection === "connected" && previousConnection.current !== "connected") refreshRef.current();
+    previousConnection.current = connection;
+  }, [connection]);
+  const title = !enabled ? "Show message timestamps" : state === "unsupported" ? "Message timestamps are unavailable in this layout." : state === "error" ? "Message timestamps may be stale or unavailable. Click to retry." : state === "partial"
     ? "Message timestamps (older history is incomplete). Click to hide." : "Hide message timestamps";
   return <button ref={buttonRef} type="button" className="message-timings-nerd__toggle" aria-label={title} title={title} aria-pressed={enabled}
-    onClick={() => { if (state === "error") refreshRef.current(); else setEnabled(value => !value); }}>
+    onClick={() => { if (state === "error") setAttempt(value => value + 1); else setEnabled(value => !value); }}>
     <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true"><circle cx="12" cy="12" r="8" /><path d="M12 7v5l3 2" /></svg>
     {state !== "ready" && <span aria-hidden="true">!</span>}
   </button>;

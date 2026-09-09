@@ -74,15 +74,23 @@ used to identify a thread. A future footer slot can replace this narrow adapter.
 - Streaming text is ignored. Known rows repaint locally on windowing changes.
   Only uncovered row IDs, reconnect/visibility recovery, and thread lifecycle
   signals request data; requests coalesce and never overlap per pane.
-- A bounded server cache coalesces concurrent clients. Lifecycle invalidation
+- A bounded server cache coalesces concurrent clients and queues loads behind
+  two global slots. Unchanged history needs one head-page probe rather than
+  another full traversal; visible rows before the declared history boundary
+  do not trigger futile older-history reads. Lifecycle invalidation
   prevents obsolete requests from restoring stale results, including failures.
 - Minute deadlines update only the live footer. Raw clock state never enters
-  React, historical duration labels have no repeating timers, and there is no
+  React. Equal historical snapshots skip formatting as well as DOM writes;
+  local-date and UTC-offset changes invalidate cached calendar text. Hidden snapshots
+  reconcile once on return. Historical duration labels have no repeating timers, and there is no
   network polling. A shared daily deadline rolls calendar labels over at local
   midnight; day-scale ages update hourly. Hidden tabs pause clocks and defer
   data reads until visible.
 - Unmount, hide, navigation, and reload remove owned labels, observers, timers,
-  and listeners. Reconnect requests fresh data; async results are tied to the
+  and listeners. Selected timing text is held until selection ends, retaining
+  its spans and text nodes. Transient RPC errors retain the last successful
+  footers and flag potentially stale data in the header; fatal decoration
+  errors clean up locally and allow manual retry. Reconnect requests fresh data; async results are tied to the
   component generation that requested them.
 
 Tests cover source-order timing, steering, folded work, child isolation,
@@ -104,3 +112,19 @@ covers request limits, in-turn page boundaries, and equal-snapshot DOM writes.
 The host DOM adapter is verified against Phosphor's materialized BB 0.39 runtime
 and SDK 0.4.15. Stock/future BB DOM layouts are not claimed to be verified. The
 header reports unsupported layouts rather than silently omitting timestamps.
+
+A second four-lens performance review led to stable refresh-error handling,
+selection preservation, computation reuse, bounded head probes, a two-load
+queue, and local failure containment. A controlled Chromium fixture with 1,000
+historical rows measured median equal-snapshot updates at roughly 0.5 ms after
+these changes versus 41 ms before, with zero DOM writes. A 100-leaf-markup
+stream produced zero descendant searches and no refresh requests. These are
+isolated fixture measurements, not end-to-end BB latency claims. Complex newly
+mounted subtrees still need bounded discovery to preserve nested timeline rows;
+footers participate in the host's normal layout and measurement.
+
+Live BB verification retained footer/span identity across an injected transient
+RPC failure and automatic recovery. A scrolled visible row stayed at the same
+screen offset across refresh (0 px delta), and a narrow viewport had no horizontal
+overflow. These checks do not exhaust every prepend, search, or history-navigation
+sequence; the host DOM/measurement compatibility boundary still applies.

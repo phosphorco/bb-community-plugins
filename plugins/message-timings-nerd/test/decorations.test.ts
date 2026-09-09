@@ -88,7 +88,7 @@ test("only the live footer changes at its deadline; hidden tabs disarm timers", 
 });
 
 test("hosted sibling headers discover their own split pane; moved rows are released", async () => {
-  const dom = new JSDOM('<section data-split-pane-id="left"><header><button></button></header><main data-conversation-collapsed="false"><div data-timeline-row-id="a"></div></main></section><section data-split-pane-id="right"><header><button></button></header><main data-conversation-collapsed="false"></main></section>');
+  const dom = new JSDOM('<section data-split-pane-id="left"><header><button></button></header><main data-conversation-collapsed="false"><div data-timeline-row-id="a"></div></main></section><section data-split-pane-id="right"><header><button></button></header><main data-conversation-collapsed="false"></main></section>', { pretendToBeVisual: true });
   const doc = dom.window.document;
   const left = findTimingPane(doc.querySelector("button")!)!;
   assert.equal(left.dataset.splitPaneId, "left");
@@ -114,7 +114,7 @@ test("hosted sibling headers discover their own split pane; moved rows are relea
 });
 
 test("equal snapshots cause no DOM writes", async () => {
-  const dom = new JSDOM('<main><div data-timeline-row-id="a"></div></main>');
+  const dom = new JSDOM('<main><div data-timeline-row-id="a"></div></main>', { pretendToBeVisual: true });
   const root = dom.window.document.querySelector("main")!;
   const controller = createDecorations(root, () => {});
   const value = stamp("a");
@@ -127,4 +127,87 @@ test("equal snapshots cause no DOM writes", async () => {
   await flush();
   assert.equal(writes, 0);
   observer.disconnect(); controller.dispose(); dom.window.close();
+});
+
+
+test("host child replacement restores the same footer; queued attributes cannot decorate another pane", async () => {
+  const dom = new JSDOM('<main><div data-timeline-row-id="a"><p>host content</p></div></main><aside></aside>', { pretendToBeVisual: true });
+  const doc = dom.window.document;
+  const root = doc.querySelector("main")!;
+  const controller = createDecorations(root, () => {});
+  controller.update([stamp("a")]);
+  await flush();
+  const row = root.firstElementChild!;
+  const footer = row.querySelector("[data-message-timings-nerd]")!;
+  const span = footer.firstElementChild;
+  row.replaceChildren(doc.createElement("p"));
+  await flush();
+  assert.equal(row.querySelector("[data-message-timings-nerd]"), footer);
+  assert.equal(footer.firstElementChild, span);
+  doc.querySelector("aside")!.append(row);
+  row.setAttribute("data-timeline-windowed-realized", "true");
+  await flush();
+  assert.equal(row.querySelector("[data-message-timings-nerd]"), null);
+  controller.dispose(); dom.window.close();
+});
+
+test("selected timing text survives refresh and catches up without replacing its text node", async () => {
+  const dom = new JSDOM('<main><div data-timeline-row-id="a"></div></main>', { pretendToBeVisual: true });
+  const doc = dom.window.document;
+  const controller = createDecorations(doc.querySelector("main")!, () => {});
+  const first = stamp("a", true);
+  controller.update([first]);
+  const span = doc.querySelector(".message-timings-nerd__age")!;
+  const text = span.firstChild;
+  const selection = doc.getSelection()!;
+  selection.selectAllChildren(span);
+  const selected = selection.toString();
+  controller.update([{ ...first, at: first.at! - 120_000 }]);
+  assert.equal(selection.toString(), selected);
+  assert.equal(span.firstChild, text);
+  selection.removeAllRanges(); doc.dispatchEvent(new dom.window.Event("selectionchange"));
+  await flush();
+  assert.notEqual(span.textContent, selected);
+  assert.equal(span.firstChild, text);
+  controller.dispose(); dom.window.close();
+});
+
+test("hidden snapshots reconcile once on return; known history limits suppress futile older-row reads", async () => {
+  const dom = new JSDOM('<main><div data-timeline-row-id="a"></div></main>', { pretendToBeVisual: true });
+  const doc = dom.window.document;
+  const root = doc.querySelector("main")!;
+  let hidden = false; let requests = 0;
+  Object.defineProperty(doc, "hidden", { get: () => hidden });
+  const controller = createDecorations(root, () => requests++);
+  const first = stamp("a");
+  controller.update([first], ["a"], "a");
+  await flush();
+  const footer = root.querySelector("[data-message-timings-nerd]")!;
+  const text = footer.textContent;
+  hidden = true;
+  controller.update([{ ...first, at: first.at! - 3_600_000 }], ["a"], "a");
+  assert.equal(footer.textContent, text);
+  hidden = false; doc.dispatchEvent(new dom.window.Event("visibilitychange"));
+  assert.notEqual(footer.textContent, text);
+  const older = doc.createElement("div"); older.dataset.timelineRowId = "older"; root.prepend(older);
+  await flush(); assert.equal(requests, 0);
+  const newer = doc.createElement("div"); newer.dataset.timelineRowId = "newer"; root.append(newer);
+  await flush(); assert.equal(requests, 1);
+  controller.dispose(); dom.window.close();
+});
+
+test("decoration errors clean up once and cannot escape subsequent observer callbacks", async () => {
+  const dom = new JSDOM('<main><div data-timeline-row-id="a"></div></main>', { pretendToBeVisual: true });
+  const root = dom.window.document.querySelector("main")!;
+  let errors = 0;
+  const controller = createDecorations(root, () => {}, () => errors++);
+  root.firstElementChild!.append = () => { throw new Error("host changed while painting"); };
+  assert.doesNotThrow(() => controller.update([stamp("a")]));
+  assert.equal(errors, 1);
+  root.firstElementChild!.setAttribute("data-timeline-windowed-realized", "true");
+  await flush();
+  controller.update([stamp("a")]); controller.dispose();
+  assert.equal(errors, 1);
+  assert.equal(root.querySelectorAll("[data-message-timings-nerd]").length, 0);
+  dom.window.close();
 });

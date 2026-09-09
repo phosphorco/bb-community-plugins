@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { createFakePluginHost } from "@get-bb/plugin-sdk/testing";
+import { createFakePluginHost, makeThreadResponse } from "@get-bb/plugin-sdk/testing";
 import plugin from "../server.ts";
 import type { Stamp } from "../timing.ts";
 
@@ -48,4 +48,21 @@ test("RPC rejects malformed input without reading thread history", async () => {
   plugin(bb);
   await assert.rejects(harness.callRpc("timings", { threadId: "t", extra: true }));
   assert.equal(harness.sdk.calls.length, 0);
+});
+
+
+test("unchanged history needs only a head probe after invalidation", async () => {
+  let pages = 0; let eventReads = 0;
+  const { bb, harness } = createFakePluginHost({ sdk: { threads: {
+    timeline: () => { pages++; return { rows: [], maxSeq: 5000,
+      timelinePage: { hasOlderRows: true, olderCursor: { anchorSeq: 5000 - pages, anchorId: `a${pages}` } } }; },
+    events: { list: () => { eventReads++; return []; } },
+  } } });
+  plugin(bb);
+  const before = await harness.callRpc("timings", { threadId: "t" });
+  assert.equal(pages, 12); assert.equal(eventReads, 2);
+  await harness.emitThreadEvent("thread.idle", { thread: makeThreadResponse({ id: "t" }), lastAssistantText: null });
+  const after = await harness.callRpc("timings", { threadId: "t" });
+  assert.deepEqual(after, before);
+  assert.equal(pages, 13); assert.equal(eventReads, 2);
 });

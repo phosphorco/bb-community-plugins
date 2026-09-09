@@ -42,3 +42,21 @@ test("invalidation keeps one in-flight request per key and respects the global l
   assert.deepEqual(await Promise.all([before, after]), [2, 2]);
   assert.equal(calls, 2);
 });
+
+test("many unique clients queue behind two global load slots", async () => {
+  let active = 0; let maximum = 0;
+  const release: (() => void)[] = [];
+  const cache = createCache(async key => {
+    active++; maximum = Math.max(maximum, active);
+    await new Promise<void>(resolve => release.push(resolve));
+    active--; return key;
+  });
+  const requests = ["a", "b", "c", "d"].map(key => cache.get(key));
+  assert.equal(active, 2);
+  for (let i = 0; i < 4; i++) {
+    release.shift()!();
+    await new Promise<void>(resolve => setImmediate(resolve));
+  }
+  assert.deepEqual(await Promise.all(requests), ["a", "b", "c", "d"]);
+  assert.equal(maximum, 2);
+});
