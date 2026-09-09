@@ -1,0 +1,36 @@
+.message-timings-nerd__stamp {
+  color: var(--muted-foreground);
+  font-size: 0.6875rem;
+  line-height: 1.5;
+  margin-block-start: 0.25rem;
+  overflow-wrap: anywhere;
+  font-variant-numeric: tabular-nums;
+}
+.message-timings-nerd__time {
+  color: color-mix(in oklab, var(--timeline-accent, var(--foreground)) 75%, var(--foreground));
+  font-weight: 500;
+}
+.message-timings-nerd__duration { color: var(--muted-foreground); }
+.message-timings-nerd__age {
+  color: color-mix(in oklch, var(--timeline-accent, var(--foreground)) 60%, var(--foreground));
+  font-weight: 500;
+}
+.message-timings-nerd__label {
+  color: color-mix(in oklab, var(--subtle-foreground, var(--muted-foreground)) 80%, var(--foreground));
+}
+.message-timings-nerd__separator { color: var(--subtle-foreground, var(--muted-foreground)); }
+.message-timings-nerd__stamp--user { text-align: end; }
+.message-timings-nerd__toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.75rem;
+  min-height: 1.75rem;
+  color: var(--muted-foreground);
+  border-radius: 0.375rem;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+}
+.message-timings-nerd__toggle:hover { background: var(--muted); color: var(--foreground); }
+.message-timings-nerd__toggle:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
