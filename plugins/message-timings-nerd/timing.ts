@@ -133,21 +133,41 @@ export function sentAt(at: number, now: number): string {
   return `${date.toLocaleDateString(undefined, { month: "short", day: "numeric", ...(date.getFullYear() !== today.getFullYear() ? { year: "numeric" } : {}) })}, ${time}`;
 }
 
-export function label(stamp: Stamp, now: number): string {
+export interface LabelPart {
+  kind: "time" | "duration" | "age" | "label" | "separator";
+  text: string;
+}
+
+export function labelParts(stamp: Stamp, now: number): LabelPart[] {
   const state = stamp.status === "interrupted" ? "Stopped" : stamp.status === "failed" ? "Failed" : "Finished";
-  const parts = [stamp.at == null ? "Send time unavailable" : stamp.kind === "user" ? sentAt(stamp.at, now) : `${state} ${sentAt(stamp.at, now)}`];
-  if (stamp.kind === "user" && (stamp.status === "rejected" || stamp.status === "pending")) parts.push(stamp.status);
-  const add = (from: number | null, to: number | null, suffix: string) => {
+  const parts: LabelPart[] = [];
+  const separator = () => parts.push({ kind: "separator", text: " · " });
+  if (stamp.at == null) parts.push({ kind: "label", text: "Send time unavailable" });
+  else {
+    if (stamp.kind === "finish") parts.push({ kind: "label", text: `${state} ` });
+    parts.push({ kind: "time", text: sentAt(stamp.at, now) });
+  }
+  if (stamp.kind === "user" && (stamp.status === "rejected" || stamp.status === "pending")) {
+    separator(); parts.push({ kind: "label", text: stamp.status });
+  }
+  const add = (from: number | null, to: number | null, suffix: string, kind: "duration" | "age" = "duration") => {
     if (from == null || to == null) return;
     const value = duration(from, to);
-    if (value != null) parts.push(`${value} ${suffix}`);
+    if (value != null) {
+      separator();
+      parts.push({ kind, text: value }, { kind: "label", text: ` ${suffix}` });
+    }
   };
   add(stamp.previousUserAt, stamp.at, stamp.kind === "user" ? "since previous message" : "from your message");
   if (stamp.kind === "user") add(stamp.previousFinishAt, stamp.at, "after agent finished");
   if (stamp.kind === "finish" && stamp.nextUserAt != null) add(stamp.at, stamp.nextUserAt, "until next message");
   if (stamp.latest) {
-    add(stamp.at, now, stamp.kind === "user" ? "since sent" : "since finish");
-    if (stamp.kind === "finish") add(stamp.previousUserAt, now, "since your message");
+    add(stamp.at, now, stamp.kind === "user" ? "since sent" : "since finish", "age");
+    if (stamp.kind === "finish") add(stamp.previousUserAt, now, "since your message", "age");
   }
-  return parts.join(" · ");
+  return parts;
+}
+
+export function label(stamp: Stamp, now: number): string {
+  return labelParts(stamp, now).map(part => part.text).join("");
 }

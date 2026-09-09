@@ -1,4 +1,4 @@
-import { label, type Stamp } from "./timing.ts";
+import { labelParts, type Stamp } from "./timing.ts";
 
 const ROW = "[data-timeline-row-id]";
 const OWNED = "data-message-timings-nerd";
@@ -32,8 +32,18 @@ export function createDecorations(root: HTMLElement, onRowsChanged: () => void) 
     if (!old) node.setAttribute(OWNED, "");
     const className = `message-timings-nerd__stamp message-timings-nerd__stamp--${stamp.kind}`;
     if (node.className !== className) node.className = className;
-    const text = label(stamp, Date.now());
-    if (node.textContent !== text) node.textContent = text;
+    const parts = labelParts(stamp, Date.now());
+    // Preserve the existing spans and selection when a snapshot is unchanged;
+    // minute ticks update only the value whose visible text changed.
+    for (let index = 0; index < parts.length; index++) {
+      const part = parts[index]!;
+      const span = node.children[index] ?? doc.createElement("span");
+      const partClass = `message-timings-nerd__${part.kind}`;
+      if (span.className !== partClass) span.className = partClass;
+      if (span.textContent !== part.text) span.textContent = part.text;
+      if (!span.parentElement) node.append(span);
+    }
+    while (node.children.length > parts.length) node.lastElementChild!.remove();
     if (!old || old.stamp.at !== stamp.at || old.stamp.kind !== stamp.kind) {
       node.title = stamp.at == null ? "The original send timestamp is outside the available history."
         : `${stamp.kind === "user" ? "Sent" : "Agent ended"} ${new Date(stamp.at).toLocaleString()}. Durations are approximate wall-clock time.`;
