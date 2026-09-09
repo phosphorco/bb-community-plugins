@@ -35,6 +35,8 @@ export const threadMessageSchema = z.object({
   role: z.enum(["human", "agent"]),
   content: z.string(),
   timestamp: z.number(),
+  /** Captured when the reply was accepted; old replies intentionally omit it. */
+  author: z.lazy(() => annotationAuthorSchema).nullable().optional(),
 });
 
 /**

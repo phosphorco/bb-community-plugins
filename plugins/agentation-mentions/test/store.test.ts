@@ -253,6 +253,20 @@ test("an edit keeps the reply thread", () => {
   assert.equal(edited.thread[0]?.role, "agent");
 });
 
+test("replies persist their own accepted author snapshots separately", () => {
+  const db = freshDb();
+  const { stored } = seed(db, coleAuthor);
+  const reply = appendThreadMessage(db, stored.id, {
+    role: "human",
+    content: "Please keep the current copy.",
+    author: machineAuthor,
+  });
+
+  assert.deepEqual(reply?.author, coleAuthor);
+  assert.deepEqual(reply?.thread[0]?.author, machineAuthor);
+  assert.equal(reply?.thread[0]?.content, "Please keep the current copy.");
+});
+
 test("resolving records who closed it and when", () => {
   const db = freshDb();
   const { stored } = seed(db);

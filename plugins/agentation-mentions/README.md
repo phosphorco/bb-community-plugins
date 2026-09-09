@@ -15,17 +15,21 @@ plugin.
 ## What the derivative adds
 
 - A composer action attaches staged annotations as a native bb mention. The
-  mention resolves the current annotation bodies when the prompt is submitted.
+  mention resolves the current annotation bodies as plain provider context; native prompt assembly wraps it once in `<attached>` when the prompt is submitted.
 - `bb agentation-mentions send --queue` uses bb's durable queued-message API;
   omitting `--queue` sends immediately.
 - At annotation admission, the plugin uses the public bb-identity request
   boundary to capture the request-bound actor's presentation, identity, and
-  evidence as an immutable historical snapshot. Delivery preserves a minimal
-  per-author source frame, while the captured-author snapshot remains in the
-  durable annotation and dispatch history for provenance and legacy resolution;
-  it does not impersonate that person or turn a later queued send into a native
+  evidence as an immutable historical snapshot. Delivery preserves the original comment as the producer-authored body, adds a
+  minimal per-author sender frame, and keeps derived selector/reply history in an
+  agent-only `<attached>` block. Captured-author snapshots remain in the durable
+  annotation and dispatch history for provenance. Legacy `authorIdentityId`
+  fields are preserved as unresolved historical data; they do not impersonate
+  that person or turn a later queued send into a native
   person-authored contribution. When no person can be resolved, the stable
-  machine actor is captured and labeled explicitly.
+  machine actor is captured and labeled explicitly. This plugin opts into the
+  shared binding's `externalMessageRendering: "producer"` mode so the host does
+  not add a second envelope.
 - Every agent tool and CLI surface uses the distinct `agentation_mentions_*`
   / `bb agentation-mentions` identity, so it can coexist with canonical
   Agentation without tool or command collisions.
@@ -80,10 +84,13 @@ bb agentation-mentions toolbar [on|off]
 
 ## Data, network, and authority
 
-- Annotation bodies, routing, replies, captured-author snapshots, and retention state are
-  stored locally in this plugin's bb database/KV namespace.
+- Annotation bodies, routing, replies (with their own accepted author
+  snapshots), and retention state are stored locally in this plugin's bb database/KV namespace.
 - The toolbar and review panel use bb's plugin RPC, realtime, and same-origin
-  event stream. The plugin contacts no third-party service of its own.
+  event stream. The plugin contacts no third-party service of its own. Retrieved annotation context is attached
+  explicitly; it is never expanded into hidden mentions or a second sender. The
+  former captured-author mention provider was not emitted by this toolbar; old
+  encoded author references are not re-resolved as sender text.
 - Delivery mutates only the target bb thread: immediate mode sends a prompt;
   queue mode adds a queued prompt. Captured attribution is source-labelled
   provenance, not native accepted authorship. Older rows retain their exact

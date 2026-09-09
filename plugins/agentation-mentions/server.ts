@@ -30,6 +30,7 @@ import { projectIdFromRoute, threadIdFromRoute } from "./lib/route.ts";
 import {
   renderAnnotation,
   renderAnnotationAssignment,
+  renderAnnotationAttachment,
   renderAnnotationLine,
   renderAnnotations,
 } from "./lib/markdown.ts";
@@ -63,14 +64,10 @@ import {
 } from "./lib/staging.ts";
 import {
   annotationAuthor,
-  capturedAuthorLabel,
-  authorGroupKey,
   captureAnnotationAuthor,
-  decodeCapturedAuthorMention,
   unavailableAnnotationAuthor,
   wrapAgentationContent,
   type AgentationPromptInput,
-  type AuthorAttribution,
 } from "./lib/identity.ts";
 import {
   deliverAnnotationInput,
@@ -78,7 +75,6 @@ import {
 } from "./lib/delivery.ts";
 import {
   AGENTATION_MENTION_PROVIDER,
-  CAPTURED_AUTHOR_MENTION_PROVIDER,
   decodeAgentationAttachment,
 } from "./lib/attachment.ts";
 
@@ -225,31 +221,11 @@ export const rpcContract = defineRpcContract({
   },
 });
 
-const { pushAnnotations, ...ordinaryRpcContract } = rpcContract;
-const identityRpcContract = defineRpcContract({ pushAnnotations });
-
-function groupByAuthor(
-  annotations: readonly z.infer<typeof storedAnnotationSchema>[],
-): Array<{
-  author: AuthorAttribution;
-  annotations: z.infer<typeof storedAnnotationSchema>[];
-}> {
-  const groups = new Map<
-    string,
-    { author: AuthorAttribution; annotations: z.infer<typeof storedAnnotationSchema>[] }
-  >();
-  for (const annotation of annotations) {
-    const author = annotationAuthor(annotation);
-    const key = authorGroupKey(author);
-    const group = groups.get(key);
-    if (group) group.annotations.push(annotation);
-    else groups.set(key, { author, annotations: [annotation] });
-  }
-  return [...groups.values()];
-}
+const { pushAnnotations, replyToAnnotation, ...ordinaryRpcContract } = rpcContract;
+const identityRpcContract = defineRpcContract({ pushAnnotations, replyToAnnotation });
 
 export default async function plugin(bb: BbPluginApi) {
-  const identityResult = bindBbIdentity(bb);
+  const identityResult = bindBbIdentity(bb, { externalMessageRendering: 'producer' });
   if (!identityResult.ok) throw new Error(identityResult.error.message);
   const identity = identityResult.value;
   const settings = bb.settings.define({
@@ -345,34 +321,16 @@ export default async function plugin(bb: BbPluginApi) {
         }
         return annotation;
       });
-      const sessions = listSessions(db, {});
-      const sections: string[] = [];
-      for (const group of groupByAuthor(annotations)) {
-        const markdown = renderAnnotations(group.annotations, {
-          title: "bb UI feedback from Agentation",
-          sessions,
-        });
-        sections.push(
-          wrapAgentationContent(markdown, group.author)
-            .map((part) => part.text)
-            .join(""),
-        );
-      }
+      const context = annotations
+        .map((annotation) => renderAnnotationAttachment(annotation))
+        .join("\n\n");
 
       return {
-        context: `${sections.join("\n\n")}\n\nResolve each item with the \`agentation_mentions_resolve\` tool once it is fixed.`,
-      };
-    },
-  });
-
-  bb.ui.registerMentionProvider({
-    id: CAPTURED_AUTHOR_MENTION_PROVIDER,
-    label: "Captured feedback author",
-    search: () => [],
-    resolve(itemId) {
-      const author = decodeCapturedAuthorMention(itemId);
-      return {
-        context: capturedAuthorLabel(author),
+        // Mention resolution returns plain retrieved context. The native host
+        // owns the enclosing attachedPluginMentionContext boundary for the
+        // prompt, so Agentation must not add a second <attached> block or a
+        // hidden author mention here.
+        context: `${context}\n\nResolve each item with the \`agentation_mentions_resolve\` tool once it is fixed.`,
       };
     },
   });
@@ -454,14 +412,15 @@ export default async function plugin(bb: BbPluginApi) {
 
     broadcast({ type: "routing", sessionId: null });
 
-    const sessions = listSessions(db, {});
     const input: AgentationPromptInput[] = [];
-    for (const group of groupByAuthor(claim.dispatch.annotations)) {
-      const markdown = renderAnnotations(group.annotations, {
-        title: "bb UI feedback from Agentation",
-        sessions,
-      });
-      input.push(...wrapAgentationContent(markdown, group.author));
+    for (const annotation of claim.dispatch.annotations) {
+      input.push(
+        ...wrapAgentationContent(
+          annotation.comment,
+          annotationAuthor(annotation),
+          renderAnnotationAttachment(annotation, { includeOriginal: false }),
+        ),
+      );
     }
     input.push({
       type: "text",
@@ -529,6 +488,39 @@ export default async function plugin(bb: BbPluginApi) {
           cursor: sessionCursor(db, input.sessionId),
           annotations: listAnnotations(db, { sessionId: input.sessionId, limit: null }),
         });
+      },
+    },
+    replyToAnnotation: {
+      origin: "interactive-user",
+      async handle(input, invocation) {
+        const existing = getAnnotation(db, input.annotationId);
+        if (!existing) return sanitizeJson({ annotation: null });
+
+        const routing = getAnnotationRouting(db, input.annotationId);
+        if (routing?.state !== "assigned" || !routing.assignedThreadId) {
+          throw new Error("Stage and send this annotation to a thread before you reply.");
+        }
+
+        const session = await identity.server.session(invocation);
+        const author = session.status === "ready"
+          ? captureAnnotationAuthor(session.actor)
+          : unavailableAnnotationAuthor(session.status);
+        const attached = renderAnnotationAttachment(existing);
+        await bb.sdk.threads.send({
+          threadId: routing.assignedThreadId,
+          mode: "auto",
+          input: wrapAgentationContent(input.message, author, attached),
+        });
+
+        const annotation = appendThreadMessage(db, input.annotationId, {
+          role: "human",
+          content: input.message,
+          author,
+        });
+        if (annotation) {
+          broadcast({ type: "annotations", sessionId: annotation.sessionId });
+        }
+        return sanitizeJson({ annotation });
       },
     },
   });
@@ -685,37 +677,6 @@ export default async function plugin(bb: BbPluginApi) {
       return sanitizeJson({ annotation, deleted: false });
     },
 
-    async replyToAnnotation(input) {
-      const existing = getAnnotation(db, input.annotationId);
-      if (!existing) return sanitizeJson({ annotation: null });
-
-      const routing = getAnnotationRouting(db, input.annotationId);
-      if (routing?.state !== "assigned" || !routing.assignedThreadId) {
-        throw new Error("Stage and send this annotation to a thread before you reply.");
-      }
-
-      const context = renderAnnotation(existing);
-      await bb.sdk.threads.send({
-        threadId: routing.assignedThreadId,
-        mode: "auto",
-        input: [
-          {
-            type: "text",
-            text: `# Agentation follow-up\n\n${context}\n\n## Human reply\n\n${input.message}`,
-            mentions: [],
-          },
-        ],
-      });
-
-      const annotation = appendThreadMessage(db, input.annotationId, {
-        role: "human",
-        content: input.message,
-      });
-      if (annotation) {
-        broadcast({ type: "annotations", sessionId: annotation.sessionId });
-      }
-      return sanitizeJson({ annotation });
-    },
   });
 
   // -------------------------------------------------------------------------

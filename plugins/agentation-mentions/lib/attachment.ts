@@ -1,5 +1,4 @@
 export const AGENTATION_MENTION_PROVIDER = "feedback-batch";
-export const CAPTURED_AUTHOR_MENTION_PROVIDER = "captured-author";
 export const MAX_ATTACHED_ANNOTATIONS = 50;
 const MAX_ANNOTATION_ID_LENGTH = 256;
 

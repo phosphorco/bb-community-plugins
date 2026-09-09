@@ -1,6 +1,6 @@
 ---
 name: agentation-mentions
-description: Read and act on visual feedback captured by Agentation → Mentions, the Scott Sunarto Agentation derivative that delivers annotations through bb mentions, queueing, and verified identity tags. Use when the user refers to its annotation batch, asks to address visual feedback, or requests watch mode.
+description: Read and act on visual feedback captured by Agentation → Mentions, the Scott Sunarto Agentation derivative that delivers annotations through bb mentions, queueing, structured author snapshots, and sender envelopes. Use when the user refers to its annotation batch, asks to address visual feedback, or requests watch mode.
 ---
 
 # Agentation → Mentions
@@ -13,9 +13,16 @@ job is to turn that into a code change and close the loop.
 
 Annotations first enter a shared staging area. A prompt action shows the live
 staged count and lets the human add that batch as a native mention. The mention
-resolves into current agent context when the prompt is sent; insertion and
-resolution do not consume or assign the annotations. The capture route is
-source context, not a delivery target.
+returns current annotation context as plain content; native mention resolution
+wraps it once as an explicit `<attached>` block when the prompt is sent. Insertion
+and resolution do not consume or assign the
+annotations. The capture route is source context, not a delivery target. Each
+dispatched annotation keeps its original comment as the sender body; selectors,
+route metadata, prior replies, and other derived context belong in `<attached>`.
+Replies are separate sender messages and retain their own captured authors.
+Unknown or legacy authors stay unknown; legacy `authorIdentityId` values are
+preserved as historical data but are not re-resolved as sender text. Never
+create a hidden mention or merge different authors into one envelope.
 
 ## The loop
 

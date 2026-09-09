@@ -53,30 +53,18 @@ export function annotationAuthor(
   return { kind: "unattributed" };
 }
 
-export function authorGroupKey(author: AuthorAttribution): string {
-  switch (author.kind) {
-    case "captured":
-      return `captured:${author.identity.key}`;
-    case "legacy-unresolved":
-      return `legacy:${author.identityId}`;
-    case "unavailable":
-      return `unavailable:${author.reason}`;
-    case "unattributed":
-      return "unattributed";
-  }
-}
 
-export function encodeCapturedAuthorMention(author: CapturedAnnotationAuthor): string {
+export function encodeCapturedAuthorSnapshot(author: CapturedAnnotationAuthor): string {
   return encodeURIComponent(JSON.stringify(author));
 }
 
-export function decodeCapturedAuthorMention(itemId: string): CapturedAnnotationAuthor {
-  if (itemId.length > 12_000) throw new Error("Invalid captured feedback author");
-  return capturedAnnotationAuthorSchema.parse(JSON.parse(decodeURIComponent(itemId)));
+export function decodeCapturedAuthorSnapshot(value: string): CapturedAnnotationAuthor {
+  if (value.length > 12_000) throw new Error("Invalid captured feedback author");
+  return capturedAnnotationAuthorSchema.parse(JSON.parse(decodeURIComponent(value)));
 }
 
 function escapeWrapperLabel(label: string): string {
-  return label.replace(/[\[\]\r\n%]/g, (character) => encodeURIComponent(character));
+  return label.replace(/[\[\]\r\n%<>]/g, (character) => encodeURIComponent(character));
 }
 
 export function capturedAuthorLabel(author: CapturedAnnotationAuthor): string {
@@ -86,26 +74,48 @@ export function capturedAuthorLabel(author: CapturedAnnotationAuthor): string {
   return escapeWrapperLabel(label);
 }
 
+/**
+ * Render one captured Agentation message. The annotation comment is the
+ * original content. Selector, route, replies and other derived details are
+ * supplied separately as an optional attachment so the host cannot mistake
+ * them for words authored by the captured person.
+ *
+ * Unknown and legacy authors deliberately remain unwrapped. A historical
+ * marker is evidence to preserve, not permission to invent a current sender.
+ */
 export function wrapAgentationContent(
   content: string,
   author: AuthorAttribution,
+  attached?: string,
 ): AgentationTextPromptInput[] {
+  const attachment = attached === undefined || attached.length === 0
+    ? null
+    : `\n<attached>\n${attached}\n</attached>`;
+
   if (author.kind !== "captured") {
-    return [{ type: "text", text: content, mentions: [] }];
+    return [
+      { type: "text" as const, text: content, mentions: [] },
+      ...(attachment
+        ? [{ type: "text" as const, text: attachment, mentions: [], visibility: "agent-only" as const }]
+        : []),
+    ];
   }
 
   const label = capturedAuthorLabel(author);
   return [
     {
-      type: "text",
-      text: `[from=${label}]\n`,
+      type: "text" as const,
+      text: `[message posted via Agentation]\n[sender=${label}]\n`,
       mentions: [],
       visibility: "agent-only",
     },
-    { type: "text", text: content, mentions: [] },
+    { type: "text" as const, text: content, mentions: [] },
+    ...(attachment
+      ? [{ type: "text" as const, text: attachment, mentions: [], visibility: "agent-only" as const }]
+      : []),
     {
-      type: "text",
-      text: `\n[/from=${label}]`,
+      type: "text" as const,
+      text: `\n[/sender=${label}]`,
       mentions: [],
       visibility: "agent-only",
     },

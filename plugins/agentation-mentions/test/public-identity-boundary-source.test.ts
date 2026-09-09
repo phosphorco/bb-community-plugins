@@ -11,13 +11,13 @@ test("annotation admission gets attribution only from the public request boundar
     readFile(toolbarUrl, "utf8"),
   ]);
 
-  assert.match(server, /bindBbIdentity\(bb\)/u);
+  assert.match(server, /bindBbIdentity\(bb,\s*\{\s*externalMessageRendering:\s*["']producer["']/u);
   assert.match(server, /identity\.rpc\.register\(identityRpcContract/u);
   assert.match(server, /origin:\s*"interactive-user"/u);
   assert.match(server, /identity\.server\.session\(invocation\)/u);
   assert.match(server, /captureAnnotationAuthor\(session\.actor\)/u);
   assert.doesNotMatch(server, /identity-boundaries|current-profile|getIdentityProfile/u);
   assert.doesNotMatch(toolbar, /authorIdentityId|current-profile|identity-boundaries/u);
-  assert.match(server, /context: capturedAuthorLabel\(author\)/u);
+  assert.match(server, /renderAnnotationAttachment\(annotation\)/u);
   assert.doesNotMatch(server, /historical source evidence|live authenticated request/u);
 });

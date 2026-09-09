@@ -486,7 +486,7 @@ export function setAnnotationStatus(db: Database, input: SetStatusInput): Stored
 export function appendThreadMessage(
   db: Database,
   annotationId: string,
-  message: { role: "human" | "agent"; content: string },
+  message: { role: "human" | "agent"; content: string; author?: AnnotationAuthor | null },
 ): StoredAnnotation | null {
   const existing = getAnnotation(db, annotationId);
   if (!existing) return null;
@@ -500,6 +500,7 @@ export function appendThreadMessage(
         role: message.role,
         content: message.content,
         timestamp: Date.now(),
+        ...(message.author === undefined ? {} : { author: message.author }),
       },
     ],
     updatedAt: nowIso(),

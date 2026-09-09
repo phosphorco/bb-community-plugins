@@ -5,9 +5,11 @@ import { sanitizeJson, type StoredAnnotation } from "../lib/afs.ts";
 import {
   renderAnnotation,
   renderAnnotationAssignment,
+  renderAnnotationAttachment,
   renderAnnotationLine,
   renderAnnotations,
 } from "../lib/markdown.ts";
+import { wrapAgentationContent } from "../lib/identity.ts";
 import {
   labelForRoute,
   panelPluginIdFromRoute,
@@ -98,6 +100,38 @@ test("the reply thread and the outcome both render", () => {
   assert.match(output, /_agent_: 24px or 16px\?/);
   assert.match(output, /_human_: 16px/);
   assert.match(output, /\*\*Resolution:\*\* clamped the label/);
+});
+
+test("final assembly keeps the original comment separate from attached history", () => {
+  const author = {
+    kind: "captured",
+    identity: { kind: "person", key: "tailnet:cole", issuer: "tailnet", subject: "cole" },
+    presentation: { displayName: "Cole", handle: "cole", avatarUrl: null },
+    evidence: "provider-verified",
+    capturedAt: "2026-09-06T12:00:00.000Z",
+  } as const;
+  const replyAuthor = {
+    kind: "captured",
+    identity: { kind: "machine", key: "p6r-machine:v1:fixture:server", instanceId: "fixture", hostId: null },
+    presentation: { displayName: "BB machine", handle: null, avatarUrl: null },
+    evidence: "machine",
+    capturedAt: "2026-09-06T12:01:00.000Z",
+  } as const;
+  const annotation = stored({
+    comment: "Make this button easier to scan",
+    author,
+    thread: [{ id: "m1", role: "agent", content: "Would 16px work?", timestamp: 2, author: replyAuthor }],
+  });
+  const attachment = renderAnnotationAttachment(annotation, { includeOriginal: false });
+  const input = wrapAgentationContent(annotation.comment, annotation.author!, attachment);
+  const text = input.filter((part) => part.type === "text").map((part) => part.text).join("");
+
+  assert.equal((text.match(/\[sender=/g) ?? []).length, 1);
+  assert.match(text, /Make this button easier to scan/);
+  assert.match(text, /<attached>/);
+  assert.match(text, /Replies to this annotation/);
+  assert.match(text, /_machine:BB machine_: Would 16px work\?/);
+  assert.doesNotMatch(attachment, /Original feedback/);
 });
 
 test("a batch groups by page and numbers within each one", () => {
