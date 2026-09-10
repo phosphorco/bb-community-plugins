@@ -31,7 +31,7 @@
   ],
   "engines": {
     "bb": ">=0.39.0 <1.0.0",
-    "bbPluginSdk": ">=0.4.47"
+    "bbPluginSdk": "^0.4.47"
   },
   "bb": {
     "name": "Agentation \u2192 Mentions",
@@ -84,9 +84,11 @@
     "sonner": "^2.0.7",
     "tailwind-merge": "^3.4.0",
     "vaul": "^1.1.2",
-    "zod": "4.3.6"
+    "zod": "4.3.6",
+    "@phosphorco/bb-identity": "file:../../../sdk-artifacts/phosphorco-bb-identity-0.1.0.e9433450fa93.tgz"
   },
   "devDependencies": {
+    "@get-bb/plugin-sdk": "0.4.47",
     "@types/better-sqlite3": "^7.6.12",
     "@types/node": "^22",
     "@types/react": "19.2.2",

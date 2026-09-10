@@ -7,6 +7,7 @@
 // the same wherever an agent meets it.
 
 import type { Session, StoredAnnotation } from "./afs.ts";
+import { capturedAuthorLabel } from "./identity.ts";
 
 function line(label: string, value: string | null | undefined): string {
   return value ? `**${label}:** ${value}\n` : "";
@@ -33,14 +34,27 @@ function describeKind(annotation: StoredAnnotation): string | null {
   return null;
 }
 
-/** One annotation as a self-contained markdown section. */
-export function renderAnnotation(annotation: StoredAnnotation, index?: number): string {
-  const heading =
-    index === undefined
-      ? `### ${annotation.element} — ${annotation.id}`
-      : `### ${index}. ${annotation.element} — ${annotation.id}`;
+function annotationAuthorLabel(annotation: StoredAnnotation): string | null {
+  if (annotation.author?.kind === "captured") {
+    return capturedAuthorLabel(annotation.author);
+  }
+  if (annotation.author?.kind === "unavailable" || annotation.authorIdentityId) {
+    return "unknown (historical author retained)";
+  }
+  return null;
+}
 
-  let out = `${heading}\n`;
+function replyLabel(message: StoredAnnotation["thread"][number]): string {
+  if (!message.author) return message.role;
+  if (message.author.kind === "captured") return capturedAuthorLabel(message.author);
+  return "unknown";
+}
+
+function renderAnnotationDetails(
+  annotation: StoredAnnotation,
+  options: { readonly includeOriginal: boolean },
+): string {
+  let out = "";
   out += line("Where", locationOf(annotation));
   out += line("Selector", `\`${annotation.elementPath}\``);
   out += line("React", annotation.reactComponents);
@@ -51,22 +65,49 @@ export function renderAnnotation(annotation: StoredAnnotation, index?: number): 
   out += line("Intent", annotation.intent);
   out += line("Severity", annotation.severity);
   out += line("Status", annotation.status);
+  out += line("Author", annotationAuthorLabel(annotation));
 
   const kindNote = describeKind(annotation);
   out += line("Layout request", kindNote);
 
-  out += `**Feedback:** ${annotation.comment}\n`;
+  if (options.includeOriginal) {
+    out += `**Original feedback:** ${annotation.comment}\n`;
+  }
 
   if (annotation.thread.length > 0) {
-    out += `\n**Conversation:**\n`;
+    out += `\n**Replies to this annotation:**\n`;
     for (const message of annotation.thread) {
-      out += `- _${message.role}_: ${message.content}\n`;
+      out += `- _${replyLabel(message)}_: ${message.content}\n`;
     }
   }
   if (annotation.resolution) {
     out += `\n**Resolution:** ${annotation.resolution}\n`;
   }
   return out;
+}
+
+/** Derived annotation context for an Agentation message's <attached> block. */
+export function renderAnnotationAttachment(
+  annotation: StoredAnnotation,
+  options: { readonly includeOriginal?: boolean } = {},
+): string {
+  const heading = `### Annotation ${annotation.element} — ${annotation.id}\n`;
+  return heading + renderAnnotationDetails(annotation, {
+    includeOriginal: options.includeOriginal ?? true,
+  }).trimEnd();
+}
+
+/** One annotation as a self-contained markdown section. */
+export function renderAnnotation(annotation: StoredAnnotation, index?: number): string {
+  const heading =
+    index === undefined
+      ? `### ${annotation.element} — ${annotation.id}`
+      : `### ${index}. ${annotation.element} — ${annotation.id}`;
+
+  const details = renderAnnotationDetails(annotation, { includeOriginal: true })
+    .replace("**Original feedback:**", "**Feedback:**")
+    .replace("**Replies to this annotation:**", "**Conversation:**");
+  return `${heading}\n${details}`.trimEnd();
 }
 
 /** A batch of annotations, grouped so the agent reads one page at a time. */

@@ -329,14 +329,14 @@ export async function runProbe({ workspaceRoot = DEFAULT_WORKSPACE_ROOT } = {}) 
     );
     check(
       "identity-public-admission-availability",
-      has(source.identityBinding.text, /export declare function bindBbIdentity\(bb: BbIdentityApi/) 
+      has(source.identityBinding.text, /export declare function bindBbIdentity\(bb: BbIdentityApi/)
         && has(source.identityBinding.text, /background<T>\(run:/)
         && has(source.identityBinding.text, /Capability absence[\s\S]*stable upstream singleton/),
       "The public identity package exposes bindBbIdentity and a background invocation, but it does not add a thread-history admission or snapshot API.",
     );
     check(
       "direct-get-server-not-found-semantics",
-      has(source.threadRoute.text, /get\(routes\.get[\s\S]*requirePublicThread/) 
+      has(source.threadRoute.text, /get\(routes\.get[\s\S]*requirePublicThread/)
         && has(source.entityLookup.text, /thread\.deletedAt !== null \|\| project\?\.deletedAt !== null[\s\S]*ApiError\(404, "thread_not_found"/),
       "Server source maps a public get of a deleted thread (or a thread in a deleted project) to HTTP 404/thread_not_found.",
     );

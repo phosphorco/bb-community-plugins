@@ -11,7 +11,7 @@ test("the manifest uses the exact approved PE02-A PNG as its rich logo", () => {
   const manifest = JSON.parse(
     readFileSync(join(pluginRoot, "package.json"), "utf8"),
   );
-  assert.equal(manifest.version, "0.2.0");
+  assert.equal(manifest.devDependencies["bb-app"], "0.42.0");
   assert.equal(manifest.bb.branding.icon, "Search");
   assert.equal(manifest.bb.branding.logo.light, "./assets/icon-32.png");
 

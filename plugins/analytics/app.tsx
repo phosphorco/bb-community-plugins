@@ -5,8 +5,8 @@ import {
   useRealtime,
   useRealtimeConnectionState,
   useRpc,
-} from "@bb/plugin-sdk/app";
-import type { PluginRealtimeConnectionState } from "@bb/plugin-sdk/app";
+} from "@get-bb/plugin-sdk/app";
+import type { PluginRealtimeConnectionState } from "@get-bb/plugin-sdk/app";
 
 import type { AnalyticsBundle, AnalyticsVisualization } from "./bundle-contract.ts";
 import {

@@ -12,10 +12,10 @@ plugin also checks the thread event log before retrying, which avoids sending a
 duplicate prompt if BB accepted a request just before the plugin process went
 away.
 
-The default message is informative when a turn was interrupted and asks the
-agent to report material restart effects. If the restart happened without an
-open turn, the plugin sends a single `.`. The settings panel provides a
-project-specific override; an empty override restores the default behavior.
+The default recovery message is a single `.`. It nudges the agent to continue
+its existing task using the conversation already in context. The settings panel
+provides a project-specific override; an empty override restores `.`.
+
 On startup and after a `thread.failed` transition, the plugin collects the
 most recently updated error threads, finds the newest paired host-daemon error,
 and resumes only disconnected threads whose interruption event is within one

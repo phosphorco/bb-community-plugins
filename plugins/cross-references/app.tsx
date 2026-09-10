@@ -2,7 +2,6 @@ import { createPortal } from "react-dom";
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import {
   definePluginApp,
-  experimental_UrlLink as UrlLink,
   useBbNavigate,
   useRealtime,
   useRealtimeConnectionState,
@@ -294,6 +293,7 @@ function BacklinkDetail({
 }
 
 function BacklinkRowView({ row, first }: { row: BacklinkRow; first: boolean }) {
+  const navigate = useBbNavigate();
   const content = (
     <>
       <strong>{row.source.presentation.label}</strong>
@@ -303,7 +303,10 @@ function BacklinkRowView({ row, first }: { row: BacklinkRow; first: boolean }) {
   return (
     <li>
       {row.source.presentation.url != null
-        ? <UrlLink href={row.source.presentation.url} className="cross-references__source-link" data-cross-reference-first={first || undefined}>{content}</UrlLink>
+        ? <a href={row.source.presentation.url} className="cross-references__source-link" data-cross-reference-first={first || undefined} onClick={(event) => {
+            if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+            if (navigate.openUrl(row.source.presentation.url!)) event.preventDefault();
+          }}>{content}</a>
         : <span className="cross-references__source-link">{content}</span>}
     </li>
   );

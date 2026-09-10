@@ -509,7 +509,7 @@ delivery service, local status, and picker integration. The Cross References
 worker owns its thread-header app contribution and exact backlink query client.
 The worker must use bb.sdk.plugins.callRpc on the backend and
 useRpc/useRealtime in the frontend. The native Machine Monitor source link
-uses the host experimental_UrlLink; current route handling recognizes
+uses the host openUrl navigation contract with a native anchor; current route handling recognizes
 same-origin app routes, while toPluginPanel itself is explicitly limited to
 the current plugin
 ([app-contract.ts](../../../fork/build/bb/packages/plugin-sdk/src/app-contract.ts#L1840-L1871),

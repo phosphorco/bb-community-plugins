@@ -1,5 +1,5 @@
 import "./app.css";
-import { definePluginApp } from "@bb/plugin-sdk/app";
+import { definePluginApp } from "@get-bb/plugin-sdk/app";
 import {
   buildThemeTokens,
   discoverThemeTokenVariables,

@@ -1,4 +1,4 @@
-import type { BbPluginApi } from "@bb/plugin-sdk";
+import type { BbPluginApi } from "@get-bb/plugin-sdk";
 
 type SdkThreads = BbPluginApi["sdk"]["threads"];
 type ListArgs = NonNullable<Parameters<SdkThreads["list"]>[0]>;
@@ -108,14 +108,22 @@ export type RetainedSourceBudgetReason =
 
 export class RetainedSourceBudgetError extends Error {
   readonly code = "retained_source_budget_exceeded";
+  readonly reason: RetainedSourceBudgetReason;
+  readonly operation: "list" | "get" | "events";
+  readonly usage: RetainedSourceBudgetUsage;
+  readonly responseBytes: number | null;
 
   constructor(
-    readonly reason: RetainedSourceBudgetReason,
-    readonly operation: "list" | "get" | "events",
-    readonly usage: RetainedSourceBudgetUsage,
-    readonly responseBytes: number | null = null,
+    reason: RetainedSourceBudgetReason,
+    operation: "list" | "get" | "events",
+    usage: RetainedSourceBudgetUsage,
+    responseBytes: number | null = null,
   ) {
     super(`Retained source ${reason} budget exceeded during ${operation}.`);
+    this.reason = reason;
+    this.operation = operation;
+    this.usage = usage;
+    this.responseBytes = responseBytes;
     this.name = "RetainedSourceBudgetError";
   }
 }
@@ -294,6 +302,7 @@ function throwIfAborted(signal: AbortSignal | undefined): void {
 }
 
 class RetainedSourceAdapterImpl {
+  private readonly sdk: RetainedSourceSdk;
   private readonly limits: RetainedSourceLimits;
   private terminalBudgetFailure: RetainedSourceBudgetError | null = null;
   private busy = false;
@@ -306,10 +315,11 @@ class RetainedSourceAdapterImpl {
   };
 
   constructor(
-    private readonly sdk: RetainedSourceSdk,
+    sdk: RetainedSourceSdk,
     limits: RetainedSourceLimits,
   ) {
     this.limits = validateLimits(limits);
+    this.sdk = sdk;
   }
 
   private snapshot(): RetainedSourceBudgetUsage {

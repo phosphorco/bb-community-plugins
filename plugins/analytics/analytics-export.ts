@@ -669,11 +669,16 @@ function freezeDeep<T>(value: T): T {
 class BoundedTextWriter {
   private readonly chunks: string[] = [];
   private bytes = 0;
+  private readonly limit: number;
+  private readonly errorCode: "csv-too-large" | "lineage-too-large";
 
   constructor(
-    private readonly limit: number,
-    private readonly errorCode: "csv-too-large" | "lineage-too-large",
-  ) {}
+    limit: number,
+    errorCode: "csv-too-large" | "lineage-too-large",
+  ) {
+    this.limit = limit;
+    this.errorCode = errorCode;
+  }
 
   append(value: string): void {
     const bytes = utf8ByteLength(value);

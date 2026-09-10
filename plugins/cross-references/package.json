@@ -28,7 +28,7 @@
   ],
   "engines": {
     "bb": ">=0.39.0 <1.0.0",
-    "bbPluginSdk": ">=0.4.15"
+    "bbPluginSdk": ">=0.4.47"
   },
   "bb": {
     "name": "Cross References",
@@ -59,7 +59,7 @@
     "zod": "4.3.6"
   },
   "devDependencies": {
-    "@get-bb/plugin-sdk": "0.4.15",
+    "@get-bb/plugin-sdk": "0.4.47",
     "@testing-library/dom": "^10.4.0",
     "@testing-library/react": "^16.3.2",
     "@types/better-sqlite3": "^7.6.12",
@@ -74,7 +74,7 @@
     "vitest": "^4.1.1"
   },
   "scripts": {
-    "build": "bb plugin build .",
+    "build": "node ../../tools/bb-target-cli.mjs plugin build .",
     "test": "node --test --experimental-strip-types test/*.test.ts && vitest run test/*.test.tsx",
     "typecheck": "tsc --noEmit"
   }

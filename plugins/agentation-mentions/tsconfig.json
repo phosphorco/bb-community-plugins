@@ -9,12 +9,6 @@
       "DOM.Iterable"
     ],
     "paths": {
-      "@bb/plugin-sdk": [
-        "../../node_modules/@phosphorco/bb-plugin-sdk-target/bundled-types/bb-plugin-sdk.d.ts"
-      ],
-      "@bb/plugin-sdk/app": [
-        "../../node_modules/@phosphorco/bb-plugin-sdk-target/bundled-types/bb-plugin-sdk-app.d.ts"
-      ],
       "@/*": [
         "./*"
       ]

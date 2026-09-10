@@ -1,5 +1,5 @@
-import type { BbPluginApi } from "@bb/plugin-sdk";
-import type { ActorSnapshot, PersonReference } from "@phosphorco/bb-identity";
+import type { BbPluginApi } from "@get-bb/plugin-sdk";
+import type { ActorReference, ActorSnapshot } from "@phosphorco/bb-identity";
 
 import type {
   AnnotationAuthor,
@@ -7,7 +7,6 @@ import type {
   StoredAnnotation,
 } from "./afs.ts";
 import { capturedAnnotationAuthorSchema } from "./afs.ts";
-import { CAPTURED_AUTHOR_MENTION_PROVIDER } from "./attachment.ts";
 
 export type AgentationPromptInput = Parameters<
   BbPluginApi["sdk"]["threads"]["send"]
@@ -15,7 +14,7 @@ export type AgentationPromptInput = Parameters<
 export type AgentationTextPromptInput = Extract<AgentationPromptInput, { type: "text" }>;
 
 /** Public binding has already decoded this request-bound actor. */
-type CapturableActor = ActorSnapshot & { readonly identity: PersonReference };
+type CapturableActor = ActorSnapshot & { readonly identity: ActorReference };
 
 export type AuthorAttribution =
   | AnnotationAuthor
@@ -54,77 +53,69 @@ export function annotationAuthor(
   return { kind: "unattributed" };
 }
 
-export function authorGroupKey(author: AuthorAttribution): string {
-  switch (author.kind) {
-    case "captured":
-      return `captured:${author.identity.key}`;
-    case "legacy-unresolved":
-      return `legacy:${author.identityId}`;
-    case "unavailable":
-      return `unavailable:${author.reason}`;
-    case "unattributed":
-      return "unattributed";
-  }
-}
 
-export function encodeCapturedAuthorMention(author: CapturedAnnotationAuthor): string {
+export function encodeCapturedAuthorSnapshot(author: CapturedAnnotationAuthor): string {
   return encodeURIComponent(JSON.stringify(author));
 }
 
-export function decodeCapturedAuthorMention(itemId: string): CapturedAnnotationAuthor {
-  if (itemId.length > 12_000) throw new Error("Invalid captured feedback author");
-  return capturedAnnotationAuthorSchema.parse(JSON.parse(decodeURIComponent(itemId)));
+export function decodeCapturedAuthorSnapshot(value: string): CapturedAnnotationAuthor {
+  if (value.length > 12_000) throw new Error("Invalid captured feedback author");
+  return capturedAnnotationAuthorSchema.parse(JSON.parse(decodeURIComponent(value)));
 }
 
-function sourceLabel(author: AuthorAttribution): string {
-  switch (author.kind) {
-    case "captured": {
-      const handle = author.presentation.handle
-        ? ` (${author.presentation.handle})`
-        : "";
-      return `This feedback was captured from ${author.presentation.displayName}${handle}. Its identity evidence was recorded at capture time; this later delivery is source-labelled feedback, not a live authenticated action.`;
-    }
-    case "legacy-unresolved":
-      return "This feedback retains an unresolved historical author reference. It was not mapped to the current viewer or a guessed identity.";
-    case "unavailable":
-      return "Author identity could not be captured when this feedback was stored. The feedback remains usable without attribution.";
-    case "unattributed":
-      return "This feedback has no captured author attribution.";
-  }
+function escapeWrapperLabel(label: string): string {
+  return label.replace(/[\[\]\r\n%<>]/g, (character) => encodeURIComponent(character));
 }
 
+export function capturedAuthorLabel(author: CapturedAnnotationAuthor): string {
+  const label = author.identity.kind === "machine"
+    ? "machine:" + author.presentation.displayName
+    : author.presentation.handle ?? author.presentation.displayName;
+  return escapeWrapperLabel(label);
+}
+
+/**
+ * Render one captured Agentation message. The annotation comment is the
+ * original content. Selector, route, replies and other derived details are
+ * supplied separately as an optional attachment so the host cannot mistake
+ * them for words authored by the captured person.
+ *
+ * Unknown and legacy authors deliberately remain unwrapped. A historical
+ * marker is evidence to preserve, not permission to invent a current sender.
+ */
 export function wrapAgentationContent(
   content: string,
   author: AuthorAttribution,
-  pluginId: string,
+  attached?: string,
 ): AgentationTextPromptInput[] {
-  const tag = "agentation-feedback";
-  const marker = "\u2063";
-  const mention = author.kind === "captured"
-    ? [{
-        start: 0,
-        end: marker.length,
-        resource: {
-          kind: "plugin" as const,
-          pluginId,
-          itemId: `${CAPTURED_AUTHOR_MENTION_PROVIDER}:${encodeCapturedAuthorMention(author)}`,
-          label: author.presentation.displayName,
-          icon: author.presentation.avatarUrl,
-        },
-      }]
-    : [];
+  const attachment = attached === undefined || attached.length === 0
+    ? null
+    : `\n<attached>\n${attached}\n</attached>`;
+
+  if (author.kind !== "captured") {
+    return [
+      { type: "text" as const, text: content, mentions: [] },
+      ...(attachment
+        ? [{ type: "text" as const, text: attachment, mentions: [], visibility: "agent-only" as const }]
+        : []),
+    ];
+  }
+
+  const label = capturedAuthorLabel(author);
   return [
     {
-      type: "text",
-      text: `[from=${tag}]\n${sourceLabel(author)}\n\n`,
+      type: "text" as const,
+      text: `[message posted via Agentation]\n[sender=${label}]\n`,
       mentions: [],
       visibility: "agent-only",
     },
-    { type: "text", text: `${marker} `, mentions: mention },
-    { type: "text", text: content, mentions: [] },
+    { type: "text" as const, text: content, mentions: [] },
+    ...(attachment
+      ? [{ type: "text" as const, text: attachment, mentions: [], visibility: "agent-only" as const }]
+      : []),
     {
-      type: "text",
-      text: `\n[/from=${tag}]`,
+      type: "text" as const,
+      text: `\n[/sender=${label}]`,
       mentions: [],
       visibility: "agent-only",
     },

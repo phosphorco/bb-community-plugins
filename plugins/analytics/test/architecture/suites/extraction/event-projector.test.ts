@@ -43,7 +43,6 @@ function turnStarted(threadId: string, seq: number, turnId: string, createdAt: n
     scope: { kind: "turn", turnId },
     type: "turn/started",
     data: { providerThreadId: "provider-thread" },
-    p6rActorHandle: null,
   } satisfies RetainedSourceEvent;
 }
 
@@ -56,7 +55,6 @@ function turnCompleted(threadId: string, seq: number, turnId: string, createdAt:
     scope: { kind: "turn", turnId },
     type: "turn/completed",
     data: { providerThreadId: "provider-thread", status: "completed" },
-    p6rActorHandle: null,
   } satisfies RetainedSourceEvent;
 }
 
@@ -86,7 +84,6 @@ function toolCompleted(
         durationMs,
       },
     },
-    p6rActorHandle: null,
   } satisfies RetainedSourceEvent;
 }
 

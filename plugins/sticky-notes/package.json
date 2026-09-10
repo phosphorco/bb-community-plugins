@@ -6,25 +6,66 @@
   "description": "Leave shared, movable sticky notes on bb threads for asynchronous collaboration.",
   "author": "Phosphor",
   "homepage": "https://github.com/phosphorco/bb-community-plugins/tree/main/plugins/sticky-notes#readme",
-  "bugs": { "url": "https://github.com/phosphorco/bb-community-plugins/issues" },
-  "repository": { "type": "git", "url": "git+https://github.com/phosphorco/bb-community-plugins.git", "directory": "plugins/sticky-notes" },
-  "publishConfig": { "access": "public", "registry": "https://registry.npmjs.org" },
-  "keywords": ["bb", "bb-plugin", "sticky-notes", "threads", "collaboration", "async"],
-  "engines": { "bb": ">=0.37", "bbPluginSdk": "^0.4.1" },
+  "bugs": {
+    "url": "https://github.com/phosphorco/bb-community-plugins/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/phosphorco/bb-community-plugins.git",
+    "directory": "plugins/sticky-notes"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org"
+  },
+  "keywords": [
+    "bb",
+    "bb-plugin",
+    "sticky-notes",
+    "threads",
+    "collaboration",
+    "async"
+  ],
+  "engines": {
+    "bb": ">=0.37",
+    "bbPluginSdk": "^0.4.1"
+  },
   "bb": {
     "name": "Sticky Notes",
     "description": "Leave shared, movable sticky notes on bb threads for asynchronous collaboration.",
     "branding": {
       "icon": "Note",
-      "logo": { "light": "./assets/icon-32.png" }
+      "logo": {
+        "light": "./assets/icon-32.png"
+      }
     },
     "server": "./server.ts",
     "app": "./app.tsx",
     "skills": []
   },
-  "files": ["dist/", "assets/", "README.md", "LICENSE", "server.ts", "app.tsx", "app.css", "create-gesture.ts", "geometry.ts", "link-metadata.ts", "links.ts", "note-state.ts", "notes.ts", "overlay-bounds.ts", "save-queue.ts", "typography.ts"],
-  "dependencies": { "zod": "4.3.6" },
+  "files": [
+    "dist/",
+    "assets/",
+    "README.md",
+    "LICENSE",
+    "server.ts",
+    "app.tsx",
+    "app.css",
+    "create-gesture.ts",
+    "geometry.ts",
+    "link-metadata.ts",
+    "links.ts",
+    "note-state.ts",
+    "notes.ts",
+    "overlay-bounds.ts",
+    "save-queue.ts",
+    "typography.ts"
+  ],
+  "dependencies": {
+    "zod": "4.3.6"
+  },
   "devDependencies": {
+    "@get-bb/plugin-sdk": "0.4.47",
     "@types/better-sqlite3": "^7.6.12",
     "@types/node": "^22",
     "@types/react": "19.2.2",
@@ -35,8 +76,8 @@
     "typescript": "^5.9.3"
   },
   "scripts": {
-    "build": "bb plugin build .",
-    "dev": "bb plugin dev .",
+    "build": "node ../../tools/bb-target-cli.mjs plugin build .",
+    "dev": "node ../../tools/bb-target-cli.mjs plugin dev .",
     "test": "node --test --experimental-strip-types test/*.test.ts",
     "typecheck": "tsc --noEmit"
   }

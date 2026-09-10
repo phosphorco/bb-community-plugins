@@ -36,7 +36,6 @@ function thread(id: string): RetainedSourceThread {
       activeGoalCount: 0,
       activePlanModeCount: 0,
       activeWorkflowCount: 0,
-      newestActiveBackgroundCommandStartedAt: null,
     },
     archivedAt: null,
     createdAt: 1_700_000_000_000,
@@ -57,6 +56,7 @@ function thread(id: string): RetainedSourceThread {
     pinnedAt: null,
     projectId: "project-1",
     providerId: "provider-1",
+    queuedWork: "none",
     runtime: { displayStatus: "idle", hostReconnectGraceExpiresAt: null },
     sectionId: null,
     sourceThreadId: null,
@@ -73,6 +73,7 @@ function threadResult(id: string): RetainedSourceThreadResult {
     ...thread(id),
     activeBackgroundAgentCount: 0,
     canSpawnChild: true,
+    queuedMessageCount: 0,
   } satisfies RetainedSourceThreadResult;
 }
 
@@ -85,7 +86,6 @@ function event(threadId: string, seq: number): RetainedSourceEvent {
     scope: { kind: "thread" },
     type: "thread/started",
     data: {},
-    p6rActorHandle: null,
   } satisfies RetainedSourceEvent;
 }
 

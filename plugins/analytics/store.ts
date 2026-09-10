@@ -985,18 +985,22 @@ function revisionPayload(
 
 export class RetainedProjectionTerminalError extends Error {
   readonly code = "retained_projection_terminal";
+  readonly reason: RetainedProjectionStageProgress["terminalReason"];
 
-  constructor(readonly reason: RetainedProjectionStageProgress["terminalReason"]) {
+  constructor(reason: RetainedProjectionStageProgress["terminalReason"]) {
     super(`Retained projection stage is terminally capped by ${reason}.`);
+    this.reason = reason;
     this.name = "RetainedProjectionTerminalError";
   }
 }
 
 class RetainedProjectionBudgetError extends Error {
   readonly code = "retained_projection_budget_exceeded";
+  readonly reason: NonNullable<RetainedProjectionStageProgress["terminalReason"]>;
 
-  constructor(readonly reason: NonNullable<RetainedProjectionStageProgress["terminalReason"]>) {
+  constructor(reason: NonNullable<RetainedProjectionStageProgress["terminalReason"]>) {
     super(`Retained projection ${reason} budget exhausted.`);
+    this.reason = reason;
     this.name = "RetainedProjectionBudgetError";
   }
 }
@@ -1048,9 +1052,11 @@ export interface RetainedStageAccountingAdvanceInput {
 
 export class AccountingNotReady extends Error {
   readonly code = "retained_stage_accounting_not_ready";
+  readonly progress: RetainedStageAccountingProgress;
 
-  constructor(readonly progress: RetainedStageAccountingProgress) {
+  constructor(progress: RetainedStageAccountingProgress) {
     super(`Retained-stage accounting is ${progress.state}; explicit bootstrap/advance is required.`);
+    this.progress = progress;
     this.name = "AccountingNotReady";
   }
 }

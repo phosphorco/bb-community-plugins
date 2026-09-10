@@ -6,9 +6,7 @@ import {
   HOST_DAEMON_ERROR_CODE,
   HOST_DAEMON_ERROR_MESSAGE,
   HOST_DAEMON_RECOVERY_WINDOW_MS,
-  INTERRUPTED_TURN_RESUME_MESSAGE,
   hasEventsAfter,
-  hasInterruptedTurn,
   hasResumeRequestAfter,
   isRecoverableThread,
   isWithinRecoveryWindow,
@@ -96,36 +94,12 @@ test("uses inclusive one-minute recovery boundaries", () => {
   );
 });
 
-test("detects whether the interrupted restart had an active turn", () => {
-  assert.equal(
-    hasInterruptedTurn(
-      [
-        { seq: 6, type: "turn/completed", scope: { kind: "turn", turnId: "turn_1" }, data: { status: "interrupted" } },
-        { seq: 7, type: "system/error", scope: { kind: "turn", turnId: "turn_1" }, data: {} },
-        interruption,
-      ],
-      interruption.seq,
-    ),
-    true,
-  );
-  assert.equal(
-    hasInterruptedTurn(
-      [
-        { seq: 6, type: "turn/completed", scope: { kind: "turn", turnId: "old" }, data: { status: "interrupted" } },
-        { seq: 7, type: "system/error", scope: { kind: "thread" }, data: {} },
-        interruption,
-      ],
-      interruption.seq,
-    ),
-    false,
-  );
-  assert.equal(hasInterruptedTurn([interruption], interruption.seq), false);
-});
-
 test("uses project overrides and concise defaults", () => {
-  assert.equal(resumeMessageFor("Use our project recovery playbook.", true), "Use our project recovery playbook.");
-  assert.equal(resumeMessageFor("   ", true), INTERRUPTED_TURN_RESUME_MESSAGE);
-  assert.equal(resumeMessageFor(null, false), DEFAULT_RESUME_MESSAGE);
+  assert.equal(resumeMessageFor("Use our project recovery playbook."), "Use our project recovery playbook.");
+  assert.equal(resumeMessageFor("   "), ".");
+  assert.equal(resumeMessageFor(undefined), ".");
+  assert.equal(DEFAULT_RESUME_MESSAGE, ".");
+  assert.equal(resumeMessageFor(null), ".");
 });
 
 test("recognizes a request already accepted after the interruption", () => {

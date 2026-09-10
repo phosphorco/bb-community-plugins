@@ -3,6 +3,7 @@ import test from "node:test";
 import Database from "better-sqlite3";
 
 import type { Annotation, AnnotationAuthor, BbContext } from "../lib/afs.ts";
+import { storedAnnotationSchema } from "../lib/afs.ts";
 import {
   appendThreadMessage,
   clearSession,
@@ -58,6 +59,14 @@ const coleAuthor: AnnotationAuthor = {
   capturedAt: "2026-09-06T12:00:00.000Z",
 };
 
+const machineAuthor: AnnotationAuthor = {
+  kind: "captured",
+  identity: { kind: "machine", key: "p6r-machine:v1:fixture-instance:server", instanceId: "fixture-instance", hostId: null },
+  presentation: { displayName: "BB machine", handle: null, avatarUrl: null },
+  evidence: "machine",
+  capturedAt: "2026-09-06T12:00:00.000Z",
+};
+
 function seed(db: Database.Database, author: AnnotationAuthor | null = null) {
   const session = openSession(db, {
     url: "http://localhost:5173/threads/thr_abc",
@@ -102,6 +111,15 @@ test("a public host-relative avatar snapshot persists unchanged", () => {
 
   assert.deepEqual(stored.author, author);
   assert.deepEqual(getAnnotation(db, stored.id)?.author, author);
+});
+
+test("machine fallback author survives the durable annotation codec", () => {
+  const db = freshDb();
+  const { stored } = seed(db, machineAuthor);
+  const row = db.prepare("SELECT payload FROM annotations WHERE id = ?").get(stored.id) as { payload: string };
+  const decoded = storedAnnotationSchema.parse(JSON.parse(row.payload));
+  assert.deepEqual(decoded.author, machineAuthor);
+  assert.deepEqual(getAnnotation(db, stored.id)?.author, machineAuthor);
 });
 
 test("legacy author marker stays exact and cannot become the current author", () => {
@@ -233,6 +251,20 @@ test("an edit keeps the reply thread", () => {
 
   assert.equal(edited.thread.length, 1);
   assert.equal(edited.thread[0]?.role, "agent");
+});
+
+test("replies persist their own accepted author snapshots separately", () => {
+  const db = freshDb();
+  const { stored } = seed(db, coleAuthor);
+  const reply = appendThreadMessage(db, stored.id, {
+    role: "human",
+    content: "Please keep the current copy.",
+    author: machineAuthor,
+  });
+
+  assert.deepEqual(reply?.author, coleAuthor);
+  assert.deepEqual(reply?.thread[0]?.author, machineAuthor);
+  assert.equal(reply?.thread[0]?.content, "Please keep the current copy.");
 });
 
 test("resolving records who closed it and when", () => {

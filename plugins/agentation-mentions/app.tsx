@@ -13,7 +13,7 @@ import {
   useComposerView,
   useRealtime,
   useRpc,
-} from "@bb/plugin-sdk/app";
+} from "@get-bb/plugin-sdk/app";
 import { toast } from "sonner";
 
 import { AgentationSettingsSection } from "@/components/settings-section.tsx";

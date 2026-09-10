@@ -21,7 +21,9 @@ import {
   sourceScopeSchema,
 } from "../execution-contract.ts";
 
-const CHILD_ENTRY = fileURLToPath(new URL("./worker.cjs", import.meta.url));
+// Both the source module and bundled dist/server.js sit one level below the
+// package root. Keep the owned child in the package's shipped query-runtime.
+const CHILD_ENTRY = fileURLToPath(new URL("../query-runtime/worker.cjs", import.meta.url));
 const RUNTIME_ID = "analytics-exec_runtime_shutdown";
 const HASH = /^[a-f0-9]{64}$/;
 const SAFE_MESSAGES = Object.freeze({

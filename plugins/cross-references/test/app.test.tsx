@@ -47,7 +47,7 @@ test("the thread header reads exact backlinks, filters signals, and restores foc
   expect(sourceLink).toBeTruthy();
   fireEvent.click(sourceLink);
   expect(slot.inspection.navigateCalls).toContainEqual({
-    method: "experimental_openUrl",
+    method: "openUrl",
     url: "/plugins/machine-monitor/machine-monitor",
   });
 

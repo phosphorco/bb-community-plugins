@@ -6,15 +6,36 @@
   "description": "Explore fast, code-authored analytics dashboards for agent tool reliability.",
   "author": "Phosphor",
   "homepage": "https://github.com/phosphorco/bb-community-plugins/tree/main/plugins/analytics#readme",
-  "bugs": { "url": "https://github.com/phosphorco/bb-community-plugins/issues" },
-  "repository": { "type": "git", "url": "git+https://github.com/phosphorco/bb-community-plugins.git", "directory": "plugins/analytics" },
-  "publishConfig": { "access": "public", "registry": "https://registry.npmjs.org" },
-  "keywords": ["bb", "bb-plugin", "analytics", "duckdb", "echarts", "agent-tools"],
-  "engines": { "bb": ">=0.39.0 <1.0.0", "bbPluginSdk": ">=0.4.8" },
+  "bugs": {
+    "url": "https://github.com/phosphorco/bb-community-plugins/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/phosphorco/bb-community-plugins.git",
+    "directory": "plugins/analytics"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org"
+  },
+  "keywords": [
+    "bb",
+    "bb-plugin",
+    "analytics",
+    "duckdb",
+    "echarts",
+    "agent-tools"
+  ],
+  "engines": {
+    "bb": ">=0.39.0 <1.0.0",
+    "bbPluginSdk": ">=0.4.8"
+  },
   "bb": {
     "name": "Analytics",
     "description": "Understand which agent capabilities are slow, unreliable, or repeatedly attempted.",
-    "branding": { "icon": "ChartNoAxesColumnIncreasing" },
+    "branding": {
+      "icon": "ChartNoAxesColumnIncreasing"
+    },
     "server": "./server.ts",
     "app": "./app.tsx",
     "skills": []
@@ -58,24 +79,24 @@
     "zod": "4.3.6"
   },
   "devDependencies": {
-    "@get-bb/plugin-sdk": "0.4.15",
-    "@playwright/test": "1.63.0",
-    "@testing-library/react": "16.3.3",
+    "@get-bb/plugin-sdk": "0.4.47",
     "@types/better-sqlite3": "^7.6.12",
     "@types/node": "^22",
     "@types/react": "19.2.2",
     "@types/react-dom": "19.2.2",
     "better-sqlite3": "^12.0.0",
-    "jsdom": "26.1.0",
     "react": "19.2.1",
     "react-dom": "19.2.1",
     "typescript": "^5.9.3",
+    "@playwright/test": "1.63.0",
+    "@testing-library/react": "16.3.3",
+    "jsdom": "26.1.0",
     "vite": "8.2.2",
     "vitest": "4.1.11"
   },
   "scripts": {
-    "build": "bb plugin build .",
-    "dev": "bb plugin dev .",
+    "build": "node ../../tools/bb-target-cli.mjs plugin build .",
+    "dev": "node ../../tools/bb-target-cli.mjs plugin dev .",
     "test": "node --test --experimental-strip-types test/*.test.ts",
     "typecheck": "tsc --noEmit"
   }

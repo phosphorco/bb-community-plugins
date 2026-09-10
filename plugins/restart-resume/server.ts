@@ -1,8 +1,7 @@
-import type { BbPluginApi } from "@bb/plugin-sdk";
+import type { BbPluginApi } from "@get-bb/plugin-sdk";
 
 import {
   hasEventsAfter,
-  hasInterruptedTurn,
   hasResumeRequestAfter,
   hostDaemonErrorAt as hostDaemonErrorTimestamp,
   isWithinRecoveryWindow,
@@ -46,7 +45,6 @@ interface RecoveryThreadShape {
 interface RecoveryCandidate {
   events: RecoveryEvent[];
   interruption: RecoveryEvent;
-  interruptedTurn: boolean;
   hostDaemonErrorAt: number | null;
 }
 
@@ -102,7 +100,6 @@ export default function restartResumePlugin(bb: BbPluginApi) {
       : {
           events,
           interruption,
-          interruptedTurn: hasInterruptedTurn(events, interruption.seq),
           hostDaemonErrorAt: hostDaemonErrorTimestamp(events, interruption.seq),
         };
   };
@@ -183,7 +180,6 @@ export default function restartResumePlugin(bb: BbPluginApi) {
 
     const message = resumeMessageFor(
       store.getProjectMessage(thread.projectId),
-      candidate.interruptedTurn,
     );
     const existing = store.getAttempt(threadId, candidate.interruption.seq);
     if (existing?.status === "sent" || existing?.status === "skipped") {

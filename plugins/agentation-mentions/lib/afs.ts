@@ -35,6 +35,8 @@ export const threadMessageSchema = z.object({
   role: z.enum(["human", "agent"]),
   content: z.string(),
   timestamp: z.number(),
+  /** Captured when the reply was accepted; old replies intentionally omit it. */
+  author: z.lazy(() => annotationAuthorSchema).nullable().optional(),
 });
 
 /**
@@ -127,6 +129,18 @@ const capturedAnnotationIdentitySchema = z.discriminatedUnion("kind", [
     key: z.string().min(1).max(512),
     instanceId: z.string().min(1).max(512),
   }).strict(),
+  z.object({
+    kind: z.literal("machine"),
+    key: z.string().min(1).max(512),
+    instanceId: z.string().min(1).max(512),
+    hostId: z.string().min(1).max(512).nullable(),
+  }).strict(),
+  z.object({
+    kind: z.literal("external"),
+    key: z.string().min(1).max(512),
+    pluginId: z.string().min(1).max(512),
+    subject: z.string().min(1).max(512),
+  }).strict(),
 ]);
 
 export const capturedAnnotationAuthorSchema = z.object({
@@ -145,6 +159,7 @@ export const capturedAnnotationAuthorSchema = z.object({
     "upstream-default",
     "integration-asserted",
     "legacy",
+    "machine",
   ]),
   capturedAt: z.string().datetime(),
 }).strict();

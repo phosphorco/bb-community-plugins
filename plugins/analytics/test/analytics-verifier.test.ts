@@ -41,5 +41,13 @@ test("reports DuckDB binder failures before a dashboard is opened", async () => 
   }];
   bundle.layout = [{ visualizationId: "broken", width: "full" }];
 
-  await assert.rejects(verifyAnalyticsBundle(bundle), /count_if/i);
+  // The isolated runtime deliberately redacts DuckDB's raw diagnostics. Prove
+  // the same query shape binds with a boolean argument before rejecting BIGINT.
+  const valid = structuredClone(bundle);
+  valid.queries[0]!.sql = "SELECT count_if(command_uses_help)::DOUBLE AS calls FROM tool_execution_fact_v1";
+  await verifyAnalyticsBundle(valid);
+  await assert.rejects(
+    verifyAnalyticsBundle(bundle),
+    /Query broken failed DuckDB verification: The request is outside the supported query contract\./,
+  );
 });

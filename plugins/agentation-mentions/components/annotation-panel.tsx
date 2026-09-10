@@ -5,7 +5,7 @@
 // the reply thread associated with each annotation.
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useBbNavigate, useRealtime, useRpc } from "@bb/plugin-sdk/app";
+import { useBbNavigate, useRealtime, useRpc } from "@get-bb/plugin-sdk/app";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";

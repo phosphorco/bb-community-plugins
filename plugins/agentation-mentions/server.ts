@@ -10,7 +10,7 @@
 //   agent tools    the loop an agent actually runs (pending → fix → resolve)
 //   bb agentation-mentions  the same loop for agents that prefer a shell
 
-import { defineRpcContract, type BbPluginApi } from "@bb/plugin-sdk";
+import { defineRpcContract, type BbPluginApi } from "@get-bb/plugin-sdk";
 import { bindBbIdentity } from "@phosphorco/bb-identity/bb";
 import { z } from "zod";
 
@@ -30,6 +30,7 @@ import { projectIdFromRoute, threadIdFromRoute } from "./lib/route.ts";
 import {
   renderAnnotation,
   renderAnnotationAssignment,
+  renderAnnotationAttachment,
   renderAnnotationLine,
   renderAnnotations,
 } from "./lib/markdown.ts";
@@ -63,13 +64,10 @@ import {
 } from "./lib/staging.ts";
 import {
   annotationAuthor,
-  authorGroupKey,
   captureAnnotationAuthor,
-  decodeCapturedAuthorMention,
   unavailableAnnotationAuthor,
   wrapAgentationContent,
   type AgentationPromptInput,
-  type AuthorAttribution,
 } from "./lib/identity.ts";
 import {
   deliverAnnotationInput,
@@ -77,7 +75,6 @@ import {
 } from "./lib/delivery.ts";
 import {
   AGENTATION_MENTION_PROVIDER,
-  CAPTURED_AUTHOR_MENTION_PROVIDER,
   decodeAgentationAttachment,
 } from "./lib/attachment.ts";
 
@@ -224,31 +221,11 @@ export const rpcContract = defineRpcContract({
   },
 });
 
-const { pushAnnotations, ...ordinaryRpcContract } = rpcContract;
-const identityRpcContract = defineRpcContract({ pushAnnotations });
-
-function groupByAuthor(
-  annotations: readonly z.infer<typeof storedAnnotationSchema>[],
-): Array<{
-  author: AuthorAttribution;
-  annotations: z.infer<typeof storedAnnotationSchema>[];
-}> {
-  const groups = new Map<
-    string,
-    { author: AuthorAttribution; annotations: z.infer<typeof storedAnnotationSchema>[] }
-  >();
-  for (const annotation of annotations) {
-    const author = annotationAuthor(annotation);
-    const key = authorGroupKey(author);
-    const group = groups.get(key);
-    if (group) group.annotations.push(annotation);
-    else groups.set(key, { author, annotations: [annotation] });
-  }
-  return [...groups.values()];
-}
+const { pushAnnotations, replyToAnnotation, ...ordinaryRpcContract } = rpcContract;
+const identityRpcContract = defineRpcContract({ pushAnnotations, replyToAnnotation });
 
 export default async function plugin(bb: BbPluginApi) {
-  const identityResult = bindBbIdentity(bb);
+  const identityResult = bindBbIdentity(bb, { externalMessageRendering: 'producer' });
   if (!identityResult.ok) throw new Error(identityResult.error.message);
   const identity = identityResult.value;
   const settings = bb.settings.define({
@@ -344,34 +321,16 @@ export default async function plugin(bb: BbPluginApi) {
         }
         return annotation;
       });
-      const sessions = listSessions(db, {});
-      const sections: string[] = [];
-      for (const group of groupByAuthor(annotations)) {
-        const markdown = renderAnnotations(group.annotations, {
-          title: "bb UI feedback from Agentation",
-          sessions,
-        });
-        sections.push(
-          wrapAgentationContent(markdown, group.author, bb.pluginId)
-            .map((part) => part.text)
-            .join(""),
-        );
-      }
+      const context = annotations
+        .map((annotation) => renderAnnotationAttachment(annotation))
+        .join("\n\n");
 
       return {
-        context: `${sections.join("\n\n")}\n\nResolve each item with the \`agentation_mentions_resolve\` tool once it is fixed.`,
-      };
-    },
-  });
-
-  bb.ui.registerMentionProvider({
-    id: CAPTURED_AUTHOR_MENTION_PROVIDER,
-    label: "Captured feedback author",
-    search: () => [],
-    resolve(itemId) {
-      const author = decodeCapturedAuthorMention(itemId);
-      return {
-        context: `Captured feedback author: ${author.presentation.displayName}. This is historical source evidence captured at ${author.capturedAt}, not a live authenticated request.`,
+        // Mention resolution returns plain retrieved context. The native host
+        // owns the enclosing attachedPluginMentionContext boundary for the
+        // prompt, so Agentation must not add a second <attached> block or a
+        // hidden author mention here.
+        context: `${context}\n\nResolve each item with the \`agentation_mentions_resolve\` tool once it is fixed.`,
       };
     },
   });
@@ -453,14 +412,15 @@ export default async function plugin(bb: BbPluginApi) {
 
     broadcast({ type: "routing", sessionId: null });
 
-    const sessions = listSessions(db, {});
     const input: AgentationPromptInput[] = [];
-    for (const group of groupByAuthor(claim.dispatch.annotations)) {
-      const markdown = renderAnnotations(group.annotations, {
-        title: "bb UI feedback from Agentation",
-        sessions,
-      });
-      input.push(...wrapAgentationContent(markdown, group.author, bb.pluginId));
+    for (const annotation of claim.dispatch.annotations) {
+      input.push(
+        ...wrapAgentationContent(
+          annotation.comment,
+          annotationAuthor(annotation),
+          renderAnnotationAttachment(annotation, { includeOriginal: false }),
+        ),
+      );
     }
     input.push({
       type: "text",
@@ -528,6 +488,39 @@ export default async function plugin(bb: BbPluginApi) {
           cursor: sessionCursor(db, input.sessionId),
           annotations: listAnnotations(db, { sessionId: input.sessionId, limit: null }),
         });
+      },
+    },
+    replyToAnnotation: {
+      origin: "interactive-user",
+      async handle(input, invocation) {
+        const existing = getAnnotation(db, input.annotationId);
+        if (!existing) return sanitizeJson({ annotation: null });
+
+        const routing = getAnnotationRouting(db, input.annotationId);
+        if (routing?.state !== "assigned" || !routing.assignedThreadId) {
+          throw new Error("Stage and send this annotation to a thread before you reply.");
+        }
+
+        const session = await identity.server.session(invocation);
+        const author = session.status === "ready"
+          ? captureAnnotationAuthor(session.actor)
+          : unavailableAnnotationAuthor(session.status);
+        const attached = renderAnnotationAttachment(existing);
+        await bb.sdk.threads.send({
+          threadId: routing.assignedThreadId,
+          mode: "auto",
+          input: wrapAgentationContent(input.message, author, attached),
+        });
+
+        const annotation = appendThreadMessage(db, input.annotationId, {
+          role: "human",
+          content: input.message,
+          author,
+        });
+        if (annotation) {
+          broadcast({ type: "annotations", sessionId: annotation.sessionId });
+        }
+        return sanitizeJson({ annotation });
       },
     },
   });
@@ -684,37 +677,6 @@ export default async function plugin(bb: BbPluginApi) {
       return sanitizeJson({ annotation, deleted: false });
     },
 
-    async replyToAnnotation(input) {
-      const existing = getAnnotation(db, input.annotationId);
-      if (!existing) return sanitizeJson({ annotation: null });
-
-      const routing = getAnnotationRouting(db, input.annotationId);
-      if (routing?.state !== "assigned" || !routing.assignedThreadId) {
-        throw new Error("Stage and send this annotation to a thread before you reply.");
-      }
-
-      const context = renderAnnotation(existing);
-      await bb.sdk.threads.send({
-        threadId: routing.assignedThreadId,
-        mode: "auto",
-        input: [
-          {
-            type: "text",
-            text: `# Agentation follow-up\n\n${context}\n\n## Human reply\n\n${input.message}`,
-            mentions: [],
-          },
-        ],
-      });
-
-      const annotation = appendThreadMessage(db, input.annotationId, {
-        role: "human",
-        content: input.message,
-      });
-      if (annotation) {
-        broadcast({ type: "annotations", sessionId: annotation.sessionId });
-      }
-      return sanitizeJson({ annotation });
-    },
   });
 
   // -------------------------------------------------------------------------
@@ -733,12 +695,10 @@ export default async function plugin(bb: BbPluginApi) {
     name: "agentation_mentions_list_sessions",
     description:
       "List annotation sessions — one per bb page a human has left visual feedback on. Start here to discover which pages have feedback.",
-    presentation: {
-      label: {
-        pending: "Listing annotation sessions",
-        completed: "Listed annotation sessions",
-      },
-    },
+    presentation: { label: {
+      pending: "Listing annotation sessions",
+      completed: "Listed annotation sessions",
+    } },
     parameters: z.object({}),
     execute() {
       const sessions = listSessions(db, {});
@@ -758,12 +718,10 @@ export default async function plugin(bb: BbPluginApi) {
     name: "agentation_mentions_get_session",
     description:
       "Get one annotation session with every annotation on it, including resolved and dismissed ones.",
-    presentation: {
-      label: {
-        pending: "Reading annotation session",
-        completed: "Read annotation session",
-      },
-    },
+    presentation: { label: {
+      pending: "Reading annotation session",
+      completed: "Read annotation session",
+    } },
     parameters: z.object({ sessionId: z.string() }),
     execute({ sessionId }) {
       const session = getSession(db, sessionId);
@@ -781,12 +739,10 @@ export default async function plugin(bb: BbPluginApi) {
     name: "agentation_mentions_get_pending",
     description:
       "Get the open (pending or acknowledged) annotations for one session, rendered with the bb route, owning plugin, and DOM selector for each.",
-    presentation: {
-      label: {
-        pending: "Reading pending annotations",
-        completed: "Read pending annotations",
-      },
-    },
+    presentation: { label: {
+      pending: "Reading pending annotations",
+      completed: "Read pending annotations",
+    } },
     parameters: z.object({ sessionId: z.string() }),
     execute({ sessionId }) {
       const session = getSession(db, sessionId);
@@ -805,12 +761,10 @@ export default async function plugin(bb: BbPluginApi) {
       "Get every open annotation across all bb pages. Use this when the human refers to UI feedback but did not supply a self-contained Agentation annotation batch.",
     instructions:
       "When the human refers to feedback they left on the bb interface and their message does not already contain an Agentation annotation batch, read it with agentation_mentions_get_all_pending before searching the code. A supplied batch is self-contained; do not fetch other pending feedback. Each annotation names the bb route and, for plugin surfaces, the owning plugin id.",
-    presentation: {
-      label: {
-        pending: "Reading all pending annotations",
-        completed: "Read all pending annotations",
-      },
-    },
+    presentation: { label: {
+      pending: "Reading all pending annotations",
+      completed: "Read all pending annotations",
+    } },
     parameters: z.object({
       pluginId: z.string().optional().describe("Only annotations on this plugin's UI surfaces."),
     }),
@@ -827,12 +781,10 @@ export default async function plugin(bb: BbPluginApi) {
   bb.agents.registerTool({
     name: "agentation_mentions_acknowledge",
     description: "Mark an annotation as acknowledged so the human can see you have picked it up.",
-    presentation: {
-      label: {
-        pending: "Acknowledging annotation",
-        completed: "Acknowledged annotation",
-      },
-    },
+    presentation: { label: {
+      pending: "Acknowledging annotation",
+      completed: "Acknowledged annotation",
+    } },
     parameters: z.object({ annotationId: z.string() }),
     execute({ annotationId }) {
       const annotation = setAnnotationStatus(db, {
@@ -850,12 +802,10 @@ export default async function plugin(bb: BbPluginApi) {
     name: "agentation_mentions_resolve",
     description:
       "Mark an annotation as resolved after you have fixed it. The marker disappears from the human's toolbar. Include a short summary of what changed.",
-    presentation: {
-      label: {
-        pending: "Resolving annotation",
-        completed: "Resolved annotation",
-      },
-    },
+    presentation: { label: {
+      pending: "Resolving annotation",
+      completed: "Resolved annotation",
+    } },
     parameters: z.object({
       annotationId: z.string(),
       summary: z.string().optional(),
@@ -877,12 +827,10 @@ export default async function plugin(bb: BbPluginApi) {
     name: "agentation_mentions_dismiss",
     description:
       "Dismiss an annotation you have decided not to act on. A reason is required — the human sees it.",
-    presentation: {
-      label: {
-        pending: "Dismissing annotation",
-        completed: "Dismissed annotation",
-      },
-    },
+    presentation: { label: {
+      pending: "Dismissing annotation",
+      completed: "Dismissed annotation",
+    } },
     parameters: z.object({ annotationId: z.string(), reason: z.string() }),
     execute({ annotationId, reason }) {
       const annotation = setAnnotationStatus(db, {
@@ -901,12 +849,10 @@ export default async function plugin(bb: BbPluginApi) {
     name: "agentation_mentions_reply",
     description:
       "Add a message to an annotation's thread — ask a clarifying question, or report progress. The human reads and answers it in the Agentation annotator UI.",
-    presentation: {
-      label: {
-        pending: "Replying to annotation",
-        completed: "Replied to annotation",
-      },
-    },
+    presentation: { label: {
+      pending: "Replying to annotation",
+      completed: "Replied to annotation",
+    } },
     parameters: z.object({ annotationId: z.string(), message: z.string() }),
     execute({ annotationId, message }) {
       const annotation = appendThreadMessage(db, annotationId, {
@@ -923,12 +869,10 @@ export default async function plugin(bb: BbPluginApi) {
     name: "agentation_mentions_watch_annotations",
     description:
       "Block until new annotations appear, then return the batch. Call it in a loop for hands-free feedback: watch, fix, resolve, watch again.",
-    presentation: {
-      label: {
-        pending: "Watching for new annotations",
-        completed: "Collected new annotations",
-      },
-    },
+    presentation: { label: {
+      pending: "Watching for new annotations",
+      completed: "Collected new annotations",
+    } },
     parameters: z.object({
       sessionId: z.string().optional().describe("Only watch one page's session."),
       batchWindowSeconds: z
