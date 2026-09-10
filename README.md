@@ -8,6 +8,9 @@
 
 | Plugin | Purpose |
 |---|---|
+| [Message Timings Nerd](plugins/message-timings-nerd/) | Send times, agent turnaround, and waits between replies. |
+| [Cross References](plugins/cross-references/) | Connect and discover related resources through authority-free multipart identities. |
+| [Machine Monitor](plugins/machine-monitor/) | Monitor the deployment machine and keep exact BB thread context attached locally and discoverable from those threads. |
 | [Agentation → Mentions](plugins/agentation-mentions/) | Based on Agentation by Scott Sunarto; adds native mentions, queued delivery, and verified identity tags. |
 | [Perspectives](plugins/perspectives/) | Consult independent expert agents and synthesize evidence across caller-selected lenses. |
 | [Sticky Notes](plugins/sticky-notes/) | Leave shared, movable notes directly on bb threads. |
@@ -20,6 +23,8 @@
 Each plugin is published independently to npm by its prefixed release tag:
 
 ```sh
+bb plugin install npm:@phosphorco/bb-plugin-cross-references@^0.1.0
+bb plugin install npm:@phosphorco/bb-plugin-machine-monitor@^0.1.0
 bb plugin install npm:@phosphorco/bb-plugin-agentation-mentions@^0.1.0
 bb plugin install npm:@phosphorco/bb-plugin-perspectives@^0.2.0
 bb plugin install npm:@phosphorco/bb-plugin-sticky-notes@^0.1.1

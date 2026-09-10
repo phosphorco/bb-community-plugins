@@ -13,6 +13,8 @@
     "typecheck": "npm run typecheck --workspaces --if-present"
   },
   "devDependencies": {
-    "bb-app": "0.39.0"
+    "bb-app": "0.39.0",
+    "@phosphorco/bb-plugin-sdk-target": "npm:@get-bb/plugin-sdk@0.4.47",
+    "bb-app-target": "npm:bb-app@0.42.0"
   }
 }

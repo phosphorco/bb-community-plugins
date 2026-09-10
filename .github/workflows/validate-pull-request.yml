@@ -34,6 +34,12 @@ jobs:
       - name: Inspect Agentation Mentions package
         run: npm pack --dry-run --ignore-scripts --workspace @phosphorco/bb-plugin-agentation-mentions
 
+      - name: Inspect Cross References package
+        run: npm pack --dry-run --ignore-scripts --workspace @phosphorco/bb-plugin-cross-references
+
+      - name: Inspect Machine Monitor package
+        run: npm pack --dry-run --ignore-scripts --workspace @phosphorco/bb-plugin-machine-monitor
+
       - name: Inspect Perspectives package
         run: npm pack --dry-run --ignore-scripts --workspace @phosphorco/bb-plugin-perspectives
 
@@ -42,3 +48,6 @@ jobs:
 
       - name: Inspect BB UI Reference package
         run: npm pack --dry-run --ignore-scripts --workspace @phosphorco/bb-plugin-bb-ui-reference
+
+      - name: Inspect Message Timings Nerd package
+        run: npm pack --dry-run --ignore-scripts --workspace @phosphorco/bb-plugin-message-timings-nerd
