@@ -44,11 +44,15 @@
     "dist/",
     "README.md",
     "LICENSE",
+    "assets/",
     "server.ts",
     "app.tsx",
     "app.css",
+    "attachments.tsx",
     "monitor.ts",
     "store.ts",
+    "attachment-contract.ts",
+    "attachment-delivery.ts",
     "rpc-contract.ts",
     "test/"
   ],
@@ -58,19 +62,23 @@
   },
   "devDependencies": {
     "@get-bb/plugin-sdk": "0.4.15",
+    "@testing-library/dom": "^10.4.0",
+    "@testing-library/react": "^16.3.2",
     "@types/better-sqlite3": "^7.6.12",
     "@types/node": "^22",
     "@types/react": "19.2.2",
     "@types/react-dom": "19.2.2",
     "better-sqlite3": "^12.0.0",
+    "jsdom": "^26.1.0",
     "react": "19.2.1",
     "react-dom": "19.2.1",
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.1"
   },
   "scripts": {
     "build": "bb plugin build .",
     "dev": "bb plugin dev .",
-    "test": "node --test --experimental-strip-types test/*.test.ts",
+    "test": "node --test --experimental-strip-types test/*.test.ts && vitest run test/*.test.tsx",
     "typecheck": "tsc --noEmit"
   }
 }

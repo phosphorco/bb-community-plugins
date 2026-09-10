@@ -1,14 +1,15 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { LineChart } from "echarts/charts";
-import { AriaComponent, DatasetComponent, GridComponent, TooltipComponent } from "echarts/components";
+import { AriaComponent, DatasetComponent, GridComponent, MarkAreaComponent, MarkLineComponent, TooltipComponent } from "echarts/components";
 import * as echarts from "echarts/core";
 import { SVGRenderer } from "echarts/renderers";
-import { definePluginApp, useRealtime, useRpc } from "@get-bb/plugin-sdk/app";
+import { definePluginApp, useRealtime, useRealtimeConnectionState, useRpc } from "@get-bb/plugin-sdk/app";
 
+import { MachineMonitorReferences } from "./attachments.tsx";
 import type { MachineMonitorHealth, MachineMonitorSnapshot, rpcContract } from "./rpc-contract.ts";
 import "./app.css";
 
-echarts.use([AriaComponent, DatasetComponent, GridComponent, LineChart, SVGRenderer, TooltipComponent]);
+echarts.use([AriaComponent, DatasetComponent, GridComponent, LineChart, MarkAreaComponent, MarkLineComponent, SVGRenderer, TooltipComponent]);
 
 const RANGES = [1, 6, 24, 24 * 7, 24 * 30] as const;
 type RangeHours = typeof RANGES[number];
@@ -16,6 +17,7 @@ type ChartTheme = { foreground: string; muted: string; border: string; surface: 
 
 function MachineMonitorPanel() {
   const rpc = useRpc<typeof rpcContract>();
+  const connection = useRealtimeConnectionState();
   const [rangeHours, setRangeHours] = useState<RangeHours>(24);
   const [snapshot, setSnapshot] = useState<MachineMonitorSnapshot | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -35,7 +37,7 @@ function MachineMonitorPanel() {
     if (requestInFlight.current) return;
     requestInFlight.current = true;
     try {
-      while (refreshPending.current) {
+      while (refreshPending.current && mounted.current) {
         refreshPending.current = false;
         const requestedRange = latestRange.current;
         try {
@@ -56,7 +58,12 @@ function MachineMonitorPanel() {
     }
   }, [rpc]);
 
-  useEffect(() => { void refresh(); }, [refresh]);
+  useEffect(() => { void refresh(); }, [rangeHours, refresh]);
+  const previousConnection = useRef(connection);
+  useEffect(() => {
+    if (previousConnection.current !== "connected" && connection === "connected") void refresh();
+    previousConnection.current = connection;
+  }, [connection, refresh]);
   useRealtime("machine-monitor-sample", useCallback(() => { void refresh(); }, [refresh]));
   useRealtime("machine-monitor-directories", useCallback(() => { void refresh(); }, [refresh]));
   useRealtime("machine-monitor-memory", useCallback(() => { void refresh(); }, [refresh]));
@@ -89,6 +96,7 @@ function MachineMonitorPanel() {
 
       {snapshot != null && <DiagnosticsCharts samples={snapshot.samples} thresholds={snapshot.thresholds} />}
       {snapshot != null && <DirectoryUsage directories={snapshot.directories} />}
+      <MachineMonitorReferences />
       {snapshot?.memoryDiagnostics != null && <MemoryPressure diagnostics={snapshot.memoryDiagnostics} processDetailsEnabled={snapshot.processDetailsEnabled} />}
       {snapshot != null && latest == null && <p className="machine-monitor__empty">Waiting for the first local sample.</p>}
       <p className="machine-monitor__footnote">CPU, RAM, and root-disk warnings use your Plugin Settings thresholds. CPU is a five-minute average to suppress bursts; load is context, not an alert. History is retained for 30 days and reduced to at most 720 points per chart.</p>
@@ -111,11 +119,26 @@ const Metric = memo(function Metric({ label, value, detail, warning }: { label: 
 
 function SidebarHealthAccessory() {
   const rpc = useRpc<typeof rpcContract>();
+  const connection = useRealtimeConnectionState();
   const [health, setHealth] = useState<MachineMonitorHealth | null>(null);
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; };
+  }, []);
   const refresh = useCallback(() => {
-    void rpc.call("health").then(setHealth).catch(() => setHealth(null));
+    void rpc.call("health").then((next) => {
+      if (mounted.current) setHealth(next);
+    }).catch(() => {
+      if (mounted.current) setHealth(null);
+    });
   }, [rpc]);
   useEffect(refresh, [refresh]);
+  const previousConnection = useRef(connection);
+  useEffect(() => {
+    if (previousConnection.current !== "connected" && connection === "connected") void refresh();
+    previousConnection.current = connection;
+  }, [connection, refresh]);
   useRealtime("machine-monitor-sample", refresh);
   const warnings = health?.warnings ?? [];
   if (warnings.length === 0) return null;
@@ -133,11 +156,12 @@ const DiagnosticsCharts = memo(function DiagnosticsCharts({ samples, thresholds 
 
 const DirectoryUsage = memo(function DirectoryUsage({ directories }: { directories: MachineMonitorSnapshot["directories"] }) {
   if (directories.length === 0) return null;
-  return <section className="machine-monitor__directories" aria-label="Local cache and working-directory usage">
-    <h2>Cache and working directories</h2>
-    <div>{directories.map((directory) => <article key={directory.id}>
-      <span>{directory.label}</span><strong>{bytes(directory.bytes) ?? "—"}</strong><small>{growth(directory.growthBytesPerDay)}</small>
-    </article>)}</div>
+  return <section className="machine-monitor__directories" aria-label="Root disk directory usage">
+    <h2>Root disk breakdown</h2>
+    <p>Nested directories are exclusive; Other is root disk usage not covered by the measured paths.</p>
+    <ol>{directories.map((directory) => <li key={directory.id} data-derived={directory.derived || undefined}>
+      <span>{directory.label}</span><strong>{bytes(directory.bytes) ?? "—"}</strong><small>{directory.partial ? "Partial: protected entries omitted" : growth(directory.growthBytesPerDay)}</small>
+    </li>)}</ol>
   </section>;
 });
 

@@ -1,6 +1,9 @@
 import { defineRpcContract } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 
+import { attachmentRpcSchemas } from "./attachment-contract.ts";
+import { MAX_REPORTED_DIRECTORIES } from "./monitor.ts";
+
 const sampleSchema = z.object({
   collectedAt: z.number().int().nonnegative(),
   cpuPercent: z.number().nullable(),
@@ -13,7 +16,7 @@ const sampleSchema = z.object({
   load5: z.number().nullable(),
 }).strict();
 const directorySchema = z.object({
-  id: z.string(), label: z.string(), bytes: z.number().nonnegative(), growthBytesPerDay: z.number().nullable(),
+  id: z.string(), label: z.string(), bytes: z.number().nonnegative(), growthBytesPerDay: z.number().nullable(), derived: z.boolean(), partial: z.boolean(),
 }).strict();
 const thresholdsSchema = z.object({ cpu: z.number(), ram: z.number(), disk: z.number() }).strict();
 const memoryProcessSchema = z.object({
@@ -48,12 +51,37 @@ export const rpcContract = defineRpcContract({
       samples: z.array(sampleSchema),
       thresholds: thresholdsSchema,
       diskGrowthBytesPerDay: z.number().nullable(),
-      directories: z.array(directorySchema),
+      directories: z.array(directorySchema).max(MAX_REPORTED_DIRECTORIES),
       memoryDiagnostics: memoryDiagnosticsSchema.nullable(),
       processDetailsEnabled: z.boolean(),
       lastError: z.string().nullable(),
     }).strict(),
   },
+  searchThreads: {
+    input: z.object({
+      query: z.string().max(256).refine((value) => value.trim().length >= 2, "Search for at least two characters."),
+    }).strict(),
+    output: z.object({
+      threads: z.array(z.object({
+        id: z.string().min(1).max(128),
+        projectId: z.string().min(1).max(128),
+        title: z.string().min(1).max(256),
+        detail: z.string().max(256).optional(),
+        archived: z.boolean(),
+      }).strict()).max(24),
+    }).strict(),
+  },
+  getThread: {
+    input: z.object({ threadId: z.string().min(1).max(128) }).strict(),
+    output: z.object({
+      id: z.string().min(1).max(128),
+      projectId: z.string().min(1).max(128),
+      title: z.string().min(1).max(256),
+      detail: z.string().max(256).optional(),
+      archived: z.boolean(),
+    }).strict(),
+  },
+  ...attachmentRpcSchemas,
 });
 
 export type MachineMonitorSnapshot = z.infer<typeof rpcContract.snapshot.output>;

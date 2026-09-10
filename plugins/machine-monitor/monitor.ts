@@ -1,17 +1,21 @@
 import { execFile } from "node:child_process";
-import { access, readFile, readdir, readlink, statfs } from "node:fs/promises";
+import { access, readFile, readdir, readlink, stat, statfs } from "node:fs/promises";
 import os from "node:os";
+import { relative, resolve } from "node:path";
 import { promisify } from "node:util";
 
 export const SAMPLE_INTERVAL_MS = 30_000;
 export const RETENTION_MS = 30 * 24 * 60 * 60_000;
 export const MAX_RENDER_POINTS = 720;
 export const DIRECTORY_SAMPLE_INTERVAL_MS = 15 * 60_000;
+export const DIRECTORY_SCAN_TIMEOUT_MS = 2 * 60_000;
 export const MEMORY_DIAGNOSTICS_INTERVAL_MS = 60_000;
 export const MEMORY_PRESSURE_INTERVAL_MS = 5_000;
 export const MEMORY_PRESSURE_CAPTURE_MS = 5 * 60_000;
 export const MEMORY_DIAGNOSTICS_RETENTION_MS = 7 * 24 * 60 * 60_000;
 export const MAX_MEMORY_DIAGNOSTICS_SNAPSHOTS = 20_000;
+export const MAX_ADDITIONAL_DIRECTORIES = 32;
+export const MAX_ADDITIONAL_DIRECTORY_SETTING_BYTES = 16 * 1024;
 const MAX_PROCESS_SCAN = 2_048;
 const MAX_REPORTED_PROCESSES = 12;
 const PROCESS_READ_CONCURRENCY = 16;
@@ -25,7 +29,12 @@ export const MONITORED_DIRECTORIES = [
   { id: "npm", label: "npm cache", paths: [".npm"] },
   { id: "tmp", label: "/tmp", paths: ["/tmp"] },
   { id: "bb", label: "~/.bb", paths: [".bb"] },
+  { id: "bb-worktrees", label: "BB worktrees", paths: [".bb/worktrees"], parentId: "bb" },
 ] as const;
+
+export const MAX_REPORTED_DIRECTORIES = MONITORED_DIRECTORIES.length + MAX_ADDITIONAL_DIRECTORIES + 1;
+
+export type MonitoredDirectory = { id: string; label: string; paths: readonly string[]; parentId?: string };
 
 export type CpuCounters = { total: number; idle: number };
 
@@ -40,7 +49,7 @@ export type MachineSample = {
   load5: number | null;
 };
 
-export type DirectorySample = { collectedAt: number; location: string; bytes: number };
+export type DirectorySample = { collectedAt: number; location: string; bytes: number; onRootFilesystem: boolean; partial: boolean };
 
 type ProcessCounters = { rssBytes: number; minorFaults: number; majorFaults: number };
 type SystemMemoryCounters = { swapInPages: number; swapOutPages: number; refaultPages: number; reclaimPages: number };
@@ -215,10 +224,59 @@ function throwIfAborted(signal?: AbortSignal): void {
   if (signal?.aborted) throw new DOMException("Machine monitor collection aborted", "AbortError");
 }
 
-export async function collectDirectorySamples(collectedAt = Date.now(), signal?: AbortSignal): Promise<DirectorySample[]> {
+export function additionalDirectories(source: string, home = os.homedir()): MonitoredDirectory[] {
+  if (new TextEncoder().encode(source).byteLength > MAX_ADDITIONAL_DIRECTORY_SETTING_BYTES) {
+    throw new Error(`Additional directory paths must total at most ${MAX_ADDITIONAL_DIRECTORY_SETTING_BYTES} bytes.`);
+  }
+  const paths = source.split("\n").map((line) => line.trim()).filter((line) => line.length > 0 && !line.startsWith("#"))
+    .map((line) => line === "~" ? home : line.startsWith("~/") ? `${home}/${line.slice(2)}` : line)
+    .filter((line) => line.startsWith("/") && line !== "/");
+  const uniquePaths = [...new Set(paths)];
+  if (uniquePaths.length > MAX_ADDITIONAL_DIRECTORIES) {
+    throw new Error(`Additional directory paths must contain at most ${MAX_ADDITIONAL_DIRECTORIES} paths.`);
+  }
+  return uniquePaths.map((path) => ({ id: `custom:${path}`, label: path, paths: [path] }));
+}
+
+function absolutePath(path: string, home: string): string {
+  return resolve(path.startsWith("/") ? path : `${home}/${path}`);
+}
+
+function containsPath(parent: string, child: string): boolean {
+  const path = relative(parent, child);
+  return path.length > 0 && !path.startsWith("../") && path !== "..";
+}
+
+export function withDirectoryHierarchy(directories: readonly MonitoredDirectory[], home = os.homedir()): MonitoredDirectory[] {
+  return directories.map((directory) => {
+    if (directory.parentId != null) return directory;
+    const directoryPaths = directory.paths.map((path) => absolutePath(path, home));
+    const parent = directories.filter((candidate) => candidate.id !== directory.id).map((candidate) => ({
+      candidate,
+      paths: candidate.paths.map((path) => absolutePath(path, home)),
+    })).filter(({ paths }) => directoryPaths.every((child) => paths.some((parent) => containsPath(parent, child))))
+      .sort((left, right) => Math.max(...right.paths.map((path) => path.length)) - Math.max(...left.paths.map((path) => path.length)))[0]?.candidate;
+    return parent == null ? directory : { ...directory, parentId: parent.id };
+  });
+}
+
+export function exclusiveDirectorySizes<T extends { id: string; bytes: number; firstBytes: number }>(entries: T[], directories: readonly MonitoredDirectory[]): Array<T & { exclusiveBytes: number; exclusiveFirstBytes: number }> {
+  const byId = new Map(entries.map((entry) => [entry.id, entry]));
+  return entries.map((entry) => {
+    const children = directories.filter((directory) => directory.parentId === entry.id).map((directory) => byId.get(directory.id)).filter((child): child is T => child != null);
+    return {
+      ...entry,
+      exclusiveBytes: Math.max(0, entry.bytes - children.reduce((total, child) => total + child.bytes, 0)),
+      exclusiveFirstBytes: Math.max(0, entry.firstBytes - children.reduce((total, child) => total + child.firstBytes, 0)),
+    };
+  });
+}
+
+export async function collectDirectorySamples(collectedAt = Date.now(), signal?: AbortSignal, directories: readonly MonitoredDirectory[] = MONITORED_DIRECTORIES): Promise<DirectorySample[]> {
   const home = os.homedir();
+  const rootDevice = await stat("/").then((entry) => entry.dev).catch(() => null);
   const results: DirectorySample[] = [];
-  for (const location of MONITORED_DIRECTORIES) {
+  for (const location of directories) {
     throwIfAborted(signal);
     const paths = location.paths.map((path) => path.startsWith("/") ? path : `${home}/${path}`);
     const existing = (await Promise.all(paths.map(async (path) => {
@@ -226,12 +284,22 @@ export async function collectDirectorySamples(collectedAt = Date.now(), signal?:
     }))).filter((path): path is string => path != null);
     if (existing.length === 0) continue;
     try {
-      const { stdout } = await execFileAsync("du", ["-sk", "--", ...existing], { timeout: 45_000, maxBuffer: 64 * 1024, signal });
+      let partial = false;
+      const stdout = await execFileAsync("du", ["-skx", "--", ...existing], { timeout: DIRECTORY_SCAN_TIMEOUT_MS, maxBuffer: 64 * 1024, signal }).then(({ stdout }) => stdout).catch((cause: unknown) => {
+        if (signal?.aborted) throw cause;
+        const error = cause as { code?: unknown; killed?: unknown; signal?: unknown; stdout?: unknown };
+        if (error.code === 1 && error.killed !== true && error.signal == null && typeof error.stdout === "string") {
+          partial = true;
+          return error.stdout;
+        }
+        throw cause;
+      });
       const bytes = stdout.split("\n").reduce((total, line) => {
         const kibibytes = Number(/^\s*(\d+)\s/.exec(line)?.[1]);
         return Number.isFinite(kibibytes) ? total + kibibytes * 1024 : total;
       }, 0);
-      results.push({ collectedAt, location: location.id, bytes });
+      const devices = await Promise.all(existing.map((path) => stat(path).then((entry) => entry.dev).catch(() => null)));
+      results.push({ collectedAt, location: location.id, bytes, onRootFilesystem: rootDevice != null && devices.every((device) => device === rootDevice), partial });
     } catch (cause) {
       if (signal?.aborted) throw cause;
       // Directory diagnostics are best-effort. The core health collector stays independent.

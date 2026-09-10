@@ -21,9 +21,11 @@
 .machine-monitor__chart h2 { font-size: 12px; font-weight: 650; }
 .machine-monitor__chart > div { height: 245px; margin: 0 6px 6px; touch-action: pan-y pinch-zoom; }
 .machine-monitor__directories { margin-top: 10px; padding: 12px; border: 1px solid var(--border); border-radius: 9px; background: var(--card); color: var(--card-foreground); }
-.machine-monitor__directories h2 { margin: 0 0 9px; font-size: 12px; font-weight: 650; }
-.machine-monitor__directories > div { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr)); gap: 8px; }
-.machine-monitor__directories article { display: grid; gap: 3px; min-width: 0; padding: 8px; border-radius: 6px; background: color-mix(in srgb, var(--muted) 45%, transparent); }
+.machine-monitor__directories h2 { margin: 0 0 3px; font-size: 12px; font-weight: 650; }
+.machine-monitor__directories > p { margin: 0 0 9px; color: var(--muted-foreground); font-size: 10px; }
+.machine-monitor__directories > ol { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr)); gap: 8px; margin: 0; padding: 0; list-style-position: inside; }
+.machine-monitor__directories li { display: grid; gap: 3px; min-width: 0; padding: 8px; border-radius: 6px; background: color-mix(in srgb, var(--muted) 45%, transparent); }
+.machine-monitor__directories li[data-derived="true"] { background: color-mix(in srgb, var(--primary) 10%, var(--muted) 45%); }
 .machine-monitor__directories span, .machine-monitor__directories small { overflow: hidden; color: var(--muted-foreground); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
 .machine-monitor__directories strong { font-size: 14px; font-variant-numeric: tabular-nums; }
 .machine-monitor__memory-pressure { margin-top: 10px; padding: 12px; border: 1px solid var(--border); border-radius: 9px; background: var(--card); color: var(--card-foreground); }
@@ -47,8 +49,36 @@
 .machine-monitor__error { margin: 0 0 10px; padding: 8px 10px; border: 1px solid color-mix(in srgb, var(--destructive) 38%, var(--border)); border-radius: 7px; color: var(--destructive); font-size: 12px; }
 .machine-monitor__empty { margin: 24px 0; color: var(--muted-foreground); font-size: 13px; }
 .machine-monitor__footnote { margin-top: 12px; }
+.machine-monitor__references { display: grid; gap: 10px; margin-top: 10px; padding: 12px; border: 1px solid var(--border); border-radius: 9px; background: var(--card); color: var(--card-foreground); }
+.machine-monitor__references > header { display: flex; align-items: start; justify-content: space-between; gap: 12px; }
+.machine-monitor__references h2 { font-size: 12px; font-weight: 650; }
+.machine-monitor__references header p, .machine-monitor__reference-help, .machine-monitor__reference-status, .machine-monitor__reference-empty, .machine-monitor__reference-error { color: var(--muted-foreground); font-size: 10px; }
+.machine-monitor__references header p { margin-top: 3px; max-width: 620px; }
+.machine-monitor__reference-count { min-width: 1.75rem; padding: 3px 6px; border-radius: 999px; color: var(--primary-foreground); background: var(--primary); font-size: 10px; font-variant-numeric: tabular-nums; text-align: center; }
+.machine-monitor__reference-status { margin: 0; }
+.machine-monitor__reference-status--pending { color: var(--primary); }
+.machine-monitor__reference-status--degraded, .machine-monitor__reference-status--blocked, .machine-monitor__reference-error { color: var(--destructive); }
+.machine-monitor__reference-empty { margin: 0; padding: 8px; border-radius: 6px; background: color-mix(in srgb, var(--muted) 36%, transparent); }
+.machine-monitor__reference-list, .machine-monitor__reference-search-results { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.machine-monitor__reference-list li, .machine-monitor__reference-search-results li { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-width: 0; padding: 7px 8px; border-radius: 6px; background: color-mix(in srgb, var(--muted) 36%, transparent); }
+.machine-monitor__reference-list li > span, .machine-monitor__reference-search-results li > span { display: grid; min-width: 0; gap: 2px; }
+.machine-monitor__reference-list small, .machine-monitor__reference-search-results small { overflow: hidden; color: var(--muted-foreground); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.machine-monitor__reference-link { min-width: 0; overflow: hidden; color: var(--primary); font-size: 12px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.machine-monitor__reference-picker { display: grid; gap: 4px; padding-top: 2px; }
+.machine-monitor__reference-picker > label { color: var(--foreground); font-size: 11px; }
+.machine-monitor__reference-picker input { width: 100%; min-height: 32px; padding: 0 9px; border: 1px solid var(--input); border-radius: 7px; color: var(--foreground); background: var(--background); font: inherit; }
+.machine-monitor__reference-picker input:focus-visible, .machine-monitor__reference-list button:focus-visible, .machine-monitor__reference-search-results button:focus-visible, .machine-monitor__reference-link:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+.machine-monitor__reference-help { margin: 0; }
+.machine-monitor__reference-error { margin: 0; overflow-wrap: anywhere; }
+.machine-monitor__reference-search-results { max-height: 230px; overflow-y: auto; overscroll-behavior: contain; }
+.machine-monitor__reference-search-results strong { min-width: 0; overflow: hidden; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.machine-monitor__reference-list button, .machine-monitor__reference-search-results button { flex: 0 0 auto; min-height: 28px; padding: 4px 8px; border: 1px solid var(--border); border-radius: 6px; color: var(--foreground); background: var(--background); font: inherit; font-size: 10px; cursor: pointer; }
+.machine-monitor__reference-search-results button:not(:disabled):hover, .machine-monitor__reference-list button:not(:disabled):hover { background: var(--accent); color: var(--accent-foreground); }
+.machine-monitor__reference-list button:disabled, .machine-monitor__reference-search-results button:disabled { cursor: default; opacity: .58; }
+.machine-monitor__reference-add { color: var(--primary) !important; }
+.machine-monitor__reference-remove { color: var(--destructive) !important; }
 @container (max-width: 760px) {
-  .machine-monitor__metrics, .machine-monitor__directories > div, .machine-monitor__memory-pressure dl { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .machine-monitor__metrics, .machine-monitor__directories > ol, .machine-monitor__memory-pressure dl { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .machine-monitor__charts { grid-template-columns: 1fr; }
 }
 @media (max-width: 760px) {
@@ -66,5 +96,5 @@
   .machine-monitor__memory-pressure > header { flex-direction: column; gap: 4px; }
 }
 @container (max-width: 300px) {
-  .machine-monitor__metrics, .machine-monitor__directories > div, .machine-monitor__memory-pressure dl { grid-template-columns: 1fr; }
+  .machine-monitor__metrics, .machine-monitor__directories > ol, .machine-monitor__memory-pressure dl { grid-template-columns: 1fr; }
 }
