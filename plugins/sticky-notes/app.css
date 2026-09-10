@@ -20,7 +20,9 @@
 
 .bb-sticky-notes-action:focus-visible,
 .bb-sticky-note-grab:focus-visible,
-.bb-sticky-note textarea:focus-visible {
+.bb-sticky-note textarea:focus-visible,
+.bb-sticky-note-link:focus-visible,
+.bb-sticky-note-link-remove:focus-visible {
   outline: 2px solid var(--ring);
   outline-offset: 2px;
 }
@@ -172,6 +174,102 @@
 
 .bb-sticky-note textarea::placeholder {
   color: color-mix(in oklab, currentColor 48%, transparent);
+}
+
+.bb-sticky-note-links {
+  border-top: 1px solid color-mix(in oklab, currentColor 20%, transparent);
+  display: flex;
+  flex: 0 1 48%;
+  flex-direction: column;
+  list-style: none;
+  margin: 0 10px 10px;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding: 4px 0 0;
+}
+
+.bb-sticky-note-link-row {
+  align-items: center;
+  display: grid;
+  gap: 3px;
+  grid-template-columns: minmax(0, 1fr) 24px;
+  min-width: 0;
+  padding: 0 4px;
+}
+
+.bb-sticky-note-link {
+  align-items: center;
+  border-radius: 6px;
+  color: inherit;
+  display: grid;
+  gap: 6px;
+  grid-template-columns: 19px minmax(0, 1fr);
+  min-width: 0;
+  padding: 4px 0;
+  text-decoration: none;
+}
+
+.bb-sticky-note-link:hover {
+  background: color-mix(in oklab, currentColor 8%, transparent);
+}
+
+.bb-sticky-note-link-number {
+  align-items: center;
+  border: 1px solid color-mix(in oklab, currentColor 28%, transparent);
+  border-radius: 999px;
+  display: inline-flex;
+  flex: 0 0 19px;
+  font-family: ui-sans-serif, system-ui, sans-serif;
+  font-size: 9px;
+  font-weight: 750;
+  height: 19px;
+  justify-content: center;
+}
+
+.bb-sticky-note-link-label {
+  display: block;
+  font-family: ui-sans-serif, system-ui, sans-serif;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.2;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bb-sticky-note-link-remove {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  border-radius: 4px;
+  color: inherit;
+  cursor: pointer;
+  display: inline-flex;
+  font-family: ui-sans-serif, system-ui, sans-serif;
+  font-size: 13px;
+  height: 24px;
+  justify-content: center;
+  opacity: 0;
+  padding: 0;
+  pointer-events: none;
+  transition: opacity 100ms ease, visibility 0s linear 100ms;
+  visibility: hidden;
+  width: 24px;
+}
+
+.bb-sticky-note-link-row:hover .bb-sticky-note-link-remove,
+.bb-sticky-note-link-row:focus-within .bb-sticky-note-link-remove {
+  opacity: 0.68;
+  pointer-events: auto;
+  transition-delay: 0s;
+  visibility: visible;
+}
+
+.bb-sticky-note-link-remove:hover {
+  background: color-mix(in oklab, currentColor 10%, transparent);
+  opacity: 1;
 }
 
 .bb-sticky-note-discard {

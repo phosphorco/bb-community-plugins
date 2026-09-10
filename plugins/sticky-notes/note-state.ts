@@ -10,6 +10,7 @@ export function reconcileAcknowledgedPatch(
     updatedAt: Math.max(current.updatedAt, acknowledged.updatedAt),
   }
   if (patch.text !== undefined) next.text = acknowledged.text
+  if (patch.links !== undefined) next.links = acknowledged.links
   if (patch.horizontalAnchor !== undefined) next.horizontalAnchor = acknowledged.horizontalAnchor
   if (patch.verticalAnchor !== undefined) next.verticalAnchor = acknowledged.verticalAnchor
   if (patch.offsetX !== undefined) next.offsetX = acknowledged.offsetX

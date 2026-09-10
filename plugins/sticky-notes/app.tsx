@@ -7,12 +7,15 @@ import {
   useRef,
   useState,
   type CSSProperties,
+  type ClipboardEvent as ReactClipboardEvent,
   type KeyboardEvent as ReactKeyboardEvent,
+  type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
 } from "react"
 import { createPortal } from "react-dom"
 import {
   definePluginApp,
+  useBbNavigate,
   useComposerView,
   useRealtime,
   useRpc,
@@ -32,6 +35,20 @@ import {
   type AbsolutePlacement,
 } from "./geometry.ts"
 import { HUE_COUNT, type StickyNote, type StickyNotePatch } from "./notes.ts"
+import {
+  extractLinksFromPaste,
+  citationTextForPaste,
+  insertPastedText,
+  linksEqual,
+  MAX_LINKS,
+  mergeNoteLinks,
+  nativeThreadIdForLinkActivation,
+  noteLinkLabel,
+  removeAndRenumberCitationMarkers,
+  removeNoteLink,
+  threadIdForBbLink,
+} from "./links.ts"
+import { fetchClientLinkTitle } from "./link-metadata.ts"
 import type { rpcContract } from "./server.ts"
 import {
   EMPTY_NOTE_FONT_SIZE,
@@ -42,7 +59,7 @@ import {
 } from "./typography.ts"
 import { intersectPaneBounds, type OverlayBounds } from "./overlay-bounds.ts"
 import { reconcileAcknowledgedPatch, reconcileNoteSnapshot } from "./note-state.ts"
-import { ConfirmedTextSaveQueue } from "./save-queue.ts"
+import { ConfirmedNoteContentSaveQueue, noteContentEqual } from "./save-queue.ts"
 import { createClickSuppression, type CreateClickSource } from "./create-gesture.ts"
 
 type NewNotePreview = {
@@ -320,13 +337,17 @@ function Note({
   onDelete,
   onUpdate,
 }: NoteProps) {
+  const rpc = useRpc<typeof rpcContract>()
+  const navigate = useBbNavigate()
   const placementBounds = { width: bounds.width, height: bounds.height }
   const [placement, setPlacement] = useState(() => resolvePlacement(note, placementBounds))
   const placementRef = useRef(placement)
   const [text, setText] = useState(note.text)
   const textRef = useRef(text)
-  const textSaverRef = useRef(new ConfirmedTextSaveQueue(note.text))
-  const textDirtyRef = useRef(false)
+  const [links, setLinks] = useState(note.links)
+  const linksRef = useRef(links)
+  const contentSaverRef = useRef(new ConfirmedNoteContentSaveQueue({ text: note.text, links: note.links }))
+  const contentDirtyRef = useRef(false)
   const textTimerRef = useRef<number | null>(null)
   const placementSaveChainRef = useRef<Promise<void>>(Promise.resolve())
   const textareaRef = useRef<HTMLTextAreaElement>(null)
@@ -334,6 +355,8 @@ function Note({
   const [positioning, setPositioning] = useState(false)
   const [textFocused, setTextFocused] = useState(false)
   const [keyboardStatus, setKeyboardStatus] = useState("")
+  const [convertingCitation, setConvertingCitation] = useState(false)
+  const removeButtonRefs = useRef(new Map<string, HTMLButtonElement>())
   const discardingRef = useRef(false)
   const cleanupGestureRef = useRef<(() => void) | null>(null)
   const interactingRef = useRef(false)
@@ -358,41 +381,150 @@ function Note({
   }, [note.horizontalAnchor, note.verticalAnchor, note.offsetX, note.offsetY, note.width, note.height, note.rotation, bounds.width, bounds.height, setCurrentPlacement])
 
   useEffect(() => {
-    textSaverRef.current.updateConfirmed(note.text)
-    if (!textDirtyRef.current) {
+    contentSaverRef.current.updateConfirmed({ text: note.text, links: note.links })
+    if (!contentDirtyRef.current) {
       textRef.current = note.text
       setText(note.text)
+      linksRef.current = note.links
+      setLinks(note.links)
     }
-  }, [note.text])
+  }, [note.links, note.text])
 
   useEffect(() => {
     if (autoFocus) textareaRef.current?.focus()
   }, [autoFocus])
 
-  const flushText = useCallback(() => {
+  const updateContent = useCallback((next: { text: string; links: StickyNote["links"] }) => {
+    textRef.current = next.text
+    linksRef.current = next.links
+    contentDirtyRef.current = true
+    setText(next.text)
+    setLinks(next.links)
+  }, [])
+
+  const flushContent = useCallback(async (): Promise<boolean> => {
     if (textTimerRef.current !== null) window.clearTimeout(textTimerRef.current)
     textTimerRef.current = null
-    const next = textRef.current
-    if (next === textSaverRef.current.confirmedText) {
-      textDirtyRef.current = false
-      return
-    }
-    void textSaverRef.current.enqueue(next, (value) => onUpdate(note.id, { text: value })).then((confirmed) => {
-      textDirtyRef.current = textRef.current !== confirmed
-    })
+    const next = { text: textRef.current, links: linksRef.current }
+    const confirmed = await contentSaverRef.current.enqueue(next, (value) => onUpdate(note.id, {
+      text: value.text,
+      links: [...value.links],
+    }))
+    contentDirtyRef.current = !noteContentEqual({ text: textRef.current, links: linksRef.current }, confirmed)
+    return noteContentEqual(next, confirmed)
   }, [note.id, onUpdate])
 
   useEffect(() => () => {
     cleanupGestureRef.current?.()
-    flushText()
-  }, [flushText])
+    void flushContent()
+  }, [flushContent])
 
   const changeText = (next: string) => {
-    textRef.current = next
-    textDirtyRef.current = true
-    setText(next)
+    updateContent({ text: next, links: linksRef.current })
     if (textTimerRef.current !== null) window.clearTimeout(textTimerRef.current)
-    textTimerRef.current = window.setTimeout(flushText, 400)
+    textTimerRef.current = window.setTimeout(() => { void flushContent() }, 400)
+  }
+
+  const saveLinks = useCallback((next: StickyNote["links"]) => {
+    updateContent({ text: textRef.current, links: next })
+    void flushContent()
+  }, [flushContent, updateContent])
+
+  const commitCitationContent = useCallback(async (candidate: {
+    text: string
+    links: StickyNote["links"]
+  }): Promise<boolean> => {
+    if (!await flushContent()) return false
+    const confirmed = await contentSaverRef.current.enqueue(candidate, (value) => onUpdate(note.id, {
+      text: value.text,
+      links: [...value.links],
+    }))
+    if (!noteContentEqual(candidate, confirmed)) return false
+    updateContent(candidate)
+    return true
+  }, [flushContent, note.id, onUpdate, updateContent])
+
+  const resolveLinkTitles = useCallback((added: readonly StickyNote["links"][number][]) => {
+    for (const link of added) {
+      const isLocalThread = threadIdForBbLink(link.url, window.location.origin) !== null
+      const title = isLocalThread
+        ? rpc.call("resolveThreadLink", { url: link.url, currentHost: window.location.host }).then(({ title }) => title)
+        : fetchClientLinkTitle(link.url)
+      void title.then((resolved) => {
+        if (!resolved) return
+        const next = linksRef.current.map((current) => current.url === link.url
+          ? { ...current, title: resolved }
+          : current)
+        if (!linksEqual(next, linksRef.current)) saveLinks(next)
+      }).catch(() => undefined)
+    }
+  }, [rpc, saveLinks])
+
+  const pasteText = async (event: ReactClipboardEvent<HTMLTextAreaElement>) => {
+    const pasted = event.clipboardData.getData("text/plain")
+    const extracted = extractLinksFromPaste(pasted)
+    if (extracted.links.length === 0) return
+    const textarea = event.currentTarget
+    const start = textarea.selectionStart ?? textRef.current.length
+    const end = textarea.selectionEnd ?? textRef.current.length
+    const nextLinks = mergeNoteLinks(linksRef.current, extracted.links)
+    const added = nextLinks.filter((link) => !linksRef.current.some((current) => current.url === link.url))
+    if (linksRef.current.length + added.length > MAX_LINKS) return
+    event.preventDefault()
+    setConvertingCitation(true)
+    if (!await flushContent()) {
+      const fallback = insertPastedText(textRef.current, start, end, pasted)
+      changeText(fallback.text)
+      setKeyboardStatus("Couldn’t add references. The URL was kept in the note text.")
+      setConvertingCitation(false)
+      window.requestAnimationFrame(() => textarea.setSelectionRange(fallback.caret, fallback.caret))
+      return
+    }
+    const inserted = insertPastedText(textRef.current, start, end, citationTextForPaste(pasted, nextLinks))
+    const candidate = { text: inserted.text, links: nextLinks }
+    if (await commitCitationContent(candidate)) {
+      resolveLinkTitles(added)
+      setKeyboardStatus(added.length === 0
+        ? "Linked to the existing reference."
+        : `Added ${added.length === 1 ? "reference" : `${added.length} references`}.`)
+      window.requestAnimationFrame(() => textarea.setSelectionRange(inserted.caret, inserted.caret))
+    } else {
+      const fallback = insertPastedText(textRef.current, start, end, pasted)
+      changeText(fallback.text)
+      setKeyboardStatus("Couldn’t add references. The URL was kept in the note text.")
+    }
+    setConvertingCitation(false)
+  }
+
+  const removeLink = async (url: string) => {
+    const index = linksRef.current.findIndex((link) => link.url === url)
+    if (index < 0) return
+    const nextLinks = removeNoteLink(linksRef.current, url)
+    const candidate = {
+      text: removeAndRenumberCitationMarkers(textRef.current, index + 1),
+      links: nextLinks,
+    }
+    setConvertingCitation(true)
+    const saved = await commitCitationContent(candidate)
+    setConvertingCitation(false)
+    if (!saved) {
+      setKeyboardStatus("Couldn’t remove the reference. It is still in the note.")
+      return
+    }
+    setKeyboardStatus(`Removed reference ${index + 1}; later citations were renumbered.`)
+    const focusUrl = nextLinks[Math.min(index, nextLinks.length - 1)]?.url
+    window.requestAnimationFrame(() => {
+      const nextButton = focusUrl ? removeButtonRefs.current.get(focusUrl) : null
+      ;(nextButton ?? textareaRef.current)?.focus()
+    })
+  }
+
+  const openLink = (event: ReactMouseEvent<HTMLAnchorElement>, url: string) => {
+    if (event.defaultPrevented) return
+    const threadId = nativeThreadIdForLinkActivation(url, window.location.origin, event)
+    if (!threadId) return
+    event.preventDefault()
+    navigate.toThread(threadId)
   }
 
   const savePlacement = useCallback((next: AbsolutePlacement) => {
@@ -552,16 +684,54 @@ function Note({
         data-wrap-style={typography.wrapStyle}
         style={{ fontSize: typography.fontSize }}
         onChange={(event) => changeText(event.target.value)}
+        onPaste={(event) => void pasteText(event)}
+        disabled={convertingCitation}
         onCompositionEnd={typography.refit}
         onBlur={() => {
           setTextFocused(false)
-          flushText()
+          void flushContent()
         }}
         onFocus={() => {
           setTextFocused(true)
           onBringForward()
         }}
       />
+      {links.length > 0 ? (
+        <ol className="bb-sticky-note-links" aria-label="References in this note">
+          {links.map((link, index) => {
+            const label = noteLinkLabel(link, window.location.host)
+            return (
+              <li className="bb-sticky-note-link-row" key={link.url}>
+                <a
+                  className="bb-sticky-note-link"
+                  href={link.url}
+                  target="_blank"
+                  rel="noreferrer"
+                  title={label}
+                  onPointerDown={(event) => event.stopPropagation()}
+                  onClick={(event) => openLink(event, link.url)}
+                >
+                  <span className="bb-sticky-note-link-number" aria-hidden="true">{index + 1}</span>
+                  <span className="bb-sticky-note-link-label">{label}</span>
+                </a>
+                <button
+                  ref={(button) => {
+                    if (button) removeButtonRefs.current.set(link.url, button)
+                    else removeButtonRefs.current.delete(link.url)
+                  }}
+                  type="button"
+                  className="bb-sticky-note-link-remove"
+                  aria-label={`Remove reference ${index + 1}: ${label}`}
+                  title="Remove reference"
+                  onPointerDown={(event) => event.stopPropagation()}
+                  disabled={convertingCitation}
+                  onClick={() => void removeLink(link.url)}
+                >×</button>
+              </li>
+            )
+          })}
+        </ol>
+      ) : null}
       {discarding ? <div className="bb-sticky-note-discard">Release to discard</div> : null}
       <span className="bb-sticky-note-sr-only" role="status" aria-live="polite">{keyboardStatus}</span>
     </section>
