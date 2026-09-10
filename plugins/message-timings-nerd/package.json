@@ -1,0 +1,67 @@
+{
+  "name": "@phosphorco/bb-plugin-message-timings-nerd",
+  "version": "0.1.0",
+  "type": "module",
+  "license": "MIT",
+  "description": "Message send times, agent turnaround, and the waits between replies.",
+  "author": "Phosphor",
+  "homepage": "https://github.com/phosphorco/bb-community-plugins/tree/main/plugins/message-timings-nerd#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/phosphorco/bb-community-plugins.git",
+    "directory": "plugins/message-timings-nerd"
+  },
+  "bugs": {
+    "url": "https://github.com/phosphorco/bb-community-plugins/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "keywords": [
+    "bb",
+    "bb-plugin",
+    "timestamps"
+  ],
+  "engines": {
+    "bb": ">=0.39.0 <1.0.0",
+    "bbPluginSdk": ">=0.4.15"
+  },
+  "bb": {
+    "name": "Message Timings Nerd",
+    "description": "Message send times, agent turnaround, and the waits between replies.",
+    "branding": {
+      "icon": "Clock"
+    },
+    "server": "./server.ts",
+    "app": "./app.tsx"
+  },
+  "files": [
+    "dist/",
+    "README.md",
+    "LICENSE",
+    "THIRD_PARTY_NOTICES.md",
+    "*.ts",
+    "*.tsx",
+    "app.css"
+  ],
+  "dependencies": {
+    "zod": "4.3.6"
+  },
+  "devDependencies": {
+    "@get-bb/plugin-sdk": "0.4.15",
+    "@types/jsdom": "^21.1.7",
+    "@types/node": "^22",
+    "@types/react": "19.2.2",
+    "better-sqlite3": "^12.11.1",
+    "cron-parser": "^5.10.0",
+    "hono": "^4.11.9",
+    "jsdom": "^26.1.0",
+    "react": "19.2.1",
+    "typescript": "^5.9.3"
+  },
+  "scripts": {
+    "build": "bb plugin build .",
+    "test": "node --test --experimental-strip-types test/*.test.ts",
+    "typecheck": "tsc --noEmit"
+  }
+}
