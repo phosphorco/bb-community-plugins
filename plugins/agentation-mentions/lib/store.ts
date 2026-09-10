@@ -12,6 +12,7 @@
 import type DatabaseNamespace from "better-sqlite3";
 import {
   type Annotation,
+  type AnnotationAuthor,
   type AnnotationStatus,
   type BbContext,
   type Session,
@@ -390,7 +391,8 @@ export interface UpsertAnnotationInput {
   sessionId: string;
   annotation: Annotation;
   bb: BbContext;
-  authorIdentityId?: string | null;
+  /** Captured by the interactive server handler for a new row only. */
+  author?: AnnotationAuthor | null;
 }
 
 /**
@@ -405,14 +407,24 @@ export function upsertAnnotation(db: Database, input: UpsertAnnotationInput): St
   const existing = getAnnotation(db, input.annotation.id);
   const timestamp = nowIso();
   const incoming = sanitizeJson(input.annotation);
+  // AFS is deliberately loose. Attribution belongs to the server boundary, so
+  // a browser cannot smuggle current or historical identity fields through it.
+  const {
+    author: _untrustedAuthor,
+    authorIdentityId: _untrustedLegacyAuthor,
+    ...annotationBody
+  } = incoming as Annotation & {
+    author?: unknown;
+    authorIdentityId?: unknown;
+  };
 
   const stored: StoredAnnotation = {
     ...existing,
-    ...incoming,
+    ...annotationBody,
     id: input.annotation.id,
     sessionId: input.sessionId,
-    status: existing?.status ?? incoming.status ?? "pending",
-    kind: incoming.kind ?? existing?.kind ?? "feedback",
+    status: existing?.status ?? annotationBody.status ?? "pending",
+    kind: annotationBody.kind ?? existing?.kind ?? "feedback",
     thread: existing?.thread ?? [],
     // Captured once, when the annotation was first placed. A later edit comes
     // from the comment box, not from clicking the element again, so re-reading
@@ -422,11 +434,16 @@ export function upsertAnnotation(db: Database, input: UpsertAnnotationInput): St
     createdAt: existing?.createdAt ?? timestamp,
     updatedAt: timestamp,
     resolution: existing?.resolution ?? null,
-    // Authorship is captured once. An edit changes the feedback, but must not
-    // let a different browser silently claim an existing annotation.
-    authorIdentityId: existing
-      ? (existing.authorIdentityId ?? null)
-      : (input.authorIdentityId ?? null),
+    // Capture is immutable. A later editor cannot become the author, and an
+    // old exact marker remains absent/unresolved rather than being rewritten.
+    ...(existing
+      ? existing.author === undefined
+        ? {}
+        : { author: existing.author }
+      : { author: input.author ?? null }),
+    ...(existing?.authorIdentityId === undefined
+      ? {}
+      : { authorIdentityId: existing.authorIdentityId }),
     seq: nextSeq(db),
   };
 

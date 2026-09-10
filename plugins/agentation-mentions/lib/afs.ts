@@ -115,6 +115,52 @@ export const annotationSchema = z.looseObject({
 
 export type Annotation = z.infer<typeof annotationSchema>;
 
+const capturedAnnotationIdentitySchema = z.discriminatedUnion("kind", [
+  z.object({
+    kind: z.literal("person"),
+    key: z.string().min(1).max(512),
+    issuer: z.string().min(1).max(512),
+    subject: z.string().min(1).max(512),
+  }).strict(),
+  z.object({
+    kind: z.literal("default-user"),
+    key: z.string().min(1).max(512),
+    instanceId: z.string().min(1).max(512),
+  }).strict(),
+]);
+
+export const capturedAnnotationAuthorSchema = z.object({
+  kind: z.literal("captured"),
+  identity: capturedAnnotationIdentitySchema,
+  presentation: z.object({
+    displayName: z.string().min(1).max(512),
+    handle: z.string().min(1).max(512).nullable(),
+    // The public profile decoder accepts any bounded, non-empty presentation
+    // string, including host-relative avatar paths. Do not narrow it to URLs.
+    avatarUrl: z.string().min(1).max(2048).nullable(),
+  }).strict(),
+  evidence: z.enum([
+    "provider-verified",
+    "local-user",
+    "upstream-default",
+    "integration-asserted",
+    "legacy",
+  ]),
+  capturedAt: z.string().datetime(),
+}).strict();
+
+export const annotationAuthorSchema = z.discriminatedUnion("kind", [
+  capturedAnnotationAuthorSchema,
+  z.object({
+    kind: z.literal("unavailable"),
+    reason: z.enum(["unavailable", "unauthenticated", "incompatible"]),
+    capturedAt: z.string().datetime(),
+  }).strict(),
+]);
+
+export type CapturedAnnotationAuthor = z.infer<typeof capturedAnnotationAuthorSchema>;
+export type AnnotationAuthor = z.infer<typeof annotationAuthorSchema>;
+
 /** An annotation as this plugin stores and serves it. */
 export const storedAnnotationSchema = z.looseObject({
   ...annotationSchema.shape,
@@ -127,7 +173,9 @@ export const storedAnnotationSchema = z.looseObject({
   updatedAt: z.string(),
   /** Free-text note the agent left when it resolved or dismissed the item. */
   resolution: z.string().nullable(),
-  /** Identity Boundaries profile that created this feedback, when available. */
+  /** Immutable request-bound author evidence for a newly created row. */
+  author: annotationAuthorSchema.nullable().optional(),
+  /** Exact historical marker; it is never a current public identity key. */
   authorIdentityId: z.string().nullable().optional(),
   /** Monotonic write cursor, used by clients to detect missed changes. */
   seq: z.number().int(),

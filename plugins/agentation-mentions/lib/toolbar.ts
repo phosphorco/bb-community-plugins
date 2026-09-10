@@ -54,7 +54,6 @@ import {
   upsertLocalAnnotation,
 } from "./toolbar-sync.ts";
 import type { rpcContract } from "../server.ts";
-import { readCurrentIdentityId } from "./identity.ts";
 import { createLocationOverrides, replaceCopiedLocations } from "./location.ts";
 
 /** How often to re-read `location`; bb navigates without a full page load. */
@@ -207,7 +206,6 @@ export async function mountAnnotationToolbar(
   context: PluginContentScriptContext,
 ): Promise<PluginContentScriptDisposer> {
   const rpc = createRpcClient<typeof rpcContract>(context.pluginId);
-  const currentIdentityId = readCurrentIdentityId(context.signal);
 
   // bb resolves system/custom themes before plugin content scripts mount.
   // Seed once; Agentation owns and persists every user change after this.
@@ -354,13 +352,11 @@ export async function mountAnnotationToolbar(
           continue;
         }
         try {
-          const authorIdentityId = await currentIdentityId;
           await rpc.call("pushAnnotations", {
             sessionId: id,
             upserts: group.upserts.map((item) => ({
               annotation: item.annotation,
               bb: item.bb,
-              authorIdentityId,
             })),
             deletedIds: group.deletes.map((item) => item.id),
           });
