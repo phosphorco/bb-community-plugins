@@ -10,5 +10,6 @@
     },
     "types": ["node"]
   },
-  "include": ["*.ts", "*.tsx", "types", "test"]
+  "include": ["*.ts", "*.tsx", "types", "test"],
+  "exclude": ["test/architecture/probes/baseline/fixtures/historical"]
 }

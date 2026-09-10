@@ -1,4 +1,5 @@
 import { readFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import { createRequire } from "node:module";
 import { resolve } from "node:path";
 
@@ -13,7 +14,9 @@ import {
   type AnalyticsBundle,
 } from "./bundle-contract.ts";
 import { BUILTIN_BUNDLES, getBuiltinBundle } from "./builtin-bundles.ts";
-import { projectToolExecutionFact, type ToolExecutionFact } from "./fact-projection.ts";
+import { verifyAnalyticsBundle } from "./analytics-verifier.ts";
+import { collectTurnTimings, FACT_PROJECTION_VERSION, projectToolExecutionFact, type ToolExecutionFact } from "./fact-projection.ts";
+import { renderAnalyticsReference, type CreateAnalyticsReference } from "./analytics-reference.ts";
 import { rpcContract } from "./rpc-contract.ts";
 import {
   AnalyticsRefreshCoordinator,
@@ -82,6 +85,75 @@ export default function analyticsPlugin(bb: BbPluginApi) {
     return bundleSummary(bundle, false);
   };
 
+  const verifyBundles = async (id?: string) => {
+    const candidates = id == null
+      ? [...BUILTIN_BUNDLES, ...store.listBundles()]
+      : [bundleById(id)?.bundle ?? (() => { throw new Error(`Unknown bundle: ${id}`); })()];
+    return Promise.all(candidates.map((bundle) => verifyAnalyticsBundle(bundle)));
+  };
+
+  const createReference = (input: CreateAnalyticsReference) => {
+    const selected = bundleById(input.bundleId);
+    if (selected == null) throw new Error(`Unknown analytics bundle: ${input.bundleId}`);
+    const query = selected.bundle.queries.find((candidate) => candidate.id === input.queryId);
+    const visualization = selected.bundle.visualizations.find((candidate) => candidate.id === input.visualizationId);
+    if (query == null || visualization == null || visualization.queryId !== query.id) {
+      throw new Error("The referenced Analytics query or visualization no longer exists.");
+    }
+    const currentGeneration = store.getIndexState().generationId;
+    if (input.snapshotGenerationId != null && input.snapshotGenerationId > currentGeneration) {
+      throw new Error("The referenced Analytics snapshot is not available on this host.");
+    }
+    let selection = input.selection;
+    if (selection != null) {
+      if (visualization.kind !== "bar" && visualization.kind !== "line") {
+        throw new Error("Datum references require a chart visualization.");
+      }
+      if (new Set(["source_event_id", "thread_id", "turn_id", "project_id"]).has(visualization.x)) {
+        throw new Error("Direct event, thread, turn, and project identifiers cannot be attached to chat.");
+      }
+      const dimension = selection.row[visualization.x] ?? null;
+      if (selection.predicate.field !== visualization.x
+        || selection.predicate.value !== dimension) {
+        throw new Error("The selected datum does not match the visualization binding.");
+      }
+      selection = {
+        ...selection,
+        row: {
+          [visualization.x]: dimension,
+          [visualization.y]: selection.row[visualization.y] ?? null,
+        },
+      };
+    }
+    const id = randomUUID();
+    const token = `analytics-ref:v1:${id}`;
+    const capsule = {
+      ...input,
+      selection,
+      version: 1 as const,
+      id,
+      token,
+      createdAt: Date.now(),
+      bundleTitle: selected.bundle.title,
+      queryTitle: query.title,
+      querySql: query.sql,
+      visualizationTitle: visualization.title,
+      visualizationKind: visualization.kind,
+    };
+    store.saveReference(capsule);
+    return { id, token, label: input.selection?.label ?? visualization.title };
+  };
+
+  const referenceId = (tokenOrId: string): string => tokenOrId.startsWith("analytics-ref:v1:")
+    ? tokenOrId.slice("analytics-ref:v1:".length)
+    : tokenOrId;
+
+  const resolveReference = (tokenOrId: string) => {
+    const capsule = store.getReference(referenceId(tokenOrId));
+    if (capsule == null) throw new Error("This Analytics reference no longer exists.");
+    return capsule;
+  };
+
   const listCandidates = async (signal: AbortSignal): Promise<ListedThread[]> => {
     const threads = await bb.sdk.threads.list({
       archived: false,
@@ -106,8 +178,10 @@ export default function analyticsPlugin(bb: BbPluginApi) {
     bb.realtime.publish("analytics-index-changed", store.getIndexState());
     try {
       const prior = new Map(store.listThreadStates().map((thread) => [thread.threadId, thread]));
-      const shouldReconcileFully = force || store.getIndexState().lastFullReconciliationAt == null
-        || startedAt - (store.getIndexState().lastFullReconciliationAt ?? 0) >= FULL_RECONCILIATION_INTERVAL_MS;
+      const indexState = store.getIndexState();
+      const shouldReconcileFully = force || indexState.factProjectionVersion < FACT_PROJECTION_VERSION
+        || indexState.lastFullReconciliationAt == null
+        || startedAt - (indexState.lastFullReconciliationAt ?? 0) >= FULL_RECONCILIATION_INTERVAL_MS;
       const candidateStartedAt = performance.now();
       const listed = await listCandidates(signal);
       candidateListMs = performance.now() - candidateStartedAt;
@@ -124,7 +198,7 @@ export default function analyticsPlugin(bb: BbPluginApi) {
         const fetchStartedAt = performance.now();
         const results = await Promise.allSettled(batch.map((thread) => bb.sdk.threads.events.list({
           threadId: thread.id,
-          types: ["item/completed"],
+          types: ["item/completed", "turn/started", "turn/completed"],
           order: "desc",
           limit: String(EVENTS_PER_THREAD_LIMIT),
           signal,
@@ -151,11 +225,12 @@ export default function analyticsPlugin(bb: BbPluginApi) {
           const events = result.value;
           eventsRead += events.length;
           const facts: ToolExecutionFact[] = [];
+          const turnTimings = collectTurnTimings(events);
           for (const event of events) {
             const fact = projectToolExecutionFact(event, {
               projectId: thread.projectId,
               providerId: thread.providerId,
-            });
+            }, turnTimings);
             if (fact != null) facts.push(fact);
           }
           reconciliations.push({
@@ -217,6 +292,7 @@ export default function analyticsPlugin(bb: BbPluginApi) {
         lastError: errors[0]?.error ?? priorErrors ?? null,
         factsChanged,
         lastFullReconciliationAt: shouldReconcileFully ? completedAt : undefined,
+        factProjectionVersion: shouldReconcileFully && errors.length === 0 ? FACT_PROJECTION_VERSION : undefined,
       });
       const publishMs = performance.now() - publishStartedAt;
       const publishedState = store.getIndexState();
@@ -334,6 +410,18 @@ export default function analyticsPlugin(bb: BbPluginApi) {
       if (deleted) bb.realtime.publish("analytics-bundles-changed", { id, action: "deleted" });
       return { deleted };
     },
+    createReference(input) {
+      return createReference(input);
+    },
+  });
+
+  bb.ui.registerMentionProvider({
+    id: "analytics-reference",
+    label: "Analytics references",
+    search: () => [],
+    resolve(itemId) {
+      return { context: renderAnalyticsReference(resolveReference(itemId)) };
+    },
   });
 
   bb.cli.register({
@@ -344,6 +432,7 @@ export default function analyticsPlugin(bb: BbPluginApi) {
       { name: "install", summary: "Validate and install a bundle JSON file.", usage: "bb analytics install <file.json>" },
       { name: "remove", summary: "Remove a user-authored bundle.", usage: "bb analytics remove <bundle-id>" },
       { name: "refresh", summary: "Request a background capability reindex.", usage: "bb analytics refresh" },
+      { name: "verify", summary: "Compile dashboard queries against the typed DuckDB fact contract.", usage: "bb analytics verify [bundle-id]" },
     ],
     async run(argv, context) {
       const [command, argument] = argv;
@@ -353,6 +442,17 @@ export default function analyticsPlugin(bb: BbPluginApi) {
       if (command === "refresh") {
         requestRefresh();
         return { exitCode: 0, stdout: "Analytics refresh requested.\n" };
+      }
+      if (command === "verify") {
+        try {
+          const verified = await verifyBundles(argument);
+          return {
+            exitCode: 0,
+            stdout: `${verified.map((result) => `${result.bundleId}\t${result.queryCount} queries\t${result.visualizationCount} visualizations`).join("\n")}\n`,
+          };
+        } catch (cause) {
+          return { exitCode: 1, stderr: `${errorText(cause)}\n` };
+        }
       }
       if (command === "install" && argument != null) {
         try {
@@ -369,7 +469,7 @@ export default function analyticsPlugin(bb: BbPluginApi) {
         if (deleted) bb.realtime.publish("analytics-bundles-changed", { id: argument, action: "deleted" });
         return { exitCode: deleted ? 0 : 1, stdout: deleted ? `Removed ${argument}.\n` : undefined, stderr: deleted ? undefined : `Unknown bundle: ${argument}\n` };
       }
-      return { exitCode: 1, stderr: "Usage: bb analytics <bundles|install <file.json>|remove <bundle-id>|refresh>\n" };
+      return { exitCode: 1, stderr: "Usage: bb analytics <bundles|install <file.json>|remove <bundle-id>|refresh|verify [bundle-id]>\n" };
     },
   });
 
@@ -380,6 +480,33 @@ export default function analyticsPlugin(bb: BbPluginApi) {
     execute({ bundle }) {
       const saved = saveBundle(bundle);
       return `Saved Analytics bundle ${saved.id} (${saved.title}).`;
+    },
+  });
+
+  bb.agents.registerTool({
+    name: "verify_analytics_bundle",
+    description: "Compile one Analytics bundle, or every installed bundle, against the typed DuckDB fact contract without reading fact data.",
+    parameters: z.object({ id: z.string().min(1).max(64).optional() }).strict(),
+    async execute({ id }) {
+      try {
+        const verified = await verifyBundles(id);
+        return verified.map((result) => `Verified ${result.bundleId}: ${result.queryCount} queries, ${result.visualizationCount} visualizations.`).join("\n");
+      } catch (cause) {
+        return { content: [{ type: "text", text: errorText(cause) }], isError: true };
+      }
+    },
+  });
+
+  bb.agents.registerTool({
+    name: "read_analytics_reference",
+    description: "Resolve an analytics-ref:v1 token into the exact dashboard, DuckDB query, parameters, snapshot coverage, and selected redacted result row that produced it.",
+    parameters: z.object({ reference: z.string().min(1).max(300) }).strict(),
+    execute({ reference }) {
+      try {
+        return renderAnalyticsReference(resolveReference(reference));
+      } catch (cause) {
+        return { content: [{ type: "text", text: errorText(cause) }], isError: true };
+      }
     },
   });
 
@@ -396,11 +523,15 @@ export default function analyticsPlugin(bb: BbPluginApi) {
   });
 
   bb.agents.configure((context) => context.origin.pluginId === bb.pluginId
-    ? { tools: [], skills: [] }
-    : {
-        tools: ["save_analytics_bundle", "delete_analytics_bundle"],
+    ? {
+        tools: ["read_analytics_reference", "verify_analytics_bundle"],
         skills: [],
-        instructions: "Analytics dashboard bundles are declarative JSON: one recent-capability loader, one or more bounded read-only DuckDB SELECT queries over tool_execution_fact_v1, and metric/bar/line/table visualizations. Prefer saving a bundle only when the user asks for a reusable dashboard.",
+        instructions: "Resolve pasted analytics-ref:v1 tokens with read_analytics_reference before answering about a referenced chart datum.",
+      }
+    : {
+        tools: ["save_analytics_bundle", "delete_analytics_bundle", "read_analytics_reference", "verify_analytics_bundle"],
+        skills: [],
+        instructions: "Analytics dashboard bundles are declarative JSON: one recent-capability loader, one or more bounded read-only DuckDB SELECT queries over tool_execution_fact_v1, and metric/bar/line/table visualizations. Prefer saving a bundle only when the user asks for a reusable dashboard. Resolve pasted analytics-ref:v1 tokens with read_analytics_reference before answering about a referenced chart datum.",
       });
 
   bb.onDispose(() => {

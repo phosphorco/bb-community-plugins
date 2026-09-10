@@ -2,6 +2,13 @@ import { defineRpcContract } from "@bb/plugin-sdk";
 import { z } from "zod";
 
 import { analyticsBundleSchema } from "./bundle-contract.ts";
+import { createAnalyticsReferenceSchema } from "./analytics-reference.ts";
+import {
+  createExecutionReferenceRequestSchema,
+  createExecutionReferenceResponseSchema,
+  executeQueryResponseSchema,
+  executionLocatorSchema,
+} from "./execution-contract.ts";
 
 const indexStateSchema = z.object({
   status: z.enum(["empty", "indexing", "ready", "error"]),
@@ -18,6 +25,7 @@ const indexStateSchema = z.object({
   durationMs: z.number().int().nonnegative().nullable(),
   // Kept during the contract transition for older Analytics app surfaces.
   error: z.string().nullable(),
+  factProjectionVersion: z.number().int().nonnegative(),
 }).strict();
 
 const bundleSummarySchema = z.object({
@@ -56,7 +64,36 @@ export const rpcContract = defineRpcContract({
     input: z.object({ id: z.string().min(1).max(64) }).strict(),
     output: z.object({ deleted: z.boolean() }).strict(),
   },
+  createReference: {
+    input: createAnalyticsReferenceSchema,
+    output: z.object({
+      id: z.string(),
+      token: z.string(),
+      label: z.string(),
+    }).strict(),
+  },
+});
+
+/**
+ * Additive execution transport. Keep this separate until the host/service
+ * handlers exist; do not make legacy rpcContract registrations require it.
+ */
+export const executionRpcContract = defineRpcContract({
+  executeQuery: {
+    input: executionLocatorSchema,
+    output: executeQueryResponseSchema,
+  },
+  createExecutionReference: {
+    input: createExecutionReferenceRequestSchema,
+    output: createExecutionReferenceResponseSchema,
+  },
 });
 
 export type AnalyticsCatalogResponse = z.infer<typeof rpcContract.catalog.output>;
 export type AnalyticsBundleResponse = z.infer<typeof rpcContract.getBundle.output>;
+export type AnalyticsExecuteQueryResponse = z.infer<
+  typeof executionRpcContract.executeQuery.output
+>;
+export type AnalyticsCreateExecutionReferenceResponse = z.infer<
+  typeof executionRpcContract.createExecutionReference.output
+>;

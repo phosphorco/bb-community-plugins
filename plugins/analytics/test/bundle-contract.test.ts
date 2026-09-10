@@ -7,14 +7,16 @@ import {
   MAX_LOADER_MAX_AGE_MS,
   MIN_LOADER_MAX_AGE_MS,
   parseBundleSource,
+  validateBundleQueries,
   validateQueryText,
 } from "../bundle-contract.ts";
 import { BUILTIN_BUNDLES } from "../builtin-bundles.ts";
 
 test("built-in dashboard bundles satisfy the public bundle contract", () => {
-  assert.equal(BUILTIN_BUNDLES.length, 2);
+  assert.equal(BUILTIN_BUNDLES.length, 3);
   for (const bundle of BUILTIN_BUNDLES) {
     assert.deepEqual(analyticsBundleSchema.parse(bundle), bundle);
+    assert.doesNotThrow(() => validateBundleQueries(bundle));
     assert.equal(bundle.loader.maxAgeMs, DEFAULT_LOADER_MAX_AGE_MS);
     assert.equal(bundle.loader.staleWhileRefresh, true);
   }
@@ -67,4 +69,9 @@ test("query text rejects mutation, external reads, and multiple statements", () 
   assert.throws(() => validateQueryText("DELETE FROM tool_execution_fact_v1"), /start with SELECT or WITH/);
   assert.throws(() => validateQueryText("SELECT * FROM read_parquet('secret.parquet')"), /curated capability/);
   assert.throws(() => validateQueryText("SELECT 1; SELECT 2"), /exactly one statement/);
+  assert.throws(() => validateQueryText("SELECT * FROM tool_execution_fact_v1, information_schema.tables"), /information_schema/);
+  assert.throws(() => validateQueryText("SELECT * FROM tool_execution_fact_v1 JOIN range(10) r ON true"), /table functions/);
+  assert.throws(() => validateQueryText("SELECT * FROM (SELECT * FROM information_schema.tables) hidden JOIN tool_execution_fact_v1 ON true"), /information_schema/);
+  assert.throws(() => validateQueryText("SELECT * FROM read_csv_auto('secret.csv')"), /curated capability/);
+  assert.throws(() => validateQueryText("SELECT * FROM tool_execution_fact_v1 -- hidden"), /comments/);
 });

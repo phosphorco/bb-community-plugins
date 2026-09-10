@@ -10,10 +10,16 @@ import {
 } from "../browser-engine.ts";
 
 function result(id: string, value: string): BrowserQueryResult {
+  const generation = "analytics:1:14:test";
   return {
     id,
-    columns: ["value"],
+    generation,
+    generationId: 1,
+    columns: [{ name: "value", logicalType: "VARCHAR", nullable: true }],
     rows: [{ value }],
+    datumKeys: [`${generation}:value:0`],
+    parameters: { rangeDays: 14, maxRows: 100 },
+    extent: { kind: "exact", rows: 1 },
     elapsedMs: 1,
     truncated: false,
     cached: false,

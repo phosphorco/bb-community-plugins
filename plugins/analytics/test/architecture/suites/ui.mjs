@@ -1,0 +1,24 @@
+import { acceptanceMode, check, controlledClock, invalidBindingResult, isolatedNegativeControls, loadProductionBinding, missingBindingResult, requireMethods, sourceLimit, suiteResult } from "../browser/acceptance-binding.mjs";
+const fixture = Object.freeze({ executionId: "analytics-exec_ui_fixture_abcdefghijklmnop", initialSeriesIds: ["failures", "latency"], structuralSeriesIds: ["failures"] });
+const required = ["mount", "reveal", "update", "exportImage", "unmount"];
+function verify(t) { const measured = Number.isFinite(t.value?.renderWorkMs) && t.value.renderWorkMs >= 0; return [
+  check("hidden-mount", t.hidden?.liveInstances === 0 && t.hidden?.observerCount === 1 ? "pass" : "fail", "hidden fixture mount observes host without chart"),
+  check("reveal", t.revealed?.liveInstances === 1 && t.revealed?.handlerCount === 1 && typeof t.revealed?.instanceId === "string" ? "pass" : "fail", "reveal creates one instance and handler"),
+  check("value-update", t.value?.updateStrategy === "merge" && t.value?.executionId === fixture.executionId && t.value?.instanceId === t.revealed?.instanceId && t.value?.liveInstances === 1 && t.value?.handlerCount === 1 ? "pass" : "fail", "compatible update retains one observed instance and handler"),
+  check("structural-update", t.structural?.updateStrategy === "full-replacement" && t.structural?.instanceId === t.revealed?.instanceId && t.structural?.liveInstances === 1 && t.structural?.handlerCount === 1 && JSON.stringify(t.structural?.visibleSeriesIds) === JSON.stringify(fixture.structuralSeriesIds) ? "pass" : "fail", "structural replacement retains one live host instance without duplicate handlers"),
+  check("render-work-measurement", measured ? "pass" : "blocked", measured ? `measured ${t.value.renderWorkMs}ms; accepted renderer budget pending` : "renderer measurement pending; no binding-owned budget accepted"),
+  check("image-lineage", t.image?.executionId === fixture.executionId && Number.isFinite(t.image?.byteLength) && t.image.byteLength > 0 ? "pass" : "fail", "image identifies and contains captured execution"),
+  check("cleanup", [t.firstDispose, t.secondDispose].every((x) => x?.liveInstances === 0 && x?.observerCount === 0 && x?.pendingFrames === 0 && x?.handlerCount === 0) ? "pass" : "fail", "each mount cycle disposes all owned resources"),
+]; }
+export async function runSuite(options = {}) {
+  const mode = acceptanceMode(options);
+  if (mode === "instrument-self-test") {
+    const p = { hidden: { liveInstances: 0, observerCount: 1 }, revealed: { liveInstances: 1, handlerCount: 1, instanceId: "i1" }, value: { updateStrategy: "merge", executionId: fixture.executionId, renderWorkMs: 4, instanceId: "i1", liveInstances: 1, handlerCount: 1 }, structural: { updateStrategy: "full-replacement", visibleSeriesIds: fixture.structuralSeriesIds, instanceId: "i1", liveInstances: 1, handlerCount: 1 }, image: { executionId: fixture.executionId, byteLength: 1 }, firstDispose: { liveInstances: 0, observerCount: 0, pendingFrames: 0, handlerCount: 0 }, secondDispose: { liveInstances: 0, observerCount: 0, pendingFrames: 0, handlerCount: 0 } };
+    return suiteResult("ui", isolatedNegativeControls(verify, p, [{ id: "hidden-mount", value: { ...p, hidden: { liveInstances: 1, observerCount: 1 } } }, { id: "reveal", value: { ...p, revealed: { liveInstances: 1, handlerCount: 2, instanceId: "i1" } } }, { id: "value-update", value: { ...p, value: { ...p.value, handlerCount: 2 } } }, { id: "structural-update", value: { ...p, structural: { ...p.structural, instanceId: "i2" } } }, { id: "image-lineage", value: { ...p, image: { executionId: "old", byteLength: 1 } } }, { id: "cleanup", value: { ...p, secondDispose: { liveInstances: 1, observerCount: 0, pendingFrames: 0, handlerCount: 0 } } }]), [{ kind: "mode", value: mode }]);
+  }
+  const loaded = await loadProductionBinding(options, "ui"); if (loaded.kind === "missing") return missingBindingResult("ui", loaded.reason);
+  const absent = requireMethods(loaded.binding, required); if (absent) return invalidBindingResult("ui", absent);
+  const clock = controlledClock();
+  try { const hidden = await loaded.binding.mount({ fixture, visible: false, clock }); const revealed = await loaded.binding.reveal({ fixture, clock }); const value = await loaded.binding.update({ fixture, kind: "value", clock }); const structural = await loaded.binding.update({ fixture, kind: "structural", clock }); const image = await loaded.binding.exportImage({ fixture, clock }); const firstDispose = await loaded.binding.unmount({ clock }); await loaded.binding.mount({ fixture, visible: true, clock }); const secondDispose = await loaded.binding.unmount({ clock }); return suiteResult("ui", verify({ hidden, revealed, value, structural, image, firstDispose, secondDispose }), [sourceLimit(loaded.sources), { kind: "render-budget", value: "pending accepted measurement" }]); }
+  finally { await loaded.binding.unmount({ clock }); }
+}

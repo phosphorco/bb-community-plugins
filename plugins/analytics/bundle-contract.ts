@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { parseAnalyticsQuery } from "./sql-policy.ts";
+
 export const ANALYTICS_BUNDLE_VERSION = 1 as const;
 export const MAX_BUNDLE_BYTES = 256 * 1024;
 export const MAX_QUERY_ROWS = 500;
@@ -159,41 +161,8 @@ export function parseBundleSource(source: string): AnalyticsBundle {
   return analyticsBundleSchema.parse(parsed);
 }
 
-const forbiddenSql = /\b(attach|copy|create|delete|detach|drop|export|import|insert|install|load|pragma|set|update|vacuum|call|read_csv|read_json|read_parquet|sqlite_scan|glob|httpfs)\b/i;
-
 export function validateQueryText(sql: string): void {
-  const normalized = sql.trim();
-  if (!/^(select|with)\b/i.test(normalized)) {
-    throw new Error("Analytics queries must start with SELECT or WITH.");
-  }
-  if (forbiddenSql.test(normalized)) {
-    throw new Error("Analytics queries may only read the curated capability fact table.");
-  }
-  if (normalized.includes(";")) {
-    throw new Error("Analytics queries must contain exactly one statement without a semicolon.");
-  }
-  validateQueryRelations(normalized);
-}
-
-function validateQueryRelations(sql: string): void {
-  const withoutStrings = sql.replace(/'(?:''|[^'])*'/g, "''");
-  const ctes = new Set(
-    [...withoutStrings.matchAll(/\b([A-Za-z_][A-Za-z0-9_]*)\s+AS\s*\(/gi)]
-      .map((match) => match[1]?.toLowerCase())
-      .filter((value): value is string => value != null),
-  );
-  const relations = [...withoutStrings.matchAll(/\b(?:FROM|JOIN)\s+([A-Za-z_][A-Za-z0-9_.]*)(\s*\()?/gi)];
-  if (relations.some((match) => match[2] != null)) {
-    throw new Error("Analytics queries cannot invoke table functions.");
-  }
-  const invalid = relations
-    .map((match) => match[1]?.split(".").at(-1)?.toLowerCase())
-    .filter((relation): relation is string => relation != null)
-    .find((relation) => relation !== "tool_execution_fact_v1" && !ctes.has(relation));
-  if (invalid != null) throw new Error(`Analytics queries may not read relation ${invalid}.`);
-  if (!relations.some((match) => match[1]?.split(".").at(-1)?.toLowerCase() === "tool_execution_fact_v1")) {
-    throw new Error("Analytics queries must read tool_execution_fact_v1.");
-  }
+  parseAnalyticsQuery(sql);
 }
 
 export function validateBundleQueries(bundle: AnalyticsBundle): void {
