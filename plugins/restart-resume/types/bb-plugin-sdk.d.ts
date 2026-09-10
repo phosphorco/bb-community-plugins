@@ -4012,6 +4012,1180 @@ declare const copyProjectAttachmentsRequestSchema: z$1.ZodObject<{
 }, z$1.core.$strict>;
 type CopyProjectAttachmentsRequest = z$1.infer<typeof copyProjectAttachmentsRequestSchema>;
 
+declare const timelineRowStatusSchema: z$1.ZodEnum<{
+    completed: "completed";
+    error: "error";
+    interrupted: "interrupted";
+    pending: "pending";
+}>;
+type TimelineRowStatus = z$1.infer<typeof timelineRowStatusSchema>;
+declare const timelineRowBaseSchema: z$1.ZodObject<{
+    createdAt: z$1.ZodNumber;
+    id: z$1.ZodString;
+    sourceSeqEnd: z$1.ZodNumber;
+    sourceSeqStart: z$1.ZodNumber;
+    startedAt: z$1.ZodNumber;
+    threadId: z$1.ZodString;
+    turnId: z$1.ZodNullable<z$1.ZodString>;
+}, z$1.core.$strip>;
+type TimelineRowBase = z$1.infer<typeof timelineRowBaseSchema>;
+declare const timelineConversationRowSchema: z$1.ZodDiscriminatedUnion<[z$1.ZodObject<{
+    attachments: z$1.ZodNullable<z$1.ZodObject<{
+        imageUrls: z$1.ZodArray<z$1.ZodString>;
+        localFilePaths: z$1.ZodArray<z$1.ZodString>;
+        localFiles: z$1.ZodNumber;
+        localImagePaths: z$1.ZodArray<z$1.ZodString>;
+        localImages: z$1.ZodNumber;
+        webImages: z$1.ZodNumber;
+    }, z$1.core.$strip>>;
+    createdAt: z$1.ZodNumber;
+    id: z$1.ZodString;
+    initiator: z$1.ZodEnum<{
+        agent: "agent";
+        system: "system";
+        user: "user";
+    }>;
+    kind: z$1.ZodLiteral<"conversation">;
+    mentions: z$1.ZodArray<z$1.ZodObject<{
+        end: z$1.ZodNumber;
+        resource: z$1.ZodPipe<z$1.ZodTransform<unknown, unknown>, z$1.ZodDiscriminatedUnion<[z$1.ZodObject<{
+            kind: z$1.ZodLiteral<"thread">;
+            label: z$1.ZodString;
+            projectId: z$1.ZodOptional<z$1.ZodString>;
+            threadId: z$1.ZodString;
+        }, z$1.core.$strip>, z$1.ZodObject<{
+            kind: z$1.ZodLiteral<"project">;
+            label: z$1.ZodString;
+            projectId: z$1.ZodString;
+        }, z$1.core.$strip>, z$1.ZodObject<{
+            kind: z$1.ZodLiteral<"section">;
+            label: z$1.ZodString;
+            sectionId: z$1.ZodString;
+        }, z$1.core.$strip>, z$1.ZodObject<{
+            entryKind: z$1.ZodEnum<{
+                directory: "directory";
+                file: "file";
+            }>;
+            kind: z$1.ZodLiteral<"path">;
+            label: z$1.ZodString;
+            path: z$1.ZodString;
+            source: z$1.ZodEnum<{
+                "thread-storage": "thread-storage";
+                workspace: "workspace";
+            }>;
+        }, z$1.core.$strip>, z$1.ZodObject<{
+            argumentHint: z$1.ZodNullable<z$1.ZodString>;
+            kind: z$1.ZodLiteral<"command">;
+            label: z$1.ZodString;
+            name: z$1.ZodString;
+            origin: z$1.ZodEnum<{
+                builtin: "builtin";
+                project: "project";
+                user: "user";
+            }>;
+            source: z$1.ZodEnum<{
+                "prompt-stack": "prompt-stack";
+                command: "command";
+                skill: "skill";
+            }>;
+            trigger: z$1.ZodEnum<{
+                "/": "/";
+            }>;
+        }, z$1.core.$strip>, z$1.ZodObject<{
+            icon: z$1.ZodOptional<z$1.ZodNullable<z$1.ZodString>>;
+            itemId: z$1.ZodString;
+            kind: z$1.ZodLiteral<"plugin">;
+            label: z$1.ZodString;
+            pluginId: z$1.ZodString;
+        }, z$1.core.$strip>], "kind">>;
+        start: z$1.ZodNumber;
+    }, z$1.core.$strip>>;
+    p6rActor: z$1.ZodDefault<z$1.ZodNullable<z$1.ZodObject<{
+        p6rDisplayName: z$1.ZodString;
+        p6rHandle: z$1.ZodString;
+        p6rImageUrl: z$1.ZodNullable<z$1.ZodString>;
+        p6rProviderId: z$1.ZodString;
+        p6rSubject: z$1.ZodString;
+    }, z$1.core.$strict>>>;
+    p6rActorHandle: z$1.ZodDefault<z$1.ZodNullable<z$1.ZodString>>;
+    role: z$1.ZodLiteral<"user">;
+    senderThreadId: z$1.ZodNullable<z$1.ZodString>;
+    sourceSeqEnd: z$1.ZodNumber;
+    sourceSeqStart: z$1.ZodNumber;
+    startedAt: z$1.ZodNumber;
+    systemMessageKind: z$1.ZodEnum<{
+        "child-completed": "child-completed";
+        "child-failed": "child-failed";
+        "child-interrupted": "child-interrupted";
+        "child-needs-attention": "child-needs-attention";
+        "child-outcome-batch": "child-outcome-batch";
+        "ownership-assigned": "ownership-assigned";
+        "ownership-removed": "ownership-removed";
+        unlabeled: "unlabeled";
+    }>;
+    systemMessageSubject: z$1.ZodNullable<z$1.ZodDiscriminatedUnion<[z$1.ZodObject<{
+        kind: z$1.ZodLiteral<"thread">;
+        threadId: z$1.ZodString;
+        threadName: z$1.ZodString;
+    }, z$1.core.$strip>, z$1.ZodObject<{
+        count: z$1.ZodNumber;
+        kind: z$1.ZodLiteral<"thread-batch">;
+    }, z$1.core.$strip>], "kind">>;
+    text: z$1.ZodString;
+    threadId: z$1.ZodString;
+    turnId: z$1.ZodNullable<z$1.ZodString>;
+    turnRequest: z$1.ZodObject<{
+        isGrouped: z$1.ZodBoolean;
+        kind: z$1.ZodEnum<{
+            message: "message";
+            steer: "steer";
+        }>;
+        status: z$1.ZodEnum<{
+            accepted: "accepted";
+            pending: "pending";
+            rejected: "rejected";
+        }>;
+    }, z$1.core.$strip>;
+}, z$1.core.$strip>, z$1.ZodObject<{
+    attachments: z$1.ZodNullable<z$1.ZodObject<{
+        imageUrls: z$1.ZodArray<z$1.ZodString>;
+        localFilePaths: z$1.ZodArray<z$1.ZodString>;
+        localFiles: z$1.ZodNumber;
+        localImagePaths: z$1.ZodArray<z$1.ZodString>;
+        localImages: z$1.ZodNumber;
+        webImages: z$1.ZodNumber;
+    }, z$1.core.$strip>>;
+    createdAt: z$1.ZodNumber;
+    id: z$1.ZodString;
+    kind: z$1.ZodLiteral<"conversation">;
+    role: z$1.ZodLiteral<"assistant">;
+    sourceSeqEnd: z$1.ZodNumber;
+    sourceSeqStart: z$1.ZodNumber;
+    startedAt: z$1.ZodNumber;
+    text: z$1.ZodString;
+    threadId: z$1.ZodString;
+    turnId: z$1.ZodNullable<z$1.ZodString>;
+    turnRequest: z$1.ZodNull;
+}, z$1.core.$strip>], "role">;
+type TimelineConversationRow = z$1.infer<typeof timelineConversationRowSchema>;
+declare const timelineSystemRowSchema: z$1.ZodUnion<readonly [z$1.ZodObject<{
+    createdAt: z$1.ZodNumber;
+    detail: z$1.ZodNullable<z$1.ZodString>;
+    id: z$1.ZodString;
+    kind: z$1.ZodLiteral<"system">;
+    sourceSeqEnd: z$1.ZodNumber;
+    sourceSeqStart: z$1.ZodNumber;
+    startedAt: z$1.ZodNumber;
+    status: z$1.ZodNullable<z$1.ZodEnum<{
+        completed: "completed";
+        error: "error";
+        interrupted: "interrupted";
+        pending: "pending";
+    }>>;
+    systemKind: z$1.ZodEnum<{
+        debug: "debug";
+        error: "error";
+        reconnect: "reconnect";
+    }>;
+    threadId: z$1.ZodString;
+    title: z$1.ZodString;
+    turnId: z$1.ZodNullable<z$1.ZodString>;
+}, z$1.core.$strip>, z$1.ZodDiscriminatedUnion<[z$1.ZodObject<{
+    completedAt: z$1.ZodNullable<z$1.ZodNumber>;
+    createdAt: z$1.ZodNumber;
+    detail: z$1.ZodNullable<z$1.ZodString>;
+    id: z$1.ZodString;
+    kind: z$1.ZodLiteral<"system">;
+    operationKind: z$1.ZodEnum<{
+        "context-clear": "context-clear";
+        "provider-unhandled": "provider-unhandled";
+        "thread-interrupted": "thread-interrupted";
+        "thread-provisioning": "thread-provisioning";
+        compaction: "compaction";
+        deprecation: "deprecation";
+        generic: "generic";
+        warning: "warning";
+    }>;
+    sourceSeqEnd: z$1.ZodNumber;
+    sourceSeqStart: z$1.ZodNumber;
+    startedAt: z$1.ZodNumber;
+    status: z$1.ZodNullable<z$1.ZodEnum<{
+        completed: "completed";
+        error: "error";
+        interrupted: "interrupted";
+        pending: "pending";
+    }>>;
+    systemKind: z$1.ZodLiteral<"operation">;
+    threadId: z$1.ZodString;
+    title: z$1.ZodString;
+    turnId: z$1.ZodNullable<z$1.ZodString>;
+}, z$1.core.$strip>, z$1.ZodObject<{
+    completedAt: z$1.ZodNullable<z$1.ZodNumber>;
+    createdAt: z$1.ZodNumber;
+    detail: z$1.ZodNullable<z$1.ZodString>;
+    id: z$1.ZodString;
+    kind: z$1.ZodLiteral<"system">;
+    operationKind: z$1.ZodLiteral<"parent-change">;
+    parentChange: z$1.ZodObject<{
+        action: z$1.ZodEnum<{
+            assign: "assign";
+            release: "release";
+            transfer: "transfer";
+        }>;
+        nextParentThreadId: z$1.ZodNullable<z$1.ZodString>;
+        nextParentThreadTitle: z$1.ZodNullable<z$1.ZodString>;
+        previousParentThreadId: z$1.ZodNullable<z$1.ZodString>;
+        previousParentThreadTitle: z$1.ZodNullable<z$1.ZodString>;
+    }, z$1.core.$strip>;
+    sourceSeqEnd: z$1.ZodNumber;
+    sourceSeqStart: z$1.ZodNumber;
+    startedAt: z$1.ZodNumber;
+    status: z$1.ZodEnum<{
+        completed: "completed";
+        error: "error";
+        interrupted: "interrupted";
+        pending: "pending";
+    }>;
+    systemKind: z$1.ZodLiteral<"operation">;
+    threadId: z$1.ZodString;
+    title: z$1.ZodString;
+    turnId: z$1.ZodNullable<z$1.ZodString>;
+}, z$1.core.$strip>], "operationKind">]>;
+type TimelineSystemRow = z$1.infer<typeof timelineSystemRowSchema>;
+interface TimelineWorkRowBase extends TimelineRowBase {
+    kind: "work";
+    status: TimelineRowStatus;
+}
+declare const timelineCommandWorkRowSchema: z$1.ZodObject<{
+    activityIntents: z$1.ZodArray<z$1.ZodDiscriminatedUnion<[z$1.ZodObject<{
+        command: z$1.ZodString;
+        name: z$1.ZodString;
+        path: z$1.ZodNullable<z$1.ZodString>;
+        type: z$1.ZodLiteral<"read">;
+    }, z$1.core.$strip>, z$1.ZodObject<{
+        command: z$1.ZodString;
+        path: z$1.ZodNullable<z$1.ZodString>;
+        type: z$1.ZodLiteral<"list_files">;
+    }, z$1.core.$strip>, z$1.ZodObject<{
+        command: z$1.ZodString;
+        path: z$1.ZodNullable<z$1.ZodString>;
+        query: z$1.ZodNullable<z$1.ZodString>;
+        type: z$1.ZodLiteral<"search">;
+    }, z$1.core.$strip>, z$1.ZodObject<{
+        command: z$1.ZodString;
+        type: z$1.ZodLiteral<"unknown">;
+    }, z$1.core.$strip>], "type">>;
+    approvalStatus: z$1.ZodNullable<z$1.ZodEnum<{
+        denied: "denied";
+        waiting_for_approval: "waiting_for_approval";
+    }>>;
+    callId: z$1.ZodString;
+    command: z$1.ZodString;
+    completedAt: z$1.ZodNullable<z$1.ZodNumber>;
+    createdAt: z$1.ZodNumber;
+    cwd: z$1.ZodNullable<z$1.ZodString>;
+    exitCode: z$1.ZodNullable<z$1.ZodNumber>;
+    id: z$1.ZodString;
+    kind: z$1.ZodLiteral<"work">;
+    output: z$1.ZodString;
+    outputPreview: z$1.ZodOptional<z$1.ZodObject<{
+        totalChars: z$1.ZodNumber;
+    }, z$1.core.$strip>>;
+    source: z$1.ZodNullable<z$1.ZodString>;
+    sourceSeqEnd: z$1.ZodNumber;
+    sourceSeqStart: z$1.ZodNumber;
+    startedAt: z$1.ZodNumber;
+    status: z$1.ZodEnum<{
+        completed: "completed";
+        error: "error";
+        interrupted: "interrupted";
+        pending: "pending";
+    }>;
+    threadId: z$1.ZodString;
+    turnId: z$1.ZodNullable<z$1.ZodString>;
+    workKind: z$1.ZodLiteral<"command">;
+}, z$1.core.$strip>;
+type TimelineCommandWorkRow = z$1.infer<typeof timelineCommandWorkRowSchema>;
+declare const timelineToolWorkRowSchema: z$1.ZodObject<{
+    activityIntents: z$1.ZodArray<z$1.ZodDiscriminatedUnion<[z$1.ZodObject<{
+        command: z$1.ZodString;
+        name: z$1.ZodString;
+        path: z$1.ZodNullable<z$1.ZodString>;
+        type: z$1.ZodLiteral<"read">;
+    }, z$1.core.$strip>, z$1.ZodObject<{
+        command: z$1.ZodString;
+        path: z$1.ZodNullable<z$1.ZodString>;
+        type: z$1.ZodLiteral<"list_files">;
+    }, z$1.core.$strip>, z$1.ZodObject<{
+        command: z$1.ZodString;
+        path: z$1.ZodNullable<z$1.ZodString>;
+        query: z$1.ZodNullable<z$1.ZodString>;
+        type: z$1.ZodLiteral<"search">;
+    }, z$1.core.$strip>, z$1.ZodObject<{
+        command: z$1.ZodString;
+        type: z$1.ZodLiteral<"unknown">;
+    }, z$1.core.$strip>], "type">>;
+    approvalStatus: z$1.ZodNullable<z$1.ZodEnum<{
+        denied: "denied";
+        waiting_for_approval: "waiting_for_approval";
+    }>>;
+    callId: z$1.ZodString;
+    completedAt: z$1.ZodNullable<z$1.ZodNumber>;
+    createdAt: z$1.ZodNumber;
+    id: z$1.ZodString;
+    kind: z$1.ZodLiteral<"work">;
+    output: z$1.ZodString;
+    outputPreview: z$1.ZodOptional<z$1.ZodObject<{
+        totalChars: z$1.ZodNumber;
+    }, z$1.core.$strip>>;
+    sourceSeqEnd: z$1.ZodNumber;
+    sourceSeqStart: z$1.ZodNumber;
+    startedAt: z$1.ZodNumber;
+    status: z$1.ZodEnum<{
+        completed: "completed";
+        error: "error";
+        interrupted: "interrupted";
+        pending: "pending";
+    }>;
+    statusLabels: z$1.ZodOptional<z$1.ZodObject<{
+        completed: z$1.ZodString;
+        pending: z$1.ZodString;
+    }, z$1.core.$strip>>;
+    threadId: z$1.ZodString;
+    toolArgs: z$1.ZodNullable<z$1.ZodRecord<z$1.ZodString, z$1.ZodType<JsonValue$1, unknown, z$1.core.$ZodTypeInternals<JsonValue$1, unknown>>>>;
+    toolName: z$1.ZodString;
+    turnId: z$1.ZodNullable<z$1.ZodString>;
+    workKind: z$1.ZodLiteral<"tool">;
+}, z$1.core.$strip>;
+type TimelineToolWorkRow = z$1.infer<typeof timelineToolWorkRowSchema>;
+declare const timelineFileChangeWorkRowSchema: z$1.ZodObject<{
+    approvalStatus: z$1.ZodNullable<z$1.ZodEnum<{
+        denied: "denied";
+        waiting_for_approval: "waiting_for_approval";
+    }>>;
+    callId: z$1.ZodString;
+    change: z$1.ZodObject<{
+        diff: z$1.ZodNullable<z$1.ZodString>;
+        diffStats: z$1.ZodObject<{
+            added: z$1.ZodNumber;
+            removed: z$1.ZodNumber;
+        }, z$1.core.$strip>;
+        kind: z$1.ZodNullable<z$1.ZodString>;
+        movePath: z$1.ZodNullable<z$1.ZodString>;
+        path: z$1.ZodString;
+    }, z$1.core.$strip>;
+    createdAt: z$1.ZodNumber;
+    id: z$1.ZodString;
+    kind: z$1.ZodLiteral<"work">;
+    sourceSeqEnd: z$1.ZodNumber;
+    sourceSeqStart: z$1.ZodNumber;
+    startedAt: z$1.ZodNumber;
+    status: z$1.ZodEnum<{
+        completed: "completed";
+        error: "error";
+        interrupted: "interrupted";
+        pending: "pending";
+    }>;
+    stderr: z$1.ZodNullable<z$1.ZodString>;
+    stdout: z$1.ZodNullable<z$1.ZodString>;
+    threadId: z$1.ZodString;
+    turnId: z$1.ZodNullable<z$1.ZodString>;
+    workKind: z$1.ZodLiteral<"file-change">;
+}, z$1.core.$strip>;
+type TimelineFileChangeWorkRow = z$1.infer<typeof timelineFileChangeWorkRowSchema>;
+declare const timelineWebSearchWorkRowSchema: z$1.ZodObject<{
+    callId: z$1.ZodString;
+    completedAt: z$1.ZodNullable<z$1.ZodNumber>;
+    createdAt: z$1.ZodNumber;
+    id: z$1.ZodString;
+    kind: z$1.ZodLiteral<"work">;
+    queries: z$1.ZodArray<z$1.ZodString>;
+    sourceSeqEnd: z$1.ZodNumber;
+    sourceSeqStart: z$1.ZodNumber;
+    startedAt: z$1.ZodNumber;
+    status: z$1.ZodEnum<{
+        completed: "completed";
+        error: "error";
+        interrupted: "interrupted";
+        pending: "pending";
+    }>;
+    threadId: z$1.ZodString;
+    turnId: z$1.ZodNullable<z$1.ZodString>;
+    workKind: z$1.ZodLiteral<"web-search">;
+}, z$1.core.$strip>;
+type TimelineWebSearchWorkRow = z$1.infer<typeof timelineWebSearchWorkRowSchema>;
+declare const timelineWebFetchWorkRowSchema: z$1.ZodObject<{
+    callId: z$1.ZodString;
+    completedAt: z$1.ZodNullable<z$1.ZodNumber>;
+    createdAt: z$1.ZodNumber;
+    id: z$1.ZodString;
+    kind: z$1.ZodLiteral<"work">;
+    pattern: z$1.ZodNullable<z$1.ZodString>;
+    prompt: z$1.ZodNullable<z$1.ZodString>;
+    sourceSeqEnd: z$1.ZodNumber;
+    sourceSeqStart: z$1.ZodNumber;
+    startedAt: z$1.ZodNumber;
+    status: z$1.ZodEnum<{
+        completed: "completed";
+        error: "error";
+        interrupted: "interrupted";
+        pending: "pending";
+    }>;
+    threadId: z$1.ZodString;
+    turnId: z$1.ZodNullable<z$1.ZodString>;
+    url: z$1.ZodString;
+    workKind: z$1.ZodLiteral<"web-fetch">;
+}, z$1.core.$strip>;
+type TimelineWebFetchWorkRow = z$1.infer<typeof timelineWebFetchWorkRowSchema>;
+declare const timelineImageViewWorkRowSchema: z$1.ZodObject<{
+    callId: z$1.ZodString;
+    completedAt: z$1.ZodNullable<z$1.ZodNumber>;
+    createdAt: z$1.ZodNumber;
+    id: z$1.ZodString;
+    kind: z$1.ZodLiteral<"work">;
+    path: z$1.ZodString;
+    sourceSeqEnd: z$1.ZodNumber;
+    sourceSeqStart: z$1.ZodNumber;
+    startedAt: z$1.ZodNumber;
+    status: z$1.ZodEnum<{
+        completed: "completed";
+        error: "error";
+        interrupted: "interrupted";
+        pending: "pending";
+    }>;
+    threadId: z$1.ZodString;
+    turnId: z$1.ZodNullable<z$1.ZodString>;
+    workKind: z$1.ZodLiteral<"image-view">;
+}, z$1.core.$strip>;
+type TimelineImageViewWorkRow = z$1.infer<typeof timelineImageViewWorkRowSchema>;
+declare const timelineApprovalWorkRowSchema: z$1.ZodDiscriminatedUnion<[z$1.ZodObject<{
+    approvalKind: z$1.ZodLiteral<"file-edit">;
+    createdAt: z$1.ZodNumber;
+    id: z$1.ZodString;
+    interactionId: z$1.ZodString;
+    kind: z$1.ZodLiteral<"work">;
+    lifecycle: z$1.ZodEnum<{
+        denied: "denied";
+        waiting: "waiting";
+    }>;
+    sourceSeqEnd: z$1.ZodNumber;
+    sourceSeqStart: z$1.ZodNumber;
+    startedAt: z$1.ZodNumber;
+    status: z$1.ZodEnum<{
+        completed: "completed";
+        error: "error";
+        interrupted: "interrupted";
+        pending: "pending";
+    }>;
+    target: z$1.ZodObject<{
+        itemId: z$1.ZodString;
+        toolName: z$1.ZodNullable<z$1.ZodString>;
+    }, z$1.core.$strip>;
+    threadId: z$1.ZodString;
+    turnId: z$1.ZodNullable<z$1.ZodString>;
+    workKind: z$1.ZodLiteral<"approval">;
+}, z$1.core.$strip>, z$1.ZodObject<{
+    approvalKind: z$1.ZodLiteral<"permission-grant">;
+    createdAt: z$1.ZodNumber;
+    grantScope: z$1.ZodNullable<z$1.ZodEnum<{
+        session: "session";
+        turn: "turn";
+    }>>;
+    id: z$1.ZodString;
+    interactionId: z$1.ZodString;
+    kind: z$1.ZodLiteral<"work">;
+    lifecycle: z$1.ZodEnum<{
+        denied: "denied";
+        granted: "granted";
+        interrupted: "interrupted";
+        pending: "pending";
+        resolving: "resolving";
+    }>;
+    sourceSeqEnd: z$1.ZodNumber;
+    sourceSeqStart: z$1.ZodNumber;
+    startedAt: z$1.ZodNumber;
+    status: z$1.ZodEnum<{
+        completed: "completed";
+        error: "error";
+        interrupted: "interrupted";
+        pending: "pending";
+    }>;
+    statusReason: z$1.ZodNullable<z$1.ZodString>;
+    target: z$1.ZodObject<{
+        itemId: z$1.ZodString;
+        toolName: z$1.ZodNullable<z$1.ZodString>;
+    }, z$1.core.$strip>;
+    threadId: z$1.ZodString;
+    turnId: z$1.ZodNullable<z$1.ZodString>;
+    workKind: z$1.ZodLiteral<"approval">;
+}, z$1.core.$strip>], "approvalKind">;
+type TimelineApprovalWorkRow = z$1.infer<typeof timelineApprovalWorkRowSchema>;
+declare const timelineQuestionWorkRowSchema: z$1.ZodObject<{
+    answers: z$1.ZodNullable<z$1.ZodRecord<z$1.ZodString, z$1.ZodObject<{
+        freeText: z$1.ZodOptional<z$1.ZodString>;
+        selected: z$1.ZodArray<z$1.ZodString>;
+    }, z$1.core.$strip>>>;
+    createdAt: z$1.ZodNumber;
+    id: z$1.ZodString;
+    interactionId: z$1.ZodString;
+    kind: z$1.ZodLiteral<"work">;
+    lifecycle: z$1.ZodEnum<{
+        answered: "answered";
+        interrupted: "interrupted";
+        pending: "pending";
+        resolving: "resolving";
+    }>;
+    questions: z$1.ZodArray<z$1.ZodObject<{
+        allowFreeText: z$1.ZodBoolean;
+        id: z$1.ZodString;
+        multiSelect: z$1.ZodBoolean;
+        options: z$1.ZodOptional<z$1.ZodArray<z$1.ZodObject<{
+            description: z$1.ZodOptional<z$1.ZodString>;
+            label: z$1.ZodString;
+            value: z$1.ZodString;
+        }, z$1.core.$strip>>>;
+        prompt: z$1.ZodString;
+        shortLabel: z$1.ZodOptional<z$1.ZodString>;
+    }, z$1.core.$strip>>;
+    sourceSeqEnd: z$1.ZodNumber;
+    sourceSeqStart: z$1.ZodNumber;
+    startedAt: z$1.ZodNumber;
+    status: z$1.ZodEnum<{
+        completed: "completed";
+        error: "error";
+        interrupted: "interrupted";
+        pending: "pending";
+    }>;
+    statusReason: z$1.ZodNullable<z$1.ZodString>;
+    threadId: z$1.ZodString;
+    turnId: z$1.ZodNullable<z$1.ZodString>;
+    workKind: z$1.ZodLiteral<"question">;
+}, z$1.core.$strip>;
+type TimelineQuestionWorkRow = z$1.infer<typeof timelineQuestionWorkRowSchema>;
+interface TimelineDelegationWorkRow extends TimelineWorkRowBase {
+    workKind: "delegation";
+    callId: string;
+    toolName: string;
+    subagentType: string | null;
+    description: string | null;
+    output: string;
+    completedAt: number | null;
+    childRows: TimelineRow[];
+}
+/**
+ * A provider background task — a dynamic workflow (Claude Code Workflow tool)
+ * or a backgrounded shell command (Bash run_in_background), discriminated by
+ * `taskType`. The row outlives its spawning turn: progress and terminal state
+ * arrive via thread-scoped events folded into this single row. `workflow` is
+ * the merged phase/agent tree, present only for workflows; null for shell
+ * commands and for workflows the provider reported no progress records for
+ * (degraded rendering falls back to description + summary). `model` is the
+ * spawning delegation's requested model for background agents; null for
+ * commands, workflows, legacy events, and providers that do not expose it.
+ */
+declare const timelineWorkflowWorkRowSchema: z$1.ZodObject<{
+    completedAt: z$1.ZodNullable<z$1.ZodNumber>;
+    createdAt: z$1.ZodNumber;
+    description: z$1.ZodString;
+    error: z$1.ZodNullable<z$1.ZodString>;
+    id: z$1.ZodString;
+    itemId: z$1.ZodString;
+    kind: z$1.ZodLiteral<"work">;
+    model: z$1.ZodNullable<z$1.ZodString>;
+    sourceSeqEnd: z$1.ZodNumber;
+    sourceSeqStart: z$1.ZodNumber;
+    startedAt: z$1.ZodNumber;
+    status: z$1.ZodEnum<{
+        completed: "completed";
+        error: "error";
+        interrupted: "interrupted";
+        pending: "pending";
+    }>;
+    summary: z$1.ZodNullable<z$1.ZodString>;
+    taskStatus: z$1.ZodEnum<{
+        completed: "completed";
+        failed: "failed";
+        killed: "killed";
+        paused: "paused";
+        pending: "pending";
+        running: "running";
+        stopped: "stopped";
+    }>;
+    taskType: z$1.ZodString;
+    threadId: z$1.ZodString;
+    turnId: z$1.ZodNullable<z$1.ZodString>;
+    usage: z$1.ZodNullable<z$1.ZodObject<{
+        durationMs: z$1.ZodNumber;
+        toolUses: z$1.ZodNumber;
+        totalTokens: z$1.ZodNumber;
+    }, z$1.core.$strip>>;
+    workKind: z$1.ZodLiteral<"workflow">;
+    workflow: z$1.ZodNullable<z$1.ZodObject<{
+        agents: z$1.ZodArray<z$1.ZodObject<{
+            agentType: z$1.ZodOptional<z$1.ZodString>;
+            attempt: z$1.ZodNumber;
+            cached: z$1.ZodBoolean;
+            durationMs: z$1.ZodOptional<z$1.ZodNumber>;
+            error: z$1.ZodOptional<z$1.ZodString>;
+            index: z$1.ZodNumber;
+            isolation: z$1.ZodOptional<z$1.ZodString>;
+            label: z$1.ZodString;
+            lastProgressAt: z$1.ZodNumber;
+            lastToolName: z$1.ZodOptional<z$1.ZodString>;
+            lastToolSummary: z$1.ZodOptional<z$1.ZodString>;
+            model: z$1.ZodString;
+            phaseIndex: z$1.ZodOptional<z$1.ZodNumber>;
+            phaseTitle: z$1.ZodOptional<z$1.ZodString>;
+            promptPreview: z$1.ZodOptional<z$1.ZodString>;
+            queuedAt: z$1.ZodOptional<z$1.ZodNumber>;
+            resultPreview: z$1.ZodOptional<z$1.ZodString>;
+            startedAt: z$1.ZodOptional<z$1.ZodNumber>;
+            state: z$1.ZodEnum<{
+                done: "done";
+                failed: "failed";
+                queued: "queued";
+                running: "running";
+                skipped: "skipped";
+            }>;
+            tokens: z$1.ZodOptional<z$1.ZodNumber>;
+            toolCalls: z$1.ZodOptional<z$1.ZodNumber>;
+        }, z$1.core.$strip>>;
+        phases: z$1.ZodArray<z$1.ZodObject<{
+            index: z$1.ZodNumber;
+            kind: z$1.ZodOptional<z$1.ZodString>;
+            title: z$1.ZodString;
+        }, z$1.core.$strip>>;
+    }, z$1.core.$strip>>;
+    workflowName: z$1.ZodNullable<z$1.ZodString>;
+}, z$1.core.$strip>;
+type TimelineWorkflowWorkRow = z$1.infer<typeof timelineWorkflowWorkRowSchema>;
+type TimelineWorkRow = TimelineCommandWorkRow | TimelineToolWorkRow | TimelineFileChangeWorkRow | TimelineWebSearchWorkRow | TimelineWebFetchWorkRow | TimelineImageViewWorkRow | TimelineApprovalWorkRow | TimelineQuestionWorkRow | TimelineDelegationWorkRow | TimelineWorkflowWorkRow;
+interface TimelineTurnRow extends TimelineRowBase {
+    kind: "turn";
+    turnId: string;
+    status: TimelineRowStatus;
+    summaryCount: number;
+    completedAt: number | null;
+    children: TimelineRow[] | null;
+}
+type TimelineSourceRow = TimelineConversationRow | TimelineWorkRow | TimelineSystemRow;
+type TimelineRow = TimelineSourceRow | TimelineTurnRow;
+
+declare const recoverySnapshotRequestSchema: z$1.ZodObject<{
+    contractVersion: z$1.ZodLiteral<1>;
+    threadIds: z$1.ZodArray<z$1.ZodString>;
+    timelineSegmentLimit: z$1.ZodNumber;
+}, z$1.core.$strict>;
+type RecoverySnapshotRequest = z$1.infer<typeof recoverySnapshotRequestSchema>;
+declare const recoverySnapshotResponseSchema: z$1.ZodObject<{
+    cacheOwner: z$1.ZodDiscriminatedUnion<[z$1.ZodObject<{
+        actor: z$1.ZodObject<{
+            p6rDisplayName: z$1.ZodString;
+            p6rHandle: z$1.ZodString;
+            p6rImageUrl: z$1.ZodNullable<z$1.ZodString>;
+            p6rProviderId: z$1.ZodString;
+            p6rSubject: z$1.ZodString;
+        }, z$1.core.$strict>;
+        principalKey: z$1.ZodString;
+        state: z$1.ZodLiteral<"resolved">;
+    }, z$1.core.$strict>, z$1.ZodObject<{
+        actor: z$1.ZodNull;
+        principalKey: z$1.ZodNull;
+        state: z$1.ZodLiteral<"read-only">;
+    }, z$1.core.$strict>], "state">;
+    consistency: z$1.ZodEnum<{
+        coherent: "coherent";
+        partial: "partial";
+        retry: "retry";
+    }>;
+    contractVersion: z$1.ZodLiteral<1>;
+    generatedAtMs: z$1.ZodNumber;
+    incompleteReasons: z$1.ZodArray<z$1.ZodEnum<{
+        "sidebar-revision-unavailable": "sidebar-revision-unavailable";
+        "thread-changed-during-snapshot": "thread-changed-during-snapshot";
+    }>>;
+    sidebar: z$1.ZodObject<{
+        personalProject: z$1.ZodObject<{
+            createdAt: z$1.ZodNumber;
+            defaultExecutionOptions: z$1.ZodNullable<z$1.ZodObject<{
+                model: z$1.ZodString;
+                permissionMode: z$1.ZodEnum<{
+                    "accept-edits": "accept-edits";
+                    auto: "auto";
+                    full: "full";
+                }>;
+                providerId: z$1.ZodString;
+                reasoningLevel: z$1.ZodEnum<{
+                    high: "high";
+                    low: "low";
+                    max: "max";
+                    medium: "medium";
+                    none: "none";
+                    ultra: "ultra";
+                    ultracode: "ultracode";
+                    xhigh: "xhigh";
+                }>;
+                serviceTier: z$1.ZodEnum<{
+                    default: "default";
+                    fast: "fast";
+                }>;
+            }, z$1.core.$strip>>;
+            gitRemoteUrl: z$1.ZodNullable<z$1.ZodString>;
+            id: z$1.ZodString;
+            kind: z$1.ZodEnum<{
+                personal: "personal";
+                standard: "standard";
+            }>;
+            name: z$1.ZodString;
+            sources: z$1.ZodArray<z$1.ZodObject<{
+                createdAt: z$1.ZodNumber;
+                hostId: z$1.ZodString;
+                id: z$1.ZodString;
+                isDefault: z$1.ZodBoolean;
+                path: z$1.ZodString;
+                projectId: z$1.ZodString;
+                type: z$1.ZodLiteral<"local_path">;
+                updatedAt: z$1.ZodNumber;
+            }, z$1.core.$strip>>;
+            threads: z$1.ZodArray<z$1.ZodObject<{
+                activity: z$1.ZodObject<{
+                    activeBackgroundAgentCount: z$1.ZodNumber;
+                    activeBackgroundCommandCount: z$1.ZodNumber;
+                    activeGoalCount: z$1.ZodNumber;
+                    activePlanModeCount: z$1.ZodNumber;
+                    activeWorkflowCount: z$1.ZodNumber;
+                    newestActiveBackgroundCommandStartedAt: z$1.ZodOptional<z$1.ZodNullable<z$1.ZodNumber>>;
+                }, z$1.core.$strip>;
+                archivedAt: z$1.ZodNullable<z$1.ZodNumber>;
+                createdAt: z$1.ZodNumber;
+                deletedAt: z$1.ZodNullable<z$1.ZodNumber>;
+                environmentBranchName: z$1.ZodNullable<z$1.ZodString>;
+                environmentHostId: z$1.ZodNullable<z$1.ZodString>;
+                environmentId: z$1.ZodNullable<z$1.ZodString>;
+                environmentName: z$1.ZodNullable<z$1.ZodString>;
+                environmentWorkspaceDisplayKind: z$1.ZodEnum<{
+                    "managed-worktree": "managed-worktree";
+                    "unmanaged-worktree": "unmanaged-worktree";
+                    other: "other";
+                }>;
+                hasPendingInteraction: z$1.ZodBoolean;
+                id: z$1.ZodString;
+                lastReadAt: z$1.ZodNullable<z$1.ZodNumber>;
+                latestAttentionAt: z$1.ZodNumber;
+                originKind: z$1.ZodNullable<z$1.ZodEnum<{
+                    fork: "fork";
+                }>>;
+                originPluginId: z$1.ZodNullable<z$1.ZodString>;
+                parentThreadId: z$1.ZodNullable<z$1.ZodString>;
+                participants: z$1.ZodOptional<z$1.ZodArray<z$1.ZodObject<{
+                    p6rDisplayName: z$1.ZodString;
+                    p6rImageUrl: z$1.ZodNullable<z$1.ZodString>;
+                    p6rPrincipalKey: z$1.core.$ZodBranded<z$1.ZodString, "P6rPrincipalKey", "out">;
+                }, z$1.core.$strict>>>;
+                pinSortKey: z$1.ZodNullable<z$1.ZodString>;
+                pinnedAt: z$1.ZodNullable<z$1.ZodNumber>;
+                projectId: z$1.ZodString;
+                providerId: z$1.ZodString;
+                runtime: z$1.ZodObject<{
+                    displayStatus: z$1.ZodEnum<{
+                        "host-reconnecting": "host-reconnecting";
+                        "waiting-for-host": "waiting-for-host";
+                        active: "active";
+                        error: "error";
+                        idle: "idle";
+                        provisioning: "provisioning";
+                        starting: "starting";
+                        stopping: "stopping";
+                    }>;
+                    hostReconnectGraceExpiresAt: z$1.ZodNullable<z$1.ZodNumber>;
+                }, z$1.core.$strip>;
+                sectionId: z$1.ZodNullable<z$1.ZodString>;
+                sourceThreadId: z$1.ZodNullable<z$1.ZodString>;
+                status: z$1.ZodEnum<{
+                    active: "active";
+                    error: "error";
+                    idle: "idle";
+                    starting: "starting";
+                    stopping: "stopping";
+                }>;
+                title: z$1.ZodNullable<z$1.ZodString>;
+                titleFallback: z$1.ZodNullable<z$1.ZodString>;
+                updatedAt: z$1.ZodNumber;
+                visibility: z$1.ZodEnum<{
+                    hidden: "hidden";
+                    visible: "visible";
+                }>;
+            }, z$1.core.$strip>>;
+            updatedAt: z$1.ZodNumber;
+        }, z$1.core.$strip>;
+        projects: z$1.ZodArray<z$1.ZodObject<{
+            createdAt: z$1.ZodNumber;
+            defaultExecutionOptions: z$1.ZodNullable<z$1.ZodObject<{
+                model: z$1.ZodString;
+                permissionMode: z$1.ZodEnum<{
+                    "accept-edits": "accept-edits";
+                    auto: "auto";
+                    full: "full";
+                }>;
+                providerId: z$1.ZodString;
+                reasoningLevel: z$1.ZodEnum<{
+                    high: "high";
+                    low: "low";
+                    max: "max";
+                    medium: "medium";
+                    none: "none";
+                    ultra: "ultra";
+                    ultracode: "ultracode";
+                    xhigh: "xhigh";
+                }>;
+                serviceTier: z$1.ZodEnum<{
+                    default: "default";
+                    fast: "fast";
+                }>;
+            }, z$1.core.$strip>>;
+            gitRemoteUrl: z$1.ZodNullable<z$1.ZodString>;
+            id: z$1.ZodString;
+            kind: z$1.ZodEnum<{
+                personal: "personal";
+                standard: "standard";
+            }>;
+            name: z$1.ZodString;
+            sources: z$1.ZodArray<z$1.ZodObject<{
+                createdAt: z$1.ZodNumber;
+                hostId: z$1.ZodString;
+                id: z$1.ZodString;
+                isDefault: z$1.ZodBoolean;
+                path: z$1.ZodString;
+                projectId: z$1.ZodString;
+                type: z$1.ZodLiteral<"local_path">;
+                updatedAt: z$1.ZodNumber;
+            }, z$1.core.$strip>>;
+            threads: z$1.ZodArray<z$1.ZodObject<{
+                activity: z$1.ZodObject<{
+                    activeBackgroundAgentCount: z$1.ZodNumber;
+                    activeBackgroundCommandCount: z$1.ZodNumber;
+                    activeGoalCount: z$1.ZodNumber;
+                    activePlanModeCount: z$1.ZodNumber;
+                    activeWorkflowCount: z$1.ZodNumber;
+                    newestActiveBackgroundCommandStartedAt: z$1.ZodOptional<z$1.ZodNullable<z$1.ZodNumber>>;
+                }, z$1.core.$strip>;
+                archivedAt: z$1.ZodNullable<z$1.ZodNumber>;
+                createdAt: z$1.ZodNumber;
+                deletedAt: z$1.ZodNullable<z$1.ZodNumber>;
+                environmentBranchName: z$1.ZodNullable<z$1.ZodString>;
+                environmentHostId: z$1.ZodNullable<z$1.ZodString>;
+                environmentId: z$1.ZodNullable<z$1.ZodString>;
+                environmentName: z$1.ZodNullable<z$1.ZodString>;
+                environmentWorkspaceDisplayKind: z$1.ZodEnum<{
+                    "managed-worktree": "managed-worktree";
+                    "unmanaged-worktree": "unmanaged-worktree";
+                    other: "other";
+                }>;
+                hasPendingInteraction: z$1.ZodBoolean;
+                id: z$1.ZodString;
+                lastReadAt: z$1.ZodNullable<z$1.ZodNumber>;
+                latestAttentionAt: z$1.ZodNumber;
+                originKind: z$1.ZodNullable<z$1.ZodEnum<{
+                    fork: "fork";
+                }>>;
+                originPluginId: z$1.ZodNullable<z$1.ZodString>;
+                parentThreadId: z$1.ZodNullable<z$1.ZodString>;
+                participants: z$1.ZodOptional<z$1.ZodArray<z$1.ZodObject<{
+                    p6rDisplayName: z$1.ZodString;
+                    p6rImageUrl: z$1.ZodNullable<z$1.ZodString>;
+                    p6rPrincipalKey: z$1.core.$ZodBranded<z$1.ZodString, "P6rPrincipalKey", "out">;
+                }, z$1.core.$strict>>>;
+                pinSortKey: z$1.ZodNullable<z$1.ZodString>;
+                pinnedAt: z$1.ZodNullable<z$1.ZodNumber>;
+                projectId: z$1.ZodString;
+                providerId: z$1.ZodString;
+                runtime: z$1.ZodObject<{
+                    displayStatus: z$1.ZodEnum<{
+                        "host-reconnecting": "host-reconnecting";
+                        "waiting-for-host": "waiting-for-host";
+                        active: "active";
+                        error: "error";
+                        idle: "idle";
+                        provisioning: "provisioning";
+                        starting: "starting";
+                        stopping: "stopping";
+                    }>;
+                    hostReconnectGraceExpiresAt: z$1.ZodNullable<z$1.ZodNumber>;
+                }, z$1.core.$strip>;
+                sectionId: z$1.ZodNullable<z$1.ZodString>;
+                sourceThreadId: z$1.ZodNullable<z$1.ZodString>;
+                status: z$1.ZodEnum<{
+                    active: "active";
+                    error: "error";
+                    idle: "idle";
+                    starting: "starting";
+                    stopping: "stopping";
+                }>;
+                title: z$1.ZodNullable<z$1.ZodString>;
+                titleFallback: z$1.ZodNullable<z$1.ZodString>;
+                updatedAt: z$1.ZodNumber;
+                visibility: z$1.ZodEnum<{
+                    hidden: "hidden";
+                    visible: "visible";
+                }>;
+            }, z$1.core.$strip>>;
+            updatedAt: z$1.ZodNumber;
+        }, z$1.core.$strip>>;
+        sections: z$1.ZodArray<z$1.ZodObject<{
+            createdAt: z$1.ZodNumber;
+            id: z$1.ZodString;
+            name: z$1.ZodString;
+            updatedAt: z$1.ZodNumber;
+        }, z$1.core.$strict>>;
+    }, z$1.core.$strip>;
+    timelines: z$1.ZodArray<z$1.ZodObject<{
+        consistency: z$1.ZodEnum<{
+            coherent: "coherent";
+            retry: "retry";
+        }>;
+        headSequence: z$1.ZodNumber;
+        olderCursor: z$1.ZodNullable<z$1.ZodObject<{
+            anchorId: z$1.ZodString;
+            anchorSeq: z$1.ZodNumber;
+        }, z$1.core.$strict>>;
+        projectionCoverage: z$1.ZodEnum<{
+            complete: "complete";
+            windowed: "windowed";
+        }>;
+        threadId: z$1.ZodString;
+        timeline: z$1.ZodObject<{
+            activeBackgroundCommands: z$1.ZodArray<z$1.ZodObject<{
+                completedAt: z$1.ZodNullable<z$1.ZodNumber>;
+                createdAt: z$1.ZodNumber;
+                description: z$1.ZodString;
+                error: z$1.ZodNullable<z$1.ZodString>;
+                id: z$1.ZodString;
+                itemId: z$1.ZodString;
+                kind: z$1.ZodLiteral<"work">;
+                model: z$1.ZodNullable<z$1.ZodString>;
+                sourceSeqEnd: z$1.ZodNumber;
+                sourceSeqStart: z$1.ZodNumber;
+                startedAt: z$1.ZodNumber;
+                status: z$1.ZodEnum<{
+                    completed: "completed";
+                    error: "error";
+                    interrupted: "interrupted";
+                    pending: "pending";
+                }>;
+                summary: z$1.ZodNullable<z$1.ZodString>;
+                taskStatus: z$1.ZodEnum<{
+                    completed: "completed";
+                    failed: "failed";
+                    killed: "killed";
+                    paused: "paused";
+                    pending: "pending";
+                    running: "running";
+                    stopped: "stopped";
+                }>;
+                taskType: z$1.ZodString;
+                threadId: z$1.ZodString;
+                turnId: z$1.ZodNullable<z$1.ZodString>;
+                usage: z$1.ZodNullable<z$1.ZodObject<{
+                    durationMs: z$1.ZodNumber;
+                    toolUses: z$1.ZodNumber;
+                    totalTokens: z$1.ZodNumber;
+                }, z$1.core.$strip>>;
+                workKind: z$1.ZodLiteral<"workflow">;
+                workflow: z$1.ZodNullable<z$1.ZodObject<{
+                    agents: z$1.ZodArray<z$1.ZodObject<{
+                        agentType: z$1.ZodOptional<z$1.ZodString>;
+                        attempt: z$1.ZodNumber;
+                        cached: z$1.ZodBoolean;
+                        durationMs: z$1.ZodOptional<z$1.ZodNumber>;
+                        error: z$1.ZodOptional<z$1.ZodString>;
+                        index: z$1.ZodNumber;
+                        isolation: z$1.ZodOptional<z$1.ZodString>;
+                        label: z$1.ZodString;
+                        lastProgressAt: z$1.ZodNumber;
+                        lastToolName: z$1.ZodOptional<z$1.ZodString>;
+                        lastToolSummary: z$1.ZodOptional<z$1.ZodString>;
+                        model: z$1.ZodString;
+                        phaseIndex: z$1.ZodOptional<z$1.ZodNumber>;
+                        phaseTitle: z$1.ZodOptional<z$1.ZodString>;
+                        promptPreview: z$1.ZodOptional<z$1.ZodString>;
+                        queuedAt: z$1.ZodOptional<z$1.ZodNumber>;
+                        resultPreview: z$1.ZodOptional<z$1.ZodString>;
+                        startedAt: z$1.ZodOptional<z$1.ZodNumber>;
+                        state: z$1.ZodEnum<{
+                            done: "done";
+                            failed: "failed";
+                            queued: "queued";
+                            running: "running";
+                            skipped: "skipped";
+                        }>;
+                        tokens: z$1.ZodOptional<z$1.ZodNumber>;
+                        toolCalls: z$1.ZodOptional<z$1.ZodNumber>;
+                    }, z$1.core.$strip>>;
+                    phases: z$1.ZodArray<z$1.ZodObject<{
+                        index: z$1.ZodNumber;
+                        kind: z$1.ZodOptional<z$1.ZodString>;
+                        title: z$1.ZodString;
+                    }, z$1.core.$strip>>;
+                }, z$1.core.$strip>>;
+                workflowName: z$1.ZodNullable<z$1.ZodString>;
+            }, z$1.core.$strip>>;
+            activePromptMode: z$1.ZodNullable<z$1.ZodObject<{
+                mode: z$1.ZodLiteral<"plan">;
+                prompt: z$1.ZodString;
+                providerId: z$1.ZodString;
+            }, z$1.core.$strict>>;
+            activeThinking: z$1.ZodNullable<z$1.ZodObject<{
+                id: z$1.ZodString;
+                startedAt: z$1.ZodNumber;
+                text: z$1.ZodString;
+                updatedAt: z$1.ZodNumber;
+            }, z$1.core.$strip>>;
+            activeWorkflows: z$1.ZodArray<z$1.ZodObject<{
+                completedAt: z$1.ZodNullable<z$1.ZodNumber>;
+                createdAt: z$1.ZodNumber;
+                description: z$1.ZodString;
+                error: z$1.ZodNullable<z$1.ZodString>;
+                id: z$1.ZodString;
+                itemId: z$1.ZodString;
+                kind: z$1.ZodLiteral<"work">;
+                model: z$1.ZodNullable<z$1.ZodString>;
+                sourceSeqEnd: z$1.ZodNumber;
+                sourceSeqStart: z$1.ZodNumber;
+                startedAt: z$1.ZodNumber;
+                status: z$1.ZodEnum<{
+                    completed: "completed";
+                    error: "error";
+                    interrupted: "interrupted";
+                    pending: "pending";
+                }>;
+                summary: z$1.ZodNullable<z$1.ZodString>;
+                taskStatus: z$1.ZodEnum<{
+                    completed: "completed";
+                    failed: "failed";
+                    killed: "killed";
+                    paused: "paused";
+                    pending: "pending";
+                    running: "running";
+                    stopped: "stopped";
+                }>;
+                taskType: z$1.ZodString;
+                threadId: z$1.ZodString;
+                turnId: z$1.ZodNullable<z$1.ZodString>;
+                usage: z$1.ZodNullable<z$1.ZodObject<{
+                    durationMs: z$1.ZodNumber;
+                    toolUses: z$1.ZodNumber;
+                    totalTokens: z$1.ZodNumber;
+                }, z$1.core.$strip>>;
+                workKind: z$1.ZodLiteral<"workflow">;
+                workflow: z$1.ZodNullable<z$1.ZodObject<{
+                    agents: z$1.ZodArray<z$1.ZodObject<{
+                        agentType: z$1.ZodOptional<z$1.ZodString>;
+                        attempt: z$1.ZodNumber;
+                        cached: z$1.ZodBoolean;
+                        durationMs: z$1.ZodOptional<z$1.ZodNumber>;
+                        error: z$1.ZodOptional<z$1.ZodString>;
+                        index: z$1.ZodNumber;
+                        isolation: z$1.ZodOptional<z$1.ZodString>;
+                        label: z$1.ZodString;
+                        lastProgressAt: z$1.ZodNumber;
+                        lastToolName: z$1.ZodOptional<z$1.ZodString>;
+                        lastToolSummary: z$1.ZodOptional<z$1.ZodString>;
+                        model: z$1.ZodString;
+                        phaseIndex: z$1.ZodOptional<z$1.ZodNumber>;
+                        phaseTitle: z$1.ZodOptional<z$1.ZodString>;
+                        promptPreview: z$1.ZodOptional<z$1.ZodString>;
+                        queuedAt: z$1.ZodOptional<z$1.ZodNumber>;
+                        resultPreview: z$1.ZodOptional<z$1.ZodString>;
+                        startedAt: z$1.ZodOptional<z$1.ZodNumber>;
+                        state: z$1.ZodEnum<{
+                            done: "done";
+                            failed: "failed";
+                            queued: "queued";
+                            running: "running";
+                            skipped: "skipped";
+                        }>;
+                        tokens: z$1.ZodOptional<z$1.ZodNumber>;
+                        toolCalls: z$1.ZodOptional<z$1.ZodNumber>;
+                    }, z$1.core.$strip>>;
+                    phases: z$1.ZodArray<z$1.ZodObject<{
+                        index: z$1.ZodNumber;
+                        kind: z$1.ZodOptional<z$1.ZodString>;
+                        title: z$1.ZodString;
+                    }, z$1.core.$strip>>;
+                }, z$1.core.$strip>>;
+                workflowName: z$1.ZodNullable<z$1.ZodString>;
+            }, z$1.core.$strip>>;
+            contextWindowUsage: z$1.ZodOptional<z$1.ZodObject<{
+                estimated: z$1.ZodBoolean;
+                modelContextWindow: z$1.ZodNumber;
+                usedTokens: z$1.ZodNumber;
+            }, z$1.core.$strip>>;
+            delta: z$1.ZodOptional<z$1.ZodObject<{
+                rowOrder: z$1.ZodOptional<z$1.ZodArray<z$1.ZodString>>;
+                upsertRows: z$1.ZodArray<z$1.ZodType<TimelineRow, unknown, z$1.core.$ZodTypeInternals<TimelineRow, unknown>>>;
+            }, z$1.core.$strip>>;
+            goal: z$1.ZodNullable<z$1.ZodObject<{
+                objective: z$1.ZodString;
+                sourceSeq: z$1.ZodNumber;
+                status: z$1.ZodEnum<{
+                    active: "active";
+                    budgetLimited: "budgetLimited";
+                    complete: "complete";
+                    paused: "paused";
+                }>;
+                timeUsedSeconds: z$1.ZodNumber;
+                tokenBudget: z$1.ZodNullable<z$1.ZodNumber>;
+                tokensUsed: z$1.ZodNumber;
+                updatedAt: z$1.ZodNumber;
+            }, z$1.core.$strip>>;
+            maxSeq: z$1.ZodNumber;
+            modelFallback: z$1.ZodNullable<z$1.ZodObject<{
+                detectedAt: z$1.ZodNumber;
+                fallbackModel: z$1.ZodString;
+                message: z$1.ZodString;
+                originalModel: z$1.ZodString;
+                reason: z$1.ZodEnum<{
+                    provider: "provider";
+                    refusal: "refusal";
+                }>;
+                sourceSeq: z$1.ZodNumber;
+            }, z$1.core.$strip>>;
+            pendingTodos: z$1.ZodNullable<z$1.ZodObject<{
+                items: z$1.ZodArray<z$1.ZodObject<{
+                    id: z$1.ZodString;
+                    status: z$1.ZodEnum<{
+                        completed: "completed";
+                        in_progress: "in_progress";
+                        pending: "pending";
+                    }>;
+                    text: z$1.ZodString;
+                }, z$1.core.$strip>>;
+                sourceSeq: z$1.ZodNumber;
+                updatedAt: z$1.ZodNumber;
+            }, z$1.core.$strip>>;
+            rows: z$1.ZodArray<z$1.ZodType<TimelineRow, unknown, z$1.core.$ZodTypeInternals<TimelineRow, unknown>>>;
+            timelinePage: z$1.ZodObject<{
+                hasOlderRows: z$1.ZodBoolean;
+                kind: z$1.ZodEnum<{
+                    latest: "latest";
+                    older: "older";
+                }>;
+                olderCursor: z$1.ZodNullable<z$1.ZodObject<{
+                    anchorId: z$1.ZodString;
+                    anchorSeq: z$1.ZodNumber;
+                }, z$1.core.$strict>>;
+                returnedSegmentCount: z$1.ZodNumber;
+                segmentLimit: z$1.ZodNumber;
+            }, z$1.core.$strict>;
+        }, z$1.core.$strip>;
+    }, z$1.core.$strict>>;
+    unavailableThreads: z$1.ZodArray<z$1.ZodObject<{
+        reason: z$1.ZodLiteral<"not-found">;
+        threadId: z$1.ZodString;
+    }, z$1.core.$strict>>;
+}, z$1.core.$strict>;
+type RecoverySnapshotResponse = z$1.infer<typeof recoverySnapshotResponseSchema>;
+
 declare const registrySkillSchema: z$1.ZodObject<{
     id: z$1.ZodString;
     installUrl: z$1.ZodNullable<z$1.ZodString>;
@@ -9634,665 +10808,6 @@ declare const terminalOutputResponseSchema: z$1.ZodObject<{
 }, z$1.core.$strict>;
 type TerminalOutputResponse = z$1.infer<typeof terminalOutputResponseSchema>;
 
-declare const timelineRowStatusSchema: z$1.ZodEnum<{
-    completed: "completed";
-    error: "error";
-    interrupted: "interrupted";
-    pending: "pending";
-}>;
-type TimelineRowStatus = z$1.infer<typeof timelineRowStatusSchema>;
-declare const timelineRowBaseSchema: z$1.ZodObject<{
-    createdAt: z$1.ZodNumber;
-    id: z$1.ZodString;
-    sourceSeqEnd: z$1.ZodNumber;
-    sourceSeqStart: z$1.ZodNumber;
-    startedAt: z$1.ZodNumber;
-    threadId: z$1.ZodString;
-    turnId: z$1.ZodNullable<z$1.ZodString>;
-}, z$1.core.$strip>;
-type TimelineRowBase = z$1.infer<typeof timelineRowBaseSchema>;
-declare const timelineConversationRowSchema: z$1.ZodDiscriminatedUnion<[z$1.ZodObject<{
-    attachments: z$1.ZodNullable<z$1.ZodObject<{
-        imageUrls: z$1.ZodArray<z$1.ZodString>;
-        localFilePaths: z$1.ZodArray<z$1.ZodString>;
-        localFiles: z$1.ZodNumber;
-        localImagePaths: z$1.ZodArray<z$1.ZodString>;
-        localImages: z$1.ZodNumber;
-        webImages: z$1.ZodNumber;
-    }, z$1.core.$strip>>;
-    createdAt: z$1.ZodNumber;
-    id: z$1.ZodString;
-    initiator: z$1.ZodEnum<{
-        agent: "agent";
-        system: "system";
-        user: "user";
-    }>;
-    kind: z$1.ZodLiteral<"conversation">;
-    mentions: z$1.ZodArray<z$1.ZodObject<{
-        end: z$1.ZodNumber;
-        resource: z$1.ZodPipe<z$1.ZodTransform<unknown, unknown>, z$1.ZodDiscriminatedUnion<[z$1.ZodObject<{
-            kind: z$1.ZodLiteral<"thread">;
-            label: z$1.ZodString;
-            projectId: z$1.ZodOptional<z$1.ZodString>;
-            threadId: z$1.ZodString;
-        }, z$1.core.$strip>, z$1.ZodObject<{
-            kind: z$1.ZodLiteral<"project">;
-            label: z$1.ZodString;
-            projectId: z$1.ZodString;
-        }, z$1.core.$strip>, z$1.ZodObject<{
-            kind: z$1.ZodLiteral<"section">;
-            label: z$1.ZodString;
-            sectionId: z$1.ZodString;
-        }, z$1.core.$strip>, z$1.ZodObject<{
-            entryKind: z$1.ZodEnum<{
-                directory: "directory";
-                file: "file";
-            }>;
-            kind: z$1.ZodLiteral<"path">;
-            label: z$1.ZodString;
-            path: z$1.ZodString;
-            source: z$1.ZodEnum<{
-                "thread-storage": "thread-storage";
-                workspace: "workspace";
-            }>;
-        }, z$1.core.$strip>, z$1.ZodObject<{
-            argumentHint: z$1.ZodNullable<z$1.ZodString>;
-            kind: z$1.ZodLiteral<"command">;
-            label: z$1.ZodString;
-            name: z$1.ZodString;
-            origin: z$1.ZodEnum<{
-                builtin: "builtin";
-                project: "project";
-                user: "user";
-            }>;
-            source: z$1.ZodEnum<{
-                "prompt-stack": "prompt-stack";
-                command: "command";
-                skill: "skill";
-            }>;
-            trigger: z$1.ZodEnum<{
-                "/": "/";
-            }>;
-        }, z$1.core.$strip>, z$1.ZodObject<{
-            icon: z$1.ZodOptional<z$1.ZodNullable<z$1.ZodString>>;
-            itemId: z$1.ZodString;
-            kind: z$1.ZodLiteral<"plugin">;
-            label: z$1.ZodString;
-            pluginId: z$1.ZodString;
-        }, z$1.core.$strip>], "kind">>;
-        start: z$1.ZodNumber;
-    }, z$1.core.$strip>>;
-    p6rActor: z$1.ZodDefault<z$1.ZodNullable<z$1.ZodObject<{
-        p6rDisplayName: z$1.ZodString;
-        p6rHandle: z$1.ZodString;
-        p6rImageUrl: z$1.ZodNullable<z$1.ZodString>;
-        p6rProviderId: z$1.ZodString;
-        p6rSubject: z$1.ZodString;
-    }, z$1.core.$strict>>>;
-    p6rActorHandle: z$1.ZodDefault<z$1.ZodNullable<z$1.ZodString>>;
-    role: z$1.ZodLiteral<"user">;
-    senderThreadId: z$1.ZodNullable<z$1.ZodString>;
-    sourceSeqEnd: z$1.ZodNumber;
-    sourceSeqStart: z$1.ZodNumber;
-    startedAt: z$1.ZodNumber;
-    systemMessageKind: z$1.ZodEnum<{
-        "child-completed": "child-completed";
-        "child-failed": "child-failed";
-        "child-interrupted": "child-interrupted";
-        "child-needs-attention": "child-needs-attention";
-        "child-outcome-batch": "child-outcome-batch";
-        "ownership-assigned": "ownership-assigned";
-        "ownership-removed": "ownership-removed";
-        unlabeled: "unlabeled";
-    }>;
-    systemMessageSubject: z$1.ZodNullable<z$1.ZodDiscriminatedUnion<[z$1.ZodObject<{
-        kind: z$1.ZodLiteral<"thread">;
-        threadId: z$1.ZodString;
-        threadName: z$1.ZodString;
-    }, z$1.core.$strip>, z$1.ZodObject<{
-        count: z$1.ZodNumber;
-        kind: z$1.ZodLiteral<"thread-batch">;
-    }, z$1.core.$strip>], "kind">>;
-    text: z$1.ZodString;
-    threadId: z$1.ZodString;
-    turnId: z$1.ZodNullable<z$1.ZodString>;
-    turnRequest: z$1.ZodObject<{
-        isGrouped: z$1.ZodBoolean;
-        kind: z$1.ZodEnum<{
-            message: "message";
-            steer: "steer";
-        }>;
-        status: z$1.ZodEnum<{
-            accepted: "accepted";
-            pending: "pending";
-            rejected: "rejected";
-        }>;
-    }, z$1.core.$strip>;
-}, z$1.core.$strip>, z$1.ZodObject<{
-    attachments: z$1.ZodNullable<z$1.ZodObject<{
-        imageUrls: z$1.ZodArray<z$1.ZodString>;
-        localFilePaths: z$1.ZodArray<z$1.ZodString>;
-        localFiles: z$1.ZodNumber;
-        localImagePaths: z$1.ZodArray<z$1.ZodString>;
-        localImages: z$1.ZodNumber;
-        webImages: z$1.ZodNumber;
-    }, z$1.core.$strip>>;
-    createdAt: z$1.ZodNumber;
-    id: z$1.ZodString;
-    kind: z$1.ZodLiteral<"conversation">;
-    role: z$1.ZodLiteral<"assistant">;
-    sourceSeqEnd: z$1.ZodNumber;
-    sourceSeqStart: z$1.ZodNumber;
-    startedAt: z$1.ZodNumber;
-    text: z$1.ZodString;
-    threadId: z$1.ZodString;
-    turnId: z$1.ZodNullable<z$1.ZodString>;
-    turnRequest: z$1.ZodNull;
-}, z$1.core.$strip>], "role">;
-type TimelineConversationRow = z$1.infer<typeof timelineConversationRowSchema>;
-declare const timelineSystemRowSchema: z$1.ZodUnion<readonly [z$1.ZodObject<{
-    createdAt: z$1.ZodNumber;
-    detail: z$1.ZodNullable<z$1.ZodString>;
-    id: z$1.ZodString;
-    kind: z$1.ZodLiteral<"system">;
-    sourceSeqEnd: z$1.ZodNumber;
-    sourceSeqStart: z$1.ZodNumber;
-    startedAt: z$1.ZodNumber;
-    status: z$1.ZodNullable<z$1.ZodEnum<{
-        completed: "completed";
-        error: "error";
-        interrupted: "interrupted";
-        pending: "pending";
-    }>>;
-    systemKind: z$1.ZodEnum<{
-        debug: "debug";
-        error: "error";
-        reconnect: "reconnect";
-    }>;
-    threadId: z$1.ZodString;
-    title: z$1.ZodString;
-    turnId: z$1.ZodNullable<z$1.ZodString>;
-}, z$1.core.$strip>, z$1.ZodDiscriminatedUnion<[z$1.ZodObject<{
-    completedAt: z$1.ZodNullable<z$1.ZodNumber>;
-    createdAt: z$1.ZodNumber;
-    detail: z$1.ZodNullable<z$1.ZodString>;
-    id: z$1.ZodString;
-    kind: z$1.ZodLiteral<"system">;
-    operationKind: z$1.ZodEnum<{
-        "context-clear": "context-clear";
-        "provider-unhandled": "provider-unhandled";
-        "thread-interrupted": "thread-interrupted";
-        "thread-provisioning": "thread-provisioning";
-        compaction: "compaction";
-        deprecation: "deprecation";
-        generic: "generic";
-        warning: "warning";
-    }>;
-    sourceSeqEnd: z$1.ZodNumber;
-    sourceSeqStart: z$1.ZodNumber;
-    startedAt: z$1.ZodNumber;
-    status: z$1.ZodNullable<z$1.ZodEnum<{
-        completed: "completed";
-        error: "error";
-        interrupted: "interrupted";
-        pending: "pending";
-    }>>;
-    systemKind: z$1.ZodLiteral<"operation">;
-    threadId: z$1.ZodString;
-    title: z$1.ZodString;
-    turnId: z$1.ZodNullable<z$1.ZodString>;
-}, z$1.core.$strip>, z$1.ZodObject<{
-    completedAt: z$1.ZodNullable<z$1.ZodNumber>;
-    createdAt: z$1.ZodNumber;
-    detail: z$1.ZodNullable<z$1.ZodString>;
-    id: z$1.ZodString;
-    kind: z$1.ZodLiteral<"system">;
-    operationKind: z$1.ZodLiteral<"parent-change">;
-    parentChange: z$1.ZodObject<{
-        action: z$1.ZodEnum<{
-            assign: "assign";
-            release: "release";
-            transfer: "transfer";
-        }>;
-        nextParentThreadId: z$1.ZodNullable<z$1.ZodString>;
-        nextParentThreadTitle: z$1.ZodNullable<z$1.ZodString>;
-        previousParentThreadId: z$1.ZodNullable<z$1.ZodString>;
-        previousParentThreadTitle: z$1.ZodNullable<z$1.ZodString>;
-    }, z$1.core.$strip>;
-    sourceSeqEnd: z$1.ZodNumber;
-    sourceSeqStart: z$1.ZodNumber;
-    startedAt: z$1.ZodNumber;
-    status: z$1.ZodEnum<{
-        completed: "completed";
-        error: "error";
-        interrupted: "interrupted";
-        pending: "pending";
-    }>;
-    systemKind: z$1.ZodLiteral<"operation">;
-    threadId: z$1.ZodString;
-    title: z$1.ZodString;
-    turnId: z$1.ZodNullable<z$1.ZodString>;
-}, z$1.core.$strip>], "operationKind">]>;
-type TimelineSystemRow = z$1.infer<typeof timelineSystemRowSchema>;
-interface TimelineWorkRowBase extends TimelineRowBase {
-    kind: "work";
-    status: TimelineRowStatus;
-}
-declare const timelineCommandWorkRowSchema: z$1.ZodObject<{
-    activityIntents: z$1.ZodArray<z$1.ZodDiscriminatedUnion<[z$1.ZodObject<{
-        command: z$1.ZodString;
-        name: z$1.ZodString;
-        path: z$1.ZodNullable<z$1.ZodString>;
-        type: z$1.ZodLiteral<"read">;
-    }, z$1.core.$strip>, z$1.ZodObject<{
-        command: z$1.ZodString;
-        path: z$1.ZodNullable<z$1.ZodString>;
-        type: z$1.ZodLiteral<"list_files">;
-    }, z$1.core.$strip>, z$1.ZodObject<{
-        command: z$1.ZodString;
-        path: z$1.ZodNullable<z$1.ZodString>;
-        query: z$1.ZodNullable<z$1.ZodString>;
-        type: z$1.ZodLiteral<"search">;
-    }, z$1.core.$strip>, z$1.ZodObject<{
-        command: z$1.ZodString;
-        type: z$1.ZodLiteral<"unknown">;
-    }, z$1.core.$strip>], "type">>;
-    approvalStatus: z$1.ZodNullable<z$1.ZodEnum<{
-        denied: "denied";
-        waiting_for_approval: "waiting_for_approval";
-    }>>;
-    callId: z$1.ZodString;
-    command: z$1.ZodString;
-    completedAt: z$1.ZodNullable<z$1.ZodNumber>;
-    createdAt: z$1.ZodNumber;
-    cwd: z$1.ZodNullable<z$1.ZodString>;
-    exitCode: z$1.ZodNullable<z$1.ZodNumber>;
-    id: z$1.ZodString;
-    kind: z$1.ZodLiteral<"work">;
-    output: z$1.ZodString;
-    outputPreview: z$1.ZodOptional<z$1.ZodObject<{
-        totalChars: z$1.ZodNumber;
-    }, z$1.core.$strip>>;
-    source: z$1.ZodNullable<z$1.ZodString>;
-    sourceSeqEnd: z$1.ZodNumber;
-    sourceSeqStart: z$1.ZodNumber;
-    startedAt: z$1.ZodNumber;
-    status: z$1.ZodEnum<{
-        completed: "completed";
-        error: "error";
-        interrupted: "interrupted";
-        pending: "pending";
-    }>;
-    threadId: z$1.ZodString;
-    turnId: z$1.ZodNullable<z$1.ZodString>;
-    workKind: z$1.ZodLiteral<"command">;
-}, z$1.core.$strip>;
-type TimelineCommandWorkRow = z$1.infer<typeof timelineCommandWorkRowSchema>;
-declare const timelineToolWorkRowSchema: z$1.ZodObject<{
-    activityIntents: z$1.ZodArray<z$1.ZodDiscriminatedUnion<[z$1.ZodObject<{
-        command: z$1.ZodString;
-        name: z$1.ZodString;
-        path: z$1.ZodNullable<z$1.ZodString>;
-        type: z$1.ZodLiteral<"read">;
-    }, z$1.core.$strip>, z$1.ZodObject<{
-        command: z$1.ZodString;
-        path: z$1.ZodNullable<z$1.ZodString>;
-        type: z$1.ZodLiteral<"list_files">;
-    }, z$1.core.$strip>, z$1.ZodObject<{
-        command: z$1.ZodString;
-        path: z$1.ZodNullable<z$1.ZodString>;
-        query: z$1.ZodNullable<z$1.ZodString>;
-        type: z$1.ZodLiteral<"search">;
-    }, z$1.core.$strip>, z$1.ZodObject<{
-        command: z$1.ZodString;
-        type: z$1.ZodLiteral<"unknown">;
-    }, z$1.core.$strip>], "type">>;
-    approvalStatus: z$1.ZodNullable<z$1.ZodEnum<{
-        denied: "denied";
-        waiting_for_approval: "waiting_for_approval";
-    }>>;
-    callId: z$1.ZodString;
-    completedAt: z$1.ZodNullable<z$1.ZodNumber>;
-    createdAt: z$1.ZodNumber;
-    id: z$1.ZodString;
-    kind: z$1.ZodLiteral<"work">;
-    output: z$1.ZodString;
-    outputPreview: z$1.ZodOptional<z$1.ZodObject<{
-        totalChars: z$1.ZodNumber;
-    }, z$1.core.$strip>>;
-    sourceSeqEnd: z$1.ZodNumber;
-    sourceSeqStart: z$1.ZodNumber;
-    startedAt: z$1.ZodNumber;
-    status: z$1.ZodEnum<{
-        completed: "completed";
-        error: "error";
-        interrupted: "interrupted";
-        pending: "pending";
-    }>;
-    statusLabels: z$1.ZodOptional<z$1.ZodObject<{
-        completed: z$1.ZodString;
-        pending: z$1.ZodString;
-    }, z$1.core.$strip>>;
-    threadId: z$1.ZodString;
-    toolArgs: z$1.ZodNullable<z$1.ZodRecord<z$1.ZodString, z$1.ZodType<JsonValue$1, unknown, z$1.core.$ZodTypeInternals<JsonValue$1, unknown>>>>;
-    toolName: z$1.ZodString;
-    turnId: z$1.ZodNullable<z$1.ZodString>;
-    workKind: z$1.ZodLiteral<"tool">;
-}, z$1.core.$strip>;
-type TimelineToolWorkRow = z$1.infer<typeof timelineToolWorkRowSchema>;
-declare const timelineFileChangeWorkRowSchema: z$1.ZodObject<{
-    approvalStatus: z$1.ZodNullable<z$1.ZodEnum<{
-        denied: "denied";
-        waiting_for_approval: "waiting_for_approval";
-    }>>;
-    callId: z$1.ZodString;
-    change: z$1.ZodObject<{
-        diff: z$1.ZodNullable<z$1.ZodString>;
-        diffStats: z$1.ZodObject<{
-            added: z$1.ZodNumber;
-            removed: z$1.ZodNumber;
-        }, z$1.core.$strip>;
-        kind: z$1.ZodNullable<z$1.ZodString>;
-        movePath: z$1.ZodNullable<z$1.ZodString>;
-        path: z$1.ZodString;
-    }, z$1.core.$strip>;
-    createdAt: z$1.ZodNumber;
-    id: z$1.ZodString;
-    kind: z$1.ZodLiteral<"work">;
-    sourceSeqEnd: z$1.ZodNumber;
-    sourceSeqStart: z$1.ZodNumber;
-    startedAt: z$1.ZodNumber;
-    status: z$1.ZodEnum<{
-        completed: "completed";
-        error: "error";
-        interrupted: "interrupted";
-        pending: "pending";
-    }>;
-    stderr: z$1.ZodNullable<z$1.ZodString>;
-    stdout: z$1.ZodNullable<z$1.ZodString>;
-    threadId: z$1.ZodString;
-    turnId: z$1.ZodNullable<z$1.ZodString>;
-    workKind: z$1.ZodLiteral<"file-change">;
-}, z$1.core.$strip>;
-type TimelineFileChangeWorkRow = z$1.infer<typeof timelineFileChangeWorkRowSchema>;
-declare const timelineWebSearchWorkRowSchema: z$1.ZodObject<{
-    callId: z$1.ZodString;
-    completedAt: z$1.ZodNullable<z$1.ZodNumber>;
-    createdAt: z$1.ZodNumber;
-    id: z$1.ZodString;
-    kind: z$1.ZodLiteral<"work">;
-    queries: z$1.ZodArray<z$1.ZodString>;
-    sourceSeqEnd: z$1.ZodNumber;
-    sourceSeqStart: z$1.ZodNumber;
-    startedAt: z$1.ZodNumber;
-    status: z$1.ZodEnum<{
-        completed: "completed";
-        error: "error";
-        interrupted: "interrupted";
-        pending: "pending";
-    }>;
-    threadId: z$1.ZodString;
-    turnId: z$1.ZodNullable<z$1.ZodString>;
-    workKind: z$1.ZodLiteral<"web-search">;
-}, z$1.core.$strip>;
-type TimelineWebSearchWorkRow = z$1.infer<typeof timelineWebSearchWorkRowSchema>;
-declare const timelineWebFetchWorkRowSchema: z$1.ZodObject<{
-    callId: z$1.ZodString;
-    completedAt: z$1.ZodNullable<z$1.ZodNumber>;
-    createdAt: z$1.ZodNumber;
-    id: z$1.ZodString;
-    kind: z$1.ZodLiteral<"work">;
-    pattern: z$1.ZodNullable<z$1.ZodString>;
-    prompt: z$1.ZodNullable<z$1.ZodString>;
-    sourceSeqEnd: z$1.ZodNumber;
-    sourceSeqStart: z$1.ZodNumber;
-    startedAt: z$1.ZodNumber;
-    status: z$1.ZodEnum<{
-        completed: "completed";
-        error: "error";
-        interrupted: "interrupted";
-        pending: "pending";
-    }>;
-    threadId: z$1.ZodString;
-    turnId: z$1.ZodNullable<z$1.ZodString>;
-    url: z$1.ZodString;
-    workKind: z$1.ZodLiteral<"web-fetch">;
-}, z$1.core.$strip>;
-type TimelineWebFetchWorkRow = z$1.infer<typeof timelineWebFetchWorkRowSchema>;
-declare const timelineImageViewWorkRowSchema: z$1.ZodObject<{
-    callId: z$1.ZodString;
-    completedAt: z$1.ZodNullable<z$1.ZodNumber>;
-    createdAt: z$1.ZodNumber;
-    id: z$1.ZodString;
-    kind: z$1.ZodLiteral<"work">;
-    path: z$1.ZodString;
-    sourceSeqEnd: z$1.ZodNumber;
-    sourceSeqStart: z$1.ZodNumber;
-    startedAt: z$1.ZodNumber;
-    status: z$1.ZodEnum<{
-        completed: "completed";
-        error: "error";
-        interrupted: "interrupted";
-        pending: "pending";
-    }>;
-    threadId: z$1.ZodString;
-    turnId: z$1.ZodNullable<z$1.ZodString>;
-    workKind: z$1.ZodLiteral<"image-view">;
-}, z$1.core.$strip>;
-type TimelineImageViewWorkRow = z$1.infer<typeof timelineImageViewWorkRowSchema>;
-declare const timelineApprovalWorkRowSchema: z$1.ZodDiscriminatedUnion<[z$1.ZodObject<{
-    approvalKind: z$1.ZodLiteral<"file-edit">;
-    createdAt: z$1.ZodNumber;
-    id: z$1.ZodString;
-    interactionId: z$1.ZodString;
-    kind: z$1.ZodLiteral<"work">;
-    lifecycle: z$1.ZodEnum<{
-        denied: "denied";
-        waiting: "waiting";
-    }>;
-    sourceSeqEnd: z$1.ZodNumber;
-    sourceSeqStart: z$1.ZodNumber;
-    startedAt: z$1.ZodNumber;
-    status: z$1.ZodEnum<{
-        completed: "completed";
-        error: "error";
-        interrupted: "interrupted";
-        pending: "pending";
-    }>;
-    target: z$1.ZodObject<{
-        itemId: z$1.ZodString;
-        toolName: z$1.ZodNullable<z$1.ZodString>;
-    }, z$1.core.$strip>;
-    threadId: z$1.ZodString;
-    turnId: z$1.ZodNullable<z$1.ZodString>;
-    workKind: z$1.ZodLiteral<"approval">;
-}, z$1.core.$strip>, z$1.ZodObject<{
-    approvalKind: z$1.ZodLiteral<"permission-grant">;
-    createdAt: z$1.ZodNumber;
-    grantScope: z$1.ZodNullable<z$1.ZodEnum<{
-        session: "session";
-        turn: "turn";
-    }>>;
-    id: z$1.ZodString;
-    interactionId: z$1.ZodString;
-    kind: z$1.ZodLiteral<"work">;
-    lifecycle: z$1.ZodEnum<{
-        denied: "denied";
-        granted: "granted";
-        interrupted: "interrupted";
-        pending: "pending";
-        resolving: "resolving";
-    }>;
-    sourceSeqEnd: z$1.ZodNumber;
-    sourceSeqStart: z$1.ZodNumber;
-    startedAt: z$1.ZodNumber;
-    status: z$1.ZodEnum<{
-        completed: "completed";
-        error: "error";
-        interrupted: "interrupted";
-        pending: "pending";
-    }>;
-    statusReason: z$1.ZodNullable<z$1.ZodString>;
-    target: z$1.ZodObject<{
-        itemId: z$1.ZodString;
-        toolName: z$1.ZodNullable<z$1.ZodString>;
-    }, z$1.core.$strip>;
-    threadId: z$1.ZodString;
-    turnId: z$1.ZodNullable<z$1.ZodString>;
-    workKind: z$1.ZodLiteral<"approval">;
-}, z$1.core.$strip>], "approvalKind">;
-type TimelineApprovalWorkRow = z$1.infer<typeof timelineApprovalWorkRowSchema>;
-declare const timelineQuestionWorkRowSchema: z$1.ZodObject<{
-    answers: z$1.ZodNullable<z$1.ZodRecord<z$1.ZodString, z$1.ZodObject<{
-        freeText: z$1.ZodOptional<z$1.ZodString>;
-        selected: z$1.ZodArray<z$1.ZodString>;
-    }, z$1.core.$strip>>>;
-    createdAt: z$1.ZodNumber;
-    id: z$1.ZodString;
-    interactionId: z$1.ZodString;
-    kind: z$1.ZodLiteral<"work">;
-    lifecycle: z$1.ZodEnum<{
-        answered: "answered";
-        interrupted: "interrupted";
-        pending: "pending";
-        resolving: "resolving";
-    }>;
-    questions: z$1.ZodArray<z$1.ZodObject<{
-        allowFreeText: z$1.ZodBoolean;
-        id: z$1.ZodString;
-        multiSelect: z$1.ZodBoolean;
-        options: z$1.ZodOptional<z$1.ZodArray<z$1.ZodObject<{
-            description: z$1.ZodOptional<z$1.ZodString>;
-            label: z$1.ZodString;
-            value: z$1.ZodString;
-        }, z$1.core.$strip>>>;
-        prompt: z$1.ZodString;
-        shortLabel: z$1.ZodOptional<z$1.ZodString>;
-    }, z$1.core.$strip>>;
-    sourceSeqEnd: z$1.ZodNumber;
-    sourceSeqStart: z$1.ZodNumber;
-    startedAt: z$1.ZodNumber;
-    status: z$1.ZodEnum<{
-        completed: "completed";
-        error: "error";
-        interrupted: "interrupted";
-        pending: "pending";
-    }>;
-    statusReason: z$1.ZodNullable<z$1.ZodString>;
-    threadId: z$1.ZodString;
-    turnId: z$1.ZodNullable<z$1.ZodString>;
-    workKind: z$1.ZodLiteral<"question">;
-}, z$1.core.$strip>;
-type TimelineQuestionWorkRow = z$1.infer<typeof timelineQuestionWorkRowSchema>;
-interface TimelineDelegationWorkRow extends TimelineWorkRowBase {
-    workKind: "delegation";
-    callId: string;
-    toolName: string;
-    subagentType: string | null;
-    description: string | null;
-    output: string;
-    completedAt: number | null;
-    childRows: TimelineRow[];
-}
-/**
- * A provider background task — a dynamic workflow (Claude Code Workflow tool)
- * or a backgrounded shell command (Bash run_in_background), discriminated by
- * `taskType`. The row outlives its spawning turn: progress and terminal state
- * arrive via thread-scoped events folded into this single row. `workflow` is
- * the merged phase/agent tree, present only for workflows; null for shell
- * commands and for workflows the provider reported no progress records for
- * (degraded rendering falls back to description + summary). `model` is the
- * spawning delegation's requested model for background agents; null for
- * commands, workflows, legacy events, and providers that do not expose it.
- */
-declare const timelineWorkflowWorkRowSchema: z$1.ZodObject<{
-    completedAt: z$1.ZodNullable<z$1.ZodNumber>;
-    createdAt: z$1.ZodNumber;
-    description: z$1.ZodString;
-    error: z$1.ZodNullable<z$1.ZodString>;
-    id: z$1.ZodString;
-    itemId: z$1.ZodString;
-    kind: z$1.ZodLiteral<"work">;
-    model: z$1.ZodNullable<z$1.ZodString>;
-    sourceSeqEnd: z$1.ZodNumber;
-    sourceSeqStart: z$1.ZodNumber;
-    startedAt: z$1.ZodNumber;
-    status: z$1.ZodEnum<{
-        completed: "completed";
-        error: "error";
-        interrupted: "interrupted";
-        pending: "pending";
-    }>;
-    summary: z$1.ZodNullable<z$1.ZodString>;
-    taskStatus: z$1.ZodEnum<{
-        completed: "completed";
-        failed: "failed";
-        killed: "killed";
-        paused: "paused";
-        pending: "pending";
-        running: "running";
-        stopped: "stopped";
-    }>;
-    taskType: z$1.ZodString;
-    threadId: z$1.ZodString;
-    turnId: z$1.ZodNullable<z$1.ZodString>;
-    usage: z$1.ZodNullable<z$1.ZodObject<{
-        durationMs: z$1.ZodNumber;
-        toolUses: z$1.ZodNumber;
-        totalTokens: z$1.ZodNumber;
-    }, z$1.core.$strip>>;
-    workKind: z$1.ZodLiteral<"workflow">;
-    workflow: z$1.ZodNullable<z$1.ZodObject<{
-        agents: z$1.ZodArray<z$1.ZodObject<{
-            agentType: z$1.ZodOptional<z$1.ZodString>;
-            attempt: z$1.ZodNumber;
-            cached: z$1.ZodBoolean;
-            durationMs: z$1.ZodOptional<z$1.ZodNumber>;
-            error: z$1.ZodOptional<z$1.ZodString>;
-            index: z$1.ZodNumber;
-            isolation: z$1.ZodOptional<z$1.ZodString>;
-            label: z$1.ZodString;
-            lastProgressAt: z$1.ZodNumber;
-            lastToolName: z$1.ZodOptional<z$1.ZodString>;
-            lastToolSummary: z$1.ZodOptional<z$1.ZodString>;
-            model: z$1.ZodString;
-            phaseIndex: z$1.ZodOptional<z$1.ZodNumber>;
-            phaseTitle: z$1.ZodOptional<z$1.ZodString>;
-            promptPreview: z$1.ZodOptional<z$1.ZodString>;
-            queuedAt: z$1.ZodOptional<z$1.ZodNumber>;
-            resultPreview: z$1.ZodOptional<z$1.ZodString>;
-            startedAt: z$1.ZodOptional<z$1.ZodNumber>;
-            state: z$1.ZodEnum<{
-                done: "done";
-                failed: "failed";
-                queued: "queued";
-                running: "running";
-                skipped: "skipped";
-            }>;
-            tokens: z$1.ZodOptional<z$1.ZodNumber>;
-            toolCalls: z$1.ZodOptional<z$1.ZodNumber>;
-        }, z$1.core.$strip>>;
-        phases: z$1.ZodArray<z$1.ZodObject<{
-            index: z$1.ZodNumber;
-            kind: z$1.ZodOptional<z$1.ZodString>;
-            title: z$1.ZodString;
-        }, z$1.core.$strip>>;
-    }, z$1.core.$strip>>;
-    workflowName: z$1.ZodNullable<z$1.ZodString>;
-}, z$1.core.$strip>;
-type TimelineWorkflowWorkRow = z$1.infer<typeof timelineWorkflowWorkRowSchema>;
-type TimelineWorkRow = TimelineCommandWorkRow | TimelineToolWorkRow | TimelineFileChangeWorkRow | TimelineWebSearchWorkRow | TimelineWebFetchWorkRow | TimelineImageViewWorkRow | TimelineApprovalWorkRow | TimelineQuestionWorkRow | TimelineDelegationWorkRow | TimelineWorkflowWorkRow;
-interface TimelineTurnRow extends TimelineRowBase {
-    kind: "turn";
-    turnId: string;
-    status: TimelineRowStatus;
-    summaryCount: number;
-    completedAt: number | null;
-    children: TimelineRow[] | null;
-}
-type TimelineSourceRow = TimelineConversationRow | TimelineWorkRow | TimelineSystemRow;
-type TimelineRow = TimelineSourceRow | TimelineTurnRow;
-
 declare const createExecutionInputSourcesSchema: z$1.ZodObject<{
     model: z$1.ZodOptional<z$1.ZodEnum<{
         "client-preference": "client-preference";
@@ -13819,6 +14334,18 @@ interface ProjectsArea {
     updatePromptStacks(args: P6rProjectPromptStacksUpdateArgs): Promise<P6rProjectPromptStacksResult>;
 }
 
+interface RecoverySnapshotArgs extends RecoverySnapshotRequest {
+    signal?: AbortSignal;
+}
+type RecoverySnapshotResult = RecoverySnapshotResponse;
+interface RecoveryArea {
+    /**
+     * Read a bounded cache bootstrap. Overall `partial` is intentional until
+     * BB can issue one revision spanning sidebar metadata and thread timelines.
+     */
+    snapshot(args: RecoverySnapshotArgs): Promise<RecoverySnapshotResult>;
+}
+
 /** Select exactly one provider-discovery host source, or omit both for primary. */
 type ProviderHostRoutingArgs = {
     environmentId: string;
@@ -14786,6 +15313,7 @@ interface BbSdkAreas extends BbRealtime {
     p6rMembers: P6rMembersArea;
     p6rPresence: P6rPresenceArea;
     projects: ProjectsArea;
+    recovery: RecoveryArea;
     plugins: PluginsArea;
     providers: ProvidersArea;
     skills: SkillsArea;
