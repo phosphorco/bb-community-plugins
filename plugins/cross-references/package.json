@@ -1,0 +1,81 @@
+{
+  "name": "@phosphorco/bb-plugin-cross-references",
+  "version": "0.1.0",
+  "type": "module",
+  "license": "MIT",
+  "description": "Create and discover deployment-local exact references between BB resources.",
+  "author": "Phosphor",
+  "homepage": "https://github.com/phosphorco/bb-community-plugins/tree/main/plugins/cross-references#readme",
+  "bugs": {
+    "url": "https://github.com/phosphorco/bb-community-plugins/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/phosphorco/bb-community-plugins.git",
+    "directory": "plugins/cross-references"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org"
+  },
+  "keywords": [
+    "bb",
+    "bb-plugin",
+    "cross-references",
+    "backlinks",
+    "links",
+    "resources"
+  ],
+  "engines": {
+    "bb": ">=0.39.0 <1.0.0",
+    "bbPluginSdk": ">=0.4.15"
+  },
+  "bb": {
+    "name": "Cross References",
+    "description": "Create and discover deployment-local exact references between BB resources.",
+    "branding": {
+      "icon": "Link"
+    },
+    "server": "./server.ts",
+    "app": "./app.tsx",
+    "skills": []
+  },
+  "files": [
+    "dist/",
+    "README.md",
+    "ARCHITECTURE.md",
+    "IMPLEMENTATION.md",
+    "LICENSE",
+    "server.ts",
+    "app.tsx",
+    "app.css",
+    "canonical.ts",
+    "model.ts",
+    "rpc-contract.ts",
+    "store.ts",
+    "test/"
+  ],
+  "dependencies": {
+    "zod": "4.3.6"
+  },
+  "devDependencies": {
+    "@get-bb/plugin-sdk": "0.4.15",
+    "@testing-library/dom": "^10.4.0",
+    "@testing-library/react": "^16.3.2",
+    "@types/better-sqlite3": "^7.6.12",
+    "@types/node": "^22",
+    "@types/react": "19.2.2",
+    "@types/react-dom": "19.2.2",
+    "better-sqlite3": "^12.0.0",
+    "react": "19.2.1",
+    "react-dom": "19.2.1",
+    "typescript": "^5.9.3",
+    "jsdom": "^26.1.0",
+    "vitest": "^4.1.1"
+  },
+  "scripts": {
+    "build": "bb plugin build .",
+    "test": "node --test --experimental-strip-types test/*.test.ts && vitest run test/*.test.tsx",
+    "typecheck": "tsc --noEmit"
+  }
+}
