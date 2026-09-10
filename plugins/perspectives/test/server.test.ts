@@ -56,6 +56,12 @@ describe("plugin registration", () => {
     ]);
 
     const help = tools.find((tool) => tool.name === "help")!;
+    expect((help as any).presentation).toEqual({
+      label: {
+        pending: "Consulting an expert helper",
+        completed: "Consulted an expert helper",
+      },
+    });
     expect((help as any).instructions).toContain("only the returned expert-consultation thread");
     expect((help as any).instructions).toContain("do not enumerate planner or pipeline threads");
     expect((help as any).instructions).toContain("cites primary evidence");
@@ -63,6 +69,12 @@ describe("plugin registration", () => {
     expect(help.parameters.safeParse({ prompt: "You are an expert." }).success).toBe(false);
 
     const gather = tools.find((tool) => tool.name === "gather_perspectives")! as any;
+    expect(gather.presentation).toEqual({
+      label: {
+        pending: "Launching an expert perspective panel",
+        completed: "Launched an expert perspective panel",
+      },
+    });
     const gatherJsonSchema = z.toJSONSchema(gather.parameters) as any;
     expect(gather.description).toContain("v8 performance characteristics");
     expect(gather.description).toContain("leverages platform native UX");
@@ -92,6 +104,14 @@ describe("plugin registration", () => {
       question: "Where is the work?",
       lenses: ["v8 performance characteristics", "big-O complexity", "duplicate work"],
     }).success).toBe(true);
+    expect(gather.parameters.safeParse({
+      question: "Where is the work?",
+      lenses: ["correctness", "operability"],
+    }).success).toBe(true);
+    expect(gather.parameters.safeParse({
+      question: "Where is the work?",
+      lenses: ["correctness"],
+    }).success).toBe(false);
     expect(gather.parameters.safeParse({ question: "Where is the work?", perspectives: 3 }).success).toBe(false);
     expect(gather.parameters.safeParse({
       question: "Where is the work?",

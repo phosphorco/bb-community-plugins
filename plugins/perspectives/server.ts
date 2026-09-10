@@ -23,7 +23,7 @@ function formatLensExample(lenses: readonly string[]): string {
 
 const LENSES_EXAMPLE_TEXT = `For example: ${LENS_EXAMPLES.map(formatLensExample).join(" or ")}.`;
 
-const lensesSchema = z.array(z.string().trim().min(1).max(120)).min(3).max(7).superRefine((lenses, context) => {
+const lensesSchema = z.array(z.string().trim().min(1).max(120)).min(2).max(7).superRefine((lenses, context) => {
   const seen = new Set<string>();
   for (const [index, lens] of lenses.entries()) {
     const key = lens.toLocaleLowerCase();
@@ -153,9 +153,11 @@ export default function plugin(bb: BbPluginApi): void {
     name: "help",
     description: "Ask one independently generated, question-specific expert for a concise, source-cited read-only answer.",
     instructions: "Use help when one independent expert can clarify a question or chart the work ahead. Supply only the question, relevant facts, and constraints; the tool generates the expert identity and prompt in a separate context. The expert cites primary evidence for material factual claims and distinguishes sourced facts from analysis. Answer with the expert result. If retaining an inspectable reference, use only the returned expert-consultation thread; do not enumerate planner or pipeline threads.",
-    experimental_statusLabels: {
-      pending: "Consulting an expert helper",
-      completed: "Consulted an expert helper",
+    presentation: {
+      label: {
+        pending: "Consulting an expert helper",
+        completed: "Consulted an expert helper",
+      },
     },
     parameters: z.object({
       question: z.string().trim().min(1),
@@ -173,10 +175,12 @@ export default function plugin(bb: BbPluginApi): void {
   bb.agents.registerTool({
     name: "gather_perspectives",
     description: `Launch a background expert panel for caller-supplied lenses and return immediately. ${LENSES_EXAMPLE_TEXT} The panel gathers source-cited read-only perspectives concurrently, asks unfinished workers to wrap up after ~20 minutes, hard-caps the run at 25 minutes, and delivers the synthesized result to this thread as a later message beginning "Perspectives panel result".`,
-    instructions: `Use gather_perspectives for consequential questions where specific independent lenses can reveal tradeoffs or disagreement. Supply the question, relevant facts, and constraints, and 3-7 short lens names. ${LENSES_EXAMPLE_TEXT} The tool generates each expert identity and prompt in a separate context and returns a launch receipt immediately; the panel keeps working in the background. Do not wait, poll, or re-invoke the tool for the result: continue with other work or end the turn, telling the user the panel is running. The synthesized result arrives in this thread as a later message beginning "Perspectives panel result"; when it arrives, answer with it. Each perspective cites primary evidence for material factual claims; synthesis preserves those citations and flags unsupported inferences. If retaining an inspectable reference, use only the final-synthesis thread named in the result; do not enumerate planner, worker, or pipeline threads.`,
-    experimental_statusLabels: {
-      pending: "Launching an expert perspective panel",
-      completed: "Launched an expert perspective panel",
+    instructions: `Use gather_perspectives for consequential questions where specific independent lenses can reveal tradeoffs or disagreement. Supply the question, relevant facts, and constraints, and 2-7 short lens names. ${LENSES_EXAMPLE_TEXT} The tool generates each expert identity and prompt in a separate context and returns a launch receipt immediately; the panel keeps working in the background. Do not wait, poll, or re-invoke the tool for the result: continue with other work or end the turn, telling the user the panel is running. The synthesized result arrives in this thread as a later message beginning "Perspectives panel result"; when it arrives, answer with it. Each perspective cites primary evidence for material factual claims; synthesis preserves those citations and flags unsupported inferences. If retaining an inspectable reference, use only the final-synthesis thread named in the result; do not enumerate planner, worker, or pipeline threads.`,
+    presentation: {
+      label: {
+        pending: "Launching an expert perspective panel",
+        completed: "Launched an expert perspective panel",
+      },
     },
     parameters: z.object({
       question: z.string().trim().min(1),
