@@ -5,6 +5,9 @@ import { createCache } from "./cache.ts";
 import { attachRequestTimes } from "./request-times.ts";
 import type { Stamp } from "./timing.ts";
 
+// BB's thread-events endpoint permits at most 100 events per request.
+const EVENT_PAGE_LIMIT = "100";
+
 export default function plugin(bb: BbPluginApi) {
   const cache = createCache(load);
   // Retain timing metadata, never expanded message/tool content. A cheap head
@@ -37,10 +40,10 @@ export default function plugin(bb: BbPluginApi) {
       if (!truncated || !cursor) break;
     }
     const firstSeq = rows.reduce((seq, row) => Math.min(seq, row.sourceSeqStart), maxSeq);
-    const events = await bb.sdk.threads.events.list({ threadId, types: ["turn/completed"], order: "desc", limit: "1000",
+    const events = await bb.sdk.threads.events.list({ threadId, types: ["turn/completed"], order: "desc", limit: EVENT_PAGE_LIMIT,
         afterSeq: String(Math.max(0, firstSeq - 1)), beforeSeq: String(maxSeq + 1) });
     const requests = await bb.sdk.threads.events.list({ threadId, types: ["client/turn/requested", "turn/input/accepted"],
-      order: "desc", limit: "1000", beforeSeq: String(maxSeq + 1) });
+      order: "desc", limit: EVENT_PAGE_LIMIT, beforeSeq: String(maxSeq + 1) });
     attachRequestTimes(rows, requests.filter(event => event.type === "client/turn/requested" || event.type === "turn/input/accepted"));
     const completions = events.flatMap(event => event.type === "turn/completed" && event.scope.kind === "turn"
       ? [{ turnId: event.scope.turnId, seq: event.seq, at: event.createdAt, status: event.data.status }] : []);
@@ -50,7 +53,7 @@ export default function plugin(bb: BbPluginApi) {
     const oldest = rows.reduce<TimingRow | null>((prior, row) => !prior || row.sourceSeqStart < prior.sourceSeqStart ? row : prior, null);
     const result = { stamps: projectTiming(threadId, rows, completions), coveredIds,
       historyStartId: truncated ? oldest?.id ?? null : null,
-      truncated: truncated || events.length >= 1000 || requests.length >= 1000 };
+      truncated: truncated || events.length >= Number(EVENT_PAGE_LIMIT) || requests.length >= Number(EVENT_PAGE_LIMIT) };
     history.delete(threadId);
     history.set(threadId, { maxSeq, result });
     if (history.size > 32) history.delete(history.keys().next().value!);

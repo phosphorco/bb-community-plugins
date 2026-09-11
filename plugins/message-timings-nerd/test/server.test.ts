@@ -4,7 +4,7 @@ import { createFakePluginHost, makeThreadResponse } from "@get-bb/plugin-sdk/tes
 import plugin from "../server.ts";
 import type { Stamp } from "../timing.ts";
 
-test("RPC caps timeline pages and completion history, and exposes incomplete coverage", async () => {
+test("RPC respects the event-page ceiling and exposes incomplete coverage", async () => {
   let pages = 0;
   const { bb, harness } = createFakePluginHost({ sdk: { threads: {
     timeline: () => {
@@ -12,9 +12,9 @@ test("RPC caps timeline pages and completion history, and exposes incomplete cov
       return { rows: [], maxSeq: 5000, timelinePage: { hasOlderRows: true, olderCursor: { anchorSeq: 5000 - pages, anchorId: `anchor${pages}` } } };
     },
     events: { list: ({ types, beforeSeq, limit }) => {
-      assert.equal(beforeSeq, "5001"); assert.equal(limit, "1000");
+      assert.equal(beforeSeq, "5001"); assert.equal(limit, "100");
       if (types?.[0] !== "turn/completed") return [];
-      return Array.from({ length: 1000 }, (_, i) => ({ type: "turn/completed", scope: { kind: "turn", turnId: `turn${i}` }, seq: i + 1, createdAt: i, data: { status: "completed" } }));
+      return Array.from({ length: 100 }, (_, i) => ({ type: "turn/completed", scope: { kind: "turn", turnId: `turn${i}` }, seq: i + 1, createdAt: i, data: { status: "completed" } }));
     } },
   } } });
   plugin(bb);

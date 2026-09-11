@@ -5,7 +5,7 @@ export function createExtractionFixture() {
     threads,
     events: Object.fromEntries(threads.map((id) => [id, [{ sequence: 1, value: `${id}-v1` }]])),
     pageSize: 200,
-    eventPageSize: 500,
+    eventPageSize: 100,
     clock: 1_700_086_400_000,
     coverage: {
       mode: "partial-retained-projection",
@@ -35,7 +35,7 @@ export const referenceFixture = Object.freeze({
 export function createStoredExecutionRecordFixture() {
   const r = "a".repeat(64), range = { startInclusiveMs: 1700000000000, endExclusiveMs: 1700086400000 };
   const scope = { scopeKey: "analytics-scope_abcdefghijklmnop", projection: "tool_execution_fact_v1", storage: "plugin-owned-sqlite" };
-  const coverage = { coverageRevision: 1, retention: { startInclusiveMs: 1692224000000, earliestVerifiedRetainedInclusiveMs: range.startInclusiveMs, endExclusiveMs: range.endExclusiveMs, policyDays: 90 }, observed: { earliestFactMs: range.startInclusiveMs, latestFactMs: range.startInclusiveMs, asOfMs: range.endExclusiveMs, projectionGeneration: 7, projectionRevision: r }, population: { candidateThreads: 200, selectedThreads: 80, loadedThreads: 80, retainedFacts: 1, cappedThreads: 0, listPages: 2, eventPages: 80, eventBytes: 100, safeFailureCount: 0, lastSafeFailureAtMs: null, candidateThreadLimit: 200, threadPageLimit: 200, eventPageLimit: 500, maxEventsPerThread: 500, maxEventBytes: 1000 }, mode: "partial-retained-projection", incompleteReasons: ["backfill-in-progress"], backfill: { state: "partial", direction: "newest-to-oldest", completeRange: null, resumable: true }, reconciliation: { observedAsOfMs: range.endExclusiveMs, lastFullReconciliationAtMs: null, deletionConfirmation: "pending-retry", sourceSemantics: "eventually-reconciled-observed-as-of" }, degraded: false };
+  const coverage = { coverageRevision: 1, retention: { startInclusiveMs: 1692224000000, earliestVerifiedRetainedInclusiveMs: range.startInclusiveMs, endExclusiveMs: range.endExclusiveMs, policyDays: 90 }, observed: { earliestFactMs: range.startInclusiveMs, latestFactMs: range.startInclusiveMs, asOfMs: range.endExclusiveMs, projectionGeneration: 7, projectionRevision: r }, population: { candidateThreads: 200, selectedThreads: 80, loadedThreads: 80, retainedFacts: 1, cappedThreads: 0, listPages: 2, eventPages: 80, eventBytes: 100, safeFailureCount: 0, lastSafeFailureAtMs: null, candidateThreadLimit: 200, threadPageLimit: 200, eventPageLimit: 100, maxEventsPerThread: 500, maxEventBytes: 1000 }, mode: "partial-retained-projection", incompleteReasons: ["backfill-in-progress"], backfill: { state: "partial", direction: "newest-to-oldest", completeRange: null, resumable: true }, reconciliation: { observedAsOfMs: range.endExclusiveMs, lastFullReconciliationAtMs: null, deletionConfirmation: "pending-retry", sourceSemantics: "eventually-reconciled-observed-as-of" }, degraded: false };
   const snapshot = { version: 2, snapshotId: "analytics-snapshot_abcdefghijklmnop", sourceScope: scope, frozenRange: range, capturedAtMs: range.endExclusiveMs, coverage };
   const parameters = [{ name: "range_days", logicalType: "integer", value: 1 }];
   // Synthetic historical fixture digests for exact SQL and canonical sorted

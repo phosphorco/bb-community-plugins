@@ -27,7 +27,10 @@ import {
 
 const INDEX_THREAD_CANDIDATE_LIMIT = 200;
 const INDEX_THREAD_LIMIT = 80;
-const EVENTS_PER_THREAD_LIMIT = 500;
+/** BB's public thread-events endpoint permits at most this many per request. */
+export const EVENT_PAGE_SIZE = 100;
+/** Analytics intentionally retains a newest-first window of this size per thread. */
+export const EVENTS_PER_THREAD_LIMIT = 500;
 const INDEX_CONCURRENCY = 4;
 const FULL_RECONCILIATION_INTERVAL_MS = 24 * 60 * 60_000;
 const DEFAULT_MAX_AGE_MS = DEFAULT_LOADER_MAX_AGE_MS;
@@ -38,6 +41,43 @@ const DUCKDB_EH_WASM_PATH = require.resolve("@duckdb/duckdb-wasm/dist/duckdb-eh.
 const DUCKDB_EH_WORKER_PATH = require.resolve("@duckdb/duckdb-wasm/dist/duckdb-browser-eh.worker.js");
 
 type ListedThread = Awaited<ReturnType<BbPluginApi["sdk"]["threads"]["list"]>>[number];
+type ThreadEvent = Awaited<ReturnType<BbPluginApi["sdk"]["threads"]["events"]["list"]>>[number];
+
+const ANALYTICS_EVENT_TYPES = ["item/completed", "turn/started", "turn/completed"] as const;
+
+/**
+ * Read Analytics' bounded newest-first window without exceeding BB's per-call
+ * API ceiling. `beforeSeq` is exclusive, so carrying the lowest observed
+ * sequence into the next descending page neither skips nor duplicates events.
+ */
+export async function listRecentThreadEvents(
+  events: Pick<BbPluginApi["sdk"]["threads"]["events"], "list">,
+  input: { threadId: string; signal: AbortSignal },
+): Promise<ThreadEvent[]> {
+  const collected: ThreadEvent[] = [];
+  let beforeSeq: string | undefined;
+
+  while (collected.length < EVENTS_PER_THREAD_LIMIT) {
+    const page = await events.list({
+      threadId: input.threadId,
+      types: ANALYTICS_EVENT_TYPES,
+      order: "desc",
+      limit: String(EVENT_PAGE_SIZE),
+      ...(beforeSeq === undefined ? {} : { beforeSeq }),
+      signal: input.signal,
+    });
+    collected.push(...page);
+    if (page.length < EVENT_PAGE_SIZE) break;
+    const lowestSeq = page.reduce<number | null>(
+      (lowest, event) => lowest == null ? event.seq : Math.min(lowest, event.seq),
+      null,
+    );
+    if (lowestSeq == null) break;
+    beforeSeq = String(lowestSeq);
+  }
+
+  return collected;
+}
 
 function errorText(cause: unknown): string {
   return cause instanceof Error ? cause.message : String(cause);
@@ -196,13 +236,10 @@ export default function analyticsPlugin(bb: BbPluginApi) {
       for (let offset = 0; offset < pending.length && !signal.aborted; offset += INDEX_CONCURRENCY) {
         const batch = pending.slice(offset, offset + INDEX_CONCURRENCY);
         const fetchStartedAt = performance.now();
-        const results = await Promise.allSettled(batch.map((thread) => bb.sdk.threads.events.list({
-          threadId: thread.id,
-          types: ["item/completed", "turn/started", "turn/completed"],
-          order: "desc",
-          limit: String(EVENTS_PER_THREAD_LIMIT),
-          signal,
-        })));
+        const results = await Promise.allSettled(batch.map((thread) => listRecentThreadEvents(
+          bb.sdk.threads.events,
+          { threadId: thread.id, signal },
+        )));
         eventFetchMs += performance.now() - fetchStartedAt;
         const projectionStartedAt = performance.now();
         for (let index = 0; index < results.length; index += 1) {

@@ -33,8 +33,10 @@ export interface RetainedSourceLimits {
  */
 export const RETAINED_SOURCE_POLICY_MAXIMA: Readonly<RetainedSourceLimits> = Object.freeze({
   listPageSize: 200,
-  eventPageSize: 500,
-  maxCalls: 64,
+  // BB's public thread-events endpoint permits at most 100 events per request.
+  eventPageSize: 100,
+  // Preserve the prior 32,000-event call budget across 100-event pages.
+  maxCalls: 320,
   maxListPages: 64,
   maxEventPages: 512,
   maxRows: 50_000,

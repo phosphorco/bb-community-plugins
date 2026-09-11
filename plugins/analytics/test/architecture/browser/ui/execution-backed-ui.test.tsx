@@ -75,7 +75,7 @@ function coverage(capturedAtMs: number, projectionGeneration: number) {
       lastSafeFailureAtMs: null,
       candidateThreadLimit: 200,
       threadPageLimit: 200,
-      eventPageLimit: 500,
+      eventPageLimit: 100,
       maxEventsPerThread: 500,
       maxEventBytes: 1_000,
     },

@@ -284,8 +284,9 @@ export async function runProbe({ workspaceRoot = DEFAULT_WORKSPACE_ROOT } = {}) 
       "current-analytics-caps",
       has(source.analyticsServer.text, /INDEX_THREAD_CANDIDATE_LIMIT = 200/)
         && has(source.analyticsServer.text, /INDEX_THREAD_LIMIT = 80/)
+        && has(source.analyticsServer.text, /EVENT_PAGE_SIZE = 100/)
         && has(source.analyticsServer.text, /EVENTS_PER_THREAD_LIMIT = 500/),
-      "The current Analytics implementation remains bounded at 200 candidates, 80 selected threads, and 500 events per selected thread.",
+      "The current Analytics implementation remains bounded at 200 candidates, 80 selected threads, 100 events per API page, and 500 events per selected thread.",
     );
     check(
       "thread-change-invalidation-kinds",
