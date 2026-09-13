@@ -50,6 +50,7 @@
     "app.tsx",
     "app.css",
     "canonical.ts",
+    "link-status.ts",
     "model.ts",
     "rpc-contract.ts",
     "store.ts",

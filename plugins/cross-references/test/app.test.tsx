@@ -44,6 +44,7 @@ test("the References header presents directed forward references and backlinks i
       rpc: {
         listForwardReferences: () => ({ rows: [forwardRow()], total: 1, nextCursor: null }),
         listBacklinks: () => ({ rows: [backlinkRow()], total: 1, nextCursor: null }),
+        checkForwardReferences: () => ([{ url: "/projects/proj_target01/threads/thr_target01", status: null, label: "BB link · Not checked" }]),
       },
       openUrl: () => true,
     } as any,
@@ -57,10 +58,12 @@ test("the References header presents directed forward references and backlinks i
   expect(trigger.textContent).toBe("11");
   fireEvent.click(trigger);
   expect(await slot.findByRole("dialog", { name: "References" })).toBeTruthy();
+  expect(await slot.findByLabelText("Link status was not checked")).toBeTruthy();
+  expect(slot.getByRole("region", { name: "Backlinks" }).querySelector(".cross-references__link-status")).toBeNull();
   expect(slot.getByRole("region", { name: "Forward references" })).toBeTruthy();
   expect(slot.getByRole("region", { name: "Backlinks" })).toBeTruthy();
   expect(document.activeElement).toBe(slot.getByRole("button", { name: "Close references" }));
-  fireEvent.click(slot.getByRole("link", { name: "Thread B BB thread" }));
+  fireEvent.click(slot.getByRole("link", { name: /Thread B BB thread/ }));
   fireEvent.click(slot.getByRole("link", { name: "Machine Monitor Deployment machine" }));
   expect(slot.inspection.navigateCalls).toContainEqual({ method: "openUrl", url: "/projects/proj_target01/threads/thr_target01" });
   expect(slot.inspection.navigateCalls).toContainEqual({ method: "openUrl", url: "/plugins/machine-monitor/machine-monitor" });
@@ -72,7 +75,7 @@ test("the References header presents directed forward references and backlinks i
     sourceIdentityDigest: "0".repeat(64),
     revision: 2,
   });
-  expect(slot.inspection.rpcCalls).toHaveLength(2);
+  expect(slot.inspection.rpcCalls).toHaveLength(3);
   await slot.behavior.emitRealtime("cross-references-changed", {
     protocolVersion: 1,
     affectedIdentityDigests: [threadDigest("proj_header01", "thr_header01")],
@@ -80,7 +83,7 @@ test("the References header presents directed forward references and backlinks i
     sourceIdentityDigest: threadDigest("proj_header01", "thr_header01"),
     revision: 2,
   });
-  await waitFor(() => expect(slot.inspection.rpcCalls).toHaveLength(4));
+  await waitFor(() => expect(slot.inspection.rpcCalls).toHaveLength(5));
 
   fireEvent.keyDown(document, { key: "Escape" });
   await waitFor(() => expect(slot.queryByRole("dialog", { name: "References" })).toBeNull());
@@ -111,6 +114,7 @@ test("renders an observed external URL as a navigable forward reference", async 
           nextCursor: null,
         }),
         listBacklinks: () => ({ rows: [], total: 0, nextCursor: null }),
+        checkForwardReferences: () => ([{ url: externalUrl, status: 200, label: "Available" }]),
       },
       openUrl: () => true,
     } as any,
@@ -118,8 +122,9 @@ test("renders an observed external URL as a navigable forward reference", async 
 
   const trigger = await slot.findByRole("button", { name: "Cross-references: 1 forward reference, 0 backlinks" });
   fireEvent.click(trigger);
-  const link = await slot.findByRole("link", { name: "Design notes example.test" });
+  const link = await slot.findByRole("link", { name: /Design notes example\.test/ });
   expect(link.getAttribute("href")).toBe(externalUrl);
+  expect(await slot.findByLabelText("Available (HTTP 200)")).toBeTruthy();
   fireEvent.click(link);
   expect(slot.inspection.navigateCalls).toContainEqual({ method: "openUrl", url: externalUrl });
   slot.lifecycle.unmount();
@@ -144,6 +149,7 @@ test("paginates forward references independently from backlinks", async () => {
           backlinkInputs.push(input);
           return { rows: [backlinkRow()], total: 1, nextCursor: null };
         },
+        checkForwardReferences: () => [],
       },
     } as any,
   );

@@ -284,6 +284,19 @@ Its output is { rows: ForwardReferenceRow[], total: number, nextCursor: string
 | null }. `total` is the same upper-bound-stable exact count used by backlink
 pages, restricted to the requested source and optional producer.
 
+checkForwardReferences takes { source: ResourceIdentity, producerPluginId?:
+string } and has no graph mutation, cursor, or persistence. It reads the
+current outgoing occurrences for the same source/filter, considers at most ten
+unique nonempty target presentation URLs in occurrence order, and returns
+{ url, status, label } for each. The status checker uses an unauthenticated
+GET with credentials omitted, manual redirects, a five-second timeout, and
+body cancellation; its one-minute, process-local cache coalesces repeat
+requests. 2xx responses are available; 3xx, restricted, absent, gone, other
+HTTP failures, and reachability failure stay distinguishable. Same-installation
+BB routes report Not checked rather than being fetched. The result is ephemeral
+Forward references display data and never affects an occurrence, projection,
+resource, digest, or backlink.
+
 ### Ownership and deduplication
 
 Machine Monitor owns its source attachments and their presentation snapshots;

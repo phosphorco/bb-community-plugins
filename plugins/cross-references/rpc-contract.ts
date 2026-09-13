@@ -2,6 +2,9 @@ import { defineRpcContract } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 
 import {
+  FORWARD_REFERENCE_CHECK_LIMIT,
+} from "./link-status.ts";
+import {
   canonicalizeIdentity,
   canonicalizeResource,
   MAX_PRESENTATION_DETAIL_BYTES,
@@ -14,6 +17,8 @@ import {
 } from "./canonical.ts";
 import type {
   ApplyProjectionInput,
+  CheckForwardReferencesInput,
+  ForwardReferenceStatus,
   GetProjectionResponse,
   ListBacklinksResponse,
   ListForwardReferencesResponse,
@@ -149,6 +154,19 @@ const listForwardReferencesOutputSchema = z.object({
   nextCursor: z.string().max(4_096).nullable(),
 }).strict();
 
+const checkForwardReferencesInputSchema = z.object({
+  source: resourceIdentitySchema,
+  producerPluginId: producerPluginIdSchema.optional(),
+}).strict();
+
+const forwardReferenceStatusSchema = z.object({
+  url: z.string().max(MAX_PRESENTATION_URL_BYTES),
+  status: z.number().int().min(100).max(599).nullable(),
+  label: z.string().min(1).max(128),
+}).strict();
+
+const checkForwardReferencesOutputSchema = z.array(forwardReferenceStatusSchema).max(FORWARD_REFERENCE_CHECK_LIMIT);
+
 export const rpcContract = defineRpcContract({
   applyProjection: {
     input: applyProjectionInputSchema,
@@ -166,12 +184,19 @@ export const rpcContract = defineRpcContract({
     input: listForwardReferencesInputSchema,
     output: listForwardReferencesOutputSchema,
   },
+  checkForwardReferences: {
+    input: checkForwardReferencesInputSchema,
+    output: checkForwardReferencesOutputSchema,
+  },
 });
 
 export {
   applyProjectionInputSchema,
   applyProjectionResponseSchema,
   backlinkRowSchema,
+  checkForwardReferencesInputSchema,
+  checkForwardReferencesOutputSchema,
+  forwardReferenceStatusSchema,
   getProjectionInputSchema,
   getProjectionOutputSchema,
   listBacklinksInputSchema,
@@ -185,6 +210,8 @@ export {
 };
 
 export type ApplyProjectionRpcInput = ApplyProjectionInput;
+export type CheckForwardReferencesRpcInput = CheckForwardReferencesInput;
+export type CheckForwardReferencesRpcOutput = ForwardReferenceStatus[];
 export type GetProjectionRpcOutput = GetProjectionResponse;
 export type ListBacklinksRpcOutput = ListBacklinksResponse;
 export type ListForwardReferencesRpcOutput = ListForwardReferencesResponse;

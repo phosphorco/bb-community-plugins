@@ -10,6 +10,7 @@ import {
 
 import type {
   BacklinkRow,
+  ForwardReferenceStatus,
   ForwardReferenceRow,
   ListBacklinksResponse,
   ListForwardReferencesResponse,
@@ -24,6 +25,7 @@ const BB_ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
 type Direction = "forward" | "backlink";
 type ReferencePages = { forward: ListForwardReferencesResponse; backlink: ListBacklinksResponse };
 type LoadingMore = Record<Direction, boolean>;
+type ForwardReferenceChecks = { checks: ForwardReferenceStatus[]; checking: boolean; checkError: boolean };
 
 function identityKey(projectId: string, threadId: string): string {
   return `${projectId}\u0000${threadId}`;
@@ -194,6 +196,53 @@ function useThreadReferences(projectId: string, threadId: string) {
   return { pages, loading, loadingMore, error, stale, loadMore };
 }
 
+/**
+ * Forward-reference reachability is optional display data. It begins only
+ * while the References dialog is open, follows the source identity that owns
+ * the visible edges, and discards an obsolete result on route or page changes.
+ */
+function useForwardReferenceChecks(
+  open: boolean,
+  projectId: string,
+  threadId: string,
+  rows: readonly ForwardReferenceRow[],
+): ForwardReferenceChecks {
+  const rpc = useRpc<typeof rpcContract>();
+  const rpcRef = useRef(rpc);
+  rpcRef.current = rpc;
+  const rowKey = JSON.stringify(rows.map((row) => [row.producerPluginId, row.revision, row.position, row.target.presentation.url]));
+  const [checks, setChecks] = useState<ForwardReferenceStatus[]>([]);
+  const [checking, setChecking] = useState(false);
+  const [checkError, setCheckError] = useState(false);
+
+  useEffect(() => {
+    setChecks([]);
+    setCheckError(false);
+    if (!open || rows.length === 0) {
+      setChecking(false);
+      return;
+    }
+    let active = true;
+    setChecking(true);
+    const source = { provider: "bb", keys: { project: projectId, thread: threadId } };
+    void rpcRef.current.call("checkForwardReferences", { source }).then(
+      (result) => {
+        if (!active) return;
+        setChecks(result);
+        setChecking(false);
+      },
+      () => {
+        if (!active) return;
+        setCheckError(true);
+        setChecking(false);
+      },
+    );
+    return () => { active = false; };
+  }, [open, projectId, rowKey, rows.length, threadId]);
+
+  return { checks, checking, checkError };
+}
+
 function LinkGlyph() {
   return <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M9.5 14.5 14.5 9.5m-8.1 8.1 1.8-1.8m4.4-4.4 1.8-1.8a3.3 3.3 0 0 0-4.7-4.7L8 6.7m8.1 8.1-1.8 1.8a3.3 3.3 0 0 1-4.7-4.7l1.8-1.8" /></svg>;
 }
@@ -206,11 +255,57 @@ function countLabel(count: number, singular: string): string {
   return `${count} ${singular}${count === 1 ? "" : "s"}`;
 }
 
+function linkStatusPresentation(check: ForwardReferenceStatus | undefined, checking: boolean, checkError: boolean) {
+  if (check === undefined) {
+    if (checking) return { label: "Checking", title: "Checking link status", tone: "muted" };
+    if (checkError) return { label: "Unavailable", title: "Link-status check unavailable", tone: "muted" };
+    return { label: "Not checked", title: "Link was outside the bounded status scan", tone: "muted" };
+  }
+  if (check.label === "Available") {
+    return { label: `${check.status}`, title: `Available (HTTP ${check.status})`, tone: "success" };
+  }
+  if (check.label === "Redirect" || check.label === "Access restricted") {
+    return {
+      label: check.status === null ? check.label : `${check.status}`,
+      title: check.status === null ? check.label : `${check.label} (HTTP ${check.status})`,
+      tone: "warning",
+    };
+  }
+  if (check.label === "Not checked" || check.label.startsWith("BB link")) {
+    return { label: "Not checked", title: "Link status was not checked", tone: "muted" };
+  }
+  return {
+    label: check.status === null ? check.label : `${check.status}`,
+    title: check.status === null ? check.label : `${check.label} (HTTP ${check.status})`,
+    tone: "destructive",
+  };
+}
+
 type PopoverPosition = { top: number; left: number };
 
-function ResourceLink({ resource, first }: { resource: ForwardReferenceRow["target"] | BacklinkRow["source"]; first: boolean }) {
+function ResourceLink({
+  resource,
+  first,
+  check,
+  checking,
+  checkError,
+}: {
+  resource: ForwardReferenceRow["target"] | BacklinkRow["source"];
+  first: boolean;
+  check?: ForwardReferenceStatus;
+  checking?: boolean;
+  checkError?: boolean;
+}) {
   const navigate = useBbNavigate();
-  const content = <><strong>{resource.presentation.label}</strong>{resource.presentation.detail != null && <small>{resource.presentation.detail}</small>}</>;
+  const showStatus = checking !== undefined && checkError !== undefined && resource.presentation.url !== undefined;
+  const status = showStatus ? linkStatusPresentation(check, checking, checkError) : null;
+  const content = <>
+    <strong>{resource.presentation.label}</strong>
+    {(resource.presentation.detail != null || status !== null) && <span className="cross-references__link-meta">
+      {resource.presentation.detail != null && <small>{resource.presentation.detail}</small>}
+      {status !== null && <span className={`cross-references__link-status cross-references__link-status-${status.tone}`} title={status.title} aria-label={status.title}>{status.label}</span>}
+    </span>}
+  </>;
   return resource.presentation.url != null
     ? <a href={resource.presentation.url} className="cross-references__source-link" data-cross-reference-first={first || undefined} onClick={(event) => {
         if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
@@ -219,7 +314,7 @@ function ResourceLink({ resource, first }: { resource: ForwardReferenceRow["targ
     : <span className="cross-references__source-link">{content}</span>;
 }
 
-function ReferenceSection({ heading, rows, total, nextCursor, loadingMore, onLoadMore, direction }: {
+function ReferenceSection({ heading, rows, total, nextCursor, loadingMore, onLoadMore, direction, checks, checking, checkError }: {
   heading: string;
   rows: readonly (ForwardReferenceRow | BacklinkRow)[];
   total: number;
@@ -227,21 +322,38 @@ function ReferenceSection({ heading, rows, total, nextCursor, loadingMore, onLoa
   loadingMore: boolean;
   onLoadMore: () => void;
   direction: Direction;
+  checks: readonly ForwardReferenceStatus[];
+  checking: boolean;
+  checkError: boolean;
 }) {
+  const checksByUrl = new Map(checks.map((check) => [check.url, check]));
   return <section className="cross-references__section" aria-label={heading}>
     <header><strong>{heading}</strong><span>{total}</span></header>
     {rows.length === 0 && <p className="cross-references__message">No {direction === "forward" ? "forward references" : "backlinks"}.</p>}
-    {rows.length > 0 && <ul>{rows.map((row, index) => <li key={`${row.producerPluginId}:${row.revision}:${row.position}:${index}`}><ResourceLink resource={direction === "forward" ? (row as ForwardReferenceRow).target : (row as BacklinkRow).source} first={index === 0} /></li>)}</ul>}
+    {rows.length > 0 && <ul>{rows.map((row, index) => {
+      const resource = direction === "forward" ? (row as ForwardReferenceRow).target : (row as BacklinkRow).source;
+      const url = resource.presentation.url;
+      return <li key={`${row.producerPluginId}:${row.revision}:${row.position}:${index}`}><ResourceLink
+        resource={resource}
+        first={index === 0}
+        check={direction === "forward" && url !== undefined ? checksByUrl.get(url) : undefined}
+        checking={direction === "forward" && url !== undefined ? checking : undefined}
+        checkError={direction === "forward" && url !== undefined ? checkError : undefined}
+      /></li>;
+    })}</ul>}
     {nextCursor != null && <button type="button" onClick={onLoadMore} disabled={loadingMore} aria-busy={loadingMore}>{loadingMore ? "Loading more…" : `Load more ${direction === "forward" ? "forward references" : "backlinks"}`}</button>}
   </section>;
 }
 
-function ReferencesDetail({ pages, loading, error, stale, loadingMore, trigger, popoverId, onClose, onLoadMore }: {
+function ReferencesDetail({ pages, loading, error, stale, loadingMore, checks, checking, checkError, trigger, popoverId, onClose, onLoadMore }: {
   pages: ReferencePages;
   loading: boolean;
   error: string | null;
   stale: boolean;
   loadingMore: LoadingMore;
+  checks: readonly ForwardReferenceStatus[];
+  checking: boolean;
+  checkError: boolean;
   trigger: HTMLButtonElement;
   popoverId: string;
   onClose: () => void;
@@ -283,8 +395,8 @@ function ReferencesDetail({ pages, loading, error, stale, loadingMore, trigger, 
       {stale && <p className="cross-references__stale" role="status">The connection is recovering; this may be briefly out of date.</p>}
       {loading && pages.forward.rows.length === 0 && pages.backlink.rows.length === 0 && <p className="cross-references__message" role="status">Checking references…</p>}
       {error != null && <p className="cross-references__error" role="alert">{error}</p>}
-      <ReferenceSection heading="Forward references" rows={pages.forward.rows} total={pages.forward.total} nextCursor={pages.forward.nextCursor} loadingMore={loadingMore.forward} onLoadMore={() => onLoadMore("forward")} direction="forward" />
-      <ReferenceSection heading="Backlinks" rows={pages.backlink.rows} total={pages.backlink.total} nextCursor={pages.backlink.nextCursor} loadingMore={loadingMore.backlink} onLoadMore={() => onLoadMore("backlink")} direction="backlink" />
+      <ReferenceSection heading="Forward references" rows={pages.forward.rows} total={pages.forward.total} nextCursor={pages.forward.nextCursor} loadingMore={loadingMore.forward} onLoadMore={() => onLoadMore("forward")} direction="forward" checks={checks} checking={checking} checkError={checkError} />
+      <ReferenceSection heading="Backlinks" rows={pages.backlink.rows} total={pages.backlink.total} nextCursor={pages.backlink.nextCursor} loadingMore={loadingMore.backlink} onLoadMore={() => onLoadMore("backlink")} direction="backlink" checks={[]} checking={false} checkError={false} />
     </div>,
     document.body,
   );
@@ -293,6 +405,7 @@ function ReferencesDetail({ pages, loading, error, stale, loadingMore, trigger, 
 function ThreadHeaderAction({ threadId, projectId }: { threadId: string; projectId: string; isCompactViewport: boolean }) {
   const { pages, loading, loadingMore, error, stale, loadMore } = useThreadReferences(projectId, threadId);
   const [open, setOpen] = useState(false);
+  const { checks, checking, checkError } = useForwardReferenceChecks(open, projectId, threadId, pages.forward.rows);
   const popoverId = `cross-references-thread-detail-${useId().replaceAll(":", "")}`;
   const triggerRef = useRef<HTMLButtonElement | null>(null);
   const close = useCallback(() => { setOpen(false); triggerRef.current?.focus(); }, []);
@@ -307,7 +420,7 @@ function ThreadHeaderAction({ threadId, projectId }: { threadId: string; project
       <span className="cross-references__metric" aria-hidden="true"><LinkGlyph /><span className="cross-references__count">{forwardCount}</span></span>
       <span className="cross-references__metric" aria-hidden="true"><BacklinkGlyph /><span className="cross-references__count">{backlinkCount}</span></span>
     </button>
-    {open && triggerRef.current != null && <ReferencesDetail pages={pages} loading={loading} loadingMore={loadingMore} error={error} stale={stale} trigger={triggerRef.current} popoverId={popoverId} onClose={close} onLoadMore={loadMore} />}
+    {open && triggerRef.current != null && <ReferencesDetail pages={pages} loading={loading} loadingMore={loadingMore} error={error} stale={stale} checks={checks} checking={checking} checkError={checkError} trigger={triggerRef.current} popoverId={popoverId} onClose={close} onLoadMore={loadMore} />}
   </>;
 }
 

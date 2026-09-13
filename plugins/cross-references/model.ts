@@ -112,6 +112,23 @@ export interface ListForwardReferencesResponse {
   nextCursor: string | null;
 }
 
+/** Ephemeral HTTP reachability information for a visible forward target. */
+export interface ForwardReferenceStatus {
+  url: string;
+  status: number | null;
+  label: string;
+}
+
+/**
+ * The status probe reads current outgoing occurrences but never changes the
+ * directed graph. It is intentionally bounded and has no pagination because
+ * it serves a compact display-time health indicator.
+ */
+export interface CheckForwardReferencesInput {
+  source: ResourceIdentity;
+  producerPluginId?: string;
+}
+
 export interface CrossReferencesChangedSignal {
   protocolVersion: 1;
   affectedIdentityDigests: string[];

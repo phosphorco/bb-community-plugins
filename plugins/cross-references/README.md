@@ -57,15 +57,20 @@ valuable, but one durable fact supplies them.
 
 [Thread Links](https://github.com/phosphorco/bb-plugins/tree/main/plugins/thread-links) remains the specialist
 that observes URLs in messages and presents URL-specific information such as
-their occurrences and status. Cross References consumes the relationships
-those observations establish and makes them navigable across the application.
+their occurrences. Cross References consumes the relationships those
+observations establish and makes them navigable across the application. When
+its Forward references view is opened, it also performs the same bounded URL
+status scan as Thread Links for current outgoing targets: one
+unauthenticated GET per unique destination, up to ten, with manual redirects,
+a five-second timeout, body cancellation, and a one-minute in-memory cache.
+Status is ephemeral display data, never a graph fact.
 
 That division keeps each surface honest:
 
-- **Thread Links** answers: “Which URLs did this message contain, and what do
-  we know about those URLs?”
+- **Thread Links** answers: “Which URLs did this message contain?”
 - **Cross References** answers: “What does this context point to, and what
-  other contexts point here?”
+  other contexts point here?” Its Forward references view can also show the
+  bounded, current HTTP result for an outgoing URL.
 
 The two products should feel coordinated, not competing. Every eligible
 HTTP(S) URL seen in an assistant response creates a forward reference promptly;
