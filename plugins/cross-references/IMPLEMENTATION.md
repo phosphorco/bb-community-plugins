@@ -11,23 +11,26 @@ model in ARCHITECTURE.md into one proving spine:
 
 This document is the executable contract for the first exact-reference slice.
 The exact canonical model, SQLite projection/index, RPCs, realtime
-invalidation, Machine Monitor source ownership, and frontend thread surface
-described here are implemented in the two owned packages.
+invalidation, source ownership, and frontend thread surface described here are
+implemented across Cross References, Machine Monitor, and Thread Links.
 
 ## Scope and non-goals
 
 The first slice includes:
 
 - one installation-local Cross References SQLite database;
-- exact canonical identity for BB projects, BB threads, and the Machine Monitor
-  page;
-- a bounded applyProjection, getProjection, and exact listBacklinks RPC
-  contract;
+- exact canonical identity for BB projects, BB threads, the Machine Monitor
+  page, and normalized HTTP(S) URL resources from Thread Links;
+- bounded applyProjection, getProjection, exact listBacklinks, and exact
+  listForwardReferences RPC contracts;
 - Machine Monitor-owned local attachments, complete-set replacement, and a
   coalescing durable outbox;
 - a bounded thread picker backed by BB thread search/get; and
-- a compact, per-thread Cross References header action with native BB thread
-  navigation.
+- a compact, per-thread References header action with native BB thread
+  navigation in both directions; and
+- a Thread Links-owned durable projection of automatic assistant-message
+  HTTP(S) URLs, with verified same-installation BB-thread URLs represented by
+  richer thread identity.
 
 It does not include:
 
@@ -35,8 +38,7 @@ It does not include:
   registry;
 - a contained-match RPC, containment UI, rollups, graph traversal, or a
   promise that resource_keys is queryable by consumers;
-- GitHub, Sticky Notes, Thread Links ingestion, federation, or private
-  per-principal authorization;
+- GitHub, Sticky Notes, federation, or private per-principal authorization;
 - a universal resource browser, generic component registry, DOM injection, or
   plugin-to-plugin React injection; or
 - automatic cleanup based only on thread.deleted, producer disablement, or an
@@ -67,7 +69,17 @@ v1 BB conventions are:
 project:         { provider: "bb", keys: { project: projectId } }
 thread:          { provider: "bb", keys: { project: projectId, thread: threadId } }
 machine monitor: { provider: "bb", keys: { page: "machine-monitor", plugin: "machine-monitor" } }
+observed URL:    { provider: "url", keys: { href: normalizedHttpUrl } }
 ~~~
+
+`url/href` is the Thread Links producer convention, not a globally reserved
+provider name. It is the `URL.href` normalization of one absolute HTTP(S) URL,
+including its query and fragment. Thread Links removes authority credentials
+before persistence and refuses credential-shaped query or fragment parameters;
+Cross References requires the resulting canonical serialization and matching
+presentation URL at its RPC boundary. The 512-byte key-value bound limits href;
+it is never truncated. No tracking-parameter stripping or URL template parsing
+is implied by this exact-reference convention.
 
 The wire types are intentionally small:
 
@@ -242,10 +254,12 @@ revision, target presentation snapshot, and target position. Rows from two
 producers remain separate occurrences even when their source and target
 identities agree.
 
-Its output is { rows: BacklinkRow[], nextCursor: string | null }, where each
-BacklinkRow has { source: Resource, producerPluginId: string, revision: number,
-targetPresentation: Presentation, position: number }. The occurrence ID is
-cursor-internal and is not a resource identity.
+Its output is { rows: BacklinkRow[], total: number, nextCursor: string | null },
+where each BacklinkRow has { source: Resource, producerPluginId: string,
+revision: number, targetPresentation: Presentation, position: number }.
+`total` counts all matching occurrences through the page's captured upper ID,
+so a header count is not mistaken for the number of rows in its first page.
+The occurrence ID is cursor-internal and is not a resource identity.
 
 The cursor is base64url without padding over compact JSON
 {v:1,targetDigest,upperId,afterId}. The first page captures
@@ -257,12 +271,43 @@ is never reused. A cursor is invalid, not silently repurposed, when its version,
 digest, bounds, or encoding is wrong. This is bounded pagination over
 eventually changing data, not a cross-request SQLite snapshot.
 
+listForwardReferences takes { source: ResourceIdentity, producerPluginId?:
+string, pageSize?: number, cursor?: string }. It reads the same active
+reference_occurrences rows by source projection and returns target
+resource/presentation, producer ID, revision, and position. Supplying a
+producer limits the outgoing view to that source-owner. Its cursor is bound to
+the exact source identity and optional producer filter. The operation does not
+write an inverse edge: the returned occurrence is the one that listBacklinks
+returns when its target is opened.
+
+Its output is { rows: ForwardReferenceRow[], total: number, nextCursor: string
+| null }. `total` is the same upper-bound-stable exact count used by backlink
+pages, restricted to the requested source and optional producer.
+
 ### Ownership and deduplication
 
-Machine Monitor owns its source attachments and their presentation snapshots.
-Cross References owns only the shared projection/index. The Cross References
-database never reaches into Machine Monitor's private database. Machine Monitor
-already obtains its own database and runs ordered migrations during plugin load
+Machine Monitor owns its source attachments and their presentation snapshots;
+Thread Links owns its assistant-message observation index and its projection
+outbox. Cross References owns only the shared projection/index. The Cross
+References database never reaches into either source plugin's private database.
+
+Thread Links projects only its immutable `original_url` values that were
+automatically observed in assistant messages and remain visible with an
+unedited title. Manually added, hidden, and user-edited links remain its local
+URL-inspection behavior. An eligible HTTP(S) URL normally projects as a
+`url/href` target. A same-installation URL that parses as a BB thread route is
+first resolved through `bb.sdk.threads.get`; success publishes the
+`bb/{project,thread}` target, while failure falls back to its HTTP(S) URL
+target. Relative BB routes have no HTTP(S) fallback.
+
+Thread Links retains a durable source-sweep cursor. After startup and at a
+bounded periodic cadence, it walks eligible indexed-link sources plus active
+prior projections, recomputes each complete source set, and reconciles it with
+Cross References. This backfills the URL convention without a manual visit and
+eventually repairs a reset peer index. The sweep never chunks one source's
+target set across projections: the 256-target complete-set bound remains
+authoritative.
+Machine Monitor already obtains its own database and runs ordered migrations during plugin load
 ([machine-monitor/server.ts](../machine-monitor/server.ts#L19-L56)); its current
 sampling service is supervised and abort-aware
 ([machine-monitor/server.ts](../machine-monitor/server.ts#L153-L189)).
@@ -276,7 +321,7 @@ source/target retain different occurrence rows. Display grouping is query/UI
 derived, initially by exact source and target IDs, and retains each contributing
 occurrence and producer. There is no display_groups table.
 
-### Local-first Machine Monitor contract
+### Local-first source contracts
 
 Machine Monitor adds one source-owned operation,
 replaceAttachments({ expectedSourceRevision, targets }). Add/remove are
@@ -482,9 +527,11 @@ needsConfiguration.
 
 The last accepted projection remains potentially stale when Machine Monitor is
 disabled. Only a delivered active empty projection or explicit tombstone
-removes live occurrences. The first slice does not turn BB's observe-only
-thread.deleted event into automatic cleanup; a later durable source mutation
-or administrative policy must decide what deletion means.
+removes live occurrences. Thread Links is the source owner for a deleted thread
+and retains a durable tombstone until Cross References acknowledges it. The
+first slice does not infer that action for arbitrary producers from BB's
+observe-only thread.deleted event; another source must decide and deliver its
+own lifecycle mutation.
 
 ## Dependency-ordered execution strategy
 

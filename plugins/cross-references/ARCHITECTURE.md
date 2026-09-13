@@ -403,6 +403,9 @@ the BB spine proves the model.
   a tombstone does the same while retaining deletion state.
 - Exact backlink pages are bounded, cursor-stable, and refetched after a
   matching signal or reconnect.
+- An automatic assistant HTTP(S) URL is an exact forward reference from its
+  source thread; a verified local BB-thread target is additionally readable as
+  a backlink, without a reverse occurrence.
 - No provider registry, private DOM integration, global browser event bus, or
   plugin-to-plugin React injection is introduced.
 
@@ -411,7 +414,6 @@ the BB spine proves the model.
 - GitHub authentication, existence validation, and live metadata refresh;
 - `defineCrossLinks`, public URL-template parsing/formatting, and a provider
   definition registry;
-- automatic ingestion from the existing Thread Links plugin;
 - contained-match RPCs, containment UI, rollups, and graph traversal;
 - fuzzy provider aliases or key equivalence;
 - cross-BB-instance federation;

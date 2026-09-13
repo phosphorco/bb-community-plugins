@@ -19,6 +19,31 @@ const ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const CONTROL_PATTERN = /\p{Cc}/u;
 const encoder = new TextEncoder();
+const SENSITIVE_URL_PARAMETER_NAMES = new Set([
+  "access_token",
+  "api_key",
+  "apikey",
+  "authorization",
+  "code",
+  "cookie",
+  "id_token",
+  "password",
+  "passwd",
+  "refresh_token",
+  "secret",
+  "session",
+  "sessionid",
+  "sid",
+  "sig",
+  "signature",
+  "token",
+  "x-amz-credential",
+  "x-amz-security-token",
+  "x-amz-signature",
+  "x-goog-credential",
+  "x-goog-signature",
+  "x-ms-signature",
+]);
 
 export type Presentation = {
   label: string;
@@ -134,6 +159,34 @@ function validateBbIdentity(provider: string, keys: Record<string, string>): voi
   fail("provider bb must use a v1 project, thread, or Machine Monitor identity.");
 }
 
+function hasSensitiveUrlParameter(params: URLSearchParams): boolean {
+  for (const name of params.keys()) {
+    if (SENSITIVE_URL_PARAMETER_NAMES.has(name.toLowerCase())) return true;
+  }
+  return false;
+}
+
+/** The exact url/href convention used by Thread Links and accepted by v1. */
+function validateUrlIdentity(provider: string, keys: Record<string, string>): void {
+  if (provider !== "url") return;
+  const names = Object.keys(keys);
+  if (names.length !== 1 || names[0] !== "href") fail("provider url must use exactly the href key.");
+  const href = keys.href!;
+  let parsed: URL;
+  try {
+    parsed = new URL(href);
+  } catch {
+    fail("url href must be a valid HTTP(S) URL.");
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") fail("url href must use HTTP(S).");
+  if (parsed.username !== "" || parsed.password !== "") fail("url href must not contain credentials.");
+  if (hasSensitiveUrlParameter(parsed.searchParams)
+    || (parsed.hash.startsWith("#") && hasSensitiveUrlParameter(new URLSearchParams(parsed.hash.slice(1))))) {
+    fail("url href must not contain credential-shaped query or fragment parameters.");
+  }
+  if (parsed.href !== href) fail("url href must use canonical URL serialization.");
+}
+
 export function validateProducerPluginId(value: unknown): string {
   return assertName(value, "producerPluginId");
 }
@@ -191,6 +244,7 @@ export function canonicalizeIdentity(value: ResourceIdentity): CanonicalIdentity
   const provider = assertName(value.provider, "provider");
   const { keys, canonicalKeysJson } = canonicalizeKeyMap(value.keys);
   validateBbIdentity(provider, keys);
+  validateUrlIdentity(provider, keys);
   const identityObject = { provider, keys };
   const canonicalIdentityJson = JSON.stringify(identityObject);
   if (utf8ByteLength(canonicalIdentityJson) > MAX_CANONICAL_IDENTITY_BYTES) {
@@ -246,6 +300,9 @@ export function canonicalizeResource(value: Resource): CanonicalResource {
   assertExactObjectKeys(value, ["provider", "keys", "presentation"], "resource");
   const identity = canonicalizeIdentity({ provider: value.provider, keys: value.keys });
   const presentation = canonicalizePresentation(value.presentation);
+  if (identity.provider === "url" && presentation.presentation.url !== identity.keys.href) {
+    fail("provider url presentation.url must equal its canonical href identity.");
+  }
   return { ...identity, ...presentation };
 }
 

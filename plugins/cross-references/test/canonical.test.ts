@@ -108,6 +108,27 @@ test("publishes exact BB project, thread, and Machine Monitor conventions", () =
   assert.equal(monitor.presentation.url, "/plugins/machine-monitor/machine-monitor");
 });
 
+test("enforces the exact canonical url/href resource convention", () => {
+  const href = "https://example.test/research?topic=links#results";
+  const resource = canonicalizeResource({
+    provider: "url",
+    keys: { href },
+    presentation: { label: "Research", url: href },
+  });
+  assert.deepEqual(resource.keys, { href });
+  assert.equal(resource.presentation.url, href);
+
+  const invalid = (candidate: Resource) => assert.throws(
+    () => canonicalizeResource(candidate),
+    (error: unknown) => error instanceof CrossReferenceValidationError,
+  );
+  invalid({ provider: "url", keys: { address: href }, presentation: { label: "Research", url: href } });
+  invalid({ provider: "url", keys: { href: "https://EXAMPLE.test/research" }, presentation: { label: "Research", url: "https://EXAMPLE.test/research" } });
+  invalid({ provider: "url", keys: { href: "https://user:password@example.test/private" }, presentation: { label: "Private", url: "https://user:password@example.test/private" } });
+  invalid({ provider: "url", keys: { href: "https://example.test/private?access_token=secret" }, presentation: { label: "Private", url: "https://example.test/private?access_token=secret" } });
+  invalid({ provider: "url", keys: { href }, presentation: { label: "Research", url: "https://example.test/other" } });
+});
+
 test("rejects malformed, unsafe, and unbounded canonical data", () => {
   const invalid = (resource: Resource) => assert.throws(
     () => canonicalizeResource(resource),

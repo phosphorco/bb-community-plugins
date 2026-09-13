@@ -61,7 +61,7 @@ test("registers the typed RPCs, verifies FK-backed storage, and publishes commit
   const parsed = await rpcContract.applyProjection.input["~standard"].validate(input);
   assert.equal("issues" in parsed, false);
 
-  assert.deepEqual(Object.keys(handlers ?? {}), ["applyProjection", "getProjection", "listBacklinks"]);
+  assert.deepEqual(Object.keys(handlers ?? {}), ["applyProjection", "getProjection", "listBacklinks", "listForwardReferences"]);
   assert.equal((await handlers!.applyProjection(input) as { outcome: string }).outcome, "applied");
   assert.equal(signals.length, 1);
   assert.equal(signals[0]?.channel, "cross-references-changed");
@@ -74,9 +74,16 @@ test("registers the typed RPCs, verifies FK-backed storage, and publishes commit
     source: { provider: source.provider, keys: source.keys },
   }) as { projection: { targets: Resource[] } | null };
   assert.equal(projection.projection?.targets[0]?.presentation.label, "Server target");
-  const backlinks = await handlers!.listBacklinks({ target: { provider: target.provider, keys: target.keys }, pageSize: 1 }) as { rows: unknown[]; nextCursor: string | null };
+  const backlinks = await handlers!.listBacklinks({ target: { provider: target.provider, keys: target.keys }, pageSize: 1 }) as { rows: unknown[]; total: number; nextCursor: string | null };
   assert.equal(backlinks.rows.length, 1);
+  assert.equal(backlinks.total, 1);
   assert.equal(backlinks.nextCursor, null);
+
+  const forward = await handlers!.listForwardReferences({ source: { provider: source.provider, keys: source.keys }, pageSize: 1 }) as { rows: Array<{ target: Resource }>; total: number; nextCursor: string | null };
+  assert.equal(forward.rows.length, 1);
+  assert.equal(forward.total, 1);
+  assert.equal(forward.rows[0]?.target.presentation.label, "Server target");
+  assert.equal(forward.nextCursor, null);
 
   assert.throws(
     () => handlers!.applyProjection({ ...input, targets: Array.from({ length: 257 }, () => target) }),

@@ -11,6 +11,7 @@ import {
 import {
   type ApplyProjectionInput,
   type ListBacklinksInput,
+  type ListForwardReferencesInput,
 } from "../model.ts";
 import {
   CrossReferenceStore,
@@ -86,6 +87,7 @@ test("enables foreign keys and installs the constrained schema and indexes", (t)
   const indexNames = (table: string) => (db.prepare(`PRAGMA index_list(${table})`).all() as Array<{ name: string }>).map((row) => row.name);
   assert.ok(indexNames("resources").some((name) => name.includes("sqlite_autoindex_resources")));
   assert.ok(indexNames("source_projections").some((name) => name.includes("sqlite_autoindex_source_projections")));
+  assert.ok(indexNames("source_projections").some((name) => name.includes("source_projections_source_idx")));
   assert.ok(indexNames("reference_occurrences").some((name) => name.includes("reference_occurrences_target_idx")));
   assert.ok(indexNames("resource_keys").some((name) => name.includes("resource_keys_match_idx")));
   assert.throws(() => db.prepare(
@@ -115,6 +117,15 @@ test("deduplicates exact resources while retaining presentation snapshots", (t) 
   const projection = store.getProjection({ producerPluginId: "machine-monitor", source: { provider: "test", keys: { source: "machine" } } }).projection;
   assert.equal(projection?.source.presentation.label, "Monitor after");
   assert.equal(projection?.targets[0]?.presentation.label, "Thread after");
+});
+
+test("prunes orphaned URL resources that no longer meet the receiver contract", (t) => {
+  const { db, store } = makeStore();
+  t.after(() => db.close());
+  db.prepare("INSERT INTO resources (provider, canonical_keys_json, key_count, created_at) VALUES (?, ?, ?, ?)")
+    .run("url", '{"href":"https://example.test/private?access_token=secret"}', 1, Date.now());
+  assert.equal(store.pruneUnsafeUrlResources(), 1);
+  assert.equal((db.prepare("SELECT COUNT(*) AS count FROM resources WHERE provider = 'url'").get() as { count: number }).count, 0);
 });
 
 test("enforces the revision CAS matrix and preserves empty and tombstone watermarks", (t) => {
@@ -188,11 +199,14 @@ test("returns exact bounded backlinks with source context, producer occurrences,
   const firstInput: ListBacklinksInput = { target: targetIdentity, pageSize: 1 };
   const first = store.listBacklinks(firstInput);
   assert.equal(first.rows.length, 1);
+  assert.equal(first.total, 3);
   assert.notEqual(first.nextCursor, null);
   const second = store.listBacklinks({ target: targetIdentity, pageSize: 1, cursor: first.nextCursor! });
   const third = store.listBacklinks({ target: targetIdentity, pageSize: 1, cursor: second.nextCursor! });
   assert.equal(second.rows.length, 1);
+  assert.equal(second.total, 3);
   assert.equal(third.rows.length, 1);
+  assert.equal(third.total, 3);
   assert.equal(third.nextCursor, null);
   assert.deepEqual(
     [first.rows[0], second.rows[0], third.rows[0]].map((row) => ({
@@ -215,7 +229,7 @@ test("returns exact bounded backlinks with source context, producer occurrences,
   decodedCursor.upperId = Number.MAX_SAFE_INTEGER;
   const oversizedCursor = Buffer.from(JSON.stringify(decodedCursor), "utf8").toString("base64url");
   assert.throws(() => store.listBacklinks({ target: targetIdentity, cursor: oversizedCursor }), /bounds/);
-  assert.deepEqual(store.listBacklinks({ target: { provider: "bb", keys: { project: "proj_12345678", thread: "thr_absent01" } }, pageSize: 100 }), { rows: [], nextCursor: null });
+  assert.deepEqual(store.listBacklinks({ target: { provider: "bb", keys: { project: "proj_12345678", thread: "thr_absent01" } }, pageSize: 100 }), { rows: [], total: 0, nextCursor: null });
 
   const plan = db.prepare(
     `EXPLAIN QUERY PLAN
@@ -224,6 +238,95 @@ test("returns exact bounded backlinks with source context, producer occurrences,
         ORDER BY id ASC LIMIT ?`,
   ).all(1, 0, 100, 2) as Array<{ detail: string }>;
   assert.ok(plan.some((entry) => entry.detail.includes("reference_occurrences_target_idx")), JSON.stringify(plan));
+});
+
+test("reads one directed occurrence as a forward reference at its source and a backlink at a BB-thread target", (t) => {
+  const { db, store } = makeStore();
+  t.after(() => db.close());
+  const source = makeThread("Thread A", "thr_source01");
+  const threadTarget = makeThread("Thread B", "thr_target02");
+  const urlTarget: Resource = {
+    provider: "url",
+    keys: { href: "https://example.test/research" },
+    presentation: { label: "Research", url: "https://example.test/research" },
+  };
+  assert.equal(store.applyProjection(makeCommand({
+    producerPluginId: "thread-links",
+    source,
+    targets: [threadTarget, urlTarget],
+    revision: 1,
+  })).outcome, "applied");
+
+  const sourceIdentity = { provider: source.provider, keys: source.keys };
+  const firstInput: ListForwardReferencesInput = { source: sourceIdentity, pageSize: 1 };
+  const first = store.listForwardReferences(firstInput);
+  assert.equal(first.rows.length, 1);
+  assert.equal(first.total, 2);
+  assert.deepEqual(first.rows[0]?.target.keys, threadTarget.keys);
+  assert.equal(first.rows[0]?.producerPluginId, "thread-links");
+  assert.notEqual(first.nextCursor, null);
+  const second = store.listForwardReferences({ source: sourceIdentity, pageSize: 1, cursor: first.nextCursor! });
+  assert.equal(second.rows.length, 1);
+  assert.equal(second.total, 2);
+  assert.deepEqual(second.rows[0]?.target.keys, urlTarget.keys);
+  assert.equal(second.nextCursor, null);
+
+  const targetIdentity = { provider: threadTarget.provider, keys: threadTarget.keys };
+  const backlinks = store.listBacklinks({ target: targetIdentity });
+  assert.equal(backlinks.rows.length, 1);
+  assert.equal(backlinks.total, 1);
+  assert.deepEqual(backlinks.rows[0]?.source.keys, source.keys);
+  assert.equal(backlinks.rows[0]?.producerPluginId, "thread-links");
+  assert.equal(
+    (db.prepare("SELECT COUNT(*) AS count FROM reference_occurrences").get() as { count: number }).count,
+    2,
+    "the two declared forward targets are the only stored edge occurrences",
+  );
+
+  assert.equal(store.applyProjection(makeCommand({
+    producerPluginId: "thread-links",
+    source,
+    targets: [],
+    revision: 2,
+    expectedRevision: 1,
+  })).outcome, "applied");
+  assert.deepEqual(store.listForwardReferences({ source: sourceIdentity }), { rows: [], total: 0, nextCursor: null });
+  assert.deepEqual(store.listBacklinks({ target: targetIdentity }), { rows: [], total: 0, nextCursor: null });
+  assert.throws(
+    () => store.listForwardReferences({ source: { provider: "test", keys: { source: "other" } }, cursor: first.nextCursor! }),
+    /bounds|source/i,
+  );
+  assert.throws(
+    () => store.listForwardReferences({ source: sourceIdentity, producerPluginId: "machine-monitor", cursor: first.nextCursor! }),
+    /cursor/i,
+  );
+});
+
+test("binds forward-reference pages to an optional producer filter", (t) => {
+  const { db, store } = makeStore();
+  t.after(() => db.close());
+  const source = makeThread("Thread A", "thr_filter_source01");
+  const threadLinksTarget = makeThread("Thread Links target", "thr_filter_target01");
+  const monitorTarget = makeThread("Monitor target", "thr_filter_target02");
+  assert.equal(store.applyProjection(makeCommand({
+    producerPluginId: "thread-links",
+    source,
+    targets: [threadLinksTarget],
+    revision: 1,
+  })).outcome, "applied");
+  assert.equal(store.applyProjection(makeCommand({
+    producerPluginId: "machine-monitor",
+    source,
+    targets: [monitorTarget],
+    revision: 1,
+  })).outcome, "applied");
+
+  const page = store.listForwardReferences({
+    source: { provider: source.provider, keys: source.keys },
+    producerPluginId: "thread-links",
+  });
+  assert.deepEqual(page.rows.map((row) => row.target.keys), [threadLinksTarget.keys]);
+  assert.equal(page.nextCursor, null);
 });
 
 test("does not reuse occurrence ids after complete replacement", (t) => {

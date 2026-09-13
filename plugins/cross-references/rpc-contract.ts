@@ -16,6 +16,7 @@ import type {
   ApplyProjectionInput,
   GetProjectionResponse,
   ListBacklinksResponse,
+  ListForwardReferencesResponse,
 } from "./model.ts";
 import { normalizeProjectionCommand } from "./model.ts";
 
@@ -124,6 +125,27 @@ const listBacklinksInputSchema = z.object({
 
 const listBacklinksOutputSchema = z.object({
   rows: z.array(backlinkRowSchema).max(100),
+  total: revisionSchema.nonnegative(),
+  nextCursor: z.string().max(4_096).nullable(),
+}).strict();
+
+const forwardReferenceRowSchema = z.object({
+  target: resourceSchema,
+  producerPluginId: producerPluginIdSchema,
+  revision: revisionSchema.nonnegative(),
+  position: z.number().int().min(0).max(MAX_TARGETS - 1).refine(Number.isSafeInteger),
+}).strict();
+
+const listForwardReferencesInputSchema = z.object({
+  source: resourceIdentitySchema,
+  producerPluginId: producerPluginIdSchema.optional(),
+  pageSize: z.number().int().min(1).max(100).refine(Number.isSafeInteger).optional(),
+  cursor: z.string().max(4_096).optional(),
+}).strict();
+
+const listForwardReferencesOutputSchema = z.object({
+  rows: z.array(forwardReferenceRowSchema).max(100),
+  total: revisionSchema.nonnegative(),
   nextCursor: z.string().max(4_096).nullable(),
 }).strict();
 
@@ -140,6 +162,10 @@ export const rpcContract = defineRpcContract({
     input: listBacklinksInputSchema,
     output: listBacklinksOutputSchema,
   },
+  listForwardReferences: {
+    input: listForwardReferencesInputSchema,
+    output: listForwardReferencesOutputSchema,
+  },
 });
 
 export {
@@ -150,6 +176,8 @@ export {
   getProjectionOutputSchema,
   listBacklinksInputSchema,
   listBacklinksOutputSchema,
+  listForwardReferencesInputSchema,
+  listForwardReferencesOutputSchema,
   presentationSchema,
   projectionSchema,
   resourceIdentitySchema,
@@ -159,3 +187,4 @@ export {
 export type ApplyProjectionRpcInput = ApplyProjectionInput;
 export type GetProjectionRpcOutput = GetProjectionResponse;
 export type ListBacklinksRpcOutput = ListBacklinksResponse;
+export type ListForwardReferencesRpcOutput = ListForwardReferencesResponse;

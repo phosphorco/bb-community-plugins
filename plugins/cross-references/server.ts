@@ -12,6 +12,7 @@ export default function crossReferencesPlugin(bb: BbPluginApi): void {
   enableForeignKeys(db);
   bb.storage.migrate(db, [...crossReferencesMigrations]);
   const store = new CrossReferenceStore(db);
+  store.pruneUnsafeUrlResources();
 
   bb.rpc.register(rpcContract, {
     applyProjection: (input) => {
@@ -27,5 +28,6 @@ export default function crossReferencesPlugin(bb: BbPluginApi): void {
     },
     getProjection: (input) => store.getProjection(input),
     listBacklinks: (input) => store.listBacklinks(input),
+    listForwardReferences: (input) => store.listForwardReferences(input),
   });
 }

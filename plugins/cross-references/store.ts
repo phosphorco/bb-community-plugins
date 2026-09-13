@@ -18,9 +18,12 @@ import {
   type ApplyProjectionResponse,
   type BacklinkRow,
   type CrossReferencesChangedSignal,
+  type ForwardReferenceRow,
   type GetProjectionResponse,
   type ListBacklinksInput,
   type ListBacklinksResponse,
+  type ListForwardReferencesInput,
+  type ListForwardReferencesResponse,
   type NormalizedProjectionCommand,
 } from "./model.ts";
 import {
@@ -91,6 +94,10 @@ export const crossReferencesMigrations = [
      ON resource_keys(provider, key, value, resource_id);
    CREATE INDEX IF NOT EXISTS reference_occurrences_target_idx
      ON reference_occurrences(target_resource_id, id)`,
+  // Append migrations only: installed plugin storage binds each earlier
+  // statement, so modifying the initial index migration would strand users.
+  `CREATE INDEX IF NOT EXISTS source_projections_source_idx
+     ON source_projections(source_resource_id, id)`,
 ] as const;
 
 export function enableForeignKeys(db: Sqlite): void {
@@ -136,9 +143,27 @@ interface BacklinkQueryRow {
   position: number;
 }
 
+interface ForwardReferenceQueryRow {
+  occurrence_id: number;
+  target_provider: string;
+  target_canonical_keys_json: string;
+  target_presentation_json: string;
+  producer_plugin_id: string;
+  revision: number;
+  position: number;
+}
+
 export interface BacklinkCursor {
   v: 1;
   targetDigest: string;
+  upperId: number;
+  afterId: number;
+}
+
+export interface ForwardReferenceCursor {
+  v: 1;
+  sourceDigest: string;
+  producerPluginId: string | null;
   upperId: number;
   afterId: number;
 }
@@ -192,6 +217,27 @@ export function encodeBacklinkCursor(cursor: BacklinkCursor): string {
   return Buffer.from(cursorJson(cursor), "utf8").toString("base64url");
 }
 
+function forwardReferenceCursorJson(cursor: ForwardReferenceCursor): string {
+  return JSON.stringify({
+    v: cursor.v,
+    sourceDigest: cursor.sourceDigest,
+    producerPluginId: cursor.producerPluginId,
+    upperId: cursor.upperId,
+    afterId: cursor.afterId,
+  });
+}
+
+export function encodeForwardReferenceCursor(cursor: ForwardReferenceCursor): string {
+  validateDigest(cursor.sourceDigest, "cursor.sourceDigest");
+  if (cursor.producerPluginId !== null) validateProducerPluginId(cursor.producerPluginId);
+  validateRevision(cursor.upperId, "cursor.upperId", 0);
+  validateRevision(cursor.afterId, "cursor.afterId", 0);
+  if (cursor.v !== 1 || cursor.afterId > cursor.upperId) {
+    throw new CrossReferenceValidationError("cursor bounds are invalid.");
+  }
+  return Buffer.from(forwardReferenceCursorJson(cursor), "utf8").toString("base64url");
+}
+
 function decodeBacklinkCursor(encoded: string, targetDigest: string, highWatermark: number): BacklinkCursor {
   if (typeof encoded !== "string" || encoded.length === 0 || encoded.length > 4_096 || !/^[A-Za-z0-9_-]+$/.test(encoded)) {
     throw new CrossReferenceValidationError("cursor encoding is invalid.");
@@ -242,6 +288,61 @@ function decodeBacklinkCursor(encoded: string, targetDigest: string, highWaterma
     throw new CrossReferenceValidationError("cursor bounds are invalid.");
   }
   if (encodeBacklinkCursor(cursor) !== encoded) {
+    throw new CrossReferenceValidationError("cursor encoding is not canonical.");
+  }
+  return cursor;
+}
+
+function decodeForwardReferenceCursor(
+  encoded: string,
+  sourceDigest: string,
+  producerPluginId: string | null,
+  highWatermark: number,
+): ForwardReferenceCursor {
+  if (typeof encoded !== "string" || encoded.length === 0 || encoded.length > 4_096 || !/^[A-Za-z0-9_-]+$/.test(encoded)) {
+    throw new CrossReferenceValidationError("cursor encoding is invalid.");
+  }
+  let bytes: Buffer;
+  try {
+    bytes = Buffer.from(encoded, "base64url");
+  } catch {
+    throw new CrossReferenceValidationError("cursor encoding is invalid.");
+  }
+  if (bytes.toString("base64url") !== encoded) {
+    throw new CrossReferenceValidationError("cursor encoding is not canonical.");
+  }
+
+  let value: unknown;
+  try {
+    value = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
+  } catch {
+    throw new CrossReferenceValidationError("cursor is not valid JSON.");
+  }
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new CrossReferenceValidationError("cursor payload is invalid.");
+  }
+  const record = value as Record<string, unknown>;
+  if (Object.keys(record).sort().join(",") !== "afterId,producerPluginId,sourceDigest,upperId,v") {
+    throw new CrossReferenceValidationError("cursor fields are invalid.");
+  }
+  const cursor: ForwardReferenceCursor = {
+    v: record.v as 1,
+    sourceDigest: record.sourceDigest as string,
+    producerPluginId: record.producerPluginId as string | null,
+    upperId: record.upperId as number,
+    afterId: record.afterId as number,
+  };
+  if (cursor.v !== 1 || cursor.sourceDigest !== sourceDigest || cursor.producerPluginId !== producerPluginId) {
+    throw new CrossReferenceValidationError("cursor does not belong to this source.");
+  }
+  validateDigest(cursor.sourceDigest, "cursor.sourceDigest");
+  if (cursor.producerPluginId !== null) validateProducerPluginId(cursor.producerPluginId);
+  validateRevision(cursor.upperId, "cursor.upperId", 0);
+  validateRevision(cursor.afterId, "cursor.afterId", 0);
+  if (cursor.afterId > cursor.upperId || cursor.upperId > highWatermark) {
+    throw new CrossReferenceValidationError("cursor bounds are invalid.");
+  }
+  if (encodeForwardReferenceCursor(cursor) !== encoded) {
     throw new CrossReferenceValidationError("cursor encoding is not canonical.");
   }
   return cursor;
@@ -302,6 +403,34 @@ export class CrossReferenceStore {
         ORDER BY reference_occurrences.position`,
     ).all(projectionId) as OccurrenceIdentityRow[];
     return rows.map((row) => identityFromRow(row).identityDigest);
+  }
+
+  /**
+   * Old development builds could have admitted an unsafe url/href resource.
+   * Resource identities are otherwise retained after an occurrence disappears,
+   * so remove only invalid URL rows that are no longer referenced by either an
+   * occurrence or a source projection. Active source-owned occurrences are
+   * left for their producer's next complete-set replacement.
+   */
+  pruneUnsafeUrlResources(): number {
+    return this.db.transaction(() => {
+      const rows = this.db.prepare(
+        "SELECT id, provider, canonical_keys_json FROM resources WHERE provider = 'url'",
+      ).all() as ResourceRow[];
+      let removed = 0;
+      const remove = this.db.prepare(`DELETE FROM resources
+        WHERE id = ?
+          AND NOT EXISTS (SELECT 1 FROM reference_occurrences WHERE target_resource_id = resources.id)
+          AND NOT EXISTS (SELECT 1 FROM source_projections WHERE source_resource_id = resources.id)`);
+      for (const row of rows) {
+        try {
+          canonicalizeIdentity({ provider: row.provider, keys: parseJson<Record<string, string>>(row.canonical_keys_json, "resource keys") });
+        } catch {
+          removed += remove.run(row.id).changes;
+        }
+      }
+      return removed;
+    })();
   }
 
   applyProjection(input: ApplyProjectionInput): ApplyProjectionStoreResult {
@@ -387,6 +516,7 @@ export class CrossReferenceStore {
       const target = command.targets[position]!;
       insertOccurrence.run(projectionId, targetResourceIds[position], target.presentationJson, position, now);
     }
+    this.pruneUnsafeUrlResources();
 
     const affectedIdentityDigests = [
       command.source.identityDigest,
@@ -451,7 +581,14 @@ export class CrossReferenceStore {
         }
       : decodeBacklinkCursor(input.cursor, targetIdentity.identityDigest, highWatermark);
     const targetRow = this.findResource(targetIdentity);
-    if (targetRow === null) return { rows: [], nextCursor: null };
+    if (targetRow === null) return { rows: [], total: 0, nextCursor: null };
+
+    const total = (this.db.prepare(
+      `SELECT COUNT(*) AS total
+         FROM reference_occurrences
+        WHERE target_resource_id = ?
+          AND id <= ?`,
+    ).get(targetRow.id, cursor.upperId) as { total: number }).total;
 
     const rows = this.db.prepare(
       `SELECT reference_occurrences.id AS occurrence_id,
@@ -495,7 +632,86 @@ export class CrossReferenceStore {
       targetPresentation: parseJson<Presentation>(row.target_presentation_json, "target presentation"),
       position: row.position,
     }));
-    return { rows: backlinkRows, nextCursor };
+    return { rows: backlinkRows, total: validateRevision(total, "backlink total", 0), nextCursor };
+  }
+
+  /**
+   * Read the outgoing side of the exact edge index. A row here is the same
+   * stored occurrence that listBacklinks exposes from its target; no reverse
+   * relationship is materialized.
+   */
+  listForwardReferences(input: ListForwardReferencesInput): ListForwardReferencesResponse {
+    const sourceIdentity = normalizeIdentityInput(input.source);
+    const producerPluginId = input.producerPluginId === undefined ? null : validateProducerPluginId(input.producerPluginId);
+    const pageSize = defaultPageSize(input.pageSize);
+    const highWatermark = this.occurrenceHighWatermark();
+    const cursor = input.cursor === undefined
+      ? {
+          v: 1 as const,
+          sourceDigest: sourceIdentity.identityDigest,
+          producerPluginId,
+          upperId: this.currentOccurrenceMaximum(),
+          afterId: 0,
+        }
+      : decodeForwardReferenceCursor(input.cursor, sourceIdentity.identityDigest, producerPluginId, highWatermark);
+    const sourceRow = this.findResource(sourceIdentity);
+    if (sourceRow === null) return { rows: [], total: 0, nextCursor: null };
+
+    const total = (this.db.prepare(
+      `SELECT COUNT(*) AS total
+         FROM source_projections
+         JOIN reference_occurrences
+           ON reference_occurrences.projection_id = source_projections.id
+        WHERE source_projections.source_resource_id = ?
+          AND source_projections.tombstone = 0
+          AND (? IS NULL OR source_projections.producer_plugin_id = ?)
+          AND reference_occurrences.id <= ?`,
+    ).get(sourceRow.id, producerPluginId, producerPluginId, cursor.upperId) as { total: number }).total;
+
+    const rows = this.db.prepare(
+      `SELECT reference_occurrences.id AS occurrence_id,
+              target_resources.provider AS target_provider,
+              target_resources.canonical_keys_json AS target_canonical_keys_json,
+              reference_occurrences.target_presentation_json,
+              source_projections.producer_plugin_id,
+              source_projections.revision,
+              reference_occurrences.position
+         FROM source_projections
+         JOIN reference_occurrences
+           ON reference_occurrences.projection_id = source_projections.id
+         JOIN resources AS target_resources
+           ON target_resources.id = reference_occurrences.target_resource_id
+        WHERE source_projections.source_resource_id = ?
+          AND source_projections.tombstone = 0
+          AND (? IS NULL OR source_projections.producer_plugin_id = ?)
+          AND reference_occurrences.id > ?
+          AND reference_occurrences.id <= ?
+        ORDER BY reference_occurrences.id ASC
+        LIMIT ?`,
+    ).all(sourceRow.id, producerPluginId, producerPluginId, cursor.afterId, cursor.upperId, pageSize + 1) as ForwardReferenceQueryRow[];
+
+    const hasNext = rows.length > pageSize;
+    const page = hasNext ? rows.slice(0, pageSize) : rows;
+    const nextCursor = hasNext
+      ? encodeForwardReferenceCursor({
+          v: 1,
+          sourceDigest: sourceIdentity.identityDigest,
+          producerPluginId,
+          upperId: cursor.upperId,
+          afterId: page.at(-1)!.occurrence_id,
+        })
+      : null;
+    const forwardRows: ForwardReferenceRow[] = page.map((row) => ({
+      target: resourceFromRow({
+        id: 0,
+        provider: row.target_provider,
+        canonical_keys_json: row.target_canonical_keys_json,
+      }, row.target_presentation_json),
+      producerPluginId: row.producer_plugin_id,
+      revision: row.revision,
+      position: row.position,
+    }));
+    return { rows: forwardRows, total: validateRevision(total, "forward-reference total", 0), nextCursor };
   }
 
   private currentOccurrenceMaximum(): number {
