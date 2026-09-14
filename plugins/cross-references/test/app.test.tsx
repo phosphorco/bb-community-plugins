@@ -120,13 +120,35 @@ test("renders an observed external URL as a navigable forward reference", async 
     } as any,
   );
 
-  const trigger = await slot.findByRole("button", { name: "Cross-references: 1 forward reference, 0 backlinks" });
+  const trigger = await slot.findByRole("button", { name: "Cross-references: 1 forward reference" });
+  expect(trigger.querySelectorAll(".cross-references__metric")).toHaveLength(1);
+  expect([...trigger.querySelectorAll(".cross-references__count")].map((count) => count.textContent)).toEqual(["1"]);
   fireEvent.click(trigger);
   const link = await slot.findByRole("link", { name: /Design notes example\.test/ });
   expect(link.getAttribute("href")).toBe(externalUrl);
   expect(await slot.findByLabelText("Available (HTTP 200)")).toBeTruthy();
   fireEvent.click(link);
   expect(slot.inspection.navigateCalls).toContainEqual({ method: "openUrl", url: externalUrl });
+  slot.lifecycle.unmount();
+});
+
+test("shows only the backlink metric when this thread has no forward references", async () => {
+  const app = await loadPluginApp(() => import("../app.tsx"));
+  const slot = renderSlot(
+    app.threadHeaderActions[0]!,
+    { threadId: "thr_backlink01", projectId: "proj_backlink01", isCompactViewport: false },
+    {
+      rpc: {
+        listForwardReferences: () => ({ rows: [], total: 0, nextCursor: null }),
+        listBacklinks: () => ({ rows: [backlinkRow()], total: 1, nextCursor: null }),
+        checkForwardReferences: () => [],
+      },
+    } as any,
+  );
+
+  const trigger = await slot.findByRole("button", { name: "Cross-references: 1 backlink" });
+  expect(trigger.querySelectorAll(".cross-references__metric")).toHaveLength(1);
+  expect([...trigger.querySelectorAll(".cross-references__count")].map((count) => count.textContent)).toEqual(["1"]);
   slot.lifecycle.unmount();
 });
 

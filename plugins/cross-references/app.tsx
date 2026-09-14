@@ -244,7 +244,7 @@ function useForwardReferenceChecks(
 }
 
 function LinkGlyph() {
-  return <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M9.5 14.5 14.5 9.5m-8.1 8.1 1.8-1.8m4.4-4.4 1.8-1.8a3.3 3.3 0 0 0-4.7-4.7L8 6.7m8.1 8.1-1.8 1.8a3.3 3.3 0 0 1-4.7-4.7l1.8-1.8" /></svg>;
+  return <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M15 7h3a5 5 0 0 1 0 10h-3M9 17H6A5 5 0 0 1 6 7h3m-1 5h8" /></svg>;
 }
 
 function BacklinkGlyph() {
@@ -412,13 +412,17 @@ function ThreadHeaderAction({ threadId, projectId }: { threadId: string; project
   const forwardCount = pages.forward.total;
   const backlinkCount = pages.backlink.total;
   const count = forwardCount + backlinkCount;
+  const directionLabels = [
+    forwardCount > 0 ? countLabel(forwardCount, "forward reference") : null,
+    backlinkCount > 0 ? countLabel(backlinkCount, "backlink") : null,
+  ].filter((label): label is string => label !== null);
   // Keep the header quiet until this exact thread has a relationship to show.
   // Once visible, its dialog owns refresh/loading detail for that relationship.
   if (loading || count === 0) return null;
   return <>
-    <button ref={triggerRef} type="button" className="cross-references__trigger" aria-label={`Cross-references: ${countLabel(forwardCount, "forward reference")}, ${countLabel(backlinkCount, "backlink")}`} aria-expanded={open} aria-haspopup="dialog" aria-controls={popoverId} title="Show cross-references" onClick={() => setOpen((current) => !current)}>
-      <span className="cross-references__metric" aria-hidden="true"><LinkGlyph /><span className="cross-references__count">{forwardCount}</span></span>
-      <span className="cross-references__metric" aria-hidden="true"><BacklinkGlyph /><span className="cross-references__count">{backlinkCount}</span></span>
+    <button ref={triggerRef} type="button" className="cross-references__trigger" aria-label={`Cross-references: ${directionLabels.join(", ")}`} aria-expanded={open} aria-haspopup="dialog" aria-controls={popoverId} title="Show cross-references" onClick={() => setOpen((current) => !current)}>
+      {forwardCount > 0 && <span className="cross-references__metric" aria-hidden="true"><LinkGlyph /><span className="cross-references__count">{forwardCount}</span></span>}
+      {backlinkCount > 0 && <span className="cross-references__metric" aria-hidden="true"><BacklinkGlyph /><span className="cross-references__count">{backlinkCount}</span></span>}
     </button>
     {open && triggerRef.current != null && <ReferencesDetail pages={pages} loading={loading} loadingMore={loadingMore} error={error} stale={stale} checks={checks} checking={checking} checkError={checkError} trigger={triggerRef.current} popoverId={popoverId} onClose={close} onLoadMore={loadMore} />}
   </>;
