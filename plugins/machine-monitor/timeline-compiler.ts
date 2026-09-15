@@ -55,12 +55,14 @@ const METRIC_COLORS: Readonly<Record<FleetMetricId, string>> = {
   "memory.swap.in.pages-per-second": "#0891b2",
   "memory.swap.out.pages-per-second": "#4f46e5",
 };
-const COMPILER_VERSION = "machine-timeline-v2";
+const COMPILER_VERSION = "machine-timeline-v3";
 const EVENT_SERIES_ROLE = "events";
-const TRACK_TOP = 12;
-const TRACK_STRIDE = 106;
-const TRACK_HEIGHT = 74;
+const TRACK_TOP = 18;
+const TRACK_STRIDE = 92;
+const TRACK_HEIGHT = 62;
 const EVENT_LANE_HEIGHT = 30;
+const TRACK_LEFT = 108;
+const TRACK_RIGHT = 16;
 
 export type TimelineComponentFamily = "grid" | "xAxis" | "yAxis" | "series" | "tooltip";
 
@@ -143,6 +145,19 @@ type MetricTrackIds = Readonly<{
   yAxis: string;
 }>;
 
+type MetricSeriesRole = "average" | "minimum" | "maximum";
+
+type TooltipMetricSeries = Readonly<{
+  metricId: FleetMetricId;
+  role: MetricSeriesRole;
+}>;
+
+type TooltipParameter = Readonly<{
+  seriesId?: unknown;
+  axisValue?: unknown;
+  value?: unknown;
+}>;
+
 const figureId = "machine-monitor:timeline";
 const ids = {
   eventsGrid: "machine-monitor:timeline:grid:events",
@@ -185,6 +200,79 @@ function bucketCenter(startMs: number, endMs: number): number {
 
 function point(value: number | null, startMs: number, endMs: number): readonly [number, number | null] {
   return [bucketCenter(startMs, endMs), value];
+}
+
+function displayPrecision(value: number, compact: boolean): number {
+  if (compact) return Math.abs(value) >= 100 ? 0 : Math.abs(value) >= 10 ? 0 : 1;
+  return Math.abs(value) >= 100 ? 0 : Math.abs(value) >= 10 ? 1 : 2;
+}
+
+/** Human-facing chart text is intentionally separate from stored exact values. */
+function formatTimelineMetric(value: number | null, metricId: FleetMetricId, compact: boolean): string {
+  if (value == null || !Number.isFinite(value)) return "—";
+  const unit = metricCatalogEntry(metricId).unit;
+  if (unit === "percent") return `${value.toFixed(compact ? 0 : 1)}%`;
+  if (unit === "bytes") {
+    const absolute = Math.abs(value);
+    if (absolute >= 1_099_511_627_776) return `${(value / 1_099_511_627_776).toFixed(compact ? 0 : 1)} TiB`;
+    if (absolute >= 1_073_741_824) return `${(value / 1_073_741_824).toFixed(compact ? 0 : 1)} GiB`;
+    return `${(value / 1_048_576).toFixed(compact ? 0 : 1)} MiB`;
+  }
+  if (unit === "pages-per-second") return `${value.toFixed(displayPrecision(value, compact))}/s`;
+  return value.toFixed(displayPrecision(value, compact));
+}
+
+function tooltipTime(atMs: number | null): string {
+  if (atMs == null || !Number.isFinite(atMs)) return "Timeline reading";
+  return new Intl.DateTimeFormat(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(atMs);
+}
+
+function tooltipTimestamp(parameter: TooltipParameter): number | null {
+  if (typeof parameter.axisValue === "number" && Number.isFinite(parameter.axisValue)) return parameter.axisValue;
+  if (Array.isArray(parameter.value) && typeof parameter.value[0] === "number" && Number.isFinite(parameter.value[0])) return parameter.value[0];
+  return null;
+}
+
+function tooltipValue(parameter: TooltipParameter): number | null {
+  const raw = Array.isArray(parameter.value) ? parameter.value[1] : parameter.value;
+  return typeof raw === "number" && Number.isFinite(raw) ? raw : null;
+}
+
+function metricTooltipFormatter(
+  rawParameters: unknown,
+  series: ReadonlyMap<string, TooltipMetricSeries>,
+  visibleMetrics: readonly FleetMetricId[],
+): string {
+  const parameters = (Array.isArray(rawParameters) ? rawParameters : [rawParameters])
+    .filter((parameter): parameter is TooltipParameter => parameter != null && typeof parameter === "object");
+  const values = new Map<FleetMetricId, Partial<Record<MetricSeriesRole, number>>>();
+  let atMs: number | null = null;
+  for (const parameter of parameters) {
+    if (atMs == null) atMs = tooltipTimestamp(parameter);
+    const descriptor = typeof parameter.seriesId === "string" ? series.get(parameter.seriesId) : undefined;
+    const value = tooltipValue(parameter);
+    if (descriptor == null || value == null) continue;
+    const metricValues = values.get(descriptor.metricId) ?? {};
+    metricValues[descriptor.role] = value;
+    values.set(descriptor.metricId, metricValues);
+  }
+  const rows = visibleMetrics.flatMap((metricId) => {
+    const metricValues = values.get(metricId);
+    if (metricValues?.average == null) return [];
+    const label = metricCatalogEntry(metricId).label;
+    const average = formatTimelineMetric(metricValues.average, metricId, false);
+    const hasEnvelope = metricValues.minimum != null && metricValues.maximum != null;
+    const envelope = hasEnvelope
+      ? `${formatTimelineMetric(metricValues.minimum!, metricId, false)}–${formatTimelineMetric(metricValues.maximum!, metricId, false)}`
+      : "";
+    return [`{metric|${label}} {value|${average}}${envelope.length > 0 ? ` {envelope|${envelope}}` : ""}`];
+  });
+  return [`{heading|${tooltipTime(atMs)}}`, ...rows].join("\n");
 }
 
 /** Stable only inside one timeline generation, by design. */
@@ -247,6 +335,7 @@ export function compileMachineTimeline(
   const grids: object[] = [];
   const xAxes: object[] = [];
   const yAxes: object[] = [];
+  const tooltipSeries = new Map<string, TooltipMetricSeries>();
 
   for (const [metricIndex, metric] of visibleMetrics.entries()) {
     const catalog = metricCatalogEntry(metric.metricId);
@@ -261,6 +350,9 @@ export function compileMachineTimeline(
     const maximumData = metric.buckets.map((bucket) => point(bucket.max, bucket.startMs, bucket.endMs));
 
     metricSeriesIds.push(averageId, minimumId, maximumId);
+    tooltipSeries.set(averageId, { metricId: metric.metricId, role: "average" });
+    tooltipSeries.set(minimumId, { metricId: metric.metricId, role: "minimum" });
+    tooltipSeries.set(maximumId, { metricId: metric.metricId, role: "maximum" });
     components.push(
       { family: "grid", id: track.grid, kind: "cartesian2d", bindingSignature: `${metric.metricId}:track` },
       { family: "xAxis", id: track.xAxis, kind: "time", bindingSignature: `${metric.metricId}:time` },
@@ -271,8 +363,8 @@ export function compileMachineTimeline(
     );
     grids.push({
       id: track.grid,
-      left: 84,
-      right: 16,
+      left: TRACK_LEFT,
+      right: TRACK_RIGHT,
       top: TRACK_TOP + metricIndex * TRACK_STRIDE,
       height: TRACK_HEIGHT,
       outerBoundsMode: "same",
@@ -293,12 +385,15 @@ export function compileMachineTimeline(
       type: "value",
       gridId: track.grid,
       min: 0,
-      name: `${catalog.label} (${catalog.unit})`,
-      nameLocation: "middle",
-      nameGap: 60,
-      nameTextStyle: { color: theme.muted, fontSize: 10 },
-      axisLabel: { color: theme.muted, fontSize: 10, hideOverlap: true },
-      splitLine: { lineStyle: { color: theme.border } },
+      // A horizontal, top-aligned label lets the eye scan each independent
+      // metric track without reading rotated diagnostic text in the gutter.
+      name: catalog.label,
+      nameLocation: "end",
+      nameRotate: 0,
+      nameGap: 12,
+      nameTextStyle: { color: theme.foreground, fontSize: 11, fontWeight: 600 },
+      axisLabel: { color: theme.muted, fontSize: 10, hideOverlap: true, formatter: (value: number) => formatTimelineMetric(value, metric.metricId, true) },
+      splitLine: { lineStyle: { color: theme.border, opacity: 0.46 } },
       axisLine: { lineStyle: { color: theme.border } },
     });
     // Min/max are the truthful server envelope; the average is never inferred
@@ -314,15 +409,15 @@ export function compileMachineTimeline(
         showSymbol: false,
         connectNulls: false,
         animation: false,
-        lineStyle: { color, width: 2 },
+        lineStyle: { color, width: 2.4 },
         itemStyle: { color },
         step: catalog.visualization === "step" ? "middle" : undefined,
-        areaStyle: catalog.visualization === "area" ? { color, opacity: 0.12 } : undefined,
+        areaStyle: catalog.visualization === "area" ? { color, opacity: 0.08 } : undefined,
         emphasis: { focus: "none", scale: false },
         markArea: gaps.length === 0 ? undefined : {
           silent: true,
           label: { show: false },
-          itemStyle: { color: theme.gap, opacity: 0.11 },
+          itemStyle: { color: theme.gap, opacity: 0.08 },
           data: gaps,
         },
       },
@@ -336,8 +431,8 @@ export function compileMachineTimeline(
         showSymbol: false,
         connectNulls: false,
         animation: false,
-        lineStyle: { color, width: 1, type: "dashed", opacity: 0.48 },
-        itemStyle: { color, opacity: 0.48 },
+        lineStyle: { color, width: 0.8, type: "dashed", opacity: 0.26 },
+        itemStyle: { color, opacity: 0.26 },
         emphasis: { focus: "none", scale: false },
       },
       {
@@ -350,8 +445,8 @@ export function compileMachineTimeline(
         showSymbol: false,
         connectNulls: false,
         animation: false,
-        lineStyle: { color, width: 1, type: "dashed", opacity: 0.72 },
-        itemStyle: { color, opacity: 0.72 },
+        lineStyle: { color, width: 1, type: "dashed", opacity: 0.38 },
+        itemStyle: { color, opacity: 0.38 },
         emphasis: { focus: "none", scale: false },
       },
     );
@@ -456,11 +551,21 @@ export function compileMachineTimeline(
         confine: true,
         backgroundColor: theme.surface,
         borderColor: theme.border,
+        borderWidth: 1,
+        padding: [8, 10],
+        axisPointer: { type: "line", lineStyle: { color: theme.muted, width: 1, opacity: 0.72 } },
         textStyle: { color: theme.foreground, fontSize: 11 },
+        formatter: (parameters: unknown) => metricTooltipFormatter(parameters, tooltipSeries, visibleMetrics.map((metric) => metric.metricId)),
+        rich: {
+          heading: { color: theme.muted, fontSize: 10, fontWeight: 600, lineHeight: 18 },
+          metric: { color: theme.muted, fontSize: 10, fontWeight: 600, lineHeight: 18 },
+          value: { color: theme.foreground, fontSize: 12, fontWeight: 650, padding: [0, 0, 0, 8] },
+          envelope: { color: theme.muted, fontSize: 10, padding: [0, 0, 0, 7] },
+        },
       },
       grid: [
         ...grids,
-        { id: ids.eventsGrid, left: 84, right: 16, top: eventTop, height: EVENT_LANE_HEIGHT },
+        { id: ids.eventsGrid, left: TRACK_LEFT, right: TRACK_RIGHT, top: eventTop, height: EVENT_LANE_HEIGHT },
       ],
       xAxis: [
         ...xAxes,

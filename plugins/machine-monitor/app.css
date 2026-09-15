@@ -66,12 +66,12 @@
 .machine-monitor__warnings li strong { flex: 0 0 auto; text-transform: capitalize; }
 .machine-monitor__warnings li span { min-width: 0; overflow-wrap: anywhere; }
 .machine-monitor__metrics article[data-unavailable="true"] { border-style: dashed; background: color-mix(in srgb, var(--muted) 42%, transparent); }
-.machine-monitor__timeline { display: grid; gap: 9px; padding: 10px; }
+.machine-monitor__timeline { display: grid; gap: 10px; padding: 12px; }
 .machine-monitor__timeline > header { align-items: center; }
 .machine-monitor__timeline > header > span { color: var(--muted-foreground); font-size: 10px; }
 .machine-monitor__timeline-status { margin: 0; padding: 7px; border-radius: 6px; background: color-mix(in srgb, var(--muted) 42%, transparent); }
-.machine-monitor__timeline-chart { min-width: 0; color: var(--foreground); background: var(--card); }
-.machine-monitor__timeline-chart > div[role="img"] { width: 100%; min-width: 0; min-height: 300px; height: 320px; touch-action: pan-y pinch-zoom; }
+.machine-monitor__timeline-chart { min-width: 0; padding: 4px 2px 0; border-radius: 7px; color: var(--card-foreground); background: linear-gradient(180deg, color-mix(in srgb, var(--muted) 24%, transparent), transparent 30%), var(--card); }
+.machine-monitor__timeline-chart > div[role="img"] { width: 100%; min-width: 0; min-height: 300px; height: 320px; border-radius: 6px; touch-action: pan-y pinch-zoom; }
 .machine-monitor__timeline-chart > div[aria-live] { color: var(--muted-foreground); font-size: 11px; }
 .machine-monitor__timeline-chart > section { min-width: 0; }
 .machine-monitor__timeline-chart h3 { margin: 9px 0 4px; font-size: 12px; }
@@ -125,7 +125,7 @@
 .machine-monitor__processes > div:first-child { color: var(--muted-foreground); font-size: 10px; }.machine-monitor__processes > div:nth-child(even) { background: color-mix(in srgb, var(--muted) 32%, transparent); }.machine-monitor__processes span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .machine-monitor__processes [role="row"] > span:first-child { overflow: visible; text-overflow: clip; white-space: normal; overflow-wrap: anywhere; }
 .machine-monitor__processes-note { margin-top: 7px !important; }
-.machine-monitor__echarts-theme { color: var(--foreground); border-top-color: var(--muted-foreground); border-right-color: var(--border); border-bottom-color: var(--primary); border-left-color: var(--destructive); text-decoration-color: color-mix(in srgb, var(--muted-foreground) 66%, var(--border)); background: var(--card); }
+.machine-monitor__echarts-theme { color: var(--card-foreground); border-top-color: var(--muted-foreground); border-right-color: var(--border); border-bottom-color: var(--primary); border-left-color: var(--destructive); text-decoration-color: color-mix(in srgb, var(--muted-foreground) 66%, var(--border)); background: var(--card); }
 .machine-monitor__sidebar-warning { display: block; width: 7px; height: 7px; border-radius: 50%; background: var(--destructive); box-shadow: 0 0 0 2px color-mix(in srgb, var(--destructive) 20%, transparent); }
 .machine-monitor__error { margin: 0 0 10px; padding: 8px 10px; border: 1px solid color-mix(in srgb, var(--destructive) 38%, var(--border)); border-radius: 7px; color: var(--destructive); font-size: 12px; }
 .machine-monitor__empty { margin: 24px 0; color: var(--muted-foreground); font-size: 13px; }

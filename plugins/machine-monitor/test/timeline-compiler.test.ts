@@ -132,6 +132,54 @@ test("omits hidden metrics and keeps metric colors stable when tracks are omitte
   assert.equal((fullLoad.lineStyle as { color: string }).color, (mixedLoad.lineStyle as { color: string }).color);
 });
 
+test("formats independent metric tracks and tooltip envelopes for monitoring rather than raw storage values", () => {
+  const input = timeline({
+    metrics: [
+      ...timeline().metrics,
+      {
+        metricId: "memory.used.bytes",
+        availability: { state: "available", reason: null },
+        buckets: [
+          { startMs: 0, endMs: 1_000, min: 90_000_000_000, average: 100_000_000_000, max: 110_000_000_000, last: 105_000_000_000, count: 2 },
+          { startMs: 1_000, endMs: 2_000, min: null, average: null, max: null, last: null, count: 0 },
+          { startMs: 2_000, endMs: 3_000, min: 120_000_000_000, average: 130_000_000_000, max: 140_000_000_000, last: 135_000_000_000, count: 4 },
+        ],
+      },
+    ],
+  });
+  const figure = compileMachineTimeline(input, {
+    theme: { foreground: "#f8fafc", muted: "#94a3b8", border: "#334155", surface: "#172033", gap: "#64748b" },
+  });
+  const axes = figure.option.yAxis as Array<Record<string, unknown>>;
+  const cpuAxis = axes.find((axis) => axis.id === "machine-monitor:timeline:y-axis:metric:cpu.utilization.percent")!;
+  const memoryAxis = axes.find((axis) => axis.id === "machine-monitor:timeline:y-axis:metric:memory.used.bytes")!;
+  const cpuFormatter = (cpuAxis.axisLabel as { formatter: (value: number) => string }).formatter;
+  const memoryFormatter = (memoryAxis.axisLabel as { formatter: (value: number) => string }).formatter;
+  assert.equal(cpuAxis.nameRotate, 0);
+  assert.equal(cpuAxis.name, "CPU utilization");
+  assert.equal(cpuFormatter(30.120645894727012), "30%");
+  assert.equal(memoryFormatter(150_000_000_000), "140 GiB");
+
+  const tooltip = figure.option.tooltip as {
+    backgroundColor: string;
+    borderColor: string;
+    formatter: (parameters: unknown) => string;
+    rich: Record<string, unknown>;
+  };
+  const rendered = tooltip.formatter([
+    { seriesId: "machine-monitor:timeline:series:metric:cpu.utilization.percent:average", value: [500, 30.120645894727012] },
+    { seriesId: "machine-monitor:timeline:series:metric:cpu.utilization.percent:minimum", value: [500, 22.537358120798057] },
+    { seriesId: "machine-monitor:timeline:series:metric:cpu.utilization.percent:maximum", value: [500, 45.27146550551095] },
+  ]);
+  assert.equal(tooltip.backgroundColor, "#172033");
+  assert.equal(tooltip.borderColor, "#334155");
+  assert.ok("heading" in tooltip.rich);
+  assert.match(rendered, /CPU utilization/);
+  assert.match(rendered, /30\.1%/);
+  assert.match(rendered, /22\.5%–45\.3%/);
+  assert.doesNotMatch(rendered, /30\.120645/);
+});
+
 test("event activation resolves only an opaque generation-scoped key, never ECharts indexes", () => {
   const input = timeline();
   const figure = compileMachineTimeline(input);

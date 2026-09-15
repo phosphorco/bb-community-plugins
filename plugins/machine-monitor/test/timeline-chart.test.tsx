@@ -357,6 +357,59 @@ test("resolves semantic chart colors from the host theme without a remount", () 
   getStyle.mockRestore();
 });
 
+test("keeps the machine timeline tooltip compact and on the active chart surface across a theme change", () => {
+  const theme = {
+    color: "rgb(248, 250, 252)",
+    borderTopColor: "rgb(148, 163, 184)",
+    borderRightColor: "rgb(51, 65, 85)",
+    backgroundColor: "rgb(23, 32, 51)",
+    textDecorationColor: "rgb(100, 116, 139)",
+    borderBottomColor: "rgb(124, 58, 237)",
+    borderLeftColor: "rgb(185, 28, 28)",
+  };
+  const originalGetComputedStyle = window.getComputedStyle.bind(window);
+  const getStyle = vi.spyOn(window, "getComputedStyle").mockImplementation((element) => {
+    const computed = originalGetComputedStyle(element);
+    return new Proxy(computed, {
+      get(target, property, receiver) {
+        if (typeof property === "string" && property in theme) return theme[property as keyof typeof theme];
+        return Reflect.get(target, property, receiver);
+      },
+    });
+  });
+  const rendered = render(<MachineTimelineChart timeline={timeline()} />);
+  const host = screen.getByRole("img", { name: /Machine timeline/ });
+  Object.defineProperty(host, "getBoundingClientRect", {
+    configurable: true,
+    value: () => ({ width: 640, height: 320, top: 0, right: 640, bottom: 320, left: 0, x: 0, y: 0, toJSON: () => ({}) }),
+  });
+  act(() => {
+    ControlledResizeObserver.instances.at(-1)!.emit(640, 320);
+    flushFrames();
+  });
+  const chart = echartsMock.instances.at(-1)!;
+  const first = chart.setOption.mock.calls.at(-1)![0] as {
+    tooltip: { backgroundColor: string; borderColor: string; rich: Record<string, { color: string }> };
+  };
+  expect(first.tooltip.backgroundColor).toBe("rgb(23, 32, 51)");
+  expect(first.tooltip.borderColor).toBe("rgb(51, 65, 85)");
+  expect(first.tooltip.rich.value!.color).toBe("rgb(248, 250, 252)");
+  expect(first.tooltip.rich.heading!.color).toBe("rgb(148, 163, 184)");
+
+  theme.backgroundColor = "rgb(15, 23, 42)";
+  theme.color = "rgb(226, 232, 240)";
+  act(() => {
+    ControlledMutationObserver.instances.at(-1)!.callback([], ControlledMutationObserver.instances.at(-1) as unknown as MutationObserver);
+    flushFrames();
+  });
+  const second = chart.setOption.mock.calls.at(-1)![0] as { tooltip: { backgroundColor: string; rich: Record<string, { color: string }> } };
+  expect(second.tooltip.backgroundColor).toBe("rgb(15, 23, 42)");
+  expect(second.tooltip.rich.value!.color).toBe("rgb(226, 232, 240)");
+  expect(echartsMock.init).toHaveBeenCalledTimes(1);
+  rendered.unmount();
+  getStyle.mockRestore();
+});
+
 test("provides partial/stale/truncated disclosure and a native exact event action", () => {
   const activated: Array<{ threadId: string | null }> = [];
   render(<MachineTimelineChart
