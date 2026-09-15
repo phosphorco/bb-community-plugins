@@ -1,5 +1,76 @@
 .machine-monitor { box-sizing: border-box; width: 100%; height: 100%; min-width: 0; min-height: 0; overflow-x: hidden; overflow-y: auto; overscroll-behavior-y: contain; container-type: inline-size; padding: 18px; color: var(--foreground); background: var(--background); -webkit-overflow-scrolling: touch; }
 .machine-monitor * { box-sizing: border-box; }
+.machine-monitor__page-header { display: flex; align-items: start; justify-content: space-between; gap: 16px; margin-bottom: 16px; }
+.machine-monitor__page-header > div { min-width: 0; }
+.machine-monitor__page-header > span { flex: 0 0 auto; padding: 4px 7px; border: 1px solid var(--border); border-radius: 999px; color: var(--muted-foreground); font-size: 10px; white-space: nowrap; }
+.machine-monitor__page-header p { margin-top: 4px; color: var(--muted-foreground); font-size: 12px; overflow-wrap: anywhere; }
+.machine-monitor__fleet-picker, .machine-monitor__selected-machine, .machine-monitor__timeline { min-width: 0; border: 1px solid var(--border); border-radius: 9px; background: var(--card); color: var(--card-foreground); }
+.machine-monitor__fleet-picker { display: grid; gap: 8px; margin-bottom: 10px; padding: 10px; }
+.machine-monitor__fleet-picker > header, .machine-monitor__selected-machine > header, .machine-monitor__timeline > header { display: flex; align-items: start; justify-content: space-between; gap: 12px; }
+.machine-monitor__fleet-picker > header > div, .machine-monitor__selected-machine > header > div { min-width: 0; }
+.machine-monitor__fleet-picker h2, .machine-monitor__timeline h2 { font-size: 12px; font-weight: 650; }
+.machine-monitor__fleet-picker header p, .machine-monitor__selected-machine > header p, .machine-monitor__machine-facts, .machine-monitor__timeline-status { color: var(--muted-foreground); font-size: 11px; overflow-wrap: anywhere; }
+.machine-monitor__fleet-picker header p, .machine-monitor__selected-machine > header p { margin-top: 3px; }
+.machine-monitor__fleet-generation { flex: 0 1 auto; color: var(--muted-foreground); font-size: 10px; font-variant-numeric: tabular-nums; text-align: end; overflow-wrap: anywhere; }
+.machine-monitor__fleet-picker > ol { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 152px), 1fr)); gap: 6px; margin: 0; padding: 0; list-style: none; }
+.machine-monitor__fleet-picker li { min-width: 0; }
+.machine-monitor__fleet-picker[data-inspecting] { gap: 6px; padding: 8px; }
+.machine-monitor__fleet-picker[data-inspecting] .machine-monitor__atlas-button { min-height: 62px; padding: 7px; }
+.machine-monitor__atlas-button { --machine-monitor-connection-layer: color-mix(in srgb, var(--muted) 62%, transparent); --machine-monitor-collector-layer: transparent; --machine-monitor-pressure-layer: transparent; position: relative; display: grid; grid-template-columns: auto minmax(0, 1fr); grid-template-areas: "state name" "metrics metrics"; align-items: center; width: 100%; min-width: 0; min-height: 68px; gap: 6px 8px; padding: 8px; border: 1px solid var(--border); border-radius: 7px; color: var(--foreground); background: linear-gradient(90deg, var(--machine-monitor-collector-layer), transparent 62%), linear-gradient(135deg, var(--machine-monitor-connection-layer), transparent 72%), linear-gradient(0deg, var(--machine-monitor-pressure-layer), transparent 68%), linear-gradient(90deg, color-mix(in srgb, var(--primary) 34%, transparent) 0 var(--machine-monitor-cpu-pressure), transparent var(--machine-monitor-cpu-pressure)) left calc(100% - 16px) / 100% 2px no-repeat, linear-gradient(90deg, color-mix(in srgb, var(--primary) 28%, transparent) 0 var(--machine-monitor-memory-pressure), transparent var(--machine-monitor-memory-pressure)) left calc(100% - 10px) / 100% 2px no-repeat, linear-gradient(90deg, color-mix(in srgb, var(--primary) 22%, transparent) 0 var(--machine-monitor-disk-pressure), transparent var(--machine-monitor-disk-pressure)) left calc(100% - 4px) / 100% 2px no-repeat, var(--card); font: inherit; text-align: start; cursor: pointer; }
+.machine-monitor__atlas-button[data-connection="disconnected"] { --machine-monitor-connection-layer: color-mix(in srgb, var(--destructive) 18%, transparent); }
+.machine-monitor__atlas-button[data-freshness="stale"] { --machine-monitor-connection-layer: color-mix(in srgb, var(--primary) 14%, transparent); }
+.machine-monitor__atlas-button[data-collector="failure"] { --machine-monitor-collector-layer: color-mix(in srgb, var(--destructive) 20%, transparent); }
+.machine-monitor__atlas-button[data-collector="warning"] { --machine-monitor-collector-layer: color-mix(in srgb, var(--primary) 14%, transparent); }
+.machine-monitor__atlas-button[data-pressure="elevated"] { --machine-monitor-pressure-layer: color-mix(in srgb, var(--primary) 10%, transparent); }
+.machine-monitor__atlas-button[data-pressure="critical"] { --machine-monitor-pressure-layer: color-mix(in srgb, var(--destructive) 14%, transparent); }
+.machine-monitor__atlas-button:hover { background-color: var(--accent); color: var(--accent-foreground); }
+.machine-monitor__atlas-button[aria-pressed="true"] { border-color: var(--primary); box-shadow: inset 3px 0 0 var(--primary); }
+.machine-monitor__atlas-button[data-anomalous] { border-width: 2px; }
+.machine-monitor__fleet-picker button:focus-visible, .machine-monitor__selected-machine select:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+.machine-monitor__atlas-state { display: grid; grid-area: state; gap: 1px; justify-items: center; min-width: 24px; color: var(--muted-foreground); font-size: 8px; font-weight: 650; line-height: 1; text-align: center; }
+.machine-monitor__atlas-state b { display: grid; width: 20px; height: 20px; place-items: center; border: 1px solid currentColor; border-radius: 50%; font-size: 13px; line-height: 1; }
+.machine-monitor__atlas-button[data-anomalous] .machine-monitor__atlas-state { color: var(--destructive); }
+.machine-monitor__atlas-button[data-freshness="stale"] .machine-monitor__atlas-state, .machine-monitor__atlas-button[data-collector="warning"] .machine-monitor__atlas-state, .machine-monitor__atlas-button[data-pressure="elevated"] .machine-monitor__atlas-state { color: var(--primary); }
+.machine-monitor__atlas-button > strong { display: flex; grid-area: name; align-items: baseline; justify-content: space-between; min-width: 0; gap: 6px; font-size: 12px; }
+.machine-monitor__atlas-button > strong > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.machine-monitor__atlas-button > strong small { flex: 0 0 auto; color: var(--primary); font-size: 9px; font-weight: 650; }
+.machine-monitor__atlas-metrics { display: grid; grid-area: metrics; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 5px; min-width: 0; }
+.machine-monitor__atlas-metric { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 3px; min-width: 0; color: var(--muted-foreground); font-size: 8px; font-variant-numeric: tabular-nums; }
+.machine-monitor__atlas-metric > b { font-size: inherit; letter-spacing: .02em; }
+.machine-monitor__atlas-metric > i { display: block; min-width: 0; height: 4px; overflow: hidden; border: 1px solid color-mix(in srgb, var(--border) 72%, transparent); border-radius: 999px; background: color-mix(in srgb, var(--muted) 60%, transparent); }
+.machine-monitor__atlas-metric > i > i { display: block; width: var(--machine-monitor-pressure); min-width: 2px; height: 100%; background: var(--primary); }
+.machine-monitor__atlas-metric[data-level="elevated"] > i > i { background: var(--primary); }
+.machine-monitor__atlas-metric[data-level="critical"] > i > i { background: var(--destructive); }
+.machine-monitor__atlas-metric[data-level="unavailable"] > i { border-style: dashed; background: repeating-linear-gradient(135deg, color-mix(in srgb, var(--muted) 75%, transparent) 0 2px, transparent 2px 4px); }
+.machine-monitor__atlas-metric[data-level="unavailable"] > i > i { display: none; }
+.machine-monitor__visually-hidden { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; border: 0; }
+.machine-monitor__selected-machine { display: grid; gap: 10px; margin-bottom: 10px; padding: 12px; }
+.machine-monitor__selected-machine[data-stale] { border-color: color-mix(in srgb, var(--primary) 48%, var(--border)); }
+.machine-monitor__selected-machine h1 { font-size: 17px; }
+.machine-monitor__selected-machine > header > label { flex: 0 0 auto; }
+.machine-monitor__machine-facts { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 7px; }
+.machine-monitor__machine-facts p { min-width: 0; padding: 7px; border-radius: 6px; background: color-mix(in srgb, var(--muted) 42%, transparent); }
+.machine-monitor__machine-facts strong { color: var(--foreground); }
+.machine-monitor__warnings { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.machine-monitor__warnings li { display: flex; gap: 7px; min-width: 0; padding: 7px; border: 1px solid color-mix(in srgb, var(--destructive) 36%, var(--border)); border-radius: 6px; color: var(--destructive); font-size: 11px; }
+.machine-monitor__warnings li strong { flex: 0 0 auto; text-transform: capitalize; }
+.machine-monitor__warnings li span { min-width: 0; overflow-wrap: anywhere; }
+.machine-monitor__metrics article[data-unavailable="true"] { border-style: dashed; background: color-mix(in srgb, var(--muted) 42%, transparent); }
+.machine-monitor__timeline { display: grid; gap: 9px; padding: 10px; }
+.machine-monitor__timeline > header { align-items: center; }
+.machine-monitor__timeline > header > span { color: var(--muted-foreground); font-size: 10px; }
+.machine-monitor__timeline-status { margin: 0; padding: 7px; border-radius: 6px; background: color-mix(in srgb, var(--muted) 42%, transparent); }
+.machine-monitor__timeline-chart { min-width: 0; color: var(--foreground); background: var(--card); }
+.machine-monitor__timeline-chart > div[role="img"] { width: 100%; min-width: 0; min-height: 300px; height: 320px; touch-action: pan-y pinch-zoom; }
+.machine-monitor__timeline-chart > div[aria-live] { color: var(--muted-foreground); font-size: 11px; }
+.machine-monitor__timeline-chart > section { min-width: 0; }
+.machine-monitor__timeline-chart h3 { margin: 9px 0 4px; font-size: 12px; }
+.machine-monitor__timeline-chart ol { display: grid; gap: 6px; margin: 0; padding-left: 20px; }
+.machine-monitor__timeline-chart li { min-width: 0; overflow-wrap: anywhere; font-size: 11px; }
+.machine-monitor__timeline-chart li p { margin-top: 3px; color: var(--muted-foreground); }
+.machine-monitor__timeline-chart button { min-height: 28px; margin-top: 5px; padding: 4px 7px; border: 1px solid var(--border); border-radius: 6px; color: var(--primary); background: var(--background); font: inherit; font-size: 10px; cursor: pointer; }
+.machine-monitor__timeline-chart button:hover { background: var(--accent); color: var(--accent-foreground); }
+.machine-monitor__timeline-chart button:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
 .machine-monitor__header { display: flex; align-items: end; justify-content: space-between; gap: 16px; margin-bottom: 16px; }
 .machine-monitor__header > div { min-width: 0; }
 .machine-monitor h1, .machine-monitor h2, .machine-monitor p { margin: 0; }
@@ -78,13 +149,19 @@
 .machine-monitor__reference-add { color: var(--primary) !important; }
 .machine-monitor__reference-remove { color: var(--destructive) !important; }
 @container (max-width: 760px) {
-  .machine-monitor__metrics, .machine-monitor__directories > ol, .machine-monitor__memory-pressure dl { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .machine-monitor__metrics, .machine-monitor__directories > ol, .machine-monitor__memory-pressure dl, .machine-monitor__machine-facts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .machine-monitor__charts { grid-template-columns: 1fr; }
+  .machine-monitor__timeline-chart > div[role="img"] { min-height: 270px; height: 290px; }
 }
 @media (max-width: 760px) {
   .machine-monitor { padding: 14px; }
 }
 @container (max-width: 460px) {
+  .machine-monitor__page-header, .machine-monitor__fleet-picker > header, .machine-monitor__selected-machine > header { flex-direction: column; gap: 9px; }
+  .machine-monitor__page-header > span { align-self: start; }
+  .machine-monitor__fleet-generation { text-align: start; }
+  .machine-monitor__fleet-picker > ol { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .machine-monitor__fleet-picker[data-inspecting] .machine-monitor__atlas-button { min-height: 60px; }
   .machine-monitor__header { align-items: stretch; flex-direction: column; gap: 12px; margin-bottom: 12px; }
   .machine-monitor label { grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 10px; }
   .machine-monitor select { width: 100%; min-width: 0; }
@@ -93,8 +170,10 @@
   .machine-monitor__metrics strong { font-size: 24px; }
   .machine-monitor__charts, .machine-monitor__directories, .machine-monitor__memory-pressure { margin-top: 8px; }
   .machine-monitor__chart > div { height: 210px; margin-inline: 2px; }
+  .machine-monitor__timeline-chart > div[role="img"] { min-height: 240px; height: 260px; }
   .machine-monitor__memory-pressure > header { flex-direction: column; gap: 4px; }
 }
 @container (max-width: 300px) {
-  .machine-monitor__metrics, .machine-monitor__directories > ol, .machine-monitor__memory-pressure dl { grid-template-columns: 1fr; }
+  .machine-monitor__metrics, .machine-monitor__directories > ol, .machine-monitor__memory-pressure dl, .machine-monitor__machine-facts { grid-template-columns: 1fr; }
+  .machine-monitor__fleet-picker > ol { grid-template-columns: 1fr; }
 }

@@ -1,13 +1,79 @@
+import { randomUUID } from "node:crypto";
 import os from "node:os";
 
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 
 import { MachineMonitorReferenceDelivery } from "./attachment-delivery.ts";
-import { additionalDirectories, bucketSizeFor, collectDirectorySamples, collectMemoryDiagnostics, collectSample, DIRECTORY_SAMPLE_INTERVAL_MS, exclusiveDirectorySizes, MAX_MEMORY_DIAGNOSTICS_SNAPSHOTS, MEMORY_DIAGNOSTICS_INTERVAL_MS, MEMORY_DIAGNOSTICS_RETENTION_MS, MEMORY_PRESSURE_CAPTURE_MS, MEMORY_PRESSURE_INTERVAL_MS, memoryPressureActive, MONITORED_DIRECTORIES, RETENTION_MS, SAMPLE_INTERVAL_MS, type CpuCounters, type MemoryDiagnosticState, type MonitoredDirectory, withDirectoryHierarchy } from "./monitor.ts";
+import {
+  FleetCoordinator,
+  legacySampleFromFleetCore,
+  targetMonitoredDirectories,
+  type FleetLane,
+} from "./fleet-coordinator.ts";
+import { FleetStore } from "./fleet-store.ts";
+import { FLEET_CONTRACT_VERSION } from "./fleet-contract.ts";
+import {
+  type HostCoreSample,
+  type HostDirectorySample,
+  type HostMemoryDiagnostic,
+  hostRpcContract,
+} from "./host-contract.ts";
+import {
+  bucketSizeFor,
+  collectDirectorySamples,
+  collectMemoryDiagnostics,
+  exclusiveDirectorySizes,
+  MAX_MEMORY_DIAGNOSTICS_SNAPSHOTS,
+  MEMORY_DIAGNOSTICS_RETENTION_MS,
+  RETENTION_MS,
+  type DirectorySample,
+  type MemoryDiagnosticState,
+  type MemoryDiagnostics,
+  type MonitoredDirectory,
+  withDirectoryHierarchy,
+} from "./monitor.ts";
+import { createPlatformCollector } from "./platform-collectors.ts";
 import { rpcContract } from "./rpc-contract.ts";
 import { MachineMonitorReferenceStore, MachineMonitorStore, machineMonitorMigrations } from "./store.ts";
+import { SqliteTimelineQuerySource, TimelineQueryService } from "./timeline-query.ts";
 
 const THREAD_SEARCH_LIMIT_PER_GROUP = 12;
+
+/**
+ * The original local-only tables and channels remain an application-facing
+ * projection. Keeping this adapter small makes its write-before-notify order
+ * explicit while FleetStore remains the coordinator's durable truth.
+ */
+export function createLegacyLocalProjection(
+  store: MachineMonitorStore,
+  publish: (channel: string, payload: Record<string, boolean | number>) => void,
+  setLastError: (value: string | null) => void,
+) {
+  return {
+    onLocalCollection(sample: HostCoreSample, normalizedAtMs: number): void {
+      store.insert(legacySampleFromFleetCore(sample, normalizedAtMs));
+      publish("machine-monitor-sample", { collectedAt: normalizedAtMs });
+    },
+    onLocalDirectories(details: readonly DirectorySample[]): void {
+      store.insertDirectories([...details]);
+      publish("machine-monitor-directories", { collectedAt: details.at(-1)?.collectedAt ?? Date.now() });
+    },
+    onLocalMemory(detail: MemoryDiagnostics): void {
+      store.insertMemoryDiagnostics(detail);
+      publish("machine-monitor-memory", { collectedAt: detail.collectedAt });
+    },
+    onLocalError(lane: FleetLane, message: string | null, occurredAtMs: number): void {
+      // Historically only core sampling drove the overall local health error.
+      if (lane !== "core") return;
+      setLastError(message);
+      if (message != null) publish("machine-monitor-sample", { collectedAt: occurredAtMs, error: true });
+    },
+    onLocalPrune(nowMs: number): void {
+      store.prune(nowMs - RETENTION_MS);
+      store.pruneMemoryDiagnostics(nowMs - MEMORY_DIAGNOSTICS_RETENTION_MS, MAX_MEMORY_DIAGNOSTICS_SNAPSHOTS);
+    },
+  };
+}
 
 function truncatePickerText(value: string, maxLength: number): string {
   return value.length <= maxLength ? value : `${value.slice(0, maxLength - 1)}…`;
@@ -27,17 +93,7 @@ function threadPickerEntry(
   return entry;
 }
 
-function wait(ms: number, signal: AbortSignal): Promise<void> {
-  return new Promise((resolve) => {
-    if (signal.aborted) { resolve(); return; }
-    const done = () => { signal.removeEventListener("abort", abort); resolve(); };
-    const timer = setTimeout(done, ms);
-    const abort = () => { clearTimeout(timer); done(); };
-    signal.addEventListener("abort", abort, { once: true });
-  });
-}
-
-export default function machineMonitorPlugin(bb: BbPluginApi) {
+export default async function machineMonitorPlugin(bb: BbPluginApi): Promise<void> {
   const settings = bb.settings.define({
     cpuWarningPercent: {
       type: "select" as const,
@@ -76,15 +132,150 @@ export default function machineMonitorPlugin(bb: BbPluginApi) {
   const db = bb.storage.database();
   bb.storage.migrate(db, machineMonitorMigrations);
   const store = new MachineMonitorStore(db);
+  const fleetStore = new FleetStore(db);
   const referenceStore = new MachineMonitorReferenceStore(db);
   const referenceDelivery = new MachineMonitorReferenceDelivery(bb, referenceStore);
-  let cpu: CpuCounters | null = null;
-  let memoryState: MemoryDiagnosticState | null = null;
+  // Fleet reads are served from this shared, committed SQLite state only. In
+  // particular, do not make a UI read (or machine switch) a collection prompt.
+  // Overview freshness is intentionally calculated by TimelineQueryService on
+  // each read rather than being cached at a wall-clock boundary.
+  const timelineQueryService = new TimelineQueryService(
+    fleetStore,
+    new SqliteTimelineQuerySource(db),
+    {
+      attachmentSnapshot: () => referenceStore.snapshot(),
+      warningThresholds: async () => {
+        const configured = await settings.get();
+        return {
+          cpu: Number(configured.cpuWarningPercent),
+          ram: Number(configured.ramWarningPercent),
+          disk: Number(configured.diskWarningPercent),
+        };
+      },
+    },
+  );
   let lastError: string | null = null;
-  let processDetailsEnabled = false;
-  void settings.get().then((configured) => { processDetailsEnabled = configured.showProcessDetails; });
+  // Await the stored value before registering/starting collection. The first
+  // memory request must honor the user's privacy setting as well as later ones.
+  let processDetailsEnabled = (await settings.get()).showProcessDetails;
 
-  const percentage = (used: number | null, total: number | null) => used == null || total == null || total <= 0 ? null : used / total * 100;
+  // This is the retained BB-server source. It implements the same
+  // identity-free host contract as an enrolled daemon, while its identity is
+  // still assigned by the coordinator rather than by its payload.
+  const localCollector = createPlatformCollector();
+  // The local source shares a durable machine identity across server reloads,
+  // but its sequences are process-lifecycle scoped. Give every server load a
+  // new server-assigned session so a restarted sequence zero cannot collide
+  // with retained collection history.
+  let localCoreState = localCollector.createSession(`local-bb-server:${randomUUID()}`);
+  let localMemoryState: MemoryDiagnosticState | null = null;
+  let localDirectorySequence = 0;
+  let localMemorySequence = 0;
+  const hostClient = bb.hosts.experimental_client({ contract: hostRpcContract });
+  const localTarget = {
+    label: "BB server",
+    capabilities: localCollector.metadata.capabilities,
+    async description(signal: AbortSignal) {
+      if (signal.aborted) throw new DOMException("Local fleet description aborted", "AbortError");
+      return {
+        contractVersion: FLEET_CONTRACT_VERSION,
+        collectorSessionId: localCoreState.collectorSessionId,
+        observedAtMs: Date.now(),
+        hostName: localCollector.metadata.hostName,
+        platform: localCollector.metadata.platform,
+        platformDetail: localCollector.metadata.platformDetail,
+        capabilities: [...localCollector.metadata.capabilities],
+      };
+    },
+    async core(signal: AbortSignal): Promise<HostCoreSample> {
+      const result = await localCollector.collectCore(localCoreState, { observedAtMs: Date.now(), signal });
+      localCoreState = result.state;
+      return result.payload;
+    },
+    async directory(request: { directoryId: string; paths: readonly string[] }, signal: AbortSignal): Promise<HostDirectorySample> {
+      const observedAtMs = Date.now();
+      const sample = (await collectDirectorySamples(observedAtMs, signal, [{ id: request.directoryId, label: request.directoryId, paths: [...request.paths] }]))[0];
+      const sequence = localDirectorySequence++;
+      return sample == null
+        ? {
+          contractVersion: FLEET_CONTRACT_VERSION,
+          collectorSessionId: localCoreState.collectorSessionId,
+          sequence,
+          observedAtMs,
+          directoryId: request.directoryId,
+          bytes: null,
+          onRootFilesystem: null,
+          partial: false,
+          availability: "unavailable",
+          reason: "No requested paths could be sampled.",
+        }
+        : {
+          contractVersion: FLEET_CONTRACT_VERSION,
+          collectorSessionId: localCoreState.collectorSessionId,
+          sequence,
+          observedAtMs: sample.collectedAt,
+          directoryId: request.directoryId,
+          bytes: sample.bytes,
+          onRootFilesystem: sample.onRootFilesystem,
+          partial: sample.partial,
+          availability: "available",
+          reason: null,
+        };
+    },
+    async memory(request: { includeProcessDetails: boolean }, signal: AbortSignal): Promise<HostMemoryDiagnostic> {
+      const result = await collectMemoryDiagnostics(localMemoryState, Date.now(), signal, {
+        includeProcesses: request.includeProcessDetails,
+        includeProcessDetails: request.includeProcessDetails,
+      });
+      localMemoryState = result.state;
+      const diagnostics = result.diagnostics;
+      const sequence = localMemorySequence++;
+      return {
+        contractVersion: FLEET_CONTRACT_VERSION,
+        collectorSessionId: localCoreState.collectorSessionId,
+        sequence,
+        observedAtMs: diagnostics.collectedAt,
+        processDetailsCollectedAtMs: diagnostics.processDetailsCollectedAt,
+        sampleIntervalMs: diagnostics.sampleIntervalMs,
+        pressureSomePercent: diagnostics.pressureSomePercent,
+        pressureFullPercent: diagnostics.pressureFullPercent,
+        swapInPagesPerSecond: diagnostics.swapInPagesPerSecond,
+        swapOutPagesPerSecond: diagnostics.swapOutPagesPerSecond,
+        refaultPagesPerSecond: diagnostics.refaultPagesPerSecond,
+        reclaimPagesPerSecond: diagnostics.reclaimPagesPerSecond,
+        bbCgroupMemoryBytes: diagnostics.bbCgroupMemoryBytes,
+        processes: diagnostics.processes,
+      };
+    },
+  };
+  const fleetCoordinator = new FleetCoordinator({
+    store: fleetStore,
+    listEnrolledHosts: async (signal) => (await bb.sdk.hosts.list({ signal })).map(({ id, name, status }) => ({ id, name, status })),
+    remote: (hostId) => ({
+      description: (signal) => hostClient.call("describe", null, { hostId, signal }),
+      core: (signal) => hostClient.call("coreSample", null, { hostId, signal }),
+      directory: (request, signal) => hostClient.call("directorySample", { ...request, paths: [...request.paths] }, { hostId, signal }),
+      memory: (request, signal) => hostClient.call("memoryDiagnostics", request, { hostId, signal }),
+    }),
+    local: localTarget,
+    directories: async () => targetMonitoredDirectories((await settings.get()).additionalDirectories),
+    includeProcessDetails: () => processDetailsEnabled,
+    ...createLegacyLocalProjection(store, (channel, payload) => bb.realtime.publish(channel, payload), (value) => { lastError = value; }),
+    publish: ({ machine, generation, kinds }) => {
+      // FleetStore commits before it returns a generation. Invalidate the one
+      // affected machine's detail cache (and the aggregate overview) before
+      // advertising that committed revision to clients.
+      timelineQueryService.invalidateMachine(machine, "all");
+      bb.realtime.publish("machine-monitor-fleet", {
+        machine,
+        dataRevision: generation.dataRevision,
+        settingsRevision: generation.settingsRevision,
+        kinds,
+      });
+    },
+    log: (_level, message) => bb.log.warn(message),
+  });
+
   const configuredThresholds = async () => {
     const configured = await settings.get();
     return {
@@ -108,18 +299,6 @@ export default function machineMonitorPlugin(bb: BbPluginApi) {
       return { ...sample, cpu5mPercent: count === 0 ? null : total / count };
     });
   };
-  const warningSummary = (latest: ReturnType<MachineMonitorStore["latest"]>, cpuAverage: number | null, thresholds: Awaited<ReturnType<typeof configuredThresholds>>) => {
-    if (lastError != null) return ["Collector unavailable"];
-    if (latest == null) return [];
-    const ram = percentage(latest.memoryUsedBytes, latest.memoryTotalBytes);
-    const disk = percentage(latest.diskUsedBytes, latest.diskTotalBytes);
-    return [
-      cpuAverage != null && cpuAverage >= thresholds.cpu ? `CPU 5m average ${cpuAverage.toFixed(0)}% (threshold ${thresholds.cpu}%)` : null,
-      ram != null && ram >= thresholds.ram ? `RAM ${ram.toFixed(0)}% (threshold ${thresholds.ram}%)` : null,
-      disk != null && disk >= thresholds.disk ? `Root disk ${disk.toFixed(0)}% (threshold ${thresholds.disk}%)` : null,
-    ].filter((warning): warning is string => warning != null);
-  };
-
   const snapshot = async (rangeHours: number) => {
     const now = Date.now();
     const since = now - rangeHours * 60 * 60_000;
@@ -141,7 +320,7 @@ export default function machineMonitorPlugin(bb: BbPluginApi) {
     const diskGrowthBytesPerDay = first == null || last == null || last.collectedAt <= first.collectedAt
       ? null : (last.diskUsedBytes! - first.diskUsedBytes!) / (last.collectedAt - first.collectedAt) * 86_400_000;
     const configured = await settings.get();
-    const monitoredDirectories: MonitoredDirectory[] = withDirectoryHierarchy([...MONITORED_DIRECTORIES, ...additionalDirectories(configured.additionalDirectories)]);
+    const monitoredDirectories: MonitoredDirectory[] = withDirectoryHierarchy(targetMonitoredDirectories(configured.additionalDirectories));
     const byId = new Map(monitoredDirectories.map((entry) => [entry.id, entry]));
     const parents = new Set(monitoredDirectories.map((entry) => entry.parentId).filter((id): id is string => id != null));
     const summariesById = new Map(store.directorySummary(since, now).map((entry) => [entry.location, { ...entry, id: entry.location }]));
@@ -171,18 +350,25 @@ export default function machineMonitorPlugin(bb: BbPluginApi) {
 
   const health = async () => {
     const latest = store.latest();
-    const thresholds = await configuredThresholds();
     const cpuAverage = store.averageCpuSince(Date.now() - 5 * 60_000);
+    const overview = await timelineQueryService.fleetOverview({ contractVersion: FLEET_CONTRACT_VERSION });
     return {
       hostName: os.hostname(),
       latest: latest == null ? null : { ...latest, cpu5mPercent: cpuAverage },
       lastError,
-      warnings: warningSummary(latest, cpuAverage, thresholds),
+      // The legacy/sidebar response remains an array of strings, but now
+      // names each affected machine and exposes the precise fleet warning
+      // category (offline, stale, collection error, capability, or metric).
+      warnings: overview.machines.flatMap((machine) => machine.warnings.map(
+        (warning) => `${machine.label} (${machine.machine.machineId}): ${warning.kind}: ${warning.message}`,
+      )),
     };
   };
   bb.rpc.register(rpcContract, {
     health,
     snapshot: ({ rangeHours }) => snapshot(rangeHours),
+    fleetOverview: (input) => timelineQueryService.fleetOverview(input),
+    machineTimeline: (input) => timelineQueryService.machineTimeline(input),
     searchThreads: async ({ query }) => {
       const result = await bb.sdk.threads.search({
         query: query.trim(),
@@ -213,78 +399,33 @@ export default function machineMonitorPlugin(bb: BbPluginApi) {
   });
   settings.onChange(async () => {
     processDetailsEnabled = (await settings.get()).showProcessDetails;
+    fleetCoordinator.settingsChanged();
+    // Preserve the existing local snapshot invalidation for settings-only UI.
     bb.realtime.publish("machine-monitor-sample", { settingsChanged: true });
   });
 
-  bb.background.service("machine-monitor-core", {
-    start: async (signal) => {
-      while (!signal.aborted) {
-        const startedAt = Date.now();
-        try {
-          const result = await collectSample(cpu, startedAt);
-          cpu = result.cpu;
-          store.insert(result.sample);
-          store.prune(startedAt - RETENTION_MS);
-          lastError = null;
-          bb.realtime.publish("machine-monitor-sample", { collectedAt: startedAt });
-        } catch (cause) {
-          lastError = cause instanceof Error ? cause.message : String(cause);
-          bb.log.warn(`Could not collect local machine health: ${lastError}`);
-          bb.realtime.publish("machine-monitor-sample", { collectedAt: startedAt, error: true });
-        }
-        await wait(Math.max(0, SAMPLE_INTERVAL_MS - (Date.now() - startedAt)), signal);
-      }
-    },
-  });
-
-  bb.background.service("machine-monitor-directories", {
-    start: async (signal) => {
-      while (!signal.aborted) {
-        const startedAt = Date.now();
-        try {
-          const configured = await settings.get();
-          const monitoredDirectories: MonitoredDirectory[] = withDirectoryHierarchy([...MONITORED_DIRECTORIES, ...additionalDirectories(configured.additionalDirectories)]);
-          for (const directory of monitoredDirectories) {
-            if (signal.aborted) break;
-            // Persist each destination independently: a large worktree must not hide /tmp or the caches.
-            store.insertDirectories(await collectDirectorySamples(startedAt, signal, [directory]));
-          }
-          store.prune(startedAt - RETENTION_MS);
-          bb.realtime.publish("machine-monitor-directories", { collectedAt: startedAt });
-        } catch (cause) {
-          if (signal.aborted) break;
-          bb.log.warn(`Could not collect local directory usage: ${cause instanceof Error ? cause.message : String(cause)}`);
-        }
-        await wait(Math.max(0, DIRECTORY_SAMPLE_INTERVAL_MS - (Date.now() - startedAt)), signal);
-      }
-    },
-  });
-
-  bb.background.service("machine-monitor-memory-pressure", {
-    start: async (signal) => {
-      let captureUntil = 0;
-      let lastProcessRankingAt = 0;
-      let nextPruneAt = 0;
-      while (!signal.aborted) {
-        const startedAt = Date.now();
-        try {
-          const includeProcesses = startedAt - lastProcessRankingAt >= MEMORY_DIAGNOSTICS_INTERVAL_MS;
-          const result = await collectMemoryDiagnostics(memoryState, startedAt, signal, { includeProcesses, includeProcessDetails: processDetailsEnabled });
-          memoryState = result.state;
-          if (includeProcesses) lastProcessRankingAt = startedAt;
-          store.insertMemoryDiagnostics(result.diagnostics);
-          if (startedAt >= nextPruneAt) {
-            store.pruneMemoryDiagnostics(startedAt - MEMORY_DIAGNOSTICS_RETENTION_MS, MAX_MEMORY_DIAGNOSTICS_SNAPSHOTS);
-            nextPruneAt = startedAt + 5 * 60_000;
-          }
-          if (memoryPressureActive(result.diagnostics)) captureUntil = Math.max(captureUntil, startedAt + MEMORY_PRESSURE_CAPTURE_MS);
-          bb.realtime.publish("machine-monitor-memory", { collectedAt: startedAt });
-        } catch (cause) {
-          if (signal.aborted) break;
-          bb.log.warn(`Could not collect memory-pressure diagnostics: ${cause instanceof Error ? cause.message : String(cause)}`);
-        }
-        const interval = Date.now() < captureUntil ? MEMORY_PRESSURE_INTERVAL_MS : MEMORY_DIAGNOSTICS_INTERVAL_MS;
-        await wait(Math.max(1_000, interval - (Date.now() - startedAt)), signal);
+  bb.background.service("machine-monitor-fleet", {
+    async start(signal) {
+      const unsubscribeHost = bb.sdk.subscribe({
+        event: "host:changed",
+        callback: (event) => {
+          if (event.changes.includes("host-connected") && typeof event.id === "string") fleetCoordinator.noteHostConnected(event.id);
+          else fleetCoordinator.requestReconcile();
+        },
+      });
+      const unsubscribeRealtime = bb.sdk.subscribe({
+        event: "realtime:connection",
+        callback: (event) => {
+          if (event.state === "connected" && event.reconnected) fleetCoordinator.requestReconcile();
+        },
+      });
+      const unsubscribeWorkerExit = hostClient.experimental_onWorkerExit(({ hostId }) => fleetCoordinator.noteWorkerExit(hostId));
+      try {
+        await fleetCoordinator.start(signal);
+      } finally {
+        unsubscribeWorkerExit();
+        unsubscribeRealtime();
+        unsubscribeHost();
       }
     },
   });

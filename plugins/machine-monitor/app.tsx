@@ -1,131 +1,621 @@
-import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { LineChart } from "echarts/charts";
-import { AriaComponent, DatasetComponent, GridComponent, MarkAreaComponent, MarkLineComponent, TooltipComponent } from "echarts/components";
-import * as echarts from "echarts/core";
-import { SVGRenderer } from "echarts/renderers";
-import { definePluginApp, useRealtime, useRealtimeConnectionState, useRpc } from "@get-bb/plugin-sdk/app";
+import { memo, useCallback, useEffect, useId, useRef, useState, type CSSProperties } from "react";
+import {
+  definePluginApp,
+  useBbNavigate,
+  useRealtime,
+  useRealtimeConnectionState,
+  useRpc,
+} from "@get-bb/plugin-sdk/app";
 
 import { MachineMonitorReferences } from "./attachments.tsx";
-import type { MachineMonitorHealth, MachineMonitorSnapshot, rpcContract } from "./rpc-contract.ts";
+import {
+  FleetClient,
+  fleetGenerationMatches,
+  mergeFleetOverview,
+  type TimelineRange,
+} from "./fleet-client.ts";
+import {
+  FLEET_CONTRACT_VERSION,
+  fleetInvalidationSignalSchema,
+  machineIdentityKey,
+  metricCatalogEntry,
+  type FleetMetricId,
+  type FleetMachineIdentity,
+  type FleetOverviewResult,
+  type MachineTimelineResult,
+} from "./fleet-contract.ts";
+import type { MachineMonitorHealth, rpcContract } from "./rpc-contract.ts";
+import { MachineTimelineChart } from "./timeline-chart.tsx";
+import type { TimelineEventActivation } from "./timeline-compiler.ts";
 import "./app.css";
-
-echarts.use([AriaComponent, DatasetComponent, GridComponent, LineChart, MarkAreaComponent, MarkLineComponent, SVGRenderer, TooltipComponent]);
 
 const RANGES = [1, 6, 24, 24 * 7, 24 * 30] as const;
 type RangeHours = typeof RANGES[number];
-type ChartTheme = { foreground: string; muted: string; border: string; surface: string; cpu: string; memory: string; disk: string; load: string; warning: string };
+type FleetMachine = FleetOverviewResult["machines"][number];
+type TimelineView = Readonly<{ timeline: MachineTimelineResult; stale: boolean }> | null;
 
-function MachineMonitorPanel() {
+const PREFETCH_LIMIT = 6;
+
+function rangeFor(hours: RangeHours, serverNowMs: number): TimelineRange {
+  // Fleet history is normalized to local-server time. Never let a skewed
+  // browser clock hide recent samples; only clamp the lower bound for the
+  // timestamp contract and keep the range valid for the zero-time edge.
+  const endMs = Math.max(1, Math.floor(serverNowMs));
+  return { startMs: Math.max(0, endMs - hours * 60 * 60_000), endMs };
+}
+
+function rangeKey(range: TimelineRange): string {
+  return `${range.startMs}:${range.endMs}`;
+}
+
+function generationText(machine: FleetMachine): string {
+  return `Data ${machine.generation.dataRevision} · settings ${machine.generation.settingsRevision}`;
+}
+
+function connectionText(machine: FleetMachine): string {
+  return `${machine.connection === "local" ? "Local" : machine.connection} · ${machine.freshness}`;
+}
+
+type FleetAtlasPressure = Readonly<{
+  key: "cpu" | "memory" | "disk";
+  label: string;
+  shortLabel: string;
+  value: number | null;
+  level: "unavailable" | "nominal" | "elevated" | "critical";
+}>;
+
+type FleetAtlasPresentation = Readonly<{
+  pressures: readonly FleetAtlasPressure[];
+  state: "current" | "stale" | "disconnected" | "failure" | "warning" | "pressure";
+  stateLabel: string;
+  glyph: string;
+  collectorState: "clear" | "warning" | "failure";
+  pressureLevel: FleetAtlasPressure["level"];
+  anomalous: boolean;
+}>;
+
+function latestMetricValue(machine: FleetMachine, metricId: FleetMetricId): number | null {
+  const observation = machine.latestMetrics.find((value) => value.metricId === metricId);
+  return observation?.availability.state === "available" && observation.value != null ? observation.value : null;
+}
+
+function percentageOf(value: number | null, total: number | null): number | null {
+  if (value == null || total == null || !Number.isFinite(value) || !Number.isFinite(total) || total <= 0) return null;
+  return Math.min(100, Math.max(0, value / total * 100));
+}
+
+function pressure(value: number | null, key: FleetAtlasPressure["key"], label: string, shortLabel: string): FleetAtlasPressure {
+  if (value == null || !Number.isFinite(value)) return { key, label, shortLabel, value: null, level: "unavailable" };
+  const bounded = Math.min(100, Math.max(0, value));
+  return {
+    key,
+    label,
+    shortLabel,
+    value: bounded,
+    level: bounded >= 90 ? "critical" : bounded >= 75 ? "elevated" : "nominal",
+  };
+}
+
+function pressureText(value: FleetAtlasPressure): string {
+  return value.value == null ? `${value.label} unavailable` : `${value.label} ${value.value.toFixed(1)} percent`;
+}
+
+function fleetAtlasPresentation(machine: FleetMachine): FleetAtlasPresentation {
+  const memoryPressure = latestMetricValue(machine, "memory.pressure.full.percent")
+    ?? latestMetricValue(machine, "memory.pressure.some.percent")
+    ?? percentageOf(latestMetricValue(machine, "memory.used.bytes"), latestMetricValue(machine, "memory.total.bytes"));
+  const pressures = [
+    pressure(latestMetricValue(machine, "cpu.utilization.percent"), "cpu", "CPU utilization", "CPU"),
+    pressure(memoryPressure, "memory", "Memory pressure", "MEM"),
+    pressure(percentageOf(latestMetricValue(machine, "disk.root.used.bytes"), latestMetricValue(machine, "disk.root.total.bytes")), "disk", "Root disk pressure", "DSK"),
+  ] as const;
+  const pressureLevel = pressures.reduce<FleetAtlasPressure["level"]>((current, value) => {
+    const weight = { unavailable: 0, nominal: 1, elevated: 2, critical: 3 } as const;
+    return weight[value.level] > weight[current] ? value.level : current;
+  }, "unavailable");
+  const collectorState = machine.lastError != null
+    || machine.warnings.some((warning) => warning.kind === "collector-error")
+    ? "failure"
+    : machine.warnings.length > 0 ? "warning" : "clear";
+  if (machine.connection === "disconnected") {
+    return { pressures, state: "disconnected", stateLabel: "Disconnected", glyph: "×", collectorState, pressureLevel, anomalous: true };
+  }
+  if (machine.freshness === "stale") {
+    return { pressures, state: "stale", stateLabel: "Stale data", glyph: "~", collectorState, pressureLevel, anomalous: true };
+  }
+  if (collectorState === "failure") {
+    return { pressures, state: "failure", stateLabel: "Collector failure", glyph: "!", collectorState, pressureLevel, anomalous: true };
+  }
+  if (collectorState === "warning") {
+    return { pressures, state: "warning", stateLabel: "Collector warning", glyph: "!", collectorState, pressureLevel, anomalous: true };
+  }
+  if (pressureLevel === "critical" || pressureLevel === "elevated") {
+    return { pressures, state: "pressure", stateLabel: `${pressureLevel === "critical" ? "Critical" : "Elevated"} resource pressure`, glyph: "↑", collectorState, pressureLevel, anomalous: true };
+  }
+  return { pressures, state: "current", stateLabel: "Current", glyph: "•", collectorState, pressureLevel, anomalous: false };
+}
+
+function displayMetric(value: number | null, unit: ReturnType<typeof metricCatalogEntry>["unit"]): string {
+  if (value == null || !Number.isFinite(value)) return "Unavailable";
+  if (unit === "percent") return `${value.toFixed(1)}%`;
+  if (unit === "bytes") return value >= 1_073_741_824 ? `${(value / 1_073_741_824).toFixed(1)} GiB` : `${(value / 1_048_576).toFixed(1)} MiB`;
+  if (unit === "pages-per-second") return `${value.toFixed(value >= 10 ? 0 : 2)}/s`;
+  return value.toFixed(value >= 10 ? 0 : 2);
+}
+
+function latestTime(value: number | null): string {
+  if (value == null) return "No collection yet";
+  return new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }).format(value);
+}
+
+function rangeLabel(hours: number): string {
+  return hours < 24 ? `${hours} hour${hours === 1 ? "" : "s"}` : hours < 168 ? `${hours / 24} days` : hours === 168 ? "7 days" : "30 days";
+}
+
+function errorText(cause: unknown, fallback: string): string {
+  return cause instanceof Error && cause.message.length > 0 ? cause.message : fallback;
+}
+
+function isFleetSignal(value: unknown): value is ReturnType<typeof fleetInvalidationSignalSchema.parse> {
+  return fleetInvalidationSignalSchema.safeParse(value).success;
+}
+
+function sameTimelineRange(left: TimelineRange, right: TimelineRange): boolean {
+  return left.startMs === right.startMs && left.endMs === right.endMs;
+}
+
+function useFleetMonitor() {
   const rpc = useRpc<typeof rpcContract>();
   const connection = useRealtimeConnectionState();
-  const [rangeHours, setRangeHours] = useState<RangeHours>(24);
-  const [snapshot, setSnapshot] = useState<MachineMonitorSnapshot | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const latestRange = useRef(rangeHours);
+  const rpcRef = useRef(rpc);
+  rpcRef.current = rpc;
+  const client = useRef(new FleetClient({
+    readOverview: () => rpcRef.current.call("fleetOverview", { contractVersion: FLEET_CONTRACT_VERSION }),
+    readTimeline: (request) => rpcRef.current.call("machineTimeline", request),
+  })).current;
   const mounted = useRef(true);
-  const requestInFlight = useRef(false);
-  const refreshPending = useRef(false);
-  latestRange.current = rangeHours;
+  const overviewRef = useRef<FleetOverviewResult | null>(null);
+  const selectedKeyRef = useRef<string | null>(null);
+  const rangeHoursRef = useRef<RangeHours>(24);
+  const rangeRef = useRef<TimelineRange>(rangeFor(24, 0));
+  const timelineViewRef = useRef<TimelineView>(null);
+  /** The machine whose retained timeline was explicitly invalidated. */
+  const selectedTimelineReconciliationKey = useRef<string | null>(null);
+  const timelineToken = useRef(0);
+  const overviewToken = useRef(0);
+  const prefetch = useRef({ range: rangeKey(rangeRef.current), keys: new Set<string>() });
+  const refreshOverviewRef = useRef<((changedMachine?: FleetMachineIdentity, rereadSelection?: boolean) => Promise<void>) | null>(null);
+
+  const [overview, setOverview] = useState<FleetOverviewResult | null>(null);
+  const [overviewLoading, setOverviewLoading] = useState(true);
+  const [overviewError, setOverviewError] = useState<string | null>(null);
+  const [selectedMachineKey, setSelectedMachineKey] = useState<string | null>(null);
+  const [rangeHours, setRangeHours] = useState<RangeHours>(24);
+  const [range, setRange] = useState<TimelineRange>(rangeRef.current);
+  const [timelineView, setTimelineView] = useState<TimelineView>(null);
+  const [timelineLoading, setTimelineLoading] = useState(false);
+  const [timelineError, setTimelineError] = useState<string | null>(null);
+
+  const commitTimelineView = useCallback((next: TimelineView) => {
+    timelineViewRef.current = next;
+    setTimelineView(next);
+  }, []);
+
+  const selectedMachine = useCallback((source = overviewRef.current, key = selectedKeyRef.current): FleetMachine | null => {
+    if (source == null || key == null) return null;
+    return source.machines.find((machine) => machineIdentityKey(machine.machine) === key) ?? null;
+  }, []);
+
+  const requestTimeline = useCallback((machine: FleetMachine, requestedRange: TimelineRange) => {
+    const machineKey = machineIdentityKey(machine.machine);
+    const expectedGeneration = machine.generation;
+    const cached = client.getTimeline(machine.machine, requestedRange, expectedGeneration);
+    const token = ++timelineToken.current;
+    setTimelineError(null);
+    if (cached != null) {
+      commitTimelineView({ timeline: cached, stale: false });
+      if (selectedTimelineReconciliationKey.current === machineKey) selectedTimelineReconciliationKey.current = null;
+      setTimelineLoading(false);
+      return;
+    }
+
+    const retained = timelineViewRef.current;
+    if (retained != null) commitTimelineView({ timeline: retained.timeline, stale: true });
+    setTimelineLoading(true);
+    void client.readTimeline(machine.machine, requestedRange, expectedGeneration, { priority: "selected" }).then((result) => {
+      if (!mounted.current || token !== timelineToken.current) return;
+      const current = selectedMachine();
+      if (current == null || machineIdentityKey(current.machine) !== machineKey || !sameTimelineRange(rangeRef.current, requestedRange)) return;
+      if (!fleetGenerationMatches(current.generation, expectedGeneration)) return;
+      if (!fleetGenerationMatches(result.generation, expectedGeneration)) {
+        // The server observed a newer committed generation than our resident
+        // overview. Reconcile first; the response is cached under its exact key.
+        void refreshOverviewRef.current?.(machine.machine, true);
+        return;
+      }
+      commitTimelineView({ timeline: result, stale: false });
+      if (selectedTimelineReconciliationKey.current === machineKey) selectedTimelineReconciliationKey.current = null;
+      setTimelineLoading(false);
+      setTimelineError(null);
+    }).catch((cause) => {
+      if (!mounted.current || token !== timelineToken.current) return;
+      const current = selectedMachine();
+      if (current == null || machineIdentityKey(current.machine) !== machineKey || !sameTimelineRange(rangeRef.current, requestedRange)
+        || !fleetGenerationMatches(current.generation, expectedGeneration)) return;
+      setTimelineLoading(false);
+      setTimelineError(errorText(cause, "Could not read this machine timeline."));
+      const currentView = timelineViewRef.current;
+      if (currentView != null) commitTimelineView({ timeline: currentView.timeline, stale: true });
+    });
+  }, [client, commitTimelineView, selectedMachine]);
+
+  const commitOverview = useCallback((next: FleetOverviewResult): FleetOverviewResult => {
+    const merged = mergeFleetOverview(overviewRef.current, next);
+    client.setOverview(merged);
+    overviewRef.current = merged;
+    setOverview(merged);
+    return merged;
+  }, [client]);
+
+  const refreshOverview = useCallback(async (changedMachine?: FleetMachineIdentity, rereadSelection = false) => {
+    const token = ++overviewToken.current;
+    if (overviewRef.current == null) setOverviewLoading(true);
+    try {
+      const next = await client.readOverview();
+      if (!mounted.current || token !== overviewToken.current) return;
+      const isInitialOverview = overviewRef.current == null;
+      const merged = commitOverview(next);
+      setOverviewLoading(false);
+      setOverviewError(null);
+      let selected = selectedMachine(merged);
+      if (selected == null) {
+        selected = merged.machines[0] ?? null;
+        const nextKey = selected == null ? null : machineIdentityKey(selected.machine);
+        selectedKeyRef.current = nextKey;
+        setSelectedMachineKey(nextKey);
+      }
+      const selectedKey = selected == null ? null : machineIdentityKey(selected.machine);
+      const visible = timelineViewRef.current;
+      const visibleMatchesSelected = selected != null && visible != null
+        && machineIdentityKey(visible.timeline.machine) === selectedKey
+        && fleetGenerationMatches(visible.timeline.generation, selected.generation);
+      const selectedWasInvalidated = selectedKey != null && selectedTimelineReconciliationKey.current === selectedKey;
+      // The winning overview callback can describe B even if A was the
+      // selected machine that began this coalesced reconciliation. Consult the
+      // committed selected row and retained timeline, not just that callback's
+      // signal, before deciding whether A needs a current-generation reread.
+      const shouldRereadSelection = selected != null && (rereadSelection || selectedWasInvalidated || !visibleMatchesSelected);
+      if (shouldRereadSelection) {
+        // Advance only at an explicit reconciliation boundary. Ordinary machine
+        // switching keeps the exact range stable, allowing a revision-current
+        // cached selection to render without an RPC.
+        const nextRange = (isInitialOverview || rereadSelection || selectedWasInvalidated || !visibleMatchesSelected)
+          ? rangeFor(rangeHoursRef.current, merged.generatedAtMs)
+          : rangeRef.current;
+        if (!sameTimelineRange(rangeRef.current, nextRange)) {
+          rangeRef.current = nextRange;
+          prefetch.current = { range: rangeKey(nextRange), keys: new Set() };
+          setRange(nextRange);
+        }
+        requestTimeline(selected!, nextRange);
+      }
+    } catch (cause) {
+      if (!mounted.current || token !== overviewToken.current) return;
+      setOverviewLoading(false);
+      setOverviewError(errorText(cause, "Could not read the fleet overview."));
+    }
+  }, [client, commitOverview, requestTimeline, selectedMachine]);
+  refreshOverviewRef.current = refreshOverview;
+
+  const chooseMachine = useCallback((machine: FleetMachine) => {
+    const key = machineIdentityKey(machine.machine);
+    selectedKeyRef.current = key;
+    setSelectedMachineKey(key);
+    requestTimeline(machine, rangeRef.current);
+  }, [requestTimeline]);
+
+  const chooseRange = useCallback((hours: RangeHours) => {
+    const nextRange = rangeFor(hours, overviewRef.current?.generatedAtMs ?? rangeRef.current.endMs);
+    rangeRef.current = nextRange;
+    prefetch.current = { range: rangeKey(nextRange), keys: new Set() };
+    rangeHoursRef.current = hours;
+    setRangeHours(hours);
+    setRange(nextRange);
+    const machine = selectedMachine();
+    if (machine != null) requestTimeline(machine, nextRange);
+  }, [requestTimeline, selectedMachine]);
+
+  const prefetchMachine = useCallback((machine: FleetMachine) => {
+    const activeRange = rangeRef.current;
+    const activeRangeKey = rangeKey(activeRange);
+    if (prefetch.current.range !== activeRangeKey) prefetch.current = { range: activeRangeKey, keys: new Set() };
+    const key = `${machineIdentityKey(machine.machine)}|${machine.generation.dataRevision}:${machine.generation.settingsRevision}`;
+    if (prefetch.current.keys.has(key) || prefetch.current.keys.size >= PREFETCH_LIMIT) return;
+    if (client.getTimeline(machine.machine, activeRange, machine.generation) != null) return;
+    prefetch.current.keys.add(key);
+    void client.readTimeline(machine.machine, activeRange, machine.generation, { priority: "prefetch" }).catch(() => undefined);
+  }, [client]);
+
+  const canActivateEvent = useCallback((activation: TimelineEventActivation): boolean => {
+    const machine = selectedMachine();
+    const visible = timelineViewRef.current;
+    return machine != null && visible != null && activation.bbReference != null
+      && connection === "connected" && machine.freshness === "fresh" && !visible.stale
+      && machineIdentityKey(activation.machine) === machineIdentityKey(visible.timeline.machine)
+      && fleetGenerationMatches(machine.generation, activation.generation)
+      && fleetGenerationMatches(visible.timeline.generation, activation.generation);
+  }, [connection, selectedMachine]);
 
   useEffect(() => {
     mounted.current = true;
-    return () => { mounted.current = false; };
-  }, []);
+    client.activate();
+    void refreshOverview();
+    return () => {
+      mounted.current = false;
+      timelineToken.current += 1;
+      overviewToken.current += 1;
+      client.dispose();
+    };
+  }, [client, refreshOverview]);
 
-  const refresh = useCallback(async () => {
-    refreshPending.current = true;
-    if (requestInFlight.current) return;
-    requestInFlight.current = true;
-    try {
-      while (refreshPending.current && mounted.current) {
-        refreshPending.current = false;
-        const requestedRange = latestRange.current;
-        try {
-          const next = await rpc.call("snapshot", { rangeHours: requestedRange });
-          if (mounted.current && !refreshPending.current && requestedRange === latestRange.current) {
-            setSnapshot(next);
-            setError(null);
-          }
-        } catch (cause) {
-          if (mounted.current && !refreshPending.current && requestedRange === latestRange.current) {
-            setError(cause instanceof Error ? cause.message : "Could not read the local machine monitor.");
-          }
-        }
-      }
-    } finally {
-      requestInFlight.current = false;
-      if (refreshPending.current && mounted.current) void refresh();
-    }
-  }, [rpc]);
-
-  useEffect(() => { void refresh(); }, [rangeHours, refresh]);
   const previousConnection = useRef(connection);
   useEffect(() => {
-    if (previousConnection.current !== "connected" && connection === "connected") void refresh();
+    if (connection !== "connected") {
+      const current = timelineViewRef.current;
+      if (current != null) commitTimelineView({ timeline: current.timeline, stale: true });
+    } else if (previousConnection.current !== "connected") {
+      const selected = selectedMachine();
+      if (selected != null) client.invalidateMachine(selected.machine);
+      void refreshOverview(undefined, true);
+    }
     previousConnection.current = connection;
-  }, [connection, refresh]);
-  useRealtime("machine-monitor-sample", useCallback(() => { void refresh(); }, [refresh]));
-  useRealtime("machine-monitor-directories", useCallback(() => { void refresh(); }, [refresh]));
-  useRealtime("machine-monitor-memory", useCallback(() => { void refresh(); }, [refresh]));
+  }, [client, commitTimelineView, connection, refreshOverview, selectedMachine]);
 
-  const latest = snapshot?.latest ?? null;
-  return (
-    <main className="machine-monitor">
-      <header className="machine-monitor__header">
-        <div>
-          <h1>Deployment machine</h1>
-          <p>{snapshot == null ? "Reading local health…" : `${snapshot.hostName} · ${snapshot.platform}`}</p>
-        </div>
-        <label>
-          <span>History</span>
-          <select value={rangeHours} onChange={(event) => setRangeHours(Number(event.target.value) as RangeHours)}>
-            {RANGES.map((hours) => <option key={hours} value={hours}>{rangeLabel(hours)}</option>)}
-          </select>
-        </label>
-      </header>
+  const onFleetInvalidation = useCallback((payload: unknown) => {
+    if (!isFleetSignal(payload)) return;
+    client.invalidateMachine(payload.machine);
+    const changedSelected = selectedKeyRef.current === machineIdentityKey(payload.machine);
+    if (changedSelected) {
+      selectedTimelineReconciliationKey.current = selectedKeyRef.current;
+      // The overview reconciliation is asynchronous. Fence the selected view
+      // now so a response started before this signal cannot briefly regain
+      // current-generation status or re-enable an event action.
+      timelineToken.current += 1;
+      setTimelineLoading(true);
+    }
+    if (changedSelected && timelineViewRef.current != null) {
+      commitTimelineView({ timeline: timelineViewRef.current.timeline, stale: true });
+    }
+    void refreshOverviewRef.current?.(payload.machine, changedSelected);
+  }, [client, commitTimelineView]);
+  useRealtime("machine-monitor-fleet", onFleetInvalidation);
 
-      {error != null && <p className="machine-monitor__error" role="alert">{error}</p>}
-      {snapshot?.lastError != null && <p className="machine-monitor__error" role="status">Collector: {snapshot.lastError}</p>}
+  // A one-shot idle opportunity warms at most two nearby rows. There is no
+  // polling timer and the global prefetch budget prevents a 256-machine burst.
+  useEffect(() => {
+    if (overview == null || selectedMachineKey == null) return;
+    const candidates = overview.machines.filter((machine) => machineIdentityKey(machine.machine) !== selectedMachineKey).slice(0, 2);
+    if (candidates.length === 0) return;
+    const work = () => candidates.forEach(prefetchMachine);
+    if (typeof window.requestIdleCallback === "function") {
+      const idle = window.requestIdleCallback(work, { timeout: 1_200 });
+      return () => window.cancelIdleCallback(idle);
+    }
+    const timer = window.setTimeout(work, 0);
+    return () => window.clearTimeout(timer);
+  }, [overview, prefetchMachine, selectedMachineKey, range]);
 
-      <section className="machine-monitor__metrics" aria-label="Current machine health">
-        <Metric label="CPU (5 min)" value={percent(latest?.cpu5mPercent)} warning={isOver(latest?.cpu5mPercent, snapshot?.thresholds.cpu)} />
-        <Metric label="Memory" value={ratio(latest?.memoryUsedBytes, latest?.memoryTotalBytes)} detail={bytes(latest?.memoryUsedBytes)} warning={isOver(percentNumber(latest?.memoryUsedBytes, latest?.memoryTotalBytes), snapshot?.thresholds.ram)} />
-        <Metric label="Disk" value={ratio(latest?.diskUsedBytes, latest?.diskTotalBytes)} detail={growth(snapshot?.diskGrowthBytesPerDay, bytes(latest?.diskUsedBytes))} warning={isOver(percentNumber(latest?.diskUsedBytes, latest?.diskTotalBytes), snapshot?.thresholds.disk)} />
-        <Metric label="Load (5 min)" value={number(latest?.load5)} detail={snapshot == null ? undefined : `up ${uptime(snapshot.uptimeSeconds)}`} warning={false} />
-      </section>
-
-      {snapshot != null && <DiagnosticsCharts samples={snapshot.samples} thresholds={snapshot.thresholds} />}
-      {snapshot != null && <DirectoryUsage directories={snapshot.directories} />}
-      <MachineMonitorReferences />
-      {snapshot?.memoryDiagnostics != null && <MemoryPressure diagnostics={snapshot.memoryDiagnostics} processDetailsEnabled={snapshot.processDetailsEnabled} />}
-      {snapshot != null && latest == null && <p className="machine-monitor__empty">Waiting for the first local sample.</p>}
-      <p className="machine-monitor__footnote">CPU, RAM, and root-disk warnings use your Plugin Settings thresholds. CPU is a five-minute average to suppress bursts; load is context, not an alert. History is retained for 30 days and reduced to at most 720 points per chart.</p>
-    </main>
-  );
+  return {
+    connection,
+    overview,
+    overviewLoading,
+    overviewError,
+    selectedMachineKey,
+    rangeHours,
+    range,
+    timelineView,
+    timelineLoading,
+    timelineError,
+    chooseMachine,
+    chooseRange,
+    prefetchMachine,
+    selectedMachine,
+    canActivateEvent,
+  };
 }
 
-const MemoryPressure = memo(function MemoryPressure({ diagnostics, processDetailsEnabled }: { diagnostics: NonNullable<MachineMonitorSnapshot["memoryDiagnostics"]>; processDetailsEnabled: boolean }) {
-  const stalled = (diagnostics.pressureFullPercent ?? 0) > 0;
-  return <section className="machine-monitor__memory-pressure" data-pressure={stalled} aria-label="Memory pressure diagnostics">
-    <header><div><h2>Memory pressure</h2><p>Kernel pressure and reclaim signals sample every minute, increasing to five seconds while work is stalled. Process ranking remains once per minute to avoid adding work during pressure.</p></div><span>{diagnostics.pressureSomePercent == null ? "Unavailable" : `${diagnostics.pressureSomePercent.toFixed(2)}% stalled`}</span></header>
-    <dl><div><dt>Full stalls</dt><dd>{rateNumber(diagnostics.pressureFullPercent, "%")}</dd></div><div><dt>Refaults</dt><dd>{rateNumber(diagnostics.refaultPagesPerSecond, "/s")}</dd></div><div><dt>Reclaim scans</dt><dd>{rateNumber(diagnostics.reclaimPagesPerSecond, "/s")}</dd></div><div><dt>BB cgroup</dt><dd>{bytes(diagnostics.bbCgroupMemoryBytes) ?? "—"}</dd></div></dl>
-    {!processDetailsEnabled ? <p className="machine-monitor__processes-note">Process attribution is hidden. Enable “Show process attribution” in this plugin’s settings to reveal local workload names and PIDs.</p> : <><div className="machine-monitor__processes" role="table" aria-label="Largest resident processes" tabIndex={0}><div role="row"><span role="columnheader">Workload</span><span role="columnheader">RSS</span><span role="columnheader">Change</span><span role="columnheader">Major faults</span></div>{diagnostics.processes.map((process) => <div role="row" key={`${process.pid}:${process.startTime}`}><span role="cell">{process.workload} <small>{process.workloadDetail == null ? `#${process.pid}` : `${process.workloadDetail} · #${process.pid}`}</small></span><span role="cell">{bytes(process.rssBytes)}</span><span role="cell">{signedBytes(process.rssDeltaBytes)}</span><span role="cell">{rateNumber(process.majorFaultsPerSecond, "/s")}</span></div>)}</div><p className="machine-monitor__processes-note">Top 12 from a bounded, local scan of up to 2,048 processes{diagnostics.processDetailsCollectedAt == null ? "" : ` · ranked ${shortTime(diagnostics.processDetailsCollectedAt)}`}.</p></>}
+const FleetPickerRow = memo(function FleetPickerRow({ machine, selected, onSelect, onIntent }: {
+  machine: FleetMachine;
+  selected: boolean;
+  onSelect: (machine: FleetMachine) => void;
+  onIntent: (machine: FleetMachine) => void;
+}) {
+  const descriptionId = useId();
+  const atlas = fleetAtlasPresentation(machine);
+  const description = [
+    `${connectionText(machine)}. ${atlas.stateLabel}.`,
+    machine.lastError == null ? `${machine.warnings.length} collector warning${machine.warnings.length === 1 ? "" : "s"}.` : `Collector failure: ${machine.lastError}.`,
+    ...atlas.pressures.map(pressureText),
+    selected ? "Selected; its full timeline inspector is shown below." : "Press to show this machine's full timeline inspector.",
+  ].join(" ");
+  const [cpu, memory, disk] = atlas.pressures;
+  const atlasBackgroundStyle = {
+    "--machine-monitor-cpu-pressure": `${cpu?.value ?? 0}%`,
+    "--machine-monitor-memory-pressure": `${memory?.value ?? 0}%`,
+    "--machine-monitor-disk-pressure": `${disk?.value ?? 0}%`,
+  } as CSSProperties;
+  return <li>
+    <button
+      className="machine-monitor__atlas-button"
+      type="button"
+      aria-pressed={selected}
+      aria-label={`${machine.label}. ${machine.connection}. ${machine.freshness}. ${atlas.stateLabel}.`}
+      aria-describedby={descriptionId}
+      data-connection={machine.connection}
+      data-freshness={machine.freshness}
+      data-collector={atlas.collectorState}
+      data-pressure={atlas.pressureLevel}
+      data-anomalous={atlas.anomalous || undefined}
+      data-selected={selected || undefined}
+      style={atlasBackgroundStyle}
+      onClick={() => onSelect(machine)}
+      onFocus={() => onIntent(machine)}
+      onPointerEnter={() => onIntent(machine)}
+    >
+      <span className="machine-monitor__atlas-state" aria-hidden="true"><b>{atlas.glyph}</b><span>{atlas.stateLabel}</span></span>
+      <strong><span>{machine.label}</span>{selected && <small>Inspecting</small>}</strong>
+      <span className="machine-monitor__atlas-metrics" aria-hidden="true">
+        {atlas.pressures.map((value) => <span
+          className="machine-monitor__atlas-metric"
+          data-level={value.level}
+          data-available={value.value != null || undefined}
+          key={value.key}
+          style={{ "--machine-monitor-pressure": `${value.value ?? 0}%` } as CSSProperties}
+        >
+          <b>{value.shortLabel}</b><i><i /></i>
+        </span>)}
+      </span>
+    </button>
+    <span id={descriptionId} className="machine-monitor__visually-hidden">{description}</span>
+  </li>;
+});
+
+function FleetPicker({ overview, selectedMachineKey, onSelect, onIntent }: {
+  overview: FleetOverviewResult;
+  selectedMachineKey: string | null;
+  onSelect: (machine: FleetMachine) => void;
+  onIntent: (machine: FleetMachine) => void;
+}) {
+  const attentionCount = overview.machines.filter((machine) => fleetAtlasPresentation(machine).anomalous).length;
+  return <section className="machine-monitor__fleet-picker" data-inspecting={selectedMachineKey != null || undefined} aria-labelledby="machine-monitor-fleet-title">
+    <header>
+      <div>
+        <h2 id="machine-monitor-fleet-title">Fleet atlas</h2>
+        <p>{`${overview.machines.length} source${overview.machines.length === 1 ? "" : "s"} · source order is preserved for keyboard navigation`}</p>
+      </div>
+      <span className="machine-monitor__fleet-generation">{attentionCount === 0 ? "All current" : `${attentionCount} need attention`}</span>
+    </header>
+    {overview.machines.length === 0 ? <p className="machine-monitor__empty">No machines are registered yet.</p> : <ol>
+      {overview.machines.map((machine) => <FleetPickerRow
+        key={machineIdentityKey(machine.machine)}
+        machine={machine}
+        selected={machineIdentityKey(machine.machine) === selectedMachineKey}
+        onSelect={onSelect}
+        onIntent={onIntent}
+      />)}
+    </ol>}
+  </section>;
+}
+
+const FleetMetric = memo(function FleetMetric({ observation }: { observation: FleetMachine["latestMetrics"][number] }) {
+  const catalog = metricCatalogEntry(observation.metricId);
+  const unavailable = observation.availability.state !== "available";
+  return <article data-unavailable={unavailable || undefined}>
+    <span>{catalog.label}</span>
+    <strong>{displayMetric(observation.value, catalog.unit)}</strong>
+    <small>{unavailable ? observation.availability.reason ?? observation.availability.state : catalog.unit}</small>
+  </article>;
+});
+
+const SelectedMachineOverview = memo(function SelectedMachineOverview({ machine, rangeHours, timelineView, timelineLoading, timelineError, connection, onRange, onActivateEvent }: {
+  machine: FleetMachine;
+  rangeHours: RangeHours;
+  timelineView: TimelineView;
+  timelineLoading: boolean;
+  timelineError: string | null;
+  connection: string;
+  onRange: (hours: RangeHours) => void;
+  onActivateEvent: (activation: TimelineEventActivation) => void;
+}) {
+  const visibleMachineKey = timelineView == null ? null : machineIdentityKey(timelineView.timeline.machine);
+  const selectedMachineKey = machineIdentityKey(machine.machine);
+  const retainedForOtherMachine = visibleMachineKey != null && visibleMachineKey !== selectedMachineKey;
+  const matchingCurrentGeneration = timelineView != null
+    && !retainedForOtherMachine
+    && fleetGenerationMatches(timelineView.timeline.generation, machine.generation);
+  const historyStale = timelineView?.stale === true || connection !== "connected" || machine.freshness !== "fresh";
+  const eventActivationAllowed = matchingCurrentGeneration && !historyStale;
+  return <section className="machine-monitor__selected-machine" data-stale={historyStale || undefined} aria-labelledby="machine-monitor-selected-title">
+    <header>
+      <div>
+        <h1 id="machine-monitor-selected-title">{machine.label}</h1>
+        <p>{`${connectionText(machine)} · ${generationText(machine)}`}</p>
+      </div>
+      <label>
+        <span>History</span>
+        <select value={rangeHours} onChange={(event) => onRange(Number(event.target.value) as RangeHours)}>
+          {RANGES.map((hours) => <option key={hours} value={hours}>{rangeLabel(hours)}</option>)}
+        </select>
+      </label>
+    </header>
+    <div className="machine-monitor__machine-facts">
+      <p><strong>Latest collection:</strong> {latestTime(machine.latestCollectedAtMs)}</p>
+      <p><strong>Connection:</strong> {machine.connection}</p>
+      <p><strong>Freshness:</strong> {machine.freshness}</p>
+      <p><strong>Capabilities:</strong> {machine.capabilities.length === 0 ? "None reported" : machine.capabilities.join(", ")}</p>
+    </div>
+    {machine.lastError != null && <p className="machine-monitor__error" role="alert">Collector error: {machine.lastError}</p>}
+    {machine.warnings.length > 0 && <ul className="machine-monitor__warnings" aria-label="Machine warnings">
+      {machine.warnings.map((warning, index) => <li key={`${warning.kind}:${warning.metricId ?? "machine"}:${index}`}><strong>{warning.kind}</strong><span>{warning.message}</span></li>)}
+    </ul>}
+    <section className="machine-monitor__metrics" aria-label={`Latest summary metrics for ${machine.label}`}>
+      {machine.latestMetrics.length === 0 ? <p className="machine-monitor__empty">No latest metrics have been collected.</p> : machine.latestMetrics.map((observation) => <FleetMetric key={observation.metricId} observation={observation} />)}
+    </section>
+    <section className="machine-monitor__timeline" aria-labelledby="machine-monitor-timeline-title">
+      <header><h2 id="machine-monitor-timeline-title">Machine timeline</h2><span>{rangeLabel(rangeHours)}</span></header>
+      {machine.connection === "disconnected" && <p className="machine-monitor__timeline-status" role="status">Machine is disconnected. Retained history remains available when the local server can read it.</p>}
+      {machine.freshness === "stale" && <p className="machine-monitor__timeline-status" role="status">Machine data is stale; the latest retained history is labeled below.</p>}
+      {timelineLoading && <p className="machine-monitor__timeline-status" role="status">Loading timeline for {machine.label}…</p>}
+      {retainedForOtherMachine && <p className="machine-monitor__timeline-status" role="status">Showing retained timeline for {timelineView?.timeline.machine.machineId}; {machine.label} is loading.</p>}
+      {timelineError != null && <p className="machine-monitor__error" role="alert">Timeline refresh error: {timelineError}</p>}
+      {timelineView == null ? <p className="machine-monitor__empty">No retained timeline is available yet.</p> : <MachineTimelineChart
+        className="machine-monitor__timeline-chart"
+        timeline={timelineView.timeline}
+        stale={historyStale}
+        refreshing={timelineLoading}
+        activationDisabled={!eventActivationAllowed}
+        onActivateEvent={onActivateEvent}
+      />}
+    </section>
   </section>;
 });
 
-const Metric = memo(function Metric({ label, value, detail, warning }: { label: string; value: string; detail?: string; warning: boolean }) {
-  return <article data-warning={warning}><span>{label}</span><strong>{value}</strong>{detail != null && <small>{detail}</small>}</article>;
-});
+function MachineMonitorPanel() {
+  const navigate = useBbNavigate();
+  const fleet = useFleetMonitor();
+  const activateEvent = useCallback((activation: TimelineEventActivation) => {
+    if (activation.bbReference == null || !fleet.canActivateEvent(activation)) return;
+    navigate.toThread(activation.bbReference.threadId);
+  }, [fleet.canActivateEvent, navigate]);
+  const selected = fleet.selectedMachine();
+
+  return <main className="machine-monitor">
+    <header className="machine-monitor__page-header">
+      <div><h1>Machine Monitor</h1><p>Fleet atlas and machine history.</p></div>
+      <span role="status">Realtime {fleet.connection}</span>
+    </header>
+    {fleet.overviewError != null && <p className="machine-monitor__error" role="alert">{fleet.overviewError}</p>}
+    {fleet.overviewLoading && fleet.overview == null && <p className="machine-monitor__empty" role="status">Loading the fleet overview…</p>}
+    {fleet.overview != null && <FleetPicker overview={fleet.overview} selectedMachineKey={fleet.selectedMachineKey} onSelect={fleet.chooseMachine} onIntent={fleet.prefetchMachine} />}
+    {selected != null && <SelectedMachineOverview
+      machine={selected}
+      rangeHours={fleet.rangeHours}
+      timelineView={fleet.timelineView}
+      timelineLoading={fleet.timelineLoading}
+      timelineError={fleet.timelineError}
+      connection={fleet.connection}
+      onRange={fleet.chooseRange}
+      onActivateEvent={activateEvent}
+    />}
+    <MachineMonitorReferences />
+  </main>;
+}
 
 function SidebarHealthAccessory() {
   const rpc = useRpc<typeof rpcContract>();
   const connection = useRealtimeConnectionState();
   const [health, setHealth] = useState<MachineMonitorHealth | null>(null);
   const mounted = useRef(true);
-  useEffect(() => {
-    mounted.current = true;
-    return () => { mounted.current = false; };
-  }, []);
   const refresh = useCallback(() => {
     void rpc.call("health").then((next) => {
       if (mounted.current) setHealth(next);
@@ -133,172 +623,20 @@ function SidebarHealthAccessory() {
       if (mounted.current) setHealth(null);
     });
   }, [rpc]);
-  useEffect(refresh, [refresh]);
-  const previousConnection = useRef(connection);
   useEffect(() => {
-    if (previousConnection.current !== "connected" && connection === "connected") void refresh();
-    previousConnection.current = connection;
+    mounted.current = true;
+    refresh();
+    return () => { mounted.current = false; };
+  }, [refresh]);
+  const prior = useRef(connection);
+  useEffect(() => {
+    if (connection === "connected" && prior.current !== "connected") refresh();
+    prior.current = connection;
   }, [connection, refresh]);
-  useRealtime("machine-monitor-sample", refresh);
+  useRealtime("machine-monitor-fleet", refresh);
   const warnings = health?.warnings ?? [];
   if (warnings.length === 0) return null;
   return <span className="machine-monitor__sidebar-warning" role="img" aria-label={`Machine health warning: ${warnings.join(", ")}`} title={`Machine health warning: ${warnings.join(", ")}`} />;
-}
-
-const DiagnosticsCharts = memo(function DiagnosticsCharts({ samples, thresholds }: { samples: MachineMonitorSnapshot["samples"]; thresholds: MachineMonitorSnapshot["thresholds"] }) {
-  const usage = useMemo(() => withChartGaps(samples.map((sample) => [sample.collectedAt, sample.cpu5mPercent, percentNumber(sample.memoryUsedBytes, sample.memoryTotalBytes), percentNumber(sample.diskUsedBytes, sample.diskTotalBytes)])), [samples]);
-  const load = useMemo(() => withChartGaps(samples.map((sample) => [sample.collectedAt, sample.load5])), [samples]);
-  return <section className="machine-monitor__charts">
-    <Chart title="Utilization" description="Five-minute CPU, memory, and disk utilization over the selected period. Shaded regions were above a configured warning threshold." dimensions={["time", "CPU", "Memory", "Disk"]} rows={usage} sampleCount={samples.length} series={["CPU", "Memory", "Disk"]} thresholds={{ CPU: thresholds.cpu, Memory: thresholds.ram, Disk: thresholds.disk }} />
-    <Chart title="Load average" description="Five-minute system load average over the selected period." dimensions={["time", "Load"]} rows={load} sampleCount={samples.length} series={["Load"]} thresholds={{}} />
-  </section>;
-});
-
-const DirectoryUsage = memo(function DirectoryUsage({ directories }: { directories: MachineMonitorSnapshot["directories"] }) {
-  if (directories.length === 0) return null;
-  return <section className="machine-monitor__directories" aria-label="Root disk directory usage">
-    <h2>Root disk breakdown</h2>
-    <p>Nested directories are exclusive; Other is root disk usage not covered by the measured paths.</p>
-    <ol>{directories.map((directory) => <li key={directory.id} data-derived={directory.derived || undefined}>
-      <span>{directory.label}</span><strong>{bytes(directory.bytes) ?? "—"}</strong><small>{directory.partial ? "Partial: protected entries omitted" : growth(directory.growthBytesPerDay)}</small>
-    </li>)}</ol>
-  </section>;
-});
-
-function Chart({ title, description, dimensions, rows, sampleCount, series, thresholds }: { title: string; description: string; dimensions: string[]; rows: Array<Array<number | null>>; sampleCount: number; series: string[]; thresholds: Record<string, number> }) {
-  const target = useRef<HTMLDivElement | null>(null);
-  const latest = useRef({ title, description, dimensions, rows, series, thresholds });
-  latest.current = { title, description, dimensions, rows, series, thresholds };
-  const applyRef = useRef<(() => void) | null>(null);
-
-  useLayoutEffect(() => {
-    const element = target.current;
-    if (element == null) return;
-    let chart: ReturnType<typeof echarts.init> | null = null;
-    let resizeFrame = 0;
-    let width = 0;
-    let height = 0;
-    let themeKey = "";
-
-    const apply = (initial = false) => {
-      const bounds = element.getBoundingClientRect();
-      if (bounds.width <= 0 || bounds.height <= 0) return;
-      chart ??= echarts.init(element, undefined, { renderer: "svg", useDirtyRect: true });
-      const current = latest.current;
-      const theme = readTheme(element);
-      const nextThemeKey = JSON.stringify(theme);
-      themeKey = nextThemeKey;
-      chart.setOption(chartOption(current.title, current.description, current.dimensions, current.rows, current.series, current.thresholds, theme), {
-        notMerge: initial,
-        lazyUpdate: !initial,
-        silent: true,
-      });
-    };
-    const resize = new ResizeObserver(([entry]) => {
-      if (entry == null) return;
-      const nextWidth = Math.round(entry.contentRect.width);
-      const nextHeight = Math.round(entry.contentRect.height);
-      if (nextWidth <= 0 || nextHeight <= 0 || (nextWidth === width && nextHeight === height)) return;
-      width = nextWidth; height = nextHeight;
-      cancelAnimationFrame(resizeFrame);
-      resizeFrame = requestAnimationFrame(() => chart == null ? apply(true) : chart.resize({ width, height, silent: true }));
-    });
-    const themeObserver = new MutationObserver(() => {
-      const nextThemeKey = JSON.stringify(readTheme(element));
-      if (nextThemeKey !== themeKey) apply();
-    });
-    resize.observe(element);
-    themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ["class", "style", "data-theme"] });
-    applyRef.current = () => apply(false);
-    apply(true);
-    return () => {
-      applyRef.current = null;
-      cancelAnimationFrame(resizeFrame);
-      resize.disconnect();
-      themeObserver.disconnect();
-      chart?.dispose();
-    };
-  }, []);
-
-  useEffect(() => { applyRef.current?.(); }, [dimensions, rows, series, thresholds, title, description]);
-  return <article className="machine-monitor__chart"><header><h2>{title}</h2><span>{sampleCount.toLocaleString()} samples</span></header><div ref={target} role="img" aria-label={description} /></article>;
-}
-
-function chartOption(title: string, description: string, dimensions: string[], rows: Array<Array<number | null>>, series: string[], thresholds: Record<string, number>, theme: ChartTheme) {
-  const percentChart = title === "Utilization";
-  const colors = title === "Utilization" ? [theme.cpu, theme.memory, theme.disk] : [theme.load];
-  return {
-    aria: { enabled: true, description }, animation: false, backgroundColor: "transparent",
-    dataset: { id: `${title}-data`, dimensions, source: rows },
-    grid: { left: 8, right: 12, top: 12, bottom: 12, outerBoundsMode: "same", outerBoundsContain: "axisLabel" },
-    tooltip: { trigger: "axis", renderMode: "richText", confine: true, axisPointer: { type: "line", snap: true }, backgroundColor: theme.surface, borderColor: theme.border, textStyle: { color: theme.foreground, fontSize: 11 }, formatter: (params: unknown) => chartTooltip(params, dimensions, percentChart) },
-    xAxis: { id: `${title}-x`, type: "time", axisPointer: { triggerEmphasis: true }, axisLabel: { color: theme.muted, fontSize: 10, hideOverlap: true }, axisLine: { lineStyle: { color: theme.border } } },
-    yAxis: { id: `${title}-y`, type: "value", min: 0, max: percentChart ? 100 : undefined, axisLabel: { color: theme.muted, fontSize: 10, formatter: (value: number) => `${value.toFixed(1)}${percentChart ? "%" : ""}` }, splitLine: { lineStyle: { color: theme.border } } },
-    series: series.map((name, index) => {
-      const color = colors[index]!;
-      return { id: `${title}-${name}`, type: "line", name, datasetId: `${title}-data`, encode: { x: "time", y: name }, showSymbol: false, connectNulls: false, sampling: "lttb", lineStyle: { width: 1.75, color, opacity: 1 }, itemStyle: { color, opacity: 1 }, emphasis: { focus: "none", scale: false, symbolSize: 8, lineStyle: { width: 1.75, color, opacity: 1 }, itemStyle: { color, opacity: 1 } }, blur: { lineStyle: { width: 1.75, color, opacity: 1 }, itemStyle: { color, opacity: 1 } }, markLine: thresholds[name] == null ? undefined : { silent: true, symbol: "none", label: { show: false }, lineStyle: { color: theme.warning, type: "dashed", opacity: .7 }, data: [{ yAxis: thresholds[name] }] }, markArea: index === 0 && title === "Utilization" ? { silent: true, itemStyle: { color: theme.warning, opacity: .1 }, data: warningWindows(rows, series, thresholds) } : undefined };
-    }),
-  };
-}
-
-function chartTooltip(params: unknown, dimensions: string[], percentChart: boolean): string {
-  const entries = (Array.isArray(params) ? params : [params]).filter((entry): entry is { axisValue?: number; marker?: string; seriesName?: string; value?: unknown } => entry != null && typeof entry === "object");
-  const time = entries[0]?.axisValue;
-  const heading = typeof time === "number" ? new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", second: "2-digit" }).format(time) : "Sample";
-  const values = entries.flatMap((entry) => {
-    const index = dimensions.indexOf(entry.seriesName ?? "");
-    const value = Array.isArray(entry.value) && index >= 0 ? entry.value[index] : entry.value;
-    return typeof value === "number" && Number.isFinite(value) ? [`${entry.marker ?? ""} ${entry.seriesName ?? "Metric"}  ${value.toFixed(1)}${percentChart ? "%" : ""}`] : [];
-  });
-  return values.length === 0 ? `${heading}\nCollection gap — no sample recorded` : [heading, ...values].join("\n");
-}
-
-function readTheme(target: HTMLElement): ChartTheme {
-  const probe = document.createElement("i"); probe.className = "machine-monitor__theme"; target.append(probe);
-  const style = getComputedStyle(probe); const theme = { foreground: style.color, muted: style.borderTopColor, border: style.borderRightColor, surface: style.backgroundColor, cpu: style.borderBottomColor, memory: style.outlineColor, disk: style.textDecorationColor, load: style.caretColor, warning: style.borderLeftColor }; probe.remove(); return theme;
-}
-function percent(value: number | null | undefined): string { return value == null || !Number.isFinite(value) ? "—" : `${value.toFixed(1)}%`; }
-function percentNumber(part: number | null | undefined, whole: number | null | undefined): number | null { return part == null || whole == null || whole <= 0 ? null : Math.max(0, Math.min(100, part / whole * 100)); }
-function ratio(part: number | null | undefined, whole: number | null | undefined): string { return percent(percentNumber(part, whole)); }
-function bytes(value: number | null | undefined): string | undefined { return value == null ? undefined : value < 1_073_741_824 ? `${(value / 1_048_576).toFixed(1)} MiB` : `${(value / 1_073_741_824).toFixed(1)} GiB`; }
-function growth(value: number | null | undefined, prefix?: string): string | undefined {
-  if (value == null || !Number.isFinite(value)) return prefix;
-  const direction = value >= 0 ? "+" : "−";
-  return `${prefix == null ? "" : `${prefix} · `}${direction}${bytes(Math.abs(value))}/day`;
-}
-function number(value: number | null | undefined): string { return value == null ? "—" : value.toFixed(1); }
-function rateNumber(value: number | null | undefined, suffix: string): string { return value == null || !Number.isFinite(value) ? "—" : `${value.toFixed(value >= 10 ? 0 : 2)}${suffix}`; }
-function signedBytes(value: number | null | undefined): string { return value == null ? "—" : `${value >= 0 ? "+" : "−"}${bytes(Math.abs(value))}`; }
-function uptime(seconds: number): string { const days = Math.floor(seconds / 86_400); const hours = Math.floor(seconds % 86_400 / 3_600); return days > 0 ? `${days}d ${hours}h` : `${hours}h`; }
-function shortTime(value: number): string { return new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit", second: "2-digit" }).format(value); }
-function rangeLabel(hours: number): string { return hours < 24 ? `${hours} hour${hours === 1 ? "" : "s"}` : hours < 168 ? `${hours / 24} days` : hours === 168 ? "7 days" : "30 days"; }
-function isOver(value: number | null | undefined, threshold: number | undefined): boolean { return value != null && threshold != null && value >= threshold; }
-function warningWindows(rows: Array<Array<number | null>>, series: string[], thresholds: Record<string, number>): Array<Array<{ xAxis: number }>> {
-  const windows: Array<Array<{ xAxis: number }>> = [];
-  let startedAt: number | null = null;
-  for (let index = 0; index < rows.length; index += 1) {
-    const row = rows[index]!;
-    const time = row[0];
-    if (time == null) continue;
-    const over = series.some((name, seriesIndex) => thresholds[name] != null && (row[seriesIndex + 1] ?? Number.NEGATIVE_INFINITY) >= thresholds[name]);
-    if (over && startedAt == null) startedAt = time;
-    if (!over && startedAt != null) { windows.push([{ xAxis: startedAt }, { xAxis: time }]); startedAt = null; }
-  }
-  if (startedAt != null && rows.at(-1)?.[0] != null) windows.push([{ xAxis: startedAt }, { xAxis: rows.at(-1)![0]! + 30_000 }]);
-  return windows;
-}
-
-function withChartGaps(rows: Array<Array<number | null>>): Array<Array<number | null>> {
-  const deltas = rows.slice(1).map((row, index) => (row[0] ?? 0) - (rows[index]?.[0] ?? 0)).filter((delta) => delta > 0).sort((left, right) => left - right);
-  const median = deltas.length === 0 ? 30_000 : deltas[Math.floor(deltas.length / 2)]!;
-  const maxGap = Math.max(90_000, median * 3);
-  const result: Array<Array<number | null>> = [];
-  for (const row of rows) {
-    const previous = result.at(-1);
-    if (previous != null && row[0] != null && previous[0] != null && row[0] - previous[0] > maxGap) result.push([previous[0] + 1, ...Array(row.length - 1).fill(null)]);
-    result.push(row);
-  }
-  return result;
 }
 
 export default definePluginApp((app) => {

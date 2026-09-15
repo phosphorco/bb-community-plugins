@@ -5,30 +5,54 @@ import test from "node:test";
 const styles = await readFile(new URL("../app.css", import.meta.url), "utf8");
 const app = await readFile(new URL("../app.tsx", import.meta.url), "utf8");
 
-test("panel owns constrained-height scrolling", () => {
+test("panel owns constrained-height scrolling without horizontal overflow", () => {
   const root = styles.match(/\.machine-monitor\s*\{([^}]*)\}/)?.[1] ?? "";
   assert.match(root, /height:\s*100%/);
+  assert.match(root, /min-width:\s*0/);
   assert.match(root, /min-height:\s*0/);
+  assert.match(root, /overflow-x:\s*hidden/);
   assert.match(root, /overflow-y:\s*auto/);
   assert.match(root, /overscroll-behavior-y:\s*contain/);
-  assert.doesNotMatch(root, /overscroll-behavior:\s*contain/);
-  assert.doesNotMatch(styles, /safe-area-inset-bottom/);
 });
 
-test("mobile charts preserve vertical touch scrolling", () => {
-  const chart = styles.match(/\.machine-monitor__chart\s*>\s*div\s*\{([^}]*)\}/)?.[1] ?? "";
-  assert.match(chart, /touch-action:\s*pan-y\s+pinch-zoom/);
+test("narrow fleet atlas keeps native controls, layered status, and compact structure", () => {
+  assert.match(app, /aria-pressed=\{selected\}/);
+  assert.match(app, /aria-describedby=\{descriptionId\}/);
+  assert.match(app, /data-connection=\{machine\.connection\}/);
+  assert.match(app, /data-freshness=\{machine\.freshness\}/);
+  assert.match(app, /data-collector=\{atlas\.collectorState\}/);
+  assert.match(app, /data-pressure=\{atlas\.pressureLevel\}/);
+  assert.match(app, /--machine-monitor-cpu-pressure/);
+  assert.match(app, /--machine-monitor-memory-pressure/);
+  assert.match(app, /--machine-monitor-disk-pressure/);
+  assert.match(app, /onFocus=\{\(\) => onIntent\(machine\)\}/);
+  assert.match(app, /onPointerEnter=\{\(\) => onIntent\(machine\)\}/);
+  assert.match(styles, /\.machine-monitor__atlas-button\s*\{[^}]*min-width:\s*0/);
+  assert.match(styles, /\.machine-monitor__atlas-button\s*\{[^}]*background:\s*linear-gradient\(90deg, var\(--machine-monitor-collector-layer\)/);
+  assert.match(styles, /var\(--machine-monitor-cpu-pressure\)/);
+  assert.match(styles, /var\(--machine-monitor-memory-pressure\)/);
+  assert.match(styles, /var\(--machine-monitor-disk-pressure\)/);
+  assert.match(styles, /\.machine-monitor__atlas-button\[data-connection="disconnected"\]/);
+  assert.match(styles, /\.machine-monitor__atlas-button\[data-freshness="stale"\]/);
+  assert.match(styles, /\.machine-monitor__atlas-button\[data-collector="failure"\]/);
+  assert.match(styles, /\.machine-monitor__atlas-metric\[data-level="unavailable"\][^}]*border-style:\s*dashed/);
+  assert.match(styles, /\.machine-monitor__atlas-button > strong > span[^}]*text-overflow:\s*ellipsis/);
+  assert.match(styles, /\.machine-monitor__fleet-picker button:focus-visible/);
+  assert.match(styles, /\.machine-monitor__fleet-picker\[data-inspecting\] \.machine-monitor__atlas-button/);
+  assert.match(styles, /@container \(max-width:\s*460px\)\s*\{[\s\S]*?\.machine-monitor__fleet-picker > header/);
+  assert.match(styles, /@container \(max-width:\s*300px\)\s*\{[\s\S]*?\.machine-monitor__fleet-picker > ol/);
 });
 
-test("wide process details remain keyboard-scrollable and reflow workload text", () => {
-  assert.match(app, /className="machine-monitor__processes"[^>]*tabIndex=\{0\}/);
-  assert.match(app, /<\/div><p className="machine-monitor__processes-note">Top 12/);
-  assert.match(styles, /\.machine-monitor__processes:focus-visible\s*\{[^}]*outline:\s*2px solid var\(--ring\)/);
-  assert.match(styles, /\.machine-monitor__processes \[role="row"\] > span:first-child\s*\{[^}]*white-space:\s*normal/);
+test("timeline host has a definite responsive drawing rectangle and native event action", () => {
+  assert.match(styles, /\.machine-monitor__timeline-chart > div\[role="img"\]\s*\{[^}]*min-height:\s*300px/);
+  assert.match(styles, /\.machine-monitor__timeline-chart > div\[role="img"\][^}]*height:\s*320px/);
+  assert.match(styles, /touch-action:\s*pan-y\s+pinch-zoom/);
+  assert.match(styles, /@container \(max-width:\s*760px\)\s*\{[\s\S]*?\.machine-monitor__timeline-chart > div\[role="img"\]/);
+  assert.match(app, /navigate\.toThread\(activation\.bbReference\.threadId\)/);
 });
 
-test("mobile layout keeps summary metrics compact", () => {
-  const compact = styles.match(/@container\s*\(max-width:\s*760px\)\s*\{([\s\S]*?)\n\}/)?.[1] ?? "";
-  assert.match(compact, /\.machine-monitor__metrics[^\{]*\{\s*grid-template-columns:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\)/);
-  assert.match(compact, /\.machine-monitor__charts\s*\{\s*grid-template-columns:\s*1fr/);
+test("mobile facts and metrics collapse without forcing a wide grid", () => {
+  const compact = styles.match(/@container \(max-width:\s*760px\)\s*\{([\s\S]*?)\n\}/)?.[1] ?? "";
+  assert.match(compact, /\.machine-monitor__metrics[^\{]*\.machine-monitor__machine-facts[^\{]*\{\s*grid-template-columns:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\)/);
+  assert.match(styles, /@container \(max-width:\s*300px\)\s*\{[\s\S]*?\.machine-monitor__machine-facts/);
 });

@@ -341,7 +341,7 @@ export function MachineMonitorReferences() {
       <header>
         <div>
           <h2 id="machine-monitor-references-title">Linked threads</h2>
-          <p>Keep the BB threads that explain or repair this deployment machine close at hand.</p>
+          <p>Keep the BB threads that explain or repair this fleet close at hand.</p>
         </div>
         <span className="machine-monitor__reference-count" aria-label={`${targets.length} linked thread${targets.length === 1 ? "" : "s"}`}>{targets.length}</span>
       </header>

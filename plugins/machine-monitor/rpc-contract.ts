@@ -2,6 +2,12 @@ import { defineRpcContract } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 
 import { attachmentRpcSchemas } from "./attachment-contract.ts";
+import {
+  fleetOverviewRequestSchema,
+  fleetOverviewResultSchema,
+  machineTimelineRequestSchema,
+  machineTimelineResultSchema,
+} from "./fleet-contract.ts";
 import { MAX_REPORTED_DIRECTORIES } from "./monitor.ts";
 
 const sampleSchema = z.object({
@@ -30,6 +36,22 @@ const memoryDiagnosticsSchema = z.object({
   refaultPagesPerSecond: z.number().nullable(), reclaimPagesPerSecond: z.number().nullable(), bbCgroupMemoryBytes: z.number().nullable(),
   processes: z.array(memoryProcessSchema).max(12),
 }).strict();
+
+/**
+ * Fleet reads share the production RPC surface with the legacy local-server
+ * methods. Keeping these schemas as their own export also lets host/UI code
+ * consume the strictly bounded fleet contract without duplicating it.
+ */
+export const fleetRpcSchemas = {
+  fleetOverview: {
+    input: fleetOverviewRequestSchema,
+    output: fleetOverviewResultSchema,
+  },
+  machineTimeline: {
+    input: machineTimelineRequestSchema,
+    output: machineTimelineResultSchema,
+  },
+} as const;
 
 export const rpcContract = defineRpcContract({
   health: {
@@ -82,7 +104,11 @@ export const rpcContract = defineRpcContract({
     }).strict(),
   },
   ...attachmentRpcSchemas,
+  ...fleetRpcSchemas,
 });
+
+/** Retained as a focused type/contract export for fleet-only consumers. */
+export const fleetRpcContract = defineRpcContract(fleetRpcSchemas);
 
 export type MachineMonitorSnapshot = z.infer<typeof rpcContract.snapshot.output>;
 export type MachineMonitorHealth = z.infer<typeof rpcContract.health.output>;

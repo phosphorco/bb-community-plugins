@@ -37,6 +37,7 @@
       "icon": "Activity"
     },
     "server": "./server.ts",
+    "host": "./host.ts",
     "app": "./app.tsx",
     "skills": []
   },
@@ -49,7 +50,18 @@
     "app.tsx",
     "app.css",
     "attachments.tsx",
+    "host.ts",
+    "host-contract.ts",
     "monitor.ts",
+    "platform-collectors.ts",
+    "fleet-contract.ts",
+    "fleet-store.ts",
+    "fleet-coordinator.ts",
+    "timeline-query.ts",
+    "fleet-cache.ts",
+    "timeline-chart.tsx",
+    "timeline-compiler.ts",
+    "fleet-client.ts",
     "store.ts",
     "attachment-contract.ts",
     "attachment-delivery.ts",
@@ -62,6 +74,7 @@
   },
   "devDependencies": {
     "@get-bb/plugin-sdk": "0.4.15",
+    "@playwright/test": "1.63.0",
     "@testing-library/dom": "^10.4.0",
     "@testing-library/react": "^16.3.2",
     "@types/better-sqlite3": "^7.6.12",
@@ -78,7 +91,8 @@
   "scripts": {
     "build": "bb plugin build .",
     "dev": "bb plugin dev .",
-    "test": "node --test --experimental-strip-types test/*.test.ts && vitest run test/*.test.tsx",
+    "test": "node --test --experimental-strip-types $(find test -maxdepth 1 -type f -name '*.test.ts' ! -name 'fleet-performance*.test.ts' -print) && vitest run test/*.test.tsx",
+    "test:fleet-performance": "node --test --experimental-transform-types test/fleet-performance.test.ts test/fleet-performance.browser.test.ts",
     "typecheck": "tsc --noEmit"
   }
 }

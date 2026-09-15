@@ -95,6 +95,238 @@ export const machineMonitorMigrations = [
     updated_at INTEGER NOT NULL,
     PRIMARY KEY (singleton, slot)
   )`,
+  `CREATE TABLE IF NOT EXISTS machine_monitor_fleet_state (
+    singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+    data_revision INTEGER NOT NULL CHECK (data_revision >= 0),
+    settings_revision INTEGER NOT NULL CHECK (settings_revision >= 0)
+  )`,
+  `INSERT OR IGNORE INTO machine_monitor_fleet_state (singleton, data_revision, settings_revision)
+   VALUES (1, 0, 0)`,
+  `CREATE TABLE IF NOT EXISTS machine_monitor_fleet_machines (
+    machine_source TEXT NOT NULL CHECK (machine_source IN ('local-bb-server', 'enrolled-host')),
+    machine_id TEXT NOT NULL,
+    label TEXT NOT NULL,
+    connection TEXT NOT NULL CHECK (connection IN ('local', 'connected', 'disconnected', 'unknown')),
+    capabilities_json TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    last_collected_at INTEGER,
+    last_fresh_at INTEGER,
+    last_error TEXT,
+    last_error_at INTEGER,
+    data_revision INTEGER NOT NULL CHECK (data_revision >= 0),
+    settings_revision INTEGER NOT NULL CHECK (settings_revision >= 0),
+    PRIMARY KEY (machine_source, machine_id),
+    CHECK (
+      (machine_source = 'local-bb-server' AND machine_id = 'local-bb-server' AND connection = 'local')
+      OR (machine_source = 'enrolled-host' AND machine_id <> 'local-bb-server' AND connection <> 'local')
+    )
+  )`,
+  `CREATE TABLE IF NOT EXISTS machine_monitor_fleet_collections (
+    machine_source TEXT NOT NULL,
+    machine_id TEXT NOT NULL,
+    collector_session_id TEXT NOT NULL,
+    sequence INTEGER NOT NULL CHECK (sequence >= 0),
+    host_observed_at INTEGER NOT NULL,
+    server_sent_at INTEGER NOT NULL,
+    server_received_at INTEGER NOT NULL,
+    normalized_at INTEGER NOT NULL,
+    clock_uncertainty_ms INTEGER NOT NULL CHECK (clock_uncertainty_ms >= 0),
+    payload_digest TEXT NOT NULL CHECK (length(payload_digest) = 64),
+    payload_json TEXT NOT NULL,
+    PRIMARY KEY (machine_source, machine_id, collector_session_id, sequence),
+    FOREIGN KEY (machine_source, machine_id) REFERENCES machine_monitor_fleet_machines(machine_source, machine_id),
+    CHECK (host_observed_at >= 0 AND server_sent_at >= 0 AND server_received_at >= 0
+      AND normalized_at >= 0 AND clock_uncertainty_ms BETWEEN 0 AND 3600000),
+    CHECK (server_received_at >= server_sent_at),
+    CHECK (normalized_at >= server_sent_at AND normalized_at <= server_received_at)
+  )`,
+  `CREATE INDEX IF NOT EXISTS machine_monitor_fleet_collections_machine_time
+    ON machine_monitor_fleet_collections(machine_source, machine_id, normalized_at, collector_session_id, sequence)`,
+  `CREATE TABLE IF NOT EXISTS machine_monitor_fleet_metric_values (
+    machine_source TEXT NOT NULL,
+    machine_id TEXT NOT NULL,
+    collector_session_id TEXT NOT NULL,
+    sequence INTEGER NOT NULL,
+    normalized_at INTEGER NOT NULL,
+    metric_id TEXT NOT NULL,
+    value REAL,
+    availability_state TEXT NOT NULL CHECK (availability_state IN ('available', 'unavailable', 'not-collected')),
+    availability_reason TEXT,
+    PRIMARY KEY (machine_source, machine_id, collector_session_id, sequence, metric_id),
+    CHECK (value IS NULL OR value >= 0),
+    CHECK ((availability_state = 'available' AND value IS NOT NULL AND availability_reason IS NULL)
+      OR (availability_state <> 'available' AND value IS NULL)),
+    FOREIGN KEY (machine_source, machine_id, collector_session_id, sequence)
+      REFERENCES machine_monitor_fleet_collections(machine_source, machine_id, collector_session_id, sequence)
+  )`,
+  `CREATE INDEX IF NOT EXISTS machine_monitor_fleet_metric_values_machine_time
+    ON machine_monitor_fleet_metric_values(machine_source, machine_id, normalized_at, metric_id)`,
+  `CREATE TABLE IF NOT EXISTS machine_monitor_fleet_directory_details (
+    machine_source TEXT NOT NULL,
+    machine_id TEXT NOT NULL,
+    collected_at INTEGER NOT NULL,
+    location TEXT NOT NULL,
+    bytes INTEGER NOT NULL CHECK (bytes >= 0),
+    on_root_filesystem INTEGER NOT NULL CHECK (on_root_filesystem IN (0, 1)),
+    partial INTEGER NOT NULL CHECK (partial IN (0, 1)),
+    payload_digest TEXT NOT NULL CHECK (length(payload_digest) = 64),
+    CHECK (collected_at >= 0),
+    PRIMARY KEY (machine_source, machine_id, collected_at, location),
+    FOREIGN KEY (machine_source, machine_id) REFERENCES machine_monitor_fleet_machines(machine_source, machine_id)
+  )`,
+  `CREATE INDEX IF NOT EXISTS machine_monitor_fleet_directory_details_machine_time
+    ON machine_monitor_fleet_directory_details(machine_source, machine_id, collected_at, location)`,
+  `CREATE TABLE IF NOT EXISTS machine_monitor_fleet_memory_details (
+    machine_source TEXT NOT NULL,
+    machine_id TEXT NOT NULL,
+    collected_at INTEGER NOT NULL,
+    sample_interval_ms INTEGER,
+    pressure_some_percent REAL,
+    pressure_full_percent REAL,
+    swap_in_pages_per_second REAL,
+    swap_out_pages_per_second REAL,
+    refault_pages_per_second REAL,
+    reclaim_pages_per_second REAL,
+    bb_cgroup_memory_bytes INTEGER,
+    processes_json TEXT NOT NULL,
+    process_details_collected_at INTEGER,
+    payload_digest TEXT NOT NULL CHECK (length(payload_digest) = 64),
+    PRIMARY KEY (machine_source, machine_id, collected_at),
+    FOREIGN KEY (machine_source, machine_id) REFERENCES machine_monitor_fleet_machines(machine_source, machine_id),
+    CHECK (collected_at >= 0)
+  )`,
+  `CREATE INDEX IF NOT EXISTS machine_monitor_fleet_memory_details_machine_time
+    ON machine_monitor_fleet_memory_details(machine_source, machine_id, collected_at)`,
+  `CREATE TABLE IF NOT EXISTS machine_monitor_fleet_events (
+    machine_source TEXT NOT NULL,
+    machine_id TEXT NOT NULL,
+    producer_id TEXT NOT NULL,
+    event_id TEXT NOT NULL,
+    contract_version INTEGER NOT NULL,
+    producer_version INTEGER NOT NULL,
+    event_start_at INTEGER NOT NULL,
+    event_end_at INTEGER NOT NULL,
+    payload_digest TEXT NOT NULL CHECK (length(payload_digest) = 64),
+    event_json TEXT NOT NULL,
+    PRIMARY KEY (machine_source, machine_id, producer_id, event_id),
+    FOREIGN KEY (machine_source, machine_id) REFERENCES machine_monitor_fleet_machines(machine_source, machine_id),
+    CHECK (event_start_at >= 0 AND event_end_at >= event_start_at)
+  )`,
+  `CREATE INDEX IF NOT EXISTS machine_monitor_fleet_events_machine_time
+    ON machine_monitor_fleet_events(machine_source, machine_id, event_start_at, producer_id, event_id)`,
+  `CREATE TABLE IF NOT EXISTS machine_monitor_fleet_errors (
+    machine_source TEXT NOT NULL,
+    machine_id TEXT NOT NULL,
+    error_id TEXT NOT NULL,
+    occurred_at INTEGER NOT NULL,
+    kind TEXT NOT NULL,
+    message TEXT NOT NULL,
+    payload_digest TEXT NOT NULL CHECK (length(payload_digest) = 64),
+    PRIMARY KEY (machine_source, machine_id, error_id),
+    FOREIGN KEY (machine_source, machine_id) REFERENCES machine_monitor_fleet_machines(machine_source, machine_id),
+    CHECK (occurred_at >= 0)
+  )`,
+  `CREATE INDEX IF NOT EXISTS machine_monitor_fleet_errors_machine_time
+    ON machine_monitor_fleet_errors(machine_source, machine_id, occurred_at, error_id)`,
+  `INSERT OR IGNORE INTO machine_monitor_fleet_machines
+    (machine_source, machine_id, label, connection, capabilities_json, created_at, updated_at,
+     last_collected_at, last_fresh_at, last_error, last_error_at, data_revision, settings_revision)
+   VALUES ('local-bb-server', 'local-bb-server', 'Local BB server', 'local', '[]', 0, 0,
+     NULL, NULL, NULL, NULL, 0, 0)`,
+  `INSERT OR IGNORE INTO machine_monitor_fleet_collections
+    (machine_source, machine_id, collector_session_id, sequence, host_observed_at,
+     server_sent_at, server_received_at, normalized_at, clock_uncertainty_ms, payload_digest, payload_json)
+   SELECT 'local-bb-server', 'local-bb-server', 'legacy-machine-samples-v1', collected_at,
+     collected_at, collected_at, collected_at, collected_at, 0,
+     '0000000000000000000000000000000000000000000000000000000000000000', '{}'
+   FROM machine_samples`,
+  `INSERT OR IGNORE INTO machine_monitor_fleet_metric_values
+    (machine_source, machine_id, collector_session_id, sequence, normalized_at, metric_id, value, availability_state, availability_reason)
+   SELECT 'local-bb-server', 'local-bb-server', 'legacy-machine-samples-v1', collected_at, collected_at,
+     metric_id, value, 'available', NULL
+   FROM (
+     SELECT collected_at, 'cpu.utilization.percent' AS metric_id, cpu_percent AS value FROM machine_samples WHERE cpu_percent IS NOT NULL
+     UNION ALL SELECT collected_at, 'memory.used.bytes', memory_used_bytes FROM machine_samples WHERE memory_used_bytes IS NOT NULL
+     UNION ALL SELECT collected_at, 'memory.total.bytes', memory_total_bytes FROM machine_samples WHERE memory_total_bytes IS NOT NULL
+     UNION ALL SELECT collected_at, 'disk.root.used.bytes', disk_used_bytes FROM machine_samples WHERE disk_used_bytes IS NOT NULL
+     UNION ALL SELECT collected_at, 'disk.root.total.bytes', disk_total_bytes FROM machine_samples WHERE disk_total_bytes IS NOT NULL
+     UNION ALL SELECT collected_at, 'load.1', load1 FROM machine_samples WHERE load1 IS NOT NULL
+     UNION ALL SELECT collected_at, 'load.5', load5 FROM machine_samples WHERE load5 IS NOT NULL
+   )`,
+  `INSERT OR IGNORE INTO machine_monitor_fleet_collections
+    (machine_source, machine_id, collector_session_id, sequence, host_observed_at,
+     server_sent_at, server_received_at, normalized_at, clock_uncertainty_ms, payload_digest, payload_json)
+   SELECT 'local-bb-server', 'local-bb-server', 'legacy-memory-diagnostics-v1', collected_at,
+     collected_at, collected_at, collected_at, collected_at, 0,
+     '0000000000000000000000000000000000000000000000000000000000000000', '{}'
+   FROM memory_diagnostics`,
+  `INSERT OR IGNORE INTO machine_monitor_fleet_metric_values
+    (machine_source, machine_id, collector_session_id, sequence, normalized_at, metric_id, value, availability_state, availability_reason)
+   SELECT 'local-bb-server', 'local-bb-server', 'legacy-memory-diagnostics-v1', collected_at, collected_at,
+     metric_id, value, 'available', NULL
+   FROM (
+     SELECT collected_at, 'memory.pressure.some.percent' AS metric_id, pressure_some_percent AS value FROM memory_diagnostics WHERE pressure_some_percent IS NOT NULL
+     UNION ALL SELECT collected_at, 'memory.pressure.full.percent', pressure_full_percent FROM memory_diagnostics WHERE pressure_full_percent IS NOT NULL
+     UNION ALL SELECT collected_at, 'memory.swap.in.pages-per-second', swap_in_pages_per_second FROM memory_diagnostics WHERE swap_in_pages_per_second IS NOT NULL
+     UNION ALL SELECT collected_at, 'memory.swap.out.pages-per-second', swap_out_pages_per_second FROM memory_diagnostics WHERE swap_out_pages_per_second IS NOT NULL
+   )`,
+  `INSERT OR IGNORE INTO machine_monitor_fleet_directory_details
+    (machine_source, machine_id, collected_at, location, bytes, on_root_filesystem, partial, payload_digest)
+   SELECT 'local-bb-server', 'local-bb-server', collected_at, location, bytes,
+     COALESCE(on_root_filesystem, 0), COALESCE(partial, 0),
+     '0000000000000000000000000000000000000000000000000000000000000000'
+   FROM directory_samples`,
+  `INSERT OR IGNORE INTO machine_monitor_fleet_memory_details
+    (machine_source, machine_id, collected_at, sample_interval_ms, pressure_some_percent,
+     pressure_full_percent, swap_in_pages_per_second, swap_out_pages_per_second,
+     refault_pages_per_second, reclaim_pages_per_second, bb_cgroup_memory_bytes,
+     processes_json, process_details_collected_at, payload_digest)
+   SELECT 'local-bb-server', 'local-bb-server', collected_at, sample_interval_ms, pressure_some_percent,
+     pressure_full_percent, swap_in_pages_per_second, swap_out_pages_per_second,
+     refault_pages_per_second, reclaim_pages_per_second, bb_cgroup_memory_bytes,
+     processes_json, process_details_collected_at,
+     '0000000000000000000000000000000000000000000000000000000000000000'
+   FROM memory_diagnostics`,
+  `UPDATE machine_monitor_fleet_machines SET
+    last_collected_at = (SELECT MAX(normalized_at) FROM machine_monitor_fleet_collections
+      WHERE machine_source = 'local-bb-server' AND machine_id = 'local-bb-server'),
+    last_fresh_at = (SELECT MAX(normalized_at) FROM machine_monitor_fleet_collections
+      WHERE machine_source = 'local-bb-server' AND machine_id = 'local-bb-server'),
+    data_revision = CASE WHEN EXISTS (SELECT 1 FROM machine_monitor_fleet_collections
+      WHERE machine_source = 'local-bb-server' AND machine_id = 'local-bb-server') THEN 1 ELSE 0 END
+   WHERE machine_source = 'local-bb-server' AND machine_id = 'local-bb-server'`,
+  `UPDATE machine_monitor_fleet_state SET data_revision = CASE WHEN EXISTS
+    (SELECT 1 FROM machine_monitor_fleet_collections) THEN 1 ELSE data_revision END
+   WHERE singleton = 1`,
+  `CREATE TABLE IF NOT EXISTS machine_monitor_fleet_memory_observations (
+    machine_source TEXT NOT NULL,
+    machine_id TEXT NOT NULL,
+    collector_session_id TEXT NOT NULL,
+    sequence INTEGER NOT NULL CHECK (sequence >= 0),
+    host_observed_at INTEGER NOT NULL,
+    server_sent_at INTEGER NOT NULL,
+    server_received_at INTEGER NOT NULL,
+    normalized_at INTEGER NOT NULL,
+    clock_uncertainty_ms INTEGER NOT NULL CHECK (clock_uncertainty_ms >= 0),
+    pressure_some_percent REAL,
+    pressure_full_percent REAL,
+    swap_in_pages_per_second REAL,
+    swap_out_pages_per_second REAL,
+    payload_digest TEXT NOT NULL CHECK (length(payload_digest) = 64),
+    PRIMARY KEY (machine_source, machine_id, collector_session_id, sequence),
+    FOREIGN KEY (machine_source, machine_id) REFERENCES machine_monitor_fleet_machines(machine_source, machine_id),
+    CHECK (host_observed_at >= 0 AND server_sent_at >= 0 AND server_received_at >= 0
+      AND normalized_at >= 0 AND clock_uncertainty_ms BETWEEN 0 AND 3600000),
+    CHECK (server_received_at >= server_sent_at),
+    CHECK (normalized_at >= server_sent_at AND normalized_at <= server_received_at),
+    CHECK (pressure_some_percent IS NULL OR pressure_some_percent >= 0),
+    CHECK (pressure_full_percent IS NULL OR pressure_full_percent >= 0),
+    CHECK (swap_in_pages_per_second IS NULL OR swap_in_pages_per_second >= 0),
+    CHECK (swap_out_pages_per_second IS NULL OR swap_out_pages_per_second >= 0)
+  )`,
+  `CREATE INDEX IF NOT EXISTS machine_monitor_fleet_memory_observations_machine_time
+    ON machine_monitor_fleet_memory_observations(machine_source, machine_id, normalized_at, collector_session_id, sequence)`,
 ];
 
 export class MachineMonitorStore {

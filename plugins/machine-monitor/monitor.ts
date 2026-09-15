@@ -1,8 +1,18 @@
 import { execFile } from "node:child_process";
-import { access, readFile, readdir, readlink, stat, statfs } from "node:fs/promises";
+import { access, readFile, readdir, readlink, stat } from "node:fs/promises";
 import os from "node:os";
 import { relative, resolve } from "node:path";
 import { promisify } from "node:util";
+
+import {
+  createPlatformCollector,
+  throwIfAborted,
+  type CpuCounters,
+  type MachineSample,
+} from "./platform-collectors.ts";
+
+export { cpuPercent, parseCpuCounters, parseMeminfo } from "./platform-collectors.ts";
+export type { CpuCounters, MachineSample } from "./platform-collectors.ts";
 
 export const SAMPLE_INTERVAL_MS = 30_000;
 export const RETENTION_MS = 30 * 24 * 60 * 60_000;
@@ -35,19 +45,6 @@ export const MONITORED_DIRECTORIES = [
 export const MAX_REPORTED_DIRECTORIES = MONITORED_DIRECTORIES.length + MAX_ADDITIONAL_DIRECTORIES + 1;
 
 export type MonitoredDirectory = { id: string; label: string; paths: readonly string[]; parentId?: string };
-
-export type CpuCounters = { total: number; idle: number };
-
-export type MachineSample = {
-  collectedAt: number;
-  cpuPercent: number | null;
-  memoryUsedBytes: number | null;
-  memoryTotalBytes: number | null;
-  diskUsedBytes: number | null;
-  diskTotalBytes: number | null;
-  load1: number | null;
-  load5: number | null;
-};
 
 export type DirectorySample = { collectedAt: number; location: string; bytes: number; onRootFilesystem: boolean; partial: boolean };
 
@@ -84,34 +81,6 @@ export type MemoryDiagnosticState = {
   reportedProcesses: MemoryProcess[];
   processDetailsCollectedAt: number | null;
 };
-
-export function cpuPercent(previous: CpuCounters | null, current: CpuCounters): number | null {
-  if (previous == null) return null;
-  const totalDelta = current.total - previous.total;
-  const idleDelta = current.idle - previous.idle;
-  if (totalDelta <= 0 || idleDelta < 0) return null;
-  return Math.max(0, Math.min(100, (1 - idleDelta / totalDelta) * 100));
-}
-
-export function parseMeminfo(source: string): { total: number; available: number } | null {
-  const values = new Map<string, number>();
-  for (const line of source.split("\n")) {
-    const match = /^(MemTotal|MemAvailable):\s+(\d+)\s+kB$/i.exec(line.trim());
-    if (match != null) values.set(match[1]!.toLowerCase(), Number(match[2]) * 1024);
-  }
-  const total = values.get("memtotal");
-  const available = values.get("memavailable");
-  return total != null && available != null ? { total, available } : null;
-}
-
-export function parseCpuCounters(source: string): CpuCounters | null {
-  const line = source.split("\n").find((entry) => entry.startsWith("cpu "));
-  if (line == null) return null;
-  const fields = line.trim().split(/\s+/).slice(1).map(Number);
-  if (fields.length < 4 || fields.some((value) => !Number.isFinite(value))) return null;
-  const total = fields.reduce((sum, value) => sum + value, 0);
-  return { total, idle: (fields[3] ?? 0) + (fields[4] ?? 0) };
-}
 
 export function parseMemoryPressure(source: string): { some: number | null; full: number | null } {
   const value = (kind: "some" | "full") => {
@@ -189,39 +158,21 @@ export function describeProcessWorkload(input: { name: string; args: string[]; c
   return { workload: `${runtime} process`, workloadDetail: compactCgroup(input.cgroup) };
 }
 
-export async function collectSample(previousCpu: CpuCounters | null, collectedAt = Date.now()): Promise<{ sample: MachineSample; cpu: CpuCounters | null }> {
-  const [meminfo, cpuinfo, filesystem] = await Promise.all([
-    readFile("/proc/meminfo", "utf8").catch(() => null),
-    readFile("/proc/stat", "utf8").catch(() => null),
-    statfs("/").catch(() => null),
-  ]);
-  const memory = meminfo == null ? null : parseMeminfo(meminfo);
-  const cpu = cpuinfo == null ? null : parseCpuCounters(cpuinfo);
-  const blockSize = filesystem == null ? 0 : Number(filesystem.bsize);
-  const diskTotalBytes = filesystem == null ? null : Number(filesystem.blocks) * blockSize;
-  const diskUsedBytes = filesystem == null ? null : (Number(filesystem.blocks) - Number(filesystem.bavail)) * blockSize;
-  const [load1, load5] = os.loadavg();
-  return {
-    cpu,
-    sample: {
-      collectedAt,
-      cpuPercent: cpu == null ? null : cpuPercent(previousCpu, cpu),
-      memoryUsedBytes: memory == null ? null : memory.total - memory.available,
-      memoryTotalBytes: memory?.total ?? null,
-      diskUsedBytes: Number.isFinite(diskUsedBytes) ? diskUsedBytes : null,
-      diskTotalBytes: Number.isFinite(diskTotalBytes) ? diskTotalBytes : null,
-      load1: Number.isFinite(load1) ? load1 : null,
-      load5: Number.isFinite(load5) ? load5 : null,
-    },
-  };
+const localPlatformCollector = createPlatformCollector();
+let localCollectorSession = localPlatformCollector.createSession("local-legacy-monitor");
+
+/**
+ * Compatibility facade for the existing local server. New host workers use
+ * `createPlatformCollector` directly to retain session/sequence metadata.
+ */
+export async function collectSample(previousCpu: CpuCounters | null, collectedAt = Date.now(), signal?: AbortSignal): Promise<{ sample: MachineSample; cpu: CpuCounters | null }> {
+  const result = await localPlatformCollector.collectCore({ ...localCollectorSession, previousCpu }, { observedAtMs: collectedAt, signal });
+  localCollectorSession = result.state;
+  return { sample: result.sample, cpu: result.state.previousCpu };
 }
 
 export function bucketSizeFor(rangeMs: number): number {
   return Math.max(SAMPLE_INTERVAL_MS, Math.ceil(rangeMs / MAX_RENDER_POINTS / 1_000) * 1_000);
-}
-
-function throwIfAborted(signal?: AbortSignal): void {
-  if (signal?.aborted) throw new DOMException("Machine monitor collection aborted", "AbortError");
 }
 
 export function additionalDirectories(source: string, home = os.homedir()): MonitoredDirectory[] {
@@ -361,6 +312,28 @@ export function memoryPressureActive(diagnostic: MemoryDiagnostics): boolean {
 
 export async function collectMemoryDiagnostics(previous: MemoryDiagnosticState | null, collectedAt = Date.now(), signal?: AbortSignal, options: { includeProcesses?: boolean; includeProcessDetails?: boolean } = {}): Promise<{ diagnostics: MemoryDiagnostics; state: MemoryDiagnosticState }> {
   throwIfAborted(signal);
+  if (localPlatformCollector.metadata.platform !== "linux" && localPlatformCollector.metadata.platform !== "wsl") {
+    // Darwin and unknown hosts keep the same bounded shape, but never probe
+    // Linux-only procfs or attribute processes. The host description exposes
+    // the missing linux-memory-pressure/process-attribution capabilities.
+    const diagnostics: MemoryDiagnostics = {
+      collectedAt,
+      processDetailsCollectedAt: null,
+      sampleIntervalMs: previous == null ? null : Math.max(0, collectedAt - previous.collectedAt),
+      pressureSomePercent: null,
+      pressureFullPercent: null,
+      swapInPagesPerSecond: null,
+      swapOutPagesPerSecond: null,
+      refaultPagesPerSecond: null,
+      reclaimPagesPerSecond: null,
+      bbCgroupMemoryBytes: null,
+      processes: [],
+    };
+    return {
+      diagnostics,
+      state: { collectedAt, processes: new Map(), system: null, reportedProcesses: [], processDetailsCollectedAt: null },
+    };
+  }
   const intervalMs = previous == null ? null : Math.max(0, collectedAt - previous.collectedAt);
   const includeProcesses = options.includeProcesses ?? true;
   const includeProcessDetails = options.includeProcessDetails ?? true;

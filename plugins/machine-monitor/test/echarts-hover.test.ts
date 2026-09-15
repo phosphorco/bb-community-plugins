@@ -1,35 +1,80 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { LineChart } from "echarts/charts";
-import { DatasetComponent, GridComponent, MarkAreaComponent, MarkLineComponent, TooltipComponent } from "echarts/components";
+import { LineChart, LinesChart, ScatterChart } from "echarts/charts";
+import { AriaComponent, GridComponent, MarkAreaComponent, TooltipComponent } from "echarts/components";
 import * as echarts from "echarts/core";
 import { SVGRenderer } from "echarts/renderers";
 
-echarts.use([DatasetComponent, GridComponent, LineChart, MarkAreaComponent, MarkLineComponent, SVGRenderer, TooltipComponent]);
+import type { MachineTimelineResult } from "../fleet-contract.ts";
+import { compileMachineTimeline, resolveMachineTimelineChartIntent } from "../timeline-compiler.ts";
 
-test("axis tooltip leaves every SVG line visible", () => {
+echarts.use([AriaComponent, GridComponent, LineChart, LinesChart, MarkAreaComponent, ScatterChart, SVGRenderer, TooltipComponent]);
+
+function timeline(): MachineTimelineResult {
+  return {
+    contractVersion: 1,
+    machine: { source: "local-bb-server", machineId: "local-bb-server" },
+    generation: { dataRevision: 3, settingsRevision: 1 },
+    range: { startMs: 0, endMs: 60_000 },
+    bucket: { alignment: "range-start", widthMs: 20_000, count: 3 },
+    coverage: { state: "complete", firstObservedAtMs: 0, lastObservedAtMs: 59_000, retainedFromMs: 0, retainedToMs: 60_000 },
+    timeNormalization: {
+      basis: "local-observation",
+      sampleCount: 5,
+      rawHostObservedRange: { firstMs: 0, lastMs: 59_000 },
+      normalizedRange: { firstMs: 0, lastMs: 59_000 },
+      maxClockUncertaintyMs: 0,
+    },
+    metrics: [{
+      metricId: "cpu.utilization.percent",
+      availability: { state: "available", reason: null },
+      buckets: [
+        { startMs: 0, endMs: 20_000, min: 10, average: 25, max: 40, last: 30, count: 2 },
+        { startMs: 20_000, endMs: 40_000, min: null, average: null, max: null, last: null, count: 0 },
+        { startMs: 40_000, endMs: 60_000, min: 22, average: 54, max: 92, last: 60, count: 3 },
+      ],
+    }],
+    gaps: [{ metricId: "cpu.utilization.percent", startMs: 20_000, endMs: 40_000, reason: "host-offline" }],
+    events: {
+      events: [{
+        contractVersion: 1,
+        producer: { id: "fleet-job", version: 1 },
+        eventId: "job-1",
+        time: { kind: "interval", startMs: 42_000, endMs: 52_000 },
+        category: "bb-job",
+        status: "failed",
+        title: "Build failed",
+        detail: null,
+        provenance: { kind: "bb-background-job", jobId: "job-1", attempt: 0 },
+        bbReference: { projectId: "project_1", threadId: "thread_1" },
+      }],
+      totalCount: 1,
+      truncated: false,
+    },
+  };
+}
+
+test("the SVG renderer preserves server extrema and resolves an event by its compiler key", () => {
+  const figure = compileMachineTimeline(timeline());
   const chart = echarts.init(null, null, { renderer: "svg", ssr: true, width: 640, height: 320 });
-  chart.setOption({
-    animation: false,
-    dataset: { id: "utilization", dimensions: ["time", "CPU", "Memory", "Disk"], source: [[0, 25, 55, 90], [30_000, 30, 58, 89], [60_000, 22, 54, 92]] },
-    tooltip: { trigger: "axis", axisPointer: { type: "line", snap: true } },
-    xAxis: { type: "time", axisPointer: { triggerEmphasis: true } },
-    yAxis: { type: "value" },
-    series: ["CPU", "Memory", "Disk"].map((name, index) => ({
-      id: name, type: "line", name, datasetId: "utilization", encode: { x: "time", y: name }, showSymbol: false, sampling: "lttb",
-      lineStyle: { width: 1.75, color: ["#b78bfa", "#fb7185", "#34d399"][index], opacity: 1 },
-      emphasis: { focus: "none", scale: false, symbolSize: 8, lineStyle: { width: 1.75, color: ["#b78bfa", "#fb7185", "#34d399"][index], opacity: 1 }, itemStyle: { color: ["#b78bfa", "#fb7185", "#34d399"][index], opacity: 1 } },
-      blur: { lineStyle: { width: 1.75, color: ["#b78bfa", "#fb7185", "#34d399"][index], opacity: 1 } },
-      markLine: index === 0 ? { lineStyle: { color: "#f59e0b" }, data: [{ yAxis: 70 }] } : undefined,
-      markArea: index === 0 ? { itemStyle: { color: "#06b6d4", opacity: .1 }, data: [[{ xAxis: 0 }, { xAxis: 30_000 }]] } : undefined,
-    })),
-  });
-  const [x, y] = chart.convertToPixel({ xAxisIndex: 0, yAxisIndex: 0 }, [30_000, 30]);
+  chart.setOption(figure.option);
+  const [x, y] = chart.convertToPixel({ xAxisId: "machine-monitor:timeline:x-axis:metric:cpu.utilization.percent", yAxisId: "machine-monitor:timeline:y-axis:metric:cpu.utilization.percent" }, [10_000, 25]);
   chart.dispatchAction({ type: "updateAxisPointer", x, y });
   const svg = chart.renderToSVGString();
-  for (const color of ["#b78bfa", "#fb7185", "#34d399"]) assert.match(svg, new RegExp(`stroke=\\"${color}\\"`));
-  assert.match(svg, /#f59e0b/, "renders the configured threshold line");
-  assert.match(svg, /#06b6d4/, "renders the configured warning area");
+  assert.match(svg, /#7c3aed/, "renders the compiler-owned metric color");
+  assert.match(svg, /#9ca3af/, "renders the explicit server gap");
+  assert.match(svg, /#dc2626/, "renders the truthful interval duration in the aligned event lane");
+  assert.equal((figure.option.series as Array<{ sampling?: unknown }>).some((series) => series.sampling != null), false, "does not ask ECharts to LTTB-reduce canonical buckets");
+
+  const datumKey = figure.accessibleEvents[0]!.datumKey;
+  const intent = resolveMachineTimelineChartIntent(figure, {
+    componentType: "series",
+    seriesId: figure.eventDurationSeriesId,
+    seriesIndex: 0,
+    dataIndex: 0,
+    data: { datumKey },
+  });
+  assert.equal(intent?.activation.event.bbReference?.threadId, "thread_1");
   chart.dispose();
 });
