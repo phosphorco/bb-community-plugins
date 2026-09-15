@@ -25,7 +25,7 @@ import {
   type MachineTimelineResult,
 } from "./fleet-contract.ts";
 import type { MachineMonitorHealth, rpcContract } from "./rpc-contract.ts";
-import { FLEET_UTILIZATION_ATTENTION_PERCENT, FleetUtilizationChart, MachineTimelineChart, type FleetUtilizationDatum } from "./timeline-chart.tsx";
+import { FLEET_UTILIZATION_ATTENTION_PERCENT, FleetUtilizationChart, MachineDashboardChart, MachineTimelineChart, type FleetUtilizationDatum } from "./timeline-chart.tsx";
 import type { TimelineEventActivation } from "./timeline-compiler.ts";
 import "./app.css";
 
@@ -187,6 +187,67 @@ function displayMetric(value: number | null, unit: ReturnType<typeof metricCatal
   if (unit === "bytes") return value >= 1_073_741_824 ? `${(value / 1_073_741_824).toFixed(1)} GiB` : `${(value / 1_048_576).toFixed(1)} MiB`;
   if (unit === "pages-per-second") return `${value.toFixed(value >= 10 ? 0 : 2)}/s`;
   return value.toFixed(value >= 10 ? 0 : 2);
+}
+
+function displayByteRate(value: number | null): string {
+  if (value == null || !Number.isFinite(value)) return "No range trend";
+  const direction = value > 0 ? "+" : value < 0 ? "−" : "±";
+  return `${direction}${displayMetric(Math.abs(value), "bytes")}/day`;
+}
+
+type DashboardMetric = Readonly<{
+  id: "cpu" | "memory" | "disk" | "load";
+  label: string;
+  value: string;
+  detail: string;
+  attention: boolean;
+  unavailable: boolean;
+}>;
+
+function selectedMachineMetrics(machine: FleetMachine): readonly DashboardMetric[] {
+  const cpu = machine.cpu5mPercent ?? latestMetricValue(machine, "cpu.utilization.percent");
+  const memoryUsed = latestMetricValue(machine, "memory.used.bytes");
+  const memoryTotal = latestMetricValue(machine, "memory.total.bytes");
+  const diskUsed = latestMetricValue(machine, "disk.root.used.bytes");
+  const diskTotal = latestMetricValue(machine, "disk.root.total.bytes");
+  const memory = percentageOf(memoryUsed, memoryTotal);
+  const disk = percentageOf(diskUsed, diskTotal);
+  const load = latestMetricValue(machine, "load.5");
+  return [
+    {
+      id: "cpu", label: "CPU (5 min)", value: displayMetric(cpu, "percent"),
+      detail: cpu == null ? "No current five-minute average" : `${Math.max(0, FLEET_UTILIZATION_ATTENTION_PERCENT - cpu).toFixed(0)} points to attention`,
+      attention: cpu != null && cpu >= FLEET_UTILIZATION_ATTENTION_PERCENT, unavailable: cpu == null,
+    },
+    {
+      id: "memory", label: "Memory", value: displayMetric(memory, "percent"),
+      detail: memoryUsed == null || memoryTotal == null ? "Capacity unavailable" : `${displayMetric(memoryUsed, "bytes")} of ${displayMetric(memoryTotal, "bytes")}`,
+      attention: memory != null && memory >= FLEET_UTILIZATION_ATTENTION_PERCENT, unavailable: memory == null,
+    },
+    {
+      id: "disk", label: "Root disk", value: displayMetric(disk, "percent"),
+      detail: diskUsed == null || diskTotal == null ? "Capacity unavailable" : `${displayMetric(diskUsed, "bytes")} of ${displayMetric(diskTotal, "bytes")}`,
+      attention: disk != null && disk >= FLEET_UTILIZATION_ATTENTION_PERCENT, unavailable: disk == null,
+    },
+    {
+      id: "load", label: "Load (5 min)", value: displayMetric(load, "load"),
+      detail: load == null ? "No current five-minute average" : "Machine load average",
+      attention: false, unavailable: load == null,
+    },
+  ];
+}
+
+function dashboardDirectories(machine: FleetMachine, timeline: MachineTimelineResult): readonly NonNullable<MachineTimelineResult["directories"]>[number][] {
+  const directories = [...(timeline.directories ?? [])];
+  const rootUsed = latestMetricValue(machine, "disk.root.used.bytes");
+  const measuredRootBytes = directories.filter((entry) => entry.onRootFilesystem).reduce((total, entry) => total + entry.bytes, 0);
+  if (rootUsed != null && measuredRootBytes < rootUsed) {
+    directories.push({
+      id: "other-root-disk", label: "Other /", bytes: rootUsed - measuredRootBytes,
+      growthBytesPerDay: null, derived: true, partial: false, onRootFilesystem: true,
+    });
+  }
+  return directories.sort((left, right) => right.bytes - left.bytes || left.label.localeCompare(right.label));
 }
 
 function latestTime(value: number | null): string {
@@ -588,14 +649,27 @@ function FleetPicker({ overview, selectedMachineKey, onSelect, onIntent }: {
   </section>;
 }
 
-const FleetMetric = memo(function FleetMetric({ observation }: { observation: FleetMachine["latestMetrics"][number] }) {
-  const catalog = metricCatalogEntry(observation.metricId);
-  const unavailable = observation.availability.state !== "available";
-  return <article data-unavailable={unavailable || undefined}>
-    <span>{catalog.label}</span>
-    <strong>{displayMetric(observation.value, catalog.unit)}</strong>
-    <small>{unavailable ? observation.availability.reason ?? observation.availability.state : catalog.unit}</small>
+const DashboardMetricCard = memo(function DashboardMetricCard({ metric }: { metric: DashboardMetric }) {
+  return <article data-attention={metric.attention || undefined} data-unavailable={metric.unavailable || undefined}>
+    <span>{metric.label}</span>
+    <strong>{metric.value}</strong>
+    <small>{metric.detail}</small>
   </article>;
+});
+
+const RootDiskBreakdown = memo(function RootDiskBreakdown({ machine, timeline }: { machine: FleetMachine; timeline: MachineTimelineResult }) {
+  const directories = useMemo(() => dashboardDirectories(machine, timeline), [machine, timeline]);
+  return <section className="machine-monitor__directories" aria-labelledby="machine-monitor-root-disk-title">
+    <h2 id="machine-monitor-root-disk-title">Root disk breakdown</h2>
+    <p>Measured directories are exclusive where a nested directory is also sampled. Other is the remaining measured root-disk use.</p>
+    {directories.length === 0 ? <p className="machine-monitor__empty">No retained directory measurements are available for this range.</p> : <ol>
+      {directories.map((directory) => <li key={directory.id} data-derived={directory.derived || undefined} data-partial={directory.partial || undefined}>
+        <span>{directory.label}</span>
+        <strong>{displayMetric(directory.bytes, "bytes")}</strong>
+        <small>{directory.partial ? "Partial measurement" : displayByteRate(directory.growthBytesPerDay)}</small>
+      </li>)}
+    </ol>}
+  </section>;
 });
 
 const SelectedMachineOverview = memo(function SelectedMachineOverview({ machine, rangeHours, timelineView, timelineLoading, timelineError, connection, onRange, onActivateEvent }: {
@@ -608,6 +682,7 @@ const SelectedMachineOverview = memo(function SelectedMachineOverview({ machine,
   onRange: (hours: RangeHours) => void;
   onActivateEvent: (activation: TimelineEventActivation) => void;
 }) {
+  const [detailOpen, setDetailOpen] = useState(false);
   const visibleMachineKey = timelineView == null ? null : machineIdentityKey(timelineView.timeline.machine);
   const selectedMachineKey = machineIdentityKey(machine.machine);
   const retainedForOtherMachine = visibleMachineKey != null && visibleMachineKey !== selectedMachineKey;
@@ -616,11 +691,15 @@ const SelectedMachineOverview = memo(function SelectedMachineOverview({ machine,
     && fleetGenerationMatches(timelineView.timeline.generation, machine.generation);
   const historyStale = timelineView?.stale === true || connection !== "connected" || machine.freshness !== "fresh";
   const eventActivationAllowed = matchingCurrentGeneration && !historyStale;
+  const dashboardMetrics = useMemo(() => selectedMachineMetrics(machine), [machine]);
+  const visibleTimeline = timelineView?.timeline ?? null;
+  const visibleSelectedTimeline = timelineView != null && !retainedForOtherMachine ? timelineView.timeline : null;
+  const eventSummary = visibleSelectedTimeline == null ? null : `${visibleSelectedTimeline.events.totalCount} exact event${visibleSelectedTimeline.events.totalCount === 1 ? "" : "s"}`;
   return <section className="machine-monitor__selected-machine" data-stale={historyStale || undefined} aria-labelledby="machine-monitor-selected-title">
     <header>
       <div>
         <h1 id="machine-monitor-selected-title">{machine.label}</h1>
-        <p>{`${connectionText(machine)} · ${generationText(machine)}`}</p>
+        <p>{`${connectionText(machine)} · updated ${latestTime(machine.latestCollectedAtMs)} · ${generationText(machine)}`}</p>
       </div>
       <label>
         <span>History</span>
@@ -629,34 +708,40 @@ const SelectedMachineOverview = memo(function SelectedMachineOverview({ machine,
         </select>
       </label>
     </header>
-    <div className="machine-monitor__machine-facts">
-      <p><strong>Latest collection:</strong> {latestTime(machine.latestCollectedAtMs)}</p>
-      <p><strong>Connection:</strong> {machine.connection}</p>
-      <p><strong>Freshness:</strong> {machine.freshness}</p>
-      <p><strong>Capabilities:</strong> {machine.capabilities.length === 0 ? "None reported" : machine.capabilities.join(", ")}</p>
-    </div>
     {machine.lastError != null && <p className="machine-monitor__error" role="alert">Collector error: {machine.lastError}</p>}
     {machine.warnings.length > 0 && <ul className="machine-monitor__warnings" aria-label="Machine warnings">
       {machine.warnings.map((warning, index) => <li key={`${warning.kind}:${warning.metricId ?? "machine"}:${index}`}><strong>{warning.kind}</strong><span>{warning.message}</span></li>)}
     </ul>}
-    <section className="machine-monitor__metrics" aria-label={`Latest summary metrics for ${machine.label}`}>
-      {machine.latestMetrics.length === 0 ? <p className="machine-monitor__empty">No latest metrics have been collected.</p> : machine.latestMetrics.map((observation) => <FleetMetric key={observation.metricId} observation={observation} />)}
+    <section className="machine-monitor__metrics" aria-label={`Operational summary for ${machine.label}`}>
+      {dashboardMetrics.map((metric) => <DashboardMetricCard key={metric.id} metric={metric} />)}
     </section>
-    <section className="machine-monitor__timeline" aria-labelledby="machine-monitor-timeline-title">
-      <header><h2 id="machine-monitor-timeline-title">Machine timeline</h2><span>{rangeLabel(rangeHours)}</span></header>
+    <section className="machine-monitor__timeline" aria-labelledby="machine-monitor-history-title">
+      <header><div><h2 id="machine-monitor-history-title">Operational history</h2><p>{`CPU, memory, and root disk share a ${FLEET_UTILIZATION_ATTENTION_PERCENT}% attention line.`}</p></div><span>{rangeLabel(rangeHours)}</span></header>
       {machine.connection === "disconnected" && <p className="machine-monitor__timeline-status" role="status">Machine is disconnected. Retained history remains available when the local server can read it.</p>}
       {machine.freshness === "stale" && <p className="machine-monitor__timeline-status" role="status">Machine data is stale; the latest retained history is labeled below.</p>}
+      {historyStale && visibleSelectedTimeline != null && <p className="machine-monitor__timeline-status" role="status">Stale: showing a retained prior generation.</p>}
       {timelineLoading && <p className="machine-monitor__timeline-status" role="status">Loading timeline for {machine.label}…</p>}
       {retainedForOtherMachine && <p className="machine-monitor__timeline-status" role="status">Showing retained timeline for {timelineView?.timeline.machine.machineId}; {machine.label} is loading.</p>}
       {timelineError != null && <p className="machine-monitor__error" role="alert">Timeline refresh error: {timelineError}</p>}
-      {timelineView == null ? <p className="machine-monitor__empty">No retained timeline is available yet.</p> : <MachineTimelineChart
-        className="machine-monitor__timeline-chart"
-        timeline={timelineView.timeline}
-        stale={historyStale}
-        refreshing={timelineLoading}
-        activationDisabled={!eventActivationAllowed}
-        onActivateEvent={onActivateEvent}
-      />}
+      {visibleTimeline == null ? <p className="machine-monitor__empty">No retained timeline is available yet.</p> : <>
+        <div className="machine-monitor__dashboard-captions" aria-hidden="true">
+          <div><h3>{retainedForOtherMachine ? `Retained history: ${visibleTimeline.machine.machineId}` : "Utilization"}</h3><span>{retainedForOtherMachine ? "Awaiting the selected machine" : "CPU · Memory · Root disk"}</span></div>
+          <div><h3>Load average</h3><span>Five-minute window</span></div>
+        </div>
+        <MachineDashboardChart className="machine-monitor__dashboard-chart" timeline={visibleTimeline} stale={historyStale || retainedForOtherMachine} />
+        {!retainedForOtherMachine && visibleSelectedTimeline != null && <RootDiskBreakdown machine={machine} timeline={visibleSelectedTimeline} />}
+        {!retainedForOtherMachine && visibleSelectedTimeline != null && <details className="machine-monitor__full-timeline" open={detailOpen} onToggle={(event) => setDetailOpen((event.currentTarget as HTMLDetailsElement).open)}>
+          <summary>Full metric timeline and events <span>{eventSummary}</span></summary>
+          {detailOpen && <MachineTimelineChart
+            className="machine-monitor__timeline-chart"
+            timeline={visibleSelectedTimeline}
+            stale={historyStale}
+            refreshing={timelineLoading}
+            activationDisabled={!eventActivationAllowed}
+            onActivateEvent={onActivateEvent}
+          />}
+        </details>}
+      </>}
     </section>
   </section>;
 });

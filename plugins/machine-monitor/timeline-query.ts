@@ -5,6 +5,7 @@ import {
   FLEET_CONTRACT_VERSION,
   FLEET_METRIC_CATALOG,
   MAX_FLEET_MACHINES,
+  MAX_MACHINE_DIRECTORY_SUMMARIES,
   MAX_TIMELINE_BUCKETS,
   MAX_TIMELINE_GAPS,
   fleetOverviewRequestSchema,
@@ -27,7 +28,7 @@ import {
   type FleetCacheInvalidationKind,
   type FleetCacheOptions,
 } from "./fleet-cache.ts";
-import { SAMPLE_INTERVAL_MS } from "./monitor.ts";
+import { MONITORED_DIRECTORIES, SAMPLE_INTERVAL_MS } from "./monitor.ts";
 
 /** A source is stale after two expected core-collection intervals. */
 export const FLEET_FRESH_AFTER_MS = SAMPLE_INTERVAL_MS * 2;
@@ -93,6 +94,16 @@ export type TimelineSqlRead = Readonly<{
     hasCurrentLocalCollection: boolean;
   }>;
   errorBucketIndexes: readonly number[];
+  /** One latest/first aggregate pair per retained monitored directory. */
+  directories?: readonly Readonly<{
+    id: string;
+    bytes: number;
+    firstBytes: number;
+    collectedAtMs: number;
+    firstCollectedAtMs: number;
+    partial: boolean;
+    onRootFilesystem: boolean;
+  }>[];
   rowCounts: TimelineQueryRowCounts;
 }>;
 
@@ -147,6 +158,16 @@ type NormalizationRow = {
 };
 
 type ErrorBucketRow = { bucketIndex: number };
+
+type DirectorySummaryRow = {
+  id: string;
+  bytes: number;
+  firstBytes: number;
+  collectedAtMs: number;
+  firstCollectedAtMs: number;
+  partial: number;
+  onRootFilesystem: number;
+};
 
 type OverviewMetricRow = LatestAvailabilityRow & {
   machineSource: "local-bb-server" | "enrolled-host";
@@ -290,6 +311,35 @@ const ERROR_BUCKETS_SQL = `
     AND occurred_at BETWEEN @startMs AND @endMs
   GROUP BY bucketIndex
   ORDER BY bucketIndex ASC
+`;
+
+/**
+ * The directory lane has its own cadence, so this is intentionally separate
+ * from metric buckets. SQLite selects exactly the first and newest retained
+ * observation for each location in the requested range; no raw directory
+ * history is hydrated into JavaScript.
+ */
+const DIRECTORY_SUMMARIES_SQL = `
+  WITH ranked AS (
+    SELECT location AS id, bytes, collected_at AS collectedAtMs,
+      partial, on_root_filesystem AS onRootFilesystem,
+      ROW_NUMBER() OVER (PARTITION BY location ORDER BY collected_at DESC) AS newestRank,
+      ROW_NUMBER() OVER (PARTITION BY location ORDER BY collected_at ASC) AS firstRank
+    FROM machine_monitor_fleet_directory_details
+    WHERE machine_source = @machineSource AND machine_id = @machineId
+      AND collected_at BETWEEN @startMs AND @endMs
+  ), newest AS (
+    SELECT id, bytes, collectedAtMs, partial, onRootFilesystem
+    FROM ranked WHERE newestRank = 1
+  ), first AS (
+    SELECT id, bytes AS firstBytes, collectedAtMs AS firstCollectedAtMs
+    FROM ranked WHERE firstRank = 1
+  )
+  SELECT newest.id, newest.bytes, first.firstBytes,
+    newest.collectedAtMs, first.firstCollectedAtMs,
+    newest.partial, newest.onRootFilesystem
+  FROM newest JOIN first ON first.id = newest.id
+  ORDER BY newest.id ASC
 `;
 
 const OVERVIEW_LATEST_METRICS_SQL = `
@@ -447,10 +497,12 @@ export class SqliteTimelineQuerySource implements TimelineQuerySource {
     const latestRows = this.db.prepare(LATEST_AVAILABILITY_SQL).all(params) as LatestAvailabilityRow[];
     const normalization = this.db.prepare(NORMALIZATION_SQL).get(params) as NormalizationRow | undefined;
     const errorBuckets = this.db.prepare(ERROR_BUCKETS_SQL).all(params) as ErrorBucketRow[];
+    const directories = this.db.prepare(DIRECTORY_SUMMARIES_SQL).all(params) as DirectorySummaryRow[];
     if (normalization == null) throw new Error("Fleet timeline normalization aggregate is unavailable.");
     if (metricBuckets.length > FLEET_METRIC_CATALOG.length * bucketCount
       || latestRows.length > FLEET_METRIC_CATALOG.length
-      || errorBuckets.length > bucketCount) throw new Error("Fleet timeline query exceeded its bounded result contract.");
+      || errorBuckets.length > bucketCount
+      || directories.length > MAX_MACHINE_DIRECTORY_SUMMARIES) throw new Error("Fleet timeline query exceeded its bounded result contract.");
     for (const row of metricBuckets) {
       if (!Number.isSafeInteger(row.bucketIndex) || row.bucketIndex < 0 || row.bucketIndex >= bucketCount) {
         throw new Error("Fleet timeline query returned an invalid range-start bucket.");
@@ -483,6 +535,11 @@ export class SqliteTimelineQuerySource implements TimelineQuerySource {
         hasCurrentLocalCollection: normalization.hasCurrentLocalCollection === 1,
       },
       errorBucketIndexes: errorBuckets.map((row) => row.bucketIndex),
+      directories: directories.map((row) => ({
+        ...row,
+        partial: row.partial === 1,
+        onRootFilesystem: row.onRootFilesystem === 1,
+      })),
       rowCounts: this.lastRead,
     };
   }
@@ -637,6 +694,44 @@ function metricPercentage(used: number | null, total: number | null): number | n
   return Number.isFinite(percentage) ? percentage : null;
 }
 
+const DIRECTORY_PRESENTATION = new Map<string, Readonly<{ label: string; parentId?: string }>>(
+  MONITORED_DIRECTORIES.map((directory) => [directory.id, { label: directory.label, parentId: "parentId" in directory ? directory.parentId : undefined }]),
+);
+
+function directoryLabel(id: string): string {
+  const known = DIRECTORY_PRESENTATION.get(id);
+  if (known != null) return known.label;
+  // The configured server path is deliberately never treated as a host-side
+  // fact in a fleet result. It remains inspectable through the owner-managed
+  // settings surface, while this dashboard names the bounded measurement.
+  return id.startsWith("configured-") ? "Configured directory" : id;
+}
+
+function directoryParentId(id: string): string | null {
+  return DIRECTORY_PRESENTATION.get(id)?.parentId ?? null;
+}
+
+function summarizeDirectories(rows: NonNullable<TimelineSqlRead["directories"]>): NonNullable<MachineTimelineResult["directories"]> {
+  const byId = new Map(rows.map((row) => [row.id, row]));
+  return rows.map((row) => {
+    const children = rows.filter((candidate) => directoryParentId(candidate.id) === row.id);
+    const childBytes = children.reduce((total, child) => total + child.bytes, 0);
+    const childFirstBytes = children.reduce((total, child) => total + child.firstBytes, 0);
+    const bytes = Math.max(0, row.bytes - childBytes);
+    const firstBytes = Math.max(0, row.firstBytes - childFirstBytes);
+    const durationMs = row.collectedAtMs - row.firstCollectedAtMs;
+    return {
+      id: row.id,
+      label: directoryLabel(row.id),
+      bytes,
+      growthBytesPerDay: durationMs > 0 ? (bytes - firstBytes) / durationMs * 86_400_000 : null,
+      derived: children.length > 0,
+      partial: row.partial || children.some((child) => child.partial),
+      onRootFilesystem: row.onRootFilesystem,
+    };
+  }).filter((entry) => byId.has(entry.id));
+}
+
 function metricThresholdWarnings(
   thresholds: FleetWarningThresholds | null,
   cpuFiveMinuteAverage: number | null,
@@ -781,7 +876,8 @@ export class TimelineQueryService {
         label: machine.label,
         connection: machine.connection,
         freshness,
-        latestCollectedAtMs: machine.latestCollectedAtMs,
+      latestCollectedAtMs: machine.latestCollectedAtMs,
+        cpu5mPercent: overview.cpuFiveMinuteAverages.get(machineKey) ?? null,
         lastError: machine.lastError,
         capabilities: machine.capabilities,
         latestMetrics,
@@ -861,6 +957,7 @@ export class TimelineQueryService {
       timeNormalization,
       metrics,
       gaps: gaps.sort(compareGaps),
+      directories: summarizeDirectories(rows.directories ?? []),
       events,
     });
   }

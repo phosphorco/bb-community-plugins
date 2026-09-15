@@ -21,7 +21,7 @@ const echartsMock = vi.hoisted(() => {
 
 vi.mock("echarts/core", () => ({ init: echartsMock.init, use: echartsMock.use }));
 
-import { FleetUtilizationChart, MachineTimelineChart } from "../timeline-chart.tsx";
+import { FleetUtilizationChart, MachineDashboardChart, MachineTimelineChart } from "../timeline-chart.tsx";
 import type { MachineTimelineResult } from "../fleet-contract.ts";
 
 class ControlledResizeObserver {
@@ -225,6 +225,51 @@ test("defers zero-size initialization, coalesces resize, selects merge/replace, 
   expect(themeObserver.disconnect).toHaveBeenCalledTimes(1);
   expect(chart.off).toHaveBeenCalledWith("click", chart.on.mock.calls[0]![1]);
   expect(chart.dispose).toHaveBeenCalledTimes(1);
+});
+
+test("composes the operational dashboard as utilization ratios plus a separate five-minute load plot", () => {
+  const metric = (metricId: string, average: number) => ({
+    metricId: metricId as any,
+    availability: { state: "available" as const, reason: null },
+    buckets: [{ startMs: 0, endMs: 1_000, min: average, average, max: average, last: average, count: 1 }],
+  });
+  const dashboard = timeline({
+    metrics: [
+      metric("cpu.utilization.percent", 24),
+      metric("memory.used.bytes", 4_000_000_000),
+      metric("memory.total.bytes", 10_000_000_000),
+      metric("disk.root.used.bytes", 6_000_000_000),
+      metric("disk.root.total.bytes", 20_000_000_000),
+      metric("load.5", 2.5),
+    ],
+  });
+  const rendered = render(<MachineDashboardChart timeline={dashboard} />);
+  const host = screen.getByRole("img", { name: /Machine dashboard for local-bb-server/ });
+  Object.defineProperty(host, "getBoundingClientRect", {
+    configurable: true,
+    value: () => ({ width: 800, height: 306, top: 0, right: 800, bottom: 306, left: 0, x: 0, y: 0, toJSON: () => ({}) }),
+  });
+  act(() => {
+    ControlledResizeObserver.instances[0]!.emit(800, 306);
+    flushFrames();
+  });
+  const option = echartsMock.instances[0]!.setOption.mock.calls[0]![0] as {
+    grid: Array<{ id: string }>;
+    yAxis: Array<{ max?: number }>;
+    series: Array<{ id: string; data: Array<[number, number | null]>; markLine?: { data: Array<{ yAxis: number }> } }>;
+  };
+  expect(option.grid).toHaveLength(2);
+  expect(option.yAxis[0]!.max).toBe(100);
+  expect(option.series.map((series) => series.id)).toEqual([
+    "machine-monitor:machine-dashboard:series:cpu.utilization.percent",
+    "machine-monitor:machine-dashboard:series:memory.used.bytes",
+    "machine-monitor:machine-dashboard:series:disk.root.used.bytes",
+    "machine-monitor:machine-dashboard:series:load.5",
+  ]);
+  expect(option.series[1]!.data[0]![1]).toBe(40);
+  expect(option.series[2]!.data[0]![1]).toBe(30);
+  expect(option.series[0]!.markLine?.data).toEqual([{ yAxis: 70 }]);
+  rendered.unmount();
 });
 
 test("reuses the same ECharts lifecycle host for a bounded fleet utilization strip", () => {

@@ -236,6 +236,43 @@ test("uses memory-only observations for normalized coverage and truthful bucket 
     "a warm-up null reports missing data, not an unsupported capability");
 });
 
+test("returns bounded exclusive directory summaries with measured daily growth", async (t) => {
+  const { db, store } = makeStore();
+  t.after(() => db.close());
+  register(store, host);
+  const first = 100;
+  const last = first + 86_400_000;
+  store.recordCollection(thresholdCollection(0, first, 10, 1, 10, 90, 100));
+  store.recordCollection(thresholdCollection(1, last, 12, 2, 10, 95, 100));
+  store.recordDirectoryDetails(host, [
+    { collectedAt: first, location: "bb", bytes: 50, onRootFilesystem: true, partial: false },
+    { collectedAt: first, location: "bb-worktrees", bytes: 30, onRootFilesystem: true, partial: false },
+    { collectedAt: last, location: "bb", bytes: 80, onRootFilesystem: true, partial: false },
+    { collectedAt: last, location: "bb-worktrees", bytes: 40, onRootFilesystem: true, partial: true },
+    { collectedAt: last, location: "tmp", bytes: 20, onRootFilesystem: true, partial: false },
+  ]);
+  const result = await new TimelineQueryService(denyRawHistoryScans(store), new SqliteTimelineQuerySource(db), { now: () => last }).machineTimeline({
+    contractVersion: FLEET_CONTRACT_VERSION,
+    machine: host,
+    range: { startMs: first, endMs: last },
+    generation: null,
+  });
+  assert.deepEqual(result.directories, [
+    {
+      id: "bb", label: "~/.bb", bytes: 40, growthBytesPerDay: 20,
+      derived: true, partial: true, onRootFilesystem: true,
+    },
+    {
+      id: "bb-worktrees", label: "BB worktrees", bytes: 40, growthBytesPerDay: 10,
+      derived: false, partial: true, onRootFilesystem: true,
+    },
+    {
+      id: "tmp", label: "/tmp", bytes: 20, growthBytesPerDay: null,
+      derived: false, partial: false, onRootFilesystem: true,
+    },
+  ]);
+});
+
 test("memory observations replace Linux core placeholders without masking absent-platform availability", async (t) => {
   const { db, store } = makeStore();
   t.after(() => db.close());

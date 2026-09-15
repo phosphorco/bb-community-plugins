@@ -158,7 +158,7 @@ function machineLabel(machine: string): string {
 
 async function waitForInitialMachine(page: any, machine: string): Promise<void> {
   await page.getByRole("button", { name: new RegExp(`^${machineLabel(machine)}\\. connected`) }).waitFor();
-  await page.waitForFunction((machineIdValue: string) => document.querySelector(`.machine-monitor__timeline-chart[aria-label*="${machineIdValue}"]`) != null, machine);
+  await page.waitForFunction((machineIdValue: string) => document.querySelector(`.machine-monitor__dashboard-chart [aria-label*="${machineIdValue}"]`) != null, machine);
 }
 
 async function warmDetail(page: any, machine: string): Promise<void> {

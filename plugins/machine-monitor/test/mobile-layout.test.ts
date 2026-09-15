@@ -50,7 +50,9 @@ test("narrow fleet atlas keeps native controls, layered status, and compact stru
   assert.match(styles, /@container \(max-width:\s*300px\)\s*\{[\s\S]*?\.machine-monitor__fleet-picker > ol/);
 });
 
-test("timeline host has a definite responsive drawing rectangle and native event action", () => {
+test("dashboard and detail charts have definite responsive drawing rectangles and native event action", () => {
+  assert.match(styles, /\.machine-monitor__dashboard-chart > div\[role="img"\]\s*\{[^}]*min-height:\s*292px/);
+  assert.match(styles, /\.machine-monitor__dashboard-chart > div\[role="img"\][^}]*height:\s*306px/);
   assert.match(styles, /\.machine-monitor__timeline-chart > div\[role="img"\]\s*\{[^}]*min-height:\s*300px/);
   assert.match(styles, /\.machine-monitor__timeline-chart > div\[role="img"\][^}]*height:\s*320px/);
   assert.match(styles, /touch-action:\s*pan-y\s+pinch-zoom/);
@@ -58,8 +60,8 @@ test("timeline host has a definite responsive drawing rectangle and native event
   assert.match(app, /navigate\.toThread\(activation\.bbReference\.threadId\)/);
 });
 
-test("mobile facts and metrics collapse without forcing a wide grid", () => {
+test("mobile operational cards and disk breakdown collapse without forcing a wide grid", () => {
   const compact = styles.match(/@container \(max-width:\s*760px\)\s*\{([\s\S]*?)\n\}/)?.[1] ?? "";
-  assert.match(compact, /\.machine-monitor__metrics[^\{]*\.machine-monitor__machine-facts[^\{]*\{\s*grid-template-columns:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\)/);
-  assert.match(styles, /@container \(max-width:\s*300px\)\s*\{[\s\S]*?\.machine-monitor__machine-facts/);
+  assert.match(compact, /\.machine-monitor__metrics[^\{]*\.machine-monitor__directories > ol[^\{]*\{\s*grid-template-columns:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\)/);
+  assert.match(styles, /@container \(max-width:\s*300px\)\s*\{[\s\S]*?\.machine-monitor__dashboard-captions/);
 });

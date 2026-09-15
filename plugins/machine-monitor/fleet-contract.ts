@@ -17,6 +17,8 @@ export const LOCAL_BB_SERVER_MACHINE_ID = "local-bb-server";
 export const MAX_FLEET_MACHINES = 256;
 export const MAX_TIMELINE_BUCKETS = 720;
 export const MAX_TIMELINE_EVENTS = 200;
+/** Eight built-in locations, thirty-two configured locations, plus derived Other. */
+export const MAX_MACHINE_DIRECTORY_SUMMARIES = 41;
 export const MAX_TIMELINE_RANGE_MS = 30 * 24 * 60 * 60_000;
 export const MAX_CLOCK_UNCERTAINTY_MS = 60 * 60_000;
 export const MAX_TIMELINE_NORMALIZATION_SAMPLES = 1_000_000;
@@ -483,6 +485,8 @@ export const fleetMachineOverviewSchema = z.object({
   connection: z.enum(["local", "connected", "disconnected", "unknown"]),
   freshness: z.enum(["fresh", "stale", "unknown"]),
   latestCollectedAtMs: timestampSchema.nullable(),
+  /** Server-normalized rolling CPU average. Null when its five-minute window has no samples. */
+  cpu5mPercent: nonnegativeFiniteNumberSchema.nullable().optional(),
   lastError: z.string().max(1_024).nullable(),
   capabilities: z.array(opaqueIdSchema(96)).max(32),
   latestMetrics: z.array(metricObservationSchema).max(FLEET_METRIC_CATALOG.length),
@@ -621,6 +625,21 @@ export function machineTimelineRequestKey(request: MachineTimelineRequest): stri
   return [FLEET_CONTRACT_VERSION, machineIdentityKey(input.machine), input.range.startMs, input.range.endMs, generation].join("|");
 }
 
+/**
+ * A bounded, machine-local storage composition summary. Directory sizes are
+ * computed from retained directory observations for the selected timeline
+ * range; callers must not infer that this is a complete filesystem inventory.
+ */
+export const machineDirectorySummarySchema = z.object({
+  id: opaqueIdSchema(128),
+  label: z.string().min(1).max(256),
+  bytes: nonnegativeFiniteNumberSchema,
+  growthBytesPerDay: finiteNumberSchema.nullable(),
+  derived: z.boolean(),
+  partial: z.boolean(),
+  onRootFilesystem: z.boolean(),
+}).strict();
+
 export const machineTimelineResultSchema = z.object({
   contractVersion: contractVersionSchema,
   machine: machineIdentitySchema,
@@ -631,6 +650,8 @@ export const machineTimelineResultSchema = z.object({
   timeNormalization: timelineTimeNormalizationSchema,
   metrics: z.array(timelineMetricSeriesSchema).max(FLEET_METRIC_CATALOG.length),
   gaps: z.array(timelineGapSchema).max(MAX_TIMELINE_GAPS),
+  /** Present on current server reads; optional preserves old retained test fixtures. */
+  directories: z.array(machineDirectorySummarySchema).max(MAX_MACHINE_DIRECTORY_SUMMARIES).optional(),
   events: timelineEventLaneSchema,
 }).strict().superRefine((value, context) => {
   if (Math.ceil((value.range.endMs - value.range.startMs) / value.bucket.widthMs) !== value.bucket.count) {

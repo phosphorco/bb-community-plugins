@@ -56,7 +56,7 @@
 .machine-monitor__visually-hidden { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; border: 0; }
 .machine-monitor__selected-machine { display: grid; gap: 10px; margin-bottom: 10px; padding: 12px; }
 .machine-monitor__selected-machine[data-stale] { border-color: color-mix(in srgb, var(--primary) 48%, var(--border)); }
-.machine-monitor__selected-machine h1 { font-size: 17px; }
+.machine-monitor__selected-machine h1 { font-size: clamp(20px, 3cqw, 28px); letter-spacing: -.035em; }
 .machine-monitor__selected-machine > header > label { flex: 0 0 auto; }
 .machine-monitor__machine-facts { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 7px; }
 .machine-monitor__machine-facts p { min-width: 0; padding: 7px; border-radius: 6px; background: color-mix(in srgb, var(--muted) 42%, transparent); }
@@ -68,6 +68,8 @@
 .machine-monitor__metrics article[data-unavailable="true"] { border-style: dashed; background: color-mix(in srgb, var(--muted) 42%, transparent); }
 .machine-monitor__timeline { display: grid; gap: 10px; padding: 12px; }
 .machine-monitor__timeline > header { align-items: center; }
+.machine-monitor__timeline > header > div { min-width: 0; }
+.machine-monitor__timeline > header p { margin-top: 3px; color: var(--muted-foreground); font-size: 11px; overflow-wrap: anywhere; }
 .machine-monitor__timeline > header > span { color: var(--muted-foreground); font-size: 10px; }
 .machine-monitor__timeline-status { margin: 0; padding: 7px; border-radius: 6px; background: color-mix(in srgb, var(--muted) 42%, transparent); }
 .machine-monitor__timeline-chart { min-width: 0; padding: 4px 2px 0; border-radius: 7px; color: var(--card-foreground); background: linear-gradient(180deg, color-mix(in srgb, var(--muted) 24%, transparent), transparent 30%), var(--card); }
@@ -94,6 +96,8 @@
 .machine-monitor__metrics article { display: grid; gap: 4px; min-height: 96px; align-content: center; padding: 13px; }
 .machine-monitor__metrics article[data-warning="true"] { border-color: color-mix(in srgb, var(--destructive) 58%, var(--border)); background: color-mix(in srgb, var(--destructive) 7%, var(--card)); }
 .machine-monitor__metrics article[data-warning="true"] > span { color: var(--destructive); }
+.machine-monitor__metrics article[data-attention="true"] { border-color: color-mix(in srgb, var(--destructive) 58%, var(--border)); background: color-mix(in srgb, var(--destructive) 7%, var(--card)); }
+.machine-monitor__metrics article[data-attention="true"] > span { color: var(--destructive); }
 .machine-monitor__metrics span, .machine-monitor__metrics small, .machine-monitor__chart header span { min-width: 0; color: var(--muted-foreground); font-size: 11px; overflow-wrap: anywhere; }
 .machine-monitor__metrics strong { font-size: clamp(21px, 3cqw, 30px); line-height: 1; letter-spacing: -.035em; font-variant-numeric: tabular-nums; }
 .machine-monitor__charts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-top: 10px; }
@@ -101,12 +105,24 @@
 .machine-monitor__chart header { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 11px 12px 2px; }
 .machine-monitor__chart h2 { font-size: 12px; font-weight: 650; }
 .machine-monitor__chart > div { height: 245px; margin: 0 6px 6px; touch-action: pan-y pinch-zoom; }
+.machine-monitor__dashboard-captions { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; padding: 3px 8% 0 7%; }
+.machine-monitor__dashboard-captions > div { min-width: 0; }
+.machine-monitor__dashboard-captions h3 { margin: 0; font-size: 14px; letter-spacing: -.015em; }
+.machine-monitor__dashboard-captions span { color: var(--muted-foreground); font-size: 10px; }
+.machine-monitor__dashboard-chart { min-width: 0; padding: 2px; border-radius: 8px; background: linear-gradient(180deg, color-mix(in srgb, var(--muted) 22%, transparent), transparent 32%); }
+.machine-monitor__dashboard-chart[data-stale="true"] { opacity: .72; }
+.machine-monitor__dashboard-chart > div[role="img"] { width: 100%; min-width: 0; min-height: 292px; height: 306px; touch-action: pan-y pinch-zoom; }
+.machine-monitor__full-timeline { min-width: 0; border-top: 1px solid var(--border); }
+.machine-monitor__full-timeline > summary { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 38px; cursor: pointer; color: var(--foreground); font-size: 12px; font-weight: 650; }
+.machine-monitor__full-timeline > summary > span { color: var(--muted-foreground); font-size: 10px; font-weight: 500; }
+.machine-monitor__full-timeline > summary:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
 .machine-monitor__directories { margin-top: 10px; padding: 12px; border: 1px solid var(--border); border-radius: 9px; background: var(--card); color: var(--card-foreground); }
 .machine-monitor__directories h2 { margin: 0 0 3px; font-size: 12px; font-weight: 650; }
 .machine-monitor__directories > p { margin: 0 0 9px; color: var(--muted-foreground); font-size: 10px; }
 .machine-monitor__directories > ol { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr)); gap: 8px; margin: 0; padding: 0; list-style-position: inside; }
 .machine-monitor__directories li { display: grid; gap: 3px; min-width: 0; padding: 8px; border-radius: 6px; background: color-mix(in srgb, var(--muted) 45%, transparent); }
 .machine-monitor__directories li[data-derived="true"] { background: color-mix(in srgb, var(--primary) 10%, var(--muted) 45%); }
+.machine-monitor__directories li[data-partial="true"] { border: 1px dashed color-mix(in srgb, var(--primary) 50%, var(--border)); }
 .machine-monitor__directories span, .machine-monitor__directories small { overflow: hidden; color: var(--muted-foreground); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
 .machine-monitor__directories strong { font-size: 14px; font-variant-numeric: tabular-nums; }
 .machine-monitor__memory-pressure { margin-top: 10px; padding: 12px; border: 1px solid var(--border); border-radius: 9px; background: var(--card); color: var(--card-foreground); }
@@ -162,6 +178,7 @@
   .machine-monitor__metrics, .machine-monitor__directories > ol, .machine-monitor__memory-pressure dl, .machine-monitor__machine-facts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .machine-monitor__charts { grid-template-columns: 1fr; }
   .machine-monitor__timeline-chart > div[role="img"] { min-height: 270px; height: 290px; }
+  .machine-monitor__dashboard-chart > div[role="img"] { min-height: 246px; height: 258px; }
 }
 @media (max-width: 760px) {
   .machine-monitor { padding: 14px; }
@@ -180,10 +197,15 @@
   .machine-monitor__metrics strong { font-size: 24px; }
   .machine-monitor__charts, .machine-monitor__directories, .machine-monitor__memory-pressure { margin-top: 8px; }
   .machine-monitor__chart > div { height: 210px; margin-inline: 2px; }
+  .machine-monitor__dashboard-captions { padding-inline: 7%; gap: 8px; }
+  .machine-monitor__dashboard-captions h3 { font-size: 12px; }
+  .machine-monitor__dashboard-captions span { font-size: 9px; }
+  .machine-monitor__dashboard-chart > div[role="img"] { min-height: 228px; height: 242px; }
   .machine-monitor__timeline-chart > div[role="img"] { min-height: 240px; height: 260px; }
   .machine-monitor__memory-pressure > header { flex-direction: column; gap: 4px; }
 }
 @container (max-width: 300px) {
   .machine-monitor__metrics, .machine-monitor__directories > ol, .machine-monitor__memory-pressure dl, .machine-monitor__machine-facts { grid-template-columns: 1fr; }
   .machine-monitor__fleet-picker > ol { grid-template-columns: 1fr; }
+  .machine-monitor__dashboard-captions { grid-template-columns: 1fr; padding-inline: 7%; }
 }

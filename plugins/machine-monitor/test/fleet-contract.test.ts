@@ -79,6 +79,15 @@ function timeline() {
         { startMs: 30, endMs: 60, min: 32, average: 35, max: 40, last: 36, count: 2 },
       ],
     }],
+    directories: [{
+      id: "bb",
+      label: "~/.bb",
+      bytes: 8_589_934_592,
+      growthBytesPerDay: 104_857_600,
+      derived: true,
+      partial: false,
+      onRootFilesystem: true,
+    }],
     gaps: [],
     events: { events: [event("event-1", 15)], totalCount: 1, truncated: false },
   };
@@ -110,6 +119,7 @@ test("the trusted metric boundary rejects unknown metrics and renderer configura
 test("a timeline is generation-keyed, bucket-complete, and preserves exact event references", () => {
   const result = timeline();
   assert.deepEqual(machineTimelineResultSchema.parse(result).events.events[0]?.bbReference, { projectId: "project_1", threadId: "thr_1" });
+  assert.deepEqual(machineTimelineResultSchema.parse(result).directories?.[0], result.directories[0]);
 
   const request = {
     contractVersion: FLEET_CONTRACT_VERSION,
@@ -123,6 +133,10 @@ test("a timeline is generation-keyed, bucket-complete, and preserves exact event
   const missingBucket = timeline();
   missingBucket.metrics[0]!.buckets.pop();
   assert.equal(machineTimelineResultSchema.safeParse(missingBucket).success, false);
+
+  const invalidDirectory = timeline();
+  invalidDirectory.directories[0]!.bytes = -1;
+  assert.equal(machineTimelineResultSchema.safeParse(invalidDirectory).success, false);
 });
 
 test("gap capacity is exactly the catalog-by-bucket worst case, without a hidden 512 cut-off", () => {

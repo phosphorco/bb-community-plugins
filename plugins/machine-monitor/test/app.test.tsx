@@ -121,6 +121,13 @@ function fleetRpc(overviews: () => unknown, onTimeline: (request: any) => unknow
   };
 }
 
+async function openDetailedTimeline(slot: { findByText: (value: RegExp) => Promise<HTMLElement> }): Promise<void> {
+  const summary = (await slot.findByText(/Full metric timeline and events/)).closest("summary");
+  if (summary == null) throw new Error("The selected machine did not render a full-timeline disclosure.");
+  const details = summary.parentElement as HTMLDetailsElement;
+  if (!details.open) fireEvent.click(summary);
+}
+
 function cachedTimeline(
   identity: typeof alpha,
   range: { startMs: number; endMs: number },
@@ -294,7 +301,7 @@ test("keeps Linked threads fleet-scoped while preserving add, native navigation,
   slot.lifecycle.unmount();
 });
 
-test("keeps overview resident, switches a cached timeline synchronously, and reuses the chart host", async () => {
+test("keeps overview resident and reuses a cached timeline without a third RPC", async () => {
   const app = await loadPluginApp(() => import("../app.tsx"));
   const calls: string[] = [];
   const slot = renderSlot(app.navPanels[0]!, { subPath: "" }, {
@@ -306,17 +313,17 @@ test("keeps overview resident, switches a cached timeline synchronously, and reu
 
   await slot.findByRole("button", { name: /Alpha\. connected/ });
   await waitFor(() => expect(calls).toEqual(["machine-alpha"]));
-  const initialHost = await slot.findByRole("img", { name: /Machine timeline/ });
+  await slot.findByRole("img", { name: /Machine dashboard for machine-alpha/ });
 
   fireEvent.click(slot.getByRole("button", { name: /Bravo\. connected/ }));
   await waitFor(() => expect(calls).toEqual(["machine-alpha", "machine-bravo"]));
   expect(slot.getByRole("button", { name: /Alpha\. connected/ })).toBeTruthy();
-  expect(slot.getByRole("img", { name: /Machine timeline/ })).toBe(initialHost);
+  expect(slot.getByRole("img", { name: /Machine dashboard for machine-bravo/ })).toBeTruthy();
 
   fireEvent.click(slot.getByRole("button", { name: /Alpha\. connected/ }));
   expect(calls).toEqual(["machine-alpha", "machine-bravo"]);
   expect(slot.getByRole("heading", { name: "Alpha" })).toBeTruthy();
-  expect(slot.getByRole("img", { name: /Machine timeline/ })).toBe(initialHost);
+  expect(slot.getByRole("img", { name: /Machine dashboard for machine-alpha/ })).toBeTruthy();
   slot.lifecycle.unmount();
 });
 
@@ -364,14 +371,14 @@ test("keeps the atlas in keyboard order while a stale, collector-failing source 
   expect(description?.textContent).toContain("Memory utilization unavailable");
   expect(description?.textContent).toContain("Root disk utilization 95.0 percent");
 
-  const host = await slot.findByRole("img", { name: /Machine timeline/ });
+  const host = await slot.findByRole("img", { name: /Machine dashboard for machine-alpha/ });
   bravoButton.focus();
   expect(document.activeElement).toBe(bravoButton);
   fireEvent.click(bravoButton);
   await slot.findByRole("heading", { name: "Bravo" });
   expect(alphaButton.getAttribute("aria-pressed")).toBe("false");
   expect(bravoButton.getAttribute("aria-pressed")).toBe("true");
-  expect(slot.getByRole("img", { name: /Machine timeline/ })).toBe(host);
+  expect(slot.getByRole("img", { name: /Machine dashboard for machine-bravo/ })).toBeTruthy();
   expect(slot.getByRole("heading", { name: "Bravo" }).closest(".machine-monitor__selected-machine")?.getAttribute("data-stale")).toBe("true");
   slot.lifecycle.unmount();
 });
@@ -393,16 +400,20 @@ test("coalesces uncached selection work and disables retained other-machine even
   } as any);
   await slot.findByRole("heading", { name: "Alpha" });
   await waitFor(() => expect(calls).toEqual(["machine-alpha"]));
+  await openDetailedTimeline(slot);
 
   const bravoButton = slot.getByRole("button", { name: /Bravo\. connected/ });
   fireEvent.click(bravoButton);
   fireEvent.click(bravoButton);
   await waitFor(() => expect(calls).toEqual(["machine-alpha", "machine-bravo"]));
   expect(slot.getByText(/Showing retained timeline for machine-alpha; Bravo is loading/)).toBeTruthy();
-  const retainedAction = slot.getByRole("button", { name: "Open linked thread for Repair thread" }) as HTMLButtonElement;
-  expect(retainedAction.disabled).toBe(true);
-  expect(slot.getByRole("img", { name: /Machine timeline/ }).getAttribute("aria-disabled")).toBe("true");
+  expect(slot.getByText("Retained history: machine-alpha")).toBeTruthy();
+  expect(slot.getByRole("img", { name: /Machine dashboard for machine-alpha\. Showing retained history/ })).toBeTruthy();
+  // A retained history from a different source is now omitted from the
+  // dashboard entirely, rather than shown with an actionable-looking chart.
+  expect(slot.queryByRole("button", { name: "Open linked thread for Repair thread" })).toBeNull();
   bravoPending.resolve(timeline(bravoRequest, { event: true }));
+  await openDetailedTimeline(slot);
   await waitFor(() => expect((slot.getByRole("button", { name: "Open linked thread for Repair thread" }) as HTMLButtonElement).disabled).toBe(false));
   expect(slot.getByRole("img", { name: /Machine timeline/ }).getAttribute("aria-disabled")).toBeNull();
   slot.lifecycle.unmount();
@@ -460,6 +471,7 @@ test("an invalidated selected response cannot reclaim event navigation across a 
   expect(slot.queryByRole("button", { name: "Open linked thread for Repair thread" })).toBeNull();
 
   currentBravo.resolve(timeline(requests[2]!, { event: true }));
+  await openDetailedTimeline(slot);
   const action = await slot.findByRole("button", { name: "Open linked thread for Repair thread" }) as HTMLButtonElement;
   expect(action.disabled).toBe(false);
   fireEvent.click(action);
@@ -551,8 +563,8 @@ test("bounds focus/pointer prefetch and exposes disconnected, stale, unsupported
   } as any);
   await slot.findByRole("heading", { name: "Machine 0" });
   expect(slot.getAllByText(/Machine is disconnected/).length).toBeGreaterThan(0);
-  expect(slot.getByText(/Unsupported on this host/)).toBeTruthy();
-  expect(slot.getByText("Coverage: no observations in this range.")).toBeTruthy();
+  fireEvent.click(slot.getByText(/Full metric timeline and events/));
+  expect(await slot.findByText("Coverage: no observations in this range.")).toBeTruthy();
 
   for (const button of slot.getAllByRole("button", { name: /Machine [0-9]+\./ })) fireEvent.focus(button);
   await waitFor(() => expect(calls.length).toBeLessThanOrEqual(1 + 6));
@@ -612,7 +624,7 @@ test("renders one generation-safe fleet utilization strip with a visible attenti
   expect(series.data.map((datum) => datum.machineKey)).toEqual(["enrolled-host:machine-alpha", "enrolled-host:machine-bravo", "enrolled-host:machine-charlie"]);
   expect(series.markLine?.data).toEqual([{ yAxis: 70 }]);
   expect(chartHost.getAttribute("aria-label")).toContain("Use the native source controls below");
-  expect(slot.getByText("40.0%")).toBeTruthy();
+  expect(slot.getAllByText("40.0%").length).toBeGreaterThan(0);
   expect(slot.getByText("22 pt · CPU")).toBeTruthy();
   expect(slot.getByText(/1 at ≥70%/)).toBeTruthy();
   expect(slot.getByRole("button", { name: /Charlie\. connected\. stale/i }).getAttribute("data-utilization")).toBe("below-attention");
@@ -630,6 +642,8 @@ test("uses the same native BB navigation for exact event list and chart-pointer 
   const slot = renderSlot(app.navPanels[0]!, { subPath: "" }, {
     rpc: fleetRpc(() => overview(), (request) => timeline(request, { event: true })),
   } as any);
+  await slot.findByRole("heading", { name: "Alpha" });
+  await openDetailedTimeline(slot);
   const listAction = await slot.findByRole("button", { name: "Open linked thread for Repair thread" });
   fireEvent.click(listAction);
   expect(slot.inspection.navigateCalls).toContainEqual({ method: "toThread", threadId: "thr_events" });
@@ -658,6 +672,8 @@ test("a nonselected summary reconciliation keeps the selected chart and exact ev
       return overviewCalls === 1 ? initial : reconciled;
     }, (request) => timeline(request, { event: true })),
   } as any);
+  await slot.findByRole("heading", { name: "Alpha" });
+  await openDetailedTimeline(slot);
   const initialAction = await slot.findByRole("button", { name: "Open linked thread for Repair thread" });
   const initialHost = slot.getByRole("img", { name: /Machine timeline/ });
   const chart = echartsMock.instances.at(-1)!;

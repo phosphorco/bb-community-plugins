@@ -56,7 +56,7 @@ export const FLEET_PERFORMANCE_BOOTSTRAP = String.raw`(() => {
   function match(measurement) {
     if (measurement.inputAt == null) return;
     const heading = document.querySelector("#machine-monitor-selected-title");
-    const chart = document.querySelector('.machine-monitor__timeline-chart[aria-label*="' + measurement.expectedMachineId + '"]');
+    const chart = document.querySelector('.machine-monitor__dashboard-chart [aria-label*="' + measurement.expectedMachineId + '"]');
     if (heading?.textContent !== measurement.expectedLabel || chart == null || measurement.usefulDomAt != null) return;
     measurement.usefulDomAt = performance.now();
     requestAnimationFrame(() => requestAnimationFrame(() => {
@@ -69,7 +69,7 @@ export const FLEET_PERFORMANCE_BOOTSTRAP = String.raw`(() => {
     if (measurement == null || button == null || measurement.inputAt != null || !button.getAttribute("aria-label")?.startsWith(measurement.targetLabel)) return;
     measurement.inputAt = performance.now();
     measurement.overviewAtInput = document.querySelector(".machine-monitor__fleet-picker") != null;
-    measurement.chartAtInput = document.querySelector('.machine-monitor__timeline-chart') != null;
+    measurement.chartAtInput = document.querySelector('.machine-monitor__dashboard-chart') != null;
     match(measurement);
   }, true);
   window.__fleetPerformance = Object.assign(state, {
@@ -91,7 +91,10 @@ export const FLEET_PERFORMANCE_BOOTSTRAP = String.raw`(() => {
         chartRetainedAtInput: measurement.chartAtInput,
         staleContentVisible: document.body.textContent.includes("Showing retained timeline") || document.body.textContent.includes("Refreshing timeline data"),
         counterDelta: diff(measurement.before, after),
-        longTasks: state.longTasks.filter((entry) => entry.startTime >= measurement.inputAt && entry.startTime <= measurement.paintAt + 50),
+        // The witness ends at the first useful painted frame.  Work scheduled
+        // after that point belongs to the next browser turn, not the measured
+        // selection transition (and must not be attributed to this click).
+        longTasks: state.longTasks.filter((entry) => entry.startTime >= measurement.inputAt && entry.startTime <= measurement.paintAt),
         heap: performance.memory == null ? null : { usedJSHeapSize: performance.memory.usedJSHeapSize, totalJSHeapSize: performance.memory.totalJSHeapSize },
       };
       state.measurement = null;

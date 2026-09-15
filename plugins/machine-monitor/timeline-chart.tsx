@@ -386,6 +386,191 @@ export function FleetUtilizationChart({ machines, className, onSelectMachine }: 
   </section>;
 }
 
+const MACHINE_DASHBOARD_FIGURE_ID = "machine-monitor:machine-dashboard";
+const MACHINE_DASHBOARD_ATTENTION_PERCENT = FLEET_UTILIZATION_ATTENTION_PERCENT;
+
+type CompiledMachineDashboard = EChartsFigure & Readonly<{
+  structuralSignature: string;
+}>;
+
+export type MachineDashboardChartProps = Readonly<{
+  timeline: MachineTimelineResult;
+  stale?: boolean;
+  className?: string;
+}>;
+
+type DashboardSeries = Readonly<{
+  metricId: "cpu.utilization.percent" | "memory.used.bytes" | "disk.root.used.bytes" | "load.5";
+  label: string;
+  color: string;
+  axisIndex: 0 | 1;
+  data: readonly (readonly [number, number | null])[];
+}>;
+
+function timelineMetricBuckets(timeline: MachineTimelineResult, metricId: DashboardSeries["metricId"]) {
+  return timeline.metrics.find((series) => series.metricId === metricId)?.buckets ?? [];
+}
+
+function ratioAt(
+  numerator: ReturnType<typeof timelineMetricBuckets>,
+  denominator: ReturnType<typeof timelineMetricBuckets>,
+  index: number,
+): number | null {
+  const value = numerator[index]?.average;
+  const total = denominator[index]?.average;
+  if (value == null || total == null || !Number.isFinite(value) || !Number.isFinite(total) || total <= 0) return null;
+  return Math.min(100, Math.max(0, value / total * 100));
+}
+
+function dashboardTimeLabel(value: number): string {
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return "";
+  return new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" }).format(date);
+}
+
+function dashboardTooltip(values: unknown): string {
+  const rows = Array.isArray(values) ? values : [];
+  const timestamp = rows.find((value) => value != null && typeof value === "object" && "axisValue" in value) as { axisValue?: unknown } | undefined;
+  const heading = typeof timestamp?.axisValue === "number" ? dashboardTimeLabel(timestamp.axisValue) : "Selected time";
+  const items = rows.flatMap((value) => {
+    if (value == null || typeof value !== "object") return [];
+    const row = value as { seriesName?: unknown; value?: unknown };
+    const point = Array.isArray(row.value) ? row.value.at(-1) : row.value;
+    if (typeof row.seriesName !== "string" || typeof point !== "number" || !Number.isFinite(point)) return [];
+    const formatted = row.seriesName === "Load (5 min)" ? point.toFixed(point >= 10 ? 0 : 2) : `${point.toFixed(1)}%`;
+    return [`${row.seriesName}: ${formatted}`];
+  });
+  return [heading, ...items].join("<br/>");
+}
+
+/**
+ * A deliberately compact operational figure: one long-lived ECharts instance
+ * owns two related grids, so switching machines updates data rather than
+ * multiplying chart lifecycles. The source timeline remains the canonical
+ * bounded data for both plots.
+ */
+function compileMachineDashboard(timeline: MachineTimelineResult, theme: ResolvedChartTheme): CompiledMachineDashboard {
+  const cpu = timelineMetricBuckets(timeline, "cpu.utilization.percent");
+  const memoryUsed = timelineMetricBuckets(timeline, "memory.used.bytes");
+  const memoryTotal = timeline.metrics.find((series) => series.metricId === "memory.total.bytes")?.buckets ?? [];
+  const diskUsed = timelineMetricBuckets(timeline, "disk.root.used.bytes");
+  const diskTotal = timeline.metrics.find((series) => series.metricId === "disk.root.total.bytes")?.buckets ?? [];
+  const load = timelineMetricBuckets(timeline, "load.5");
+  const points = timeline.bucket.count;
+  const timeAt = (index: number) => timeline.range.startMs + index * timeline.bucket.widthMs;
+  const series: readonly DashboardSeries[] = [
+    {
+      metricId: "cpu.utilization.percent", label: "CPU", color: "#60a5fa", axisIndex: 0,
+      data: Array.from({ length: points }, (_, index) => [timeAt(index), cpu[index]?.average ?? null] as const),
+    },
+    {
+      metricId: "memory.used.bytes", label: "Memory", color: "#fb7185", axisIndex: 0,
+      data: Array.from({ length: points }, (_, index) => [timeAt(index), ratioAt(memoryUsed, memoryTotal, index)] as const),
+    },
+    {
+      metricId: "disk.root.used.bytes", label: "Root disk", color: "#2dd4bf", axisIndex: 0,
+      data: Array.from({ length: points }, (_, index) => [timeAt(index), ratioAt(diskUsed, diskTotal, index)] as const),
+    },
+    {
+      metricId: "load.5", label: "Load (5 min)", color: "#c084fc", axisIndex: 1,
+      data: Array.from({ length: points }, (_, index) => [timeAt(index), load[index]?.average ?? null] as const),
+    },
+  ];
+  const structuralSignature = `${MACHINE_DASHBOARD_FIGURE_ID}:v1`;
+  const renderSignature = JSON.stringify({
+    structuralSignature,
+    generation: timeline.generation,
+    range: timeline.range,
+    values: series.map((entry) => entry.data),
+    theme,
+  });
+  const gridTop = 20;
+  const option: EChartsCoreOption = {
+    animation: false,
+    aria: {
+      enabled: true,
+      description: `Operational charts for ${timeline.machine.machineId}. Left plot shows CPU, memory, and root-disk utilization against a ${MACHINE_DASHBOARD_ATTENTION_PERCENT} percent attention line. Right plot shows five-minute load average.`,
+    },
+    tooltip: {
+      show: true,
+      trigger: "axis",
+      confine: true,
+      backgroundColor: theme.surface,
+      borderColor: theme.border,
+      textStyle: { color: theme.foreground, fontSize: 11 },
+      formatter: dashboardTooltip,
+    },
+    grid: [
+      { id: `${MACHINE_DASHBOARD_FIGURE_ID}:grid:utilization`, left: "7%", top: gridTop, width: "38%", bottom: 38, containLabel: true },
+      { id: `${MACHINE_DASHBOARD_FIGURE_ID}:grid:load`, left: "57%", top: gridTop, width: "36%", bottom: 38, containLabel: true },
+    ],
+    xAxis: [0, 1].map((index) => ({
+      id: `${MACHINE_DASHBOARD_FIGURE_ID}:x:${index}`,
+      gridIndex: index,
+      type: "time" as const,
+      min: timeline.range.startMs,
+      max: timeline.range.endMs,
+      axisLabel: { color: theme.muted, fontSize: 9, formatter: dashboardTimeLabel },
+      axisTick: { show: false },
+      axisLine: { lineStyle: { color: theme.border } },
+      splitLine: { show: false },
+    })),
+    yAxis: [
+      {
+        id: `${MACHINE_DASHBOARD_FIGURE_ID}:y:utilization`, gridIndex: 0, type: "value", min: 0, max: 100, interval: 25,
+        axisLabel: { color: theme.muted, fontSize: 9, formatter: "{value}%" },
+        axisLine: { lineStyle: { color: theme.border } }, splitLine: { lineStyle: { color: theme.border, opacity: 0.72 } },
+      },
+      {
+        id: `${MACHINE_DASHBOARD_FIGURE_ID}:y:load`, gridIndex: 1, type: "value", min: 0, scale: true,
+        axisLabel: { color: theme.muted, fontSize: 9 },
+        axisLine: { lineStyle: { color: theme.border } }, splitLine: { lineStyle: { color: theme.border, opacity: 0.72 } },
+      },
+    ],
+    series: series.map((entry) => ({
+      id: `${MACHINE_DASHBOARD_FIGURE_ID}:series:${entry.metricId}`,
+      name: entry.label,
+      type: "line" as const,
+      xAxisIndex: entry.axisIndex,
+      yAxisIndex: entry.axisIndex,
+      data: entry.data,
+      showSymbol: false,
+      connectNulls: false,
+      emphasis: { disabled: true },
+      lineStyle: { color: entry.color, width: entry.metricId === "load.5" ? 2.2 : 2 },
+      itemStyle: { color: entry.color },
+      markLine: entry.metricId === "cpu.utilization.percent" ? {
+        silent: true,
+        symbol: "none",
+        lineStyle: { color: theme.destructive, type: "dashed", opacity: 0.82 },
+        label: { color: theme.muted, fontSize: 9, formatter: `Attention ${MACHINE_DASHBOARD_ATTENTION_PERCENT}%` },
+        data: [{ yAxis: MACHINE_DASHBOARD_ATTENTION_PERCENT }],
+      } : undefined,
+    })),
+  };
+  return { option, renderSignature, structuralSignature };
+}
+
+function decideMachineDashboardUpdate(previous: CompiledMachineDashboard | null, next: CompiledMachineDashboard): EChartsUpdateDecision {
+  if (previous == null || previous.structuralSignature !== next.structuralSignature) {
+    return { kind: "full-replacement", reason: "machine dashboard structure changed" };
+  }
+  return { kind: "merge" };
+}
+
+export function MachineDashboardChart({ timeline, stale = false, className }: MachineDashboardChartProps) {
+  const compile = useCallback((theme: ResolvedChartTheme) => compileMachineDashboard(timeline, theme), [timeline]);
+  const label = `Machine dashboard for ${timeline.machine.machineId}. ${stale ? "Showing retained history. " : ""}CPU, memory, and root-disk utilization are compared to the ${MACHINE_DASHBOARD_ATTENTION_PERCENT} percent attention line. Five-minute load is shown separately.`;
+  return <section className={className} aria-label="Operational history charts" data-stale={stale || undefined}>
+    <EChartsHost
+      compile={compile}
+      label={label}
+      minimumHeight={292}
+      decideUpdate={decideMachineDashboardUpdate}
+    />
+  </section>;
+}
+
 function timeLabel(atMs: number): string {
   const date = new Date(atMs);
   return Number.isFinite(date.getTime()) ? date.toISOString() : `${atMs} ms`;
