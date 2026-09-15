@@ -544,7 +544,7 @@ function compileMachineDashboard(timeline: MachineTimelineResult, theme: Resolve
         silent: true,
         symbol: "none",
         lineStyle: { color: theme.destructive, type: "dashed", opacity: 0.82 },
-        label: { color: theme.muted, fontSize: 9, formatter: `Attention ${MACHINE_DASHBOARD_ATTENTION_PERCENT}%` },
+        label: { color: theme.muted, fontSize: 9, position: "insideEndTop", formatter: `Attention ${MACHINE_DASHBOARD_ATTENTION_PERCENT}%` },
         data: [{ yAxis: MACHINE_DASHBOARD_ATTENTION_PERCENT }],
       } : undefined,
     })),

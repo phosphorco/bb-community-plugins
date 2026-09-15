@@ -127,20 +127,20 @@ retained by native controls; a real Chromium SVG bar hit selects its matching
 source, while the chart compiler rejects a late datum after reordering unless
 its stable machine key still matches.
 
-The temporary production bundle SHA-256 was
-`6333ebe37f2abec7d81475a0b8381d3289ca3af4d81f11f9332c89cedbc7cb5d`, using
+The final temporary production bundle SHA-256 was
+`9d2704f78d966021eb93b61ef41623beec7951e02ebd76f06f5870010715f761`, using
 Chromium 153.0.8010.12 / revision 1243 at 1280×900 DPR 1, light theme, reduced
 motion, HTTP cache disabled, and service workers blocked.
 
 | Distribution | Candidate p95 / gate |
 | --- | --- |
 | Cached selection | **31.5ms / ≤50ms interaction gate pass** |
-| Warm-uncached selection | **82.1ms / ≤110ms dashboard-regression ceiling / ≤250ms interaction gate pass** |
+| Warm-uncached selection | **82.9ms / ≤110ms dashboard-regression ceiling / ≤250ms interaction gate pass** |
 
-The 12 cached candidate paints were 31.5, 30.2, 31.5, 30.8, 30.9, 31.1,
-30.4, 31.1, 31.3, 31.0, 30.5, and 31.3ms. The warm-uncached candidates were
-82.1, 82.0, 81.2, 81.3, 79.5, 80.1, 80.6, 81.6, 81.0, 81.4, 81.3, and
-81.6ms.
+The 12 cached candidate paints were 31.5, 31.3, 30.2, 31.0, 30.8, 30.7,
+31.4, 30.9, 30.8, 31.1, 31.0, and 31.2ms. The warm-uncached candidates were
+82.9, 81.4, 80.7, 81.3, 81.3, 80.7, 82.3, 81.1, 82.0, 81.9, 79.1, and
+82.8ms.
 
 The initial surface creates exactly two ECharts instances: the selected-machine
 operational dashboard and one shared fleet-utilization chart—never one chart
