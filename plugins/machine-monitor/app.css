@@ -57,7 +57,11 @@
 .machine-monitor__selected-machine { display: grid; gap: 10px; margin-bottom: 10px; padding: 12px; }
 .machine-monitor__selected-machine[data-stale] { border-color: color-mix(in srgb, var(--primary) 48%, var(--border)); }
 .machine-monitor__selected-machine h1 { font-size: clamp(20px, 3cqw, 28px); letter-spacing: -.035em; }
-.machine-monitor__selected-machine > header > label { flex: 0 0 auto; }
+.machine-monitor__selected-controls { display: grid; justify-items: end; gap: 6px; flex: 0 0 auto; }
+.machine-monitor__selected-controls > label { min-width: 104px; }
+.machine-monitor__selected-status { max-width: 260px; padding: 4px 7px; border: 1px solid var(--border); border-radius: 999px; color: var(--muted-foreground); font-size: 10px; font-variant-numeric: tabular-nums; text-align: end; }
+.machine-monitor__selected-status[data-state="stale"] { border-style: dashed; border-color: color-mix(in srgb, var(--primary) 60%, var(--border)); color: var(--primary); }
+.machine-monitor__selected-status[data-state="disconnected"] { border-color: color-mix(in srgb, var(--destructive) 60%, var(--border)); color: var(--destructive); }
 .machine-monitor__machine-facts { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 7px; }
 .machine-monitor__machine-facts p { min-width: 0; padding: 7px; border-radius: 6px; background: color-mix(in srgb, var(--muted) 42%, transparent); }
 .machine-monitor__machine-facts strong { color: var(--foreground); }
@@ -93,25 +97,25 @@
 .machine-monitor select:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
 .machine-monitor__metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
 .machine-monitor__metrics article, .machine-monitor__chart { min-width: 0; border: 1px solid var(--border); border-radius: 9px; background: var(--card); color: var(--card-foreground); }
-.machine-monitor__metrics article { display: grid; gap: 4px; min-height: 96px; align-content: center; padding: 13px; }
+.machine-monitor__metrics article { display: grid; gap: 5px; min-height: 112px; align-content: center; padding: 15px; }
 .machine-monitor__metrics article[data-warning="true"] { border-color: color-mix(in srgb, var(--destructive) 58%, var(--border)); background: color-mix(in srgb, var(--destructive) 7%, var(--card)); }
 .machine-monitor__metrics article[data-warning="true"] > span { color: var(--destructive); }
 .machine-monitor__metrics article[data-attention="true"] { border-color: color-mix(in srgb, var(--destructive) 58%, var(--border)); background: color-mix(in srgb, var(--destructive) 7%, var(--card)); }
 .machine-monitor__metrics article[data-attention="true"] > span { color: var(--destructive); }
 .machine-monitor__metrics span, .machine-monitor__metrics small, .machine-monitor__chart header span { min-width: 0; color: var(--muted-foreground); font-size: 11px; overflow-wrap: anywhere; }
-.machine-monitor__metrics strong { font-size: clamp(21px, 3cqw, 30px); line-height: 1; letter-spacing: -.035em; font-variant-numeric: tabular-nums; }
+.machine-monitor__metrics strong { font-size: clamp(24px, 3.4cqw, 34px); line-height: 1; letter-spacing: -.04em; font-variant-numeric: tabular-nums; }
 .machine-monitor__charts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-top: 10px; }
 .machine-monitor__chart { overflow: hidden; }
 .machine-monitor__chart header { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 11px 12px 2px; }
 .machine-monitor__chart h2 { font-size: 12px; font-weight: 650; }
 .machine-monitor__chart > div { height: 245px; margin: 0 6px 6px; touch-action: pan-y pinch-zoom; }
-.machine-monitor__dashboard-captions { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; padding: 3px 8% 0 7%; }
-.machine-monitor__dashboard-captions > div { min-width: 0; }
-.machine-monitor__dashboard-captions h3 { margin: 0; font-size: 14px; letter-spacing: -.015em; }
-.machine-monitor__dashboard-captions span { color: var(--muted-foreground); font-size: 10px; }
-.machine-monitor__dashboard-chart { min-width: 0; padding: 2px; border-radius: 8px; background: linear-gradient(180deg, color-mix(in srgb, var(--muted) 22%, transparent), transparent 32%); }
-.machine-monitor__dashboard-chart[data-stale="true"] { opacity: .72; }
-.machine-monitor__dashboard-chart > div[role="img"] { width: 100%; min-width: 0; min-height: 292px; height: 306px; touch-action: pan-y pinch-zoom; }
+.machine-monitor__dashboard-chart { min-width: 0; overflow: hidden; border: 1px solid var(--border); border-radius: 9px; background: linear-gradient(180deg, color-mix(in srgb, var(--muted) 26%, transparent), transparent 36%), var(--card); }
+.machine-monitor__dashboard-chart[data-stale="true"] { border-style: dashed; border-color: color-mix(in srgb, var(--primary) 58%, var(--border)); }
+.machine-monitor__dashboard-captions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1px; border-bottom: 1px solid var(--border); background: var(--border); }
+.machine-monitor__dashboard-captions > div { display: grid; min-width: 0; gap: 2px; padding: 10px 12px 8px; background: color-mix(in srgb, var(--muted) 25%, var(--card)); }
+.machine-monitor__dashboard-captions strong { font-size: 14px; letter-spacing: -.02em; }
+.machine-monitor__dashboard-captions span { overflow: hidden; color: var(--muted-foreground); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.machine-monitor__dashboard-chart > div[role="img"] { width: 100%; min-width: 0; min-height: 300px; height: 320px; touch-action: pan-y pinch-zoom; }
 .machine-monitor__full-timeline { min-width: 0; border-top: 1px solid var(--border); }
 .machine-monitor__full-timeline > summary { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 38px; cursor: pointer; color: var(--foreground); font-size: 12px; font-weight: 650; }
 .machine-monitor__full-timeline > summary > span { color: var(--muted-foreground); font-size: 10px; font-weight: 500; }
@@ -125,6 +129,20 @@
 .machine-monitor__directories li[data-partial="true"] { border: 1px dashed color-mix(in srgb, var(--primary) 50%, var(--border)); }
 .machine-monitor__directories span, .machine-monitor__directories small { overflow: hidden; color: var(--muted-foreground); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
 .machine-monitor__directories strong { font-size: 14px; font-variant-numeric: tabular-nums; }
+.machine-monitor__directories li > i { display: block; width: 100%; height: 4px; overflow: hidden; border-radius: 999px; background: color-mix(in srgb, var(--muted) 58%, transparent); }
+.machine-monitor__directories li > i > i { display: block; width: var(--machine-monitor-directory-rank); min-width: 2px; height: 100%; border-radius: inherit; background: var(--primary); }
+.machine-monitor__history-data { min-width: 0; border-top: 1px solid var(--border); }
+.machine-monitor__history-data > summary { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 38px; cursor: pointer; color: var(--foreground); font-size: 12px; font-weight: 650; }
+.machine-monitor__history-data > summary > span { color: var(--muted-foreground); font-size: 10px; font-weight: 500; }
+.machine-monitor__history-data > summary:focus-visible, .machine-monitor__history-data-table:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+.machine-monitor__history-data-body { display: grid; gap: 8px; padding-bottom: 10px; }
+.machine-monitor__history-data-body > p, .machine-monitor__history-gaps { margin: 0; color: var(--muted-foreground); font-size: 10px; }
+.machine-monitor__history-data-table { max-height: 260px; overflow: auto; overscroll-behavior: contain; border: 1px solid var(--border); border-radius: 6px; }
+.machine-monitor__history-data-table table { width: 100%; min-width: 530px; border-collapse: collapse; font-size: 10px; font-variant-numeric: tabular-nums; }
+.machine-monitor__history-data-table th, .machine-monitor__history-data-table td { padding: 5px 7px; border-bottom: 1px solid color-mix(in srgb, var(--border) 72%, transparent); text-align: end; white-space: nowrap; }
+.machine-monitor__history-data-table th:first-child, .machine-monitor__history-data-table td:first-child { text-align: start; }
+.machine-monitor__history-data-table th { position: sticky; top: 0; color: var(--muted-foreground); background: var(--card); font-weight: 650; }
+.machine-monitor__history-gaps { display: grid; gap: 3px; max-height: 110px; overflow: auto; padding-left: 18px; }
 .machine-monitor__memory-pressure { margin-top: 10px; padding: 12px; border: 1px solid var(--border); border-radius: 9px; background: var(--card); color: var(--card-foreground); }
 .machine-monitor__memory-pressure[data-pressure="true"] { border-color: color-mix(in srgb, var(--destructive) 48%, var(--border)); background: color-mix(in srgb, var(--destructive) 5%, var(--card)); }
 .machine-monitor__memory-pressure > header { display: flex; align-items: start; justify-content: space-between; gap: 12px; }
@@ -178,7 +196,7 @@
   .machine-monitor__metrics, .machine-monitor__directories > ol, .machine-monitor__memory-pressure dl, .machine-monitor__machine-facts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .machine-monitor__charts { grid-template-columns: 1fr; }
   .machine-monitor__timeline-chart > div[role="img"] { min-height: 270px; height: 290px; }
-  .machine-monitor__dashboard-chart > div[role="img"] { min-height: 246px; height: 258px; }
+  .machine-monitor__dashboard-chart > div[role="img"] { min-height: 300px; height: 320px; }
 }
 @media (max-width: 760px) {
   .machine-monitor { padding: 14px; }
@@ -193,19 +211,19 @@
   .machine-monitor label { grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 10px; }
   .machine-monitor select { width: 100%; min-width: 0; }
   .machine-monitor__metrics { gap: 8px; }
-  .machine-monitor__metrics article { min-height: 80px; padding: 10px; }
+  .machine-monitor__metrics article { min-height: 86px; padding: 11px; }
   .machine-monitor__metrics strong { font-size: 24px; }
   .machine-monitor__charts, .machine-monitor__directories, .machine-monitor__memory-pressure { margin-top: 8px; }
   .machine-monitor__chart > div { height: 210px; margin-inline: 2px; }
-  .machine-monitor__dashboard-captions { padding-inline: 7%; gap: 8px; }
-  .machine-monitor__dashboard-captions h3 { font-size: 12px; }
-  .machine-monitor__dashboard-captions span { font-size: 9px; }
-  .machine-monitor__dashboard-chart > div[role="img"] { min-height: 228px; height: 242px; }
+  .machine-monitor__selected-controls { width: 100%; justify-items: stretch; }
+  .machine-monitor__selected-controls > label { min-width: 0; }
+  .machine-monitor__selected-status { max-width: none; text-align: start; }
+  .machine-monitor__dashboard-captions { grid-template-columns: 1fr; }
+  .machine-monitor__dashboard-chart > div[role="img"] { min-height: 438px; height: 458px; }
   .machine-monitor__timeline-chart > div[role="img"] { min-height: 240px; height: 260px; }
   .machine-monitor__memory-pressure > header { flex-direction: column; gap: 4px; }
 }
 @container (max-width: 300px) {
   .machine-monitor__metrics, .machine-monitor__directories > ol, .machine-monitor__memory-pressure dl, .machine-monitor__machine-facts { grid-template-columns: 1fr; }
   .machine-monitor__fleet-picker > ol { grid-template-columns: 1fr; }
-  .machine-monitor__dashboard-captions { grid-template-columns: 1fr; padding-inline: 7%; }
 }

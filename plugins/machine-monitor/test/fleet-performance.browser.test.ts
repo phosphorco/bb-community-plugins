@@ -158,7 +158,7 @@ function machineLabel(machine: string): string {
 
 async function waitForInitialMachine(page: any, machine: string): Promise<void> {
   await page.getByRole("button", { name: new RegExp(`^${machineLabel(machine)}\\. connected`) }).waitFor();
-  await page.waitForFunction((machineIdValue: string) => document.querySelector(`.machine-monitor__dashboard-chart [aria-label*="${machineIdValue}"]`) != null, machine);
+  await page.waitForFunction((machineIdValue: string) => document.querySelector(`.machine-monitor__dashboard-chart[data-machine-id="${machineIdValue}"]`) != null, machine);
 }
 
 async function warmDetail(page: any, machine: string): Promise<void> {
@@ -175,7 +175,9 @@ async function warmDetail(page: any, machine: string): Promise<void> {
 
 /** Exercise actual SVG hit testing, not a synthetic ECharts callback. */
 async function clickFleetUtilizationBar(page: any, dataIndex: number): Promise<void> {
-  const point = await page.locator(".machine-monitor__fleet-utilization svg").evaluate((svg: SVGElement, index: number) => {
+  const chart = page.locator(".machine-monitor__fleet-utilization svg");
+  await chart.scrollIntoViewIfNeeded();
+  const point = await chart.evaluate((svg: SVGElement, index: number) => {
     const primary = getComputedStyle(svg.closest(".machine-monitor__echarts-theme")!).borderBottomColor;
     const datum = [...svg.querySelectorAll<SVGPathElement>("path")]
       .filter((path) => path.getAttribute("fill") === primary && path.getBoundingClientRect().width > 1 && path.getBoundingClientRect().height > 1)[index];
@@ -297,7 +299,7 @@ test("production Chromium fleet selection witness meets the latency, cache, inva
     timerProbe: true,
   }, "browser instrumentation preflight must be complete before any timing verdict");
   assert.deepEqual(preflight.browser, { viewport: { width: 1280, height: 900, dpr: 1 }, theme: "light", reducedMotion: true });
-  assert.equal(preflight.probe.counters.chartInit, 2, "the initial surface must mount only its selected timeline and one shared utilization chart");
+  assert.equal(preflight.probe.counters.chartInit, 2, "the initial surface must mount one shared fleet chart plus one two-grid operational dashboard");
 
   // The rendered SVG datum carries its machine key through ECharts hit testing.
   // A separate compiler regression covers a late event after source reordering.

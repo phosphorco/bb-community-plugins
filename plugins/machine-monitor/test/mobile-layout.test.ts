@@ -29,7 +29,6 @@ test("narrow fleet atlas keeps native controls, layered status, and compact stru
   assert.match(app, /FLEET_UTILIZATION_ATTENTION_PERCENT/);
   assert.match(app, /data-utilization=\{atlas\.utilization\.state\}/);
   assert.match(app, /onFocus=\{\(\) => onIntent\(machine\)\}/);
-  assert.match(app, /onPointerEnter=\{\(\) => onIntent\(machine\)\}/);
   assert.match(styles, /\.machine-monitor__atlas-button\s*\{[^}]*min-width:\s*0/);
   assert.match(styles, /\.machine-monitor__atlas-button\s*\{[^}]*background:\s*linear-gradient\(90deg, var\(--machine-monitor-collector-layer\)/);
   assert.match(styles, /var\(--machine-monitor-cpu-pressure\)/);
@@ -51,8 +50,9 @@ test("narrow fleet atlas keeps native controls, layered status, and compact stru
 });
 
 test("dashboard and detail charts have definite responsive drawing rectangles and native event action", () => {
-  assert.match(styles, /\.machine-monitor__dashboard-chart > div\[role="img"\]\s*\{[^}]*min-height:\s*292px/);
-  assert.match(styles, /\.machine-monitor__dashboard-chart > div\[role="img"\][^}]*height:\s*306px/);
+  assert.match(styles, /\.machine-monitor__dashboard-captions\s*\{[^}]*grid-template-columns:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\)/);
+  assert.match(styles, /\.machine-monitor__dashboard-chart > div\[role="img"\]\s*\{[^}]*min-height:\s*300px/);
+  assert.match(styles, /\.machine-monitor__dashboard-chart > div\[role="img"\][^}]*height:\s*320px/);
   assert.match(styles, /\.machine-monitor__timeline-chart > div\[role="img"\]\s*\{[^}]*min-height:\s*300px/);
   assert.match(styles, /\.machine-monitor__timeline-chart > div\[role="img"\][^}]*height:\s*320px/);
   assert.match(styles, /touch-action:\s*pan-y\s+pinch-zoom/);
@@ -63,5 +63,6 @@ test("dashboard and detail charts have definite responsive drawing rectangles an
 test("mobile operational cards and disk breakdown collapse without forcing a wide grid", () => {
   const compact = styles.match(/@container \(max-width:\s*760px\)\s*\{([\s\S]*?)\n\}/)?.[1] ?? "";
   assert.match(compact, /\.machine-monitor__metrics[^\{]*\.machine-monitor__directories > ol[^\{]*\{\s*grid-template-columns:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\)/);
-  assert.match(styles, /@container \(max-width:\s*300px\)\s*\{[\s\S]*?\.machine-monitor__dashboard-captions/);
+  assert.match(styles, /@container \(max-width:\s*460px\)\s*\{[\s\S]*?\.machine-monitor__dashboard-captions\s*\{[^}]*grid-template-columns:\s*1fr/);
+  assert.match(styles, /@container \(max-width:\s*460px\)\s*\{[\s\S]*?\.machine-monitor__dashboard-chart > div\[role="img"\]\s*\{[^}]*min-height:\s*438px/);
 });

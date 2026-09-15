@@ -227,7 +227,7 @@ test("defers zero-size initialization, coalesces resize, selects merge/replace, 
   expect(chart.dispose).toHaveBeenCalledTimes(1);
 });
 
-test("composes the operational dashboard as utilization ratios plus a separate five-minute load plot", () => {
+test("composes the operational dashboard as two deliberate grids in one persistent ECharts host", () => {
   const metric = (metricId: string, average: number) => ({
     metricId: metricId as any,
     availability: { state: "available" as const, reason: null },
@@ -244,21 +244,26 @@ test("composes the operational dashboard as utilization ratios plus a separate f
     ],
   });
   const rendered = render(<MachineDashboardChart timeline={dashboard} />);
-  const host = screen.getByRole("img", { name: /Machine dashboard for local-bb-server/ });
+  const host = screen.getByRole("img", { name: /Operational history for local-bb-server/ });
   Object.defineProperty(host, "getBoundingClientRect", {
     configurable: true,
-    value: () => ({ width: 800, height: 306, top: 0, right: 800, bottom: 306, left: 0, x: 0, y: 0, toJSON: () => ({}) }),
+    value: () => ({ width: 800, height: 320, top: 0, right: 800, bottom: 320, left: 0, x: 0, y: 0, toJSON: () => ({}) }),
   });
   act(() => {
-    ControlledResizeObserver.instances[0]!.emit(800, 306);
+    ControlledResizeObserver.instances[0]!.emit(800, 320);
     flushFrames();
   });
+  expect(echartsMock.init).toHaveBeenCalledTimes(1);
   const option = echartsMock.instances[0]!.setOption.mock.calls[0]![0] as {
     grid: Array<{ id: string }>;
     yAxis: Array<{ max?: number }>;
-    series: Array<{ id: string; data: Array<[number, number | null]>; markLine?: { data: Array<{ yAxis: number }> } }>;
+    series: Array<{ id: string; data: Array<[number, number | null]> }>;
+    media: Array<{ query: { maxWidth: number } }>;
   };
-  expect(option.grid).toHaveLength(2);
+  expect(option.grid.map((grid) => grid.id)).toEqual([
+    "machine-monitor:machine-dashboard:grid:utilization",
+    "machine-monitor:machine-dashboard:grid:load",
+  ]);
   expect(option.yAxis[0]!.max).toBe(100);
   expect(option.series.map((series) => series.id)).toEqual([
     "machine-monitor:machine-dashboard:series:cpu.utilization.percent",
@@ -268,7 +273,7 @@ test("composes the operational dashboard as utilization ratios plus a separate f
   ]);
   expect(option.series[1]!.data[0]![1]).toBe(40);
   expect(option.series[2]!.data[0]![1]).toBe(30);
-  expect(option.series[0]!.markLine?.data).toEqual([{ yAxis: 70 }]);
+  expect(option.media[0]!.query.maxWidth).toBe(640);
   rendered.unmount();
 });
 

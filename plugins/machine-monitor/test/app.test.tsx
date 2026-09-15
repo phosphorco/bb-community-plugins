@@ -313,17 +313,26 @@ test("keeps overview resident and reuses a cached timeline without a third RPC",
 
   await slot.findByRole("button", { name: /Alpha\. connected/ });
   await waitFor(() => expect(calls).toEqual(["machine-alpha"]));
-  await slot.findByRole("img", { name: /Machine dashboard for machine-alpha/ });
+  await slot.findByRole("img", { name: /Operational history for machine-alpha/ });
+  const selectedPanel = slot.getByRole("heading", { name: "Alpha" }).closest(".machine-monitor__selected-machine")!;
+  const fleetPanel = slot.getByRole("heading", { name: "Fleet overview" }).closest(".machine-monitor__fleet-picker")!;
+  expect(selectedPanel.compareDocumentPosition(fleetPanel) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
+  const historySummary = slot.getByText(/^History data/).closest("summary")!;
+  const historyDetails = historySummary.parentElement as HTMLDetailsElement;
+  historyDetails.open = true;
+  fireEvent(historyDetails, new Event("toggle", { bubbles: true }));
+  expect(slot.getByRole("table")).toBeTruthy();
+  expect(slot.getByText(/Coverage is complete for the requested bounded range/)).toBeTruthy();
 
   fireEvent.click(slot.getByRole("button", { name: /Bravo\. connected/ }));
   await waitFor(() => expect(calls).toEqual(["machine-alpha", "machine-bravo"]));
   expect(slot.getByRole("button", { name: /Alpha\. connected/ })).toBeTruthy();
-  expect(slot.getByRole("img", { name: /Machine dashboard for machine-bravo/ })).toBeTruthy();
+  expect(slot.getByRole("img", { name: /Operational history for machine-bravo/ })).toBeTruthy();
 
   fireEvent.click(slot.getByRole("button", { name: /Alpha\. connected/ }));
   expect(calls).toEqual(["machine-alpha", "machine-bravo"]);
   expect(slot.getByRole("heading", { name: "Alpha" })).toBeTruthy();
-  expect(slot.getByRole("img", { name: /Machine dashboard for machine-alpha/ })).toBeTruthy();
+  expect(slot.getByRole("img", { name: /Operational history for machine-alpha/ })).toBeTruthy();
   slot.lifecycle.unmount();
 });
 
@@ -371,14 +380,14 @@ test("keeps the atlas in keyboard order while a stale, collector-failing source 
   expect(description?.textContent).toContain("Memory utilization unavailable");
   expect(description?.textContent).toContain("Root disk utilization 95.0 percent");
 
-  const host = await slot.findByRole("img", { name: /Machine dashboard for machine-alpha/ });
+  const host = await slot.findByRole("img", { name: /Operational history for machine-alpha/ });
   bravoButton.focus();
   expect(document.activeElement).toBe(bravoButton);
   fireEvent.click(bravoButton);
   await slot.findByRole("heading", { name: "Bravo" });
   expect(alphaButton.getAttribute("aria-pressed")).toBe("false");
   expect(bravoButton.getAttribute("aria-pressed")).toBe("true");
-  expect(slot.getByRole("img", { name: /Machine dashboard for machine-bravo/ })).toBeTruthy();
+  expect(slot.getByRole("img", { name: /Operational history for machine-bravo/ })).toBeTruthy();
   expect(slot.getByRole("heading", { name: "Bravo" }).closest(".machine-monitor__selected-machine")?.getAttribute("data-stale")).toBe("true");
   slot.lifecycle.unmount();
 });
@@ -407,10 +416,9 @@ test("coalesces uncached selection work and disables retained other-machine even
   fireEvent.click(bravoButton);
   await waitFor(() => expect(calls).toEqual(["machine-alpha", "machine-bravo"]));
   expect(slot.getByText(/Showing retained timeline for machine-alpha; Bravo is loading/)).toBeTruthy();
-  expect(slot.getByText("Retained history: machine-alpha")).toBeTruthy();
-  expect(slot.getByRole("img", { name: /Machine dashboard for machine-alpha\. Showing retained history/ })).toBeTruthy();
-  // A retained history from a different source is now omitted from the
-  // dashboard entirely, rather than shown with an actionable-looking chart.
+  expect(slot.getByRole("img", { name: /Operational history for machine-alpha\. Showing retained history/ })).toBeTruthy();
+  // Retained history remains visible while a new source loads, but its exact
+  // event controls stay absent until the matching generation arrives.
   expect(slot.queryByRole("button", { name: "Open linked thread for Repair thread" })).toBeNull();
   bravoPending.resolve(timeline(bravoRequest, { event: true }));
   await openDetailedTimeline(slot);
@@ -734,7 +742,8 @@ test("coalesced A then B invalidations refresh selected A once and reconnect rec
   expect(slot.getByRole("button", { name: /Bravo current\. connected/ })).toBeTruthy();
 
   await slot.behavior.setRealtimeConnectionState("reconnecting");
-  expect(slot.getByText("Stale: showing a retained prior generation.")).toBeTruthy();
+  expect(slot.queryByText("Stale: showing a retained prior generation.")).toBeNull();
+  expect(slot.getByRole("img", { name: /Operational history for machine-alpha\. Showing retained history/ }).parentElement?.getAttribute("data-stale")).toBe("true");
   await slot.behavior.setRealtimeConnectionState("connected");
   await waitFor(() => expect(overviewCalls).toBe(3));
   await waitFor(() => expect(timelineRequests).toHaveLength(3));

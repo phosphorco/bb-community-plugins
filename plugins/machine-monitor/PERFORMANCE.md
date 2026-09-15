@@ -90,7 +90,7 @@ deterministic fixture serializes to 521,037 bytes for the selected 500-event
 timeline and 316,517 bytes for an ordinary 720×3 timeline. Directly loading
 all 32 fixture timelines through the production cache retained 26 entries and
 8,223,127 bytes—under the cap. The browser run's final Chromium telemetry was
-27,600,000 used JS-heap bytes out of 53,500,000 total JS-heap bytes; this is
+10,600,000 used JS-heap bytes out of 31,200,000 total JS-heap bytes; this is
 recorded context, not a separate acceptance threshold.
 
 The normal package test intentionally excludes `fleet-performance*.test.ts`:
@@ -100,13 +100,23 @@ number.
 
 ## Operational-dashboard ECharts release check
 
-Run: 2026-09-15. The selected-machine surface now retains one ECharts instance
-with two grids: CPU, memory-used/total, and root-disk-used/total utilization on
-the left (with the inclusive 70% attention line), and five-minute load on the
-right. Exact events remain in the explicitly opened source timeline below it.
-While an uncached selection is loading, the retained dashboard stays mounted
-and names the source of its retained history; it never exposes that source's
-event actions as if they belonged to the newly selected machine.
+Run: 2026-09-15. The selected-machine surface comes before the compact fleet
+switcher and retains one ECharts instance with two named grids: CPU,
+memory-used/total, and root-disk-used/total utilization on the left (with the
+inclusive 70% attention line), and five-minute load on the right. At narrow
+width, an ECharts media option stacks the same two grids instead of remounting
+them. The selected header names current, stale, or disconnected state with an
+exact as-of time; retained chart provenance appears only for a different
+machine or data generation. Exact events remain in the explicitly opened
+source timeline below it. The native History data disclosure supplies exact
+plotted buckets, coverage, and unavailable gaps; its disk section ranks only
+root-filesystem entries and never invents an `Other /` residual.
+
+The compact fleet switcher retains keyboard-focus and one-shot idle warming.
+Pointer-hover warming was deliberately removed: selected-first reflow could
+move a different fleet row under a stationary pointer and produce an unrelated
+background RPC. A click still selects immediately, while no inadvertent hover
+can consume a detail-flight slot.
 
 The deterministic performance fixture remains unchanged: 32 sources, three
 core tracks with 720 buckets each, and 500 selected-machine events. Its sparse
@@ -118,19 +128,19 @@ source, while the chart compiler rejects a late datum after reordering unless
 its stable machine key still matches.
 
 The temporary production bundle SHA-256 was
-`bda4a74b867d764e249e1108a853f2f200a359dfd098a2ebe5db229e5c1e230c`, using
+`6333ebe37f2abec7d81475a0b8381d3289ca3af4d81f11f9332c89cedbc7cb5d`, using
 Chromium 153.0.8010.12 / revision 1243 at 1280×900 DPR 1, light theme, reduced
 motion, HTTP cache disabled, and service workers blocked.
 
 | Distribution | Candidate p95 / gate |
 | --- | --- |
-| Cached selection | **31.3ms / ≤50ms interaction gate pass** |
-| Warm-uncached selection | **81.2ms / ≤110ms dashboard-regression ceiling / ≤250ms interaction gate pass** |
+| Cached selection | **31.5ms / ≤50ms interaction gate pass** |
+| Warm-uncached selection | **82.1ms / ≤110ms dashboard-regression ceiling / ≤250ms interaction gate pass** |
 
-The 12 cached candidate paints were 30.3, 30.3, 30.8, 30.5, 30.8, 31.3,
-31.1, 31.2, 30.8, 30.8, 31.1, and 31.1ms. The warm-uncached candidates were
-80.1, 79.8, 80.9, 80.6, 80.6, 80.3, 81.2, 80.8, 80.6, 81.1, 81.0, and
-80.6ms.
+The 12 cached candidate paints were 31.5, 30.2, 31.5, 30.8, 30.9, 31.1,
+30.4, 31.1, 31.3, 31.0, 30.5, and 31.3ms. The warm-uncached candidates were
+82.1, 82.0, 81.2, 81.3, 79.5, 80.1, 80.6, 81.6, 81.0, 81.4, 81.3, and
+81.6ms.
 
 The initial surface creates exactly two ECharts instances: the selected-machine
 operational dashboard and one shared fleet-utilization chart—never one chart
