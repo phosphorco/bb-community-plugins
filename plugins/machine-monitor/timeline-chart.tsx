@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef } from "react";
-import { LineChart, LinesChart, ScatterChart } from "echarts/charts";
-import { AriaComponent, GridComponent, MarkAreaComponent, TooltipComponent } from "echarts/components";
+import { BarChart, LineChart, LinesChart, ScatterChart } from "echarts/charts";
+import { AriaComponent, GridComponent, MarkAreaComponent, MarkLineComponent, TooltipComponent } from "echarts/components";
 import * as echarts from "echarts/core";
+import type { EChartsCoreOption } from "echarts/core";
 import { SVGRenderer } from "echarts/renderers";
 
 import type { MachineTimelineResult } from "./fleet-contract.ts";
@@ -16,8 +17,8 @@ import {
   type TimelineEventActivation,
 } from "./timeline-compiler.ts";
 
-// This is the sole ECharts registry and lifecycle owner for fleet timelines.
-echarts.use([AriaComponent, GridComponent, LineChart, LinesChart, MarkAreaComponent, ScatterChart, SVGRenderer, TooltipComponent]);
+// This is the sole ECharts registry and lifecycle owner for fleet monitoring.
+echarts.use([AriaComponent, BarChart, GridComponent, LineChart, LinesChart, MarkAreaComponent, MarkLineComponent, ScatterChart, SVGRenderer, TooltipComponent]);
 
 export type MachineTimelineChartProps = Readonly<{
   timeline: MachineTimelineResult;
@@ -30,30 +31,50 @@ export type MachineTimelineChartProps = Readonly<{
   onActivateEvent?: (activation: TimelineEventActivation) => void;
 }>;
 
-type MachineTimelineEChartsHostProps = Readonly<{
-  compile: (theme: TimelineChartTheme) => CompiledMachineTimeline;
+type ResolvedChartTheme = TimelineChartTheme & Readonly<{
+  primary: string;
+  destructive: string;
+}>;
+
+type EChartsFigure = Readonly<{
+  option: EChartsCoreOption;
+  renderSignature: string;
+}>;
+
+type EChartsUpdateDecision =
+  | Readonly<{ kind: "merge" }>
+  | Readonly<{ kind: "replace-families"; families: readonly string[] }>
+  | Readonly<{ kind: "full-replacement"; reason: string }>
+  | Readonly<{ kind: "rebuild-instance"; reason: string }>;
+
+type EChartsHostProps<Figure extends EChartsFigure, Intent> = Readonly<{
+  compile: (theme: ResolvedChartTheme) => Figure;
   label: string;
   minimumHeight?: number;
   activationDisabled?: boolean;
-  onIntent?: (intent: TimelineChartIntent) => void;
+  onIntent?: (intent: Intent) => void;
+  decideUpdate: (previous: Figure | null, next: Figure) => EChartsUpdateDecision;
+  resolveIntent?: (compiled: Figure, event: unknown) => Intent | null;
 }>;
 
 function cssColor(value: string, fallback: string): string {
   return value.length > 0 && value !== "rgba(0, 0, 0, 0)" && value !== "transparent" ? value : fallback;
 }
 
-function resolveTheme(element: HTMLElement): TimelineChartTheme {
+function resolveTheme(element: HTMLElement): ResolvedChartTheme {
   const style = getComputedStyle(element);
   return {
     foreground: cssColor(style.color, "#111827"),
     muted: cssColor(style.borderTopColor, "#6b7280"),
     border: cssColor(style.borderRightColor, "#d1d5db"),
     surface: cssColor(style.backgroundColor, "#ffffff"),
-    gap: cssColor(style.borderBottomColor, "#9ca3af"),
+    gap: cssColor(style.textDecorationColor, "#9ca3af"),
+    primary: cssColor(style.borderBottomColor, "#7c3aed"),
+    destructive: cssColor(style.borderLeftColor, "#b91c1c"),
   };
 }
 
-function themeFingerprint(theme: TimelineChartTheme): string {
+function themeFingerprint(theme: ResolvedChartTheme): string {
   return JSON.stringify(theme);
 }
 
@@ -62,20 +83,22 @@ function themeFingerprint(theme: TimelineChartTheme): string {
  * element, never mirrors resize or hover into React state, and its event
  * listener resolves the current compiler-owned datum map before publication.
  */
-export function MachineTimelineEChartsHost({ compile, label, minimumHeight = 240, activationDisabled = false, onIntent }: MachineTimelineEChartsHostProps) {
+function EChartsHost<Figure extends EChartsFigure, Intent>({ compile, label, minimumHeight = 240, activationDisabled = false, onIntent, decideUpdate, resolveIntent }: EChartsHostProps<Figure, Intent>) {
   const target = useRef<HTMLDivElement | null>(null);
   const compileRef = useRef(compile);
   const intentRef = useRef(onIntent);
+  const resolveIntentRef = useRef(resolveIntent);
   const scheduleApplyRef = useRef<(() => void) | null>(null);
   compileRef.current = compile;
   intentRef.current = onIntent;
+  resolveIntentRef.current = resolveIntent;
 
   useLayoutEffect(() => {
     const element = target.current;
     if (element == null) return;
 
     let chart: ReturnType<typeof echarts.init> | null = null;
-    let applied: CompiledMachineTimeline | null = null;
+    let applied: Figure | null = null;
     let disposed = false;
     let resizeFrame = 0;
     let pendingSize: { width: number; height: number } | null = null;
@@ -109,7 +132,7 @@ export function MachineTimelineEChartsHost({ compile, label, minimumHeight = 240
         chart = echarts.init(element, undefined, { renderer: "svg", useDirtyRect: true, width, height });
         const activeChart = chart;
         const onClick = (event: unknown) => {
-          const intent = resolveMachineTimelineChartIntent(applied ?? next, event);
+          const intent = resolveIntentRef.current?.(applied ?? next, event);
           if (intent != null) intentRef.current?.(intent);
         };
         activeChart.on("click", onClick);
@@ -121,7 +144,7 @@ export function MachineTimelineEChartsHost({ compile, label, minimumHeight = 240
       appliedSize = { width, height };
 
       if (applied?.renderSignature === next.renderSignature && resolvedThemeKey === nextThemeKey) return;
-      const decision = decideMachineTimelineUpdate(applied, next);
+      const decision = decideUpdate(applied, next);
       if (decision.kind === "replace-families") {
         chart.setOption(next.option, { replaceMerge: [...decision.families], lazyUpdate: false, silent: true });
       } else if (decision.kind === "full-replacement") {
@@ -138,7 +161,7 @@ export function MachineTimelineEChartsHost({ compile, label, minimumHeight = 240
         chart = echarts.init(element, undefined, { renderer: "svg", useDirtyRect: true, width, height });
         const activeChart = chart;
         const onClickForNewChart = (event: unknown) => {
-          const intent = resolveMachineTimelineChartIntent(next, event);
+          const intent = resolveIntentRef.current?.(next, event);
           if (intent != null) intentRef.current?.(intent);
         };
         activeChart.on("click", onClickForNewChart);
@@ -189,7 +212,7 @@ export function MachineTimelineEChartsHost({ compile, label, minimumHeight = 240
       applied = null;
       pendingSize = null;
     };
-  }, []);
+  }, [decideUpdate]);
 
   // Canonical input can change while the host instance remains mounted. The
   // signature gate inside apply keeps equal data/theme updates completely quiet.
@@ -197,7 +220,170 @@ export function MachineTimelineEChartsHost({ compile, label, minimumHeight = 240
     scheduleApplyRef.current?.();
   }, [compile]);
 
-  return <div ref={target} role="img" aria-label={label} aria-disabled={activationDisabled || undefined} style={{ minHeight: minimumHeight, minWidth: 0, width: "100%" }} />;
+  return <div ref={target} className="machine-monitor__echarts-theme" role="img" aria-label={label} aria-disabled={activationDisabled || undefined} style={{ minHeight: minimumHeight, minWidth: 0, width: "100%" }} />;
+}
+
+type MachineTimelineEChartsHostProps = Readonly<{
+  compile: (theme: TimelineChartTheme) => CompiledMachineTimeline;
+  label: string;
+  minimumHeight?: number;
+  activationDisabled?: boolean;
+  onIntent?: (intent: TimelineChartIntent) => void;
+}>;
+
+export function MachineTimelineEChartsHost({ compile, label, minimumHeight, activationDisabled, onIntent }: MachineTimelineEChartsHostProps) {
+  return <EChartsHost
+    compile={compile}
+    label={label}
+    minimumHeight={minimumHeight}
+    activationDisabled={activationDisabled}
+    onIntent={onIntent}
+    decideUpdate={decideMachineTimelineUpdate}
+    resolveIntent={resolveMachineTimelineChartIntent}
+  />;
+}
+
+export const FLEET_UTILIZATION_ATTENTION_PERCENT = 70;
+const FLEET_UTILIZATION_FIGURE_ID = "machine-monitor:fleet-utilization";
+const FLEET_UTILIZATION_SERIES_ID = `${FLEET_UTILIZATION_FIGURE_ID}:series:utilization`;
+
+/** Canonical, bounded input for the fleet overview chart; cards remain exact UI. */
+export type FleetUtilizationDatum = Readonly<{
+  machineKey: string;
+  label: string;
+  utilization: number | null;
+  headroomToAttention: number | null;
+  status: "current" | "stale" | "disconnected" | "unavailable";
+  statusLabel: string;
+  selected: boolean;
+}>;
+
+type CompiledFleetUtilization = EChartsFigure & Readonly<{
+  structuralSignature: string;
+  datumByIndex: readonly FleetUtilizationDatum[];
+}>;
+
+type FleetUtilizationIntent = Readonly<{ kind: "select-machine"; machineKey: string }>;
+
+function utilizationColor(datum: FleetUtilizationDatum, theme: ResolvedChartTheme): string {
+  if (datum.status !== "current") return theme.muted;
+  return datum.utilization != null && datum.utilization >= FLEET_UTILIZATION_ATTENTION_PERCENT ? theme.destructive : theme.primary;
+}
+
+function compileFleetUtilization(data: readonly FleetUtilizationDatum[], theme: ResolvedChartTheme): CompiledFleetUtilization {
+  const structuralSignature = JSON.stringify(data.map((datum) => datum.machineKey));
+  const renderSignature = JSON.stringify({
+    structuralSignature,
+    values: data.map((datum) => [datum.utilization, datum.headroomToAttention, datum.status, datum.selected]),
+    theme,
+  });
+  const denseLabels = data.length > 12;
+  const labelInterval = denseLabels ? Math.max(1, Math.ceil(data.length / 8) - 1) : 0;
+  const option: EChartsCoreOption = {
+    animation: false,
+    aria: { enabled: true },
+    grid: { id: `${FLEET_UTILIZATION_FIGURE_ID}:grid`, top: 18, right: 10, bottom: denseLabels ? 54 : 36, left: 34, containLabel: false },
+    tooltip: { show: true, trigger: "axis", axisPointer: { type: "shadow" } },
+    xAxis: {
+      id: `${FLEET_UTILIZATION_FIGURE_ID}:x`,
+      type: "category",
+      data: data.map((datum) => datum.label),
+      axisLabel: { show: true, color: theme.muted, fontSize: 9, interval: labelInterval, rotate: denseLabels ? 36 : 0, margin: 8, overflow: "truncate", width: denseLabels ? 68 : 120 },
+      axisTick: { show: false },
+      axisLine: { lineStyle: { color: theme.border } },
+    },
+    yAxis: {
+      id: `${FLEET_UTILIZATION_FIGURE_ID}:y`,
+      type: "value",
+      min: 0,
+      max: 100,
+      interval: 25,
+      axisLabel: { color: theme.muted, fontSize: 9, formatter: "{value}%" },
+      splitLine: { lineStyle: { color: theme.border } },
+      axisLine: { lineStyle: { color: theme.border } },
+    },
+    series: [{
+      id: FLEET_UTILIZATION_SERIES_ID,
+      name: "Worst current utilization",
+      type: "bar",
+      silent: false,
+      barMaxWidth: data.length > 8 ? 28 : 42,
+      showBackground: true,
+      backgroundStyle: { color: theme.border, opacity: 0.34 },
+      emphasis: { disabled: true },
+      data: data.map((datum) => ({
+        // ECharts returns this exact datum on click.  The resolver below checks
+        // it against the current index map, so a delayed event from a reordered
+        // chart can never select a different machine.
+        machineKey: datum.machineKey,
+        name: datum.label,
+        value: datum.utilization,
+        itemStyle: {
+          color: utilizationColor(datum, theme),
+          opacity: datum.status === "current" ? 1 : 0.52,
+          borderColor: datum.selected ? theme.foreground : "transparent",
+          borderWidth: datum.selected ? 2 : 0,
+        },
+        label: datum.selected
+          ? { show: true, position: "top", color: theme.foreground, fontSize: 10, fontWeight: 650, formatter: datum.utilization == null ? "—" : `${datum.utilization.toFixed(0)}%` }
+          : { show: false },
+      })),
+      markLine: {
+        silent: true,
+        symbol: "none",
+        lineStyle: { color: theme.foreground, type: "dashed", opacity: 0.65 },
+        label: { color: theme.muted, fontSize: 9, formatter: `Attention ${FLEET_UTILIZATION_ATTENTION_PERCENT}%` },
+        data: [{ yAxis: FLEET_UTILIZATION_ATTENTION_PERCENT }],
+      },
+    }],
+  };
+  return { option, renderSignature, structuralSignature, datumByIndex: data };
+}
+
+function decideFleetUtilizationUpdate(previous: CompiledFleetUtilization | null, next: CompiledFleetUtilization): EChartsUpdateDecision {
+  if (previous == null || previous.structuralSignature !== next.structuralSignature) {
+    return { kind: "full-replacement", reason: "fleet machine set changed" };
+  }
+  return { kind: "merge" };
+}
+
+function resolveFleetUtilizationIntent(compiled: CompiledFleetUtilization, event: unknown): FleetUtilizationIntent | null {
+  if (event == null || typeof event !== "object") return null;
+  const candidate = event as { componentType?: unknown; seriesId?: unknown; dataIndex?: unknown; data?: { machineKey?: unknown } };
+  if (candidate.componentType !== "series" || candidate.seriesId !== FLEET_UTILIZATION_SERIES_ID || typeof candidate.dataIndex !== "number" || !Number.isSafeInteger(candidate.dataIndex)) return null;
+  const datum = compiled.datumByIndex[candidate.dataIndex];
+  if (datum == null || candidate.data?.machineKey !== datum.machineKey) return null;
+  return { kind: "select-machine", machineKey: datum.machineKey };
+}
+
+export type FleetUtilizationChartProps = Readonly<{
+  machines: readonly FleetUtilizationDatum[];
+  className?: string;
+  onSelectMachine?: (machineKey: string) => void;
+}>;
+
+/**
+ * One compact, source-ordered ECharts overview for the entire fleet. Native
+ * cards beneath it remain the exact-value and keyboard selection surface.
+ */
+export function FleetUtilizationChart({ machines, className, onSelectMachine }: FleetUtilizationChartProps) {
+  const compile = useCallback((theme: ResolvedChartTheme) => compileFleetUtilization(machines, theme), [machines]);
+  const onIntent = useCallback((intent: FleetUtilizationIntent) => {
+    if (intent.kind === "select-machine") onSelectMachine?.(intent.machineKey);
+  }, [onSelectMachine]);
+  const label = `Fleet utilization for ${machines.length} machines. Each bar is the worst current CPU, memory, or root-disk percentage. Attention begins at ${FLEET_UTILIZATION_ATTENTION_PERCENT} percent. Use the native source controls below for exact values and machine status.`;
+
+  return <section className={className} aria-label="Fleet utilization overview">
+    <EChartsHost
+      compile={compile}
+      label={label}
+      minimumHeight={152}
+      onIntent={onIntent}
+      decideUpdate={decideFleetUtilizationUpdate}
+      resolveIntent={resolveFleetUtilizationIntent}
+    />
+    <p>{`Current utilization · ${FLEET_UTILIZATION_ATTENTION_PERCENT}% attention target · select a bar or source to inspect.`}</p>
+  </section>;
 }
 
 function timeLabel(atMs: number): string {

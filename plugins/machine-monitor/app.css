@@ -5,18 +5,18 @@
 .machine-monitor__page-header > span { flex: 0 0 auto; padding: 4px 7px; border: 1px solid var(--border); border-radius: 999px; color: var(--muted-foreground); font-size: 10px; white-space: nowrap; }
 .machine-monitor__page-header p { margin-top: 4px; color: var(--muted-foreground); font-size: 12px; overflow-wrap: anywhere; }
 .machine-monitor__fleet-picker, .machine-monitor__selected-machine, .machine-monitor__timeline { min-width: 0; border: 1px solid var(--border); border-radius: 9px; background: var(--card); color: var(--card-foreground); }
-.machine-monitor__fleet-picker { display: grid; gap: 8px; margin-bottom: 10px; padding: 10px; }
+.machine-monitor__fleet-picker { display: grid; gap: 0; margin-bottom: 10px; padding: 0; overflow: hidden; }
 .machine-monitor__fleet-picker > header, .machine-monitor__selected-machine > header, .machine-monitor__timeline > header { display: flex; align-items: start; justify-content: space-between; gap: 12px; }
+.machine-monitor__fleet-picker > header { padding: 10px 10px 8px; }
 .machine-monitor__fleet-picker > header > div, .machine-monitor__selected-machine > header > div { min-width: 0; }
 .machine-monitor__fleet-picker h2, .machine-monitor__timeline h2 { font-size: 12px; font-weight: 650; }
 .machine-monitor__fleet-picker header p, .machine-monitor__selected-machine > header p, .machine-monitor__machine-facts, .machine-monitor__timeline-status { color: var(--muted-foreground); font-size: 11px; overflow-wrap: anywhere; }
 .machine-monitor__fleet-picker header p, .machine-monitor__selected-machine > header p { margin-top: 3px; }
 .machine-monitor__fleet-generation { flex: 0 1 auto; color: var(--muted-foreground); font-size: 10px; font-variant-numeric: tabular-nums; text-align: end; overflow-wrap: anywhere; }
-.machine-monitor__fleet-picker > ol { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 152px), 1fr)); gap: 6px; margin: 0; padding: 0; list-style: none; }
+.machine-monitor__fleet-picker > ol { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 152px), 1fr)); gap: 6px; margin: 0; padding: 8px 10px 10px; list-style: none; }
 .machine-monitor__fleet-picker li { min-width: 0; }
-.machine-monitor__fleet-picker[data-inspecting] { gap: 6px; padding: 8px; }
-.machine-monitor__fleet-picker[data-inspecting] .machine-monitor__atlas-button { min-height: 62px; padding: 7px; }
-.machine-monitor__atlas-button { --machine-monitor-connection-layer: color-mix(in srgb, var(--muted) 62%, transparent); --machine-monitor-collector-layer: transparent; --machine-monitor-pressure-layer: transparent; position: relative; display: grid; grid-template-columns: auto minmax(0, 1fr); grid-template-areas: "state name" "metrics metrics"; align-items: center; width: 100%; min-width: 0; min-height: 68px; gap: 6px 8px; padding: 8px; border: 1px solid var(--border); border-radius: 7px; color: var(--foreground); background: linear-gradient(90deg, var(--machine-monitor-collector-layer), transparent 62%), linear-gradient(135deg, var(--machine-monitor-connection-layer), transparent 72%), linear-gradient(0deg, var(--machine-monitor-pressure-layer), transparent 68%), linear-gradient(90deg, color-mix(in srgb, var(--primary) 34%, transparent) 0 var(--machine-monitor-cpu-pressure), transparent var(--machine-monitor-cpu-pressure)) left calc(100% - 16px) / 100% 2px no-repeat, linear-gradient(90deg, color-mix(in srgb, var(--primary) 28%, transparent) 0 var(--machine-monitor-memory-pressure), transparent var(--machine-monitor-memory-pressure)) left calc(100% - 10px) / 100% 2px no-repeat, linear-gradient(90deg, color-mix(in srgb, var(--primary) 22%, transparent) 0 var(--machine-monitor-disk-pressure), transparent var(--machine-monitor-disk-pressure)) left calc(100% - 4px) / 100% 2px no-repeat, var(--card); font: inherit; text-align: start; cursor: pointer; }
+.machine-monitor__fleet-picker[data-inspecting] .machine-monitor__atlas-button { min-height: 56px; }
+.machine-monitor__atlas-button { --machine-monitor-connection-layer: color-mix(in srgb, var(--muted) 62%, transparent); --machine-monitor-collector-layer: transparent; --machine-monitor-pressure-layer: transparent; position: relative; display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "identity score" "metrics metrics"; align-items: center; width: 100%; min-width: 0; min-height: 64px; gap: 5px 8px; padding: 7px; border: 1px solid var(--border); border-radius: 7px; color: var(--foreground); background: linear-gradient(90deg, var(--machine-monitor-collector-layer), transparent 62%), linear-gradient(135deg, var(--machine-monitor-connection-layer), transparent 72%), linear-gradient(0deg, var(--machine-monitor-pressure-layer), transparent 68%), linear-gradient(90deg, color-mix(in srgb, var(--primary) 34%, transparent) 0 var(--machine-monitor-cpu-pressure), transparent var(--machine-monitor-cpu-pressure)) left calc(100% - 16px) / 100% 2px no-repeat, linear-gradient(90deg, color-mix(in srgb, var(--primary) 28%, transparent) 0 var(--machine-monitor-memory-pressure), transparent var(--machine-monitor-memory-pressure)) left calc(100% - 10px) / 100% 2px no-repeat, linear-gradient(90deg, color-mix(in srgb, var(--primary) 22%, transparent) 0 var(--machine-monitor-disk-pressure), transparent var(--machine-monitor-disk-pressure)) left calc(100% - 4px) / 100% 2px no-repeat, var(--card); font: inherit; text-align: start; cursor: pointer; }
 .machine-monitor__atlas-button[data-connection="disconnected"] { --machine-monitor-connection-layer: color-mix(in srgb, var(--destructive) 18%, transparent); }
 .machine-monitor__atlas-button[data-freshness="stale"] { --machine-monitor-connection-layer: color-mix(in srgb, var(--primary) 14%, transparent); }
 .machine-monitor__atlas-button[data-collector="failure"] { --machine-monitor-collector-layer: color-mix(in srgb, var(--destructive) 20%, transparent); }
@@ -27,13 +27,20 @@
 .machine-monitor__atlas-button[aria-pressed="true"] { border-color: var(--primary); box-shadow: inset 3px 0 0 var(--primary); }
 .machine-monitor__atlas-button[data-anomalous] { border-width: 2px; }
 .machine-monitor__fleet-picker button:focus-visible, .machine-monitor__selected-machine select:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
-.machine-monitor__atlas-state { display: grid; grid-area: state; gap: 1px; justify-items: center; min-width: 24px; color: var(--muted-foreground); font-size: 8px; font-weight: 650; line-height: 1; text-align: center; }
-.machine-monitor__atlas-state b { display: grid; width: 20px; height: 20px; place-items: center; border: 1px solid currentColor; border-radius: 50%; font-size: 13px; line-height: 1; }
-.machine-monitor__atlas-button[data-anomalous] .machine-monitor__atlas-state { color: var(--destructive); }
-.machine-monitor__atlas-button[data-freshness="stale"] .machine-monitor__atlas-state, .machine-monitor__atlas-button[data-collector="warning"] .machine-monitor__atlas-state, .machine-monitor__atlas-button[data-pressure="elevated"] .machine-monitor__atlas-state { color: var(--primary); }
-.machine-monitor__atlas-button > strong { display: flex; grid-area: name; align-items: baseline; justify-content: space-between; min-width: 0; gap: 6px; font-size: 12px; }
-.machine-monitor__atlas-button > strong > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.machine-monitor__atlas-button > strong small { flex: 0 0 auto; color: var(--primary); font-size: 9px; font-weight: 650; }
+.machine-monitor__atlas-identity { display: flex; grid-area: identity; align-items: center; min-width: 0; gap: 6px; }
+.machine-monitor__atlas-identity > b { display: grid; width: 18px; height: 18px; flex: 0 0 auto; place-items: center; border: 1px solid currentColor; border-radius: 50%; color: var(--muted-foreground); font-size: 12px; line-height: 1; }
+.machine-monitor__atlas-identity > span { display: grid; min-width: 0; gap: 1px; }
+.machine-monitor__atlas-identity strong, .machine-monitor__atlas-identity small { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.machine-monitor__atlas-identity strong { font-size: 12px; }
+.machine-monitor__atlas-identity small { color: var(--muted-foreground); font-size: 8px; font-weight: 650; }
+.machine-monitor__atlas-button[data-anomalous] .machine-monitor__atlas-identity > b { color: var(--destructive); }
+.machine-monitor__atlas-button[data-freshness="stale"] .machine-monitor__atlas-identity > b, .machine-monitor__atlas-button[data-collector="warning"] .machine-monitor__atlas-identity > b, .machine-monitor__atlas-button[data-pressure="elevated"] .machine-monitor__atlas-identity > b { color: var(--primary); }
+.machine-monitor__atlas-button[data-selected] .machine-monitor__atlas-identity small { color: var(--primary); }
+.machine-monitor__atlas-score { display: grid; grid-area: score; justify-items: end; min-width: 0; gap: 1px; color: var(--muted-foreground); font-size: 8px; font-variant-numeric: tabular-nums; text-align: end; }
+.machine-monitor__atlas-score > strong { color: var(--foreground); font-size: 13px; line-height: 1; }
+.machine-monitor__atlas-score > small { max-width: 74px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.machine-monitor__atlas-button[data-utilization="attention"] .machine-monitor__atlas-score > strong { color: var(--destructive); }
+.machine-monitor__atlas-button[data-utilization="unavailable"] .machine-monitor__atlas-score { font-style: italic; }
 .machine-monitor__atlas-metrics { display: grid; grid-area: metrics; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 5px; min-width: 0; }
 .machine-monitor__atlas-metric { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 3px; min-width: 0; color: var(--muted-foreground); font-size: 8px; font-variant-numeric: tabular-nums; }
 .machine-monitor__atlas-metric > b { font-size: inherit; letter-spacing: .02em; }
@@ -43,6 +50,9 @@
 .machine-monitor__atlas-metric[data-level="critical"] > i > i { background: var(--destructive); }
 .machine-monitor__atlas-metric[data-level="unavailable"] > i { border-style: dashed; background: repeating-linear-gradient(135deg, color-mix(in srgb, var(--muted) 75%, transparent) 0 2px, transparent 2px 4px); }
 .machine-monitor__atlas-metric[data-level="unavailable"] > i > i { display: none; }
+.machine-monitor__fleet-utilization { display: grid; min-width: 0; gap: 3px; padding: 5px 10px 7px; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); background: color-mix(in srgb, var(--muted) 24%, transparent); }
+.machine-monitor__fleet-utilization > div[role="img"] { width: 100%; min-width: 0; height: 152px; min-height: 152px; touch-action: pan-y pinch-zoom; }
+.machine-monitor__fleet-utilization > p { color: var(--muted-foreground); font-size: 10px; overflow-wrap: anywhere; }
 .machine-monitor__visually-hidden { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; border: 0; }
 .machine-monitor__selected-machine { display: grid; gap: 10px; margin-bottom: 10px; padding: 12px; }
 .machine-monitor__selected-machine[data-stale] { border-color: color-mix(in srgb, var(--primary) 48%, var(--border)); }
@@ -115,7 +125,7 @@
 .machine-monitor__processes > div:first-child { color: var(--muted-foreground); font-size: 10px; }.machine-monitor__processes > div:nth-child(even) { background: color-mix(in srgb, var(--muted) 32%, transparent); }.machine-monitor__processes span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .machine-monitor__processes [role="row"] > span:first-child { overflow: visible; text-overflow: clip; white-space: normal; overflow-wrap: anywhere; }
 .machine-monitor__processes-note { margin-top: 7px !important; }
-.machine-monitor__theme { position: absolute; width: 0; height: 0; overflow: hidden; pointer-events: none; color: var(--foreground); border-top-color: var(--muted-foreground); border-right-color: var(--border); border-bottom-color: color-mix(in oklch, oklch(72% .15 250) 76%, var(--primary)); border-left-color: color-mix(in oklch, var(--destructive) 82%, var(--foreground)); outline-color: color-mix(in oklch, oklch(72% .16 15) 76%, var(--destructive)); text-decoration-color: color-mix(in oklch, oklch(76% .15 145) 76%, var(--primary)); caret-color: color-mix(in oklch, oklch(72% .12 300) 76%, var(--primary)); background: var(--popover, var(--card)); }
+.machine-monitor__echarts-theme { color: var(--foreground); border-top-color: var(--muted-foreground); border-right-color: var(--border); border-bottom-color: var(--primary); border-left-color: var(--destructive); text-decoration-color: color-mix(in srgb, var(--muted-foreground) 66%, var(--border)); background: var(--card); }
 .machine-monitor__sidebar-warning { display: block; width: 7px; height: 7px; border-radius: 50%; background: var(--destructive); box-shadow: 0 0 0 2px color-mix(in srgb, var(--destructive) 20%, transparent); }
 .machine-monitor__error { margin: 0 0 10px; padding: 8px 10px; border: 1px solid color-mix(in srgb, var(--destructive) 38%, var(--border)); border-radius: 7px; color: var(--destructive); font-size: 12px; }
 .machine-monitor__empty { margin: 24px 0; color: var(--muted-foreground); font-size: 13px; }

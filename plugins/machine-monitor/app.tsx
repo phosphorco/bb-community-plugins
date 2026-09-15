@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useId, useRef, useState, type CSSProperties } from "react";
+import { memo, useCallback, useEffect, useId, useMemo, useRef, useState, type CSSProperties } from "react";
 import {
   definePluginApp,
   useBbNavigate,
@@ -25,7 +25,7 @@ import {
   type MachineTimelineResult,
 } from "./fleet-contract.ts";
 import type { MachineMonitorHealth, rpcContract } from "./rpc-contract.ts";
-import { MachineTimelineChart } from "./timeline-chart.tsx";
+import { FLEET_UTILIZATION_ATTENTION_PERCENT, FleetUtilizationChart, MachineTimelineChart, type FleetUtilizationDatum } from "./timeline-chart.tsx";
 import type { TimelineEventActivation } from "./timeline-compiler.ts";
 import "./app.css";
 
@@ -64,6 +64,15 @@ type FleetAtlasPressure = Readonly<{
   level: "unavailable" | "nominal" | "elevated" | "critical";
 }>;
 
+type FleetAtlasUtilization = Readonly<{
+  value: number | null;
+  headroomToAttention: number | null;
+  limitingResource: FleetAtlasPressure["shortLabel"] | null;
+  state: "unavailable" | "below-attention" | "attention";
+  description: string;
+  compactLabel: string;
+}>;
+
 type FleetAtlasPresentation = Readonly<{
   pressures: readonly FleetAtlasPressure[];
   state: "current" | "stale" | "disconnected" | "failure" | "warning" | "pressure";
@@ -71,6 +80,7 @@ type FleetAtlasPresentation = Readonly<{
   glyph: string;
   collectorState: "clear" | "warning" | "failure";
   pressureLevel: FleetAtlasPressure["level"];
+  utilization: FleetAtlasUtilization;
   anomalous: boolean;
 }>;
 
@@ -100,39 +110,75 @@ function pressureText(value: FleetAtlasPressure): string {
   return value.value == null ? `${value.label} unavailable` : `${value.label} ${value.value.toFixed(1)} percent`;
 }
 
+function fleetUtilization(pressures: readonly FleetAtlasPressure[]): FleetAtlasUtilization {
+  const available = pressures.filter((pressure): pressure is FleetAtlasPressure & Readonly<{ value: number }> => pressure.value != null);
+  if (available.length === 0) {
+    return { value: null, headroomToAttention: null, limitingResource: null, state: "unavailable", description: "Overall utilization unavailable; none of CPU, memory, or root disk reported a current percentage.", compactLabel: "Unavailable" };
+  }
+  const limiting = available.reduce((current, pressure) => pressure.value > current.value ? pressure : current);
+  const value = limiting.value;
+  const headroomToAttention = FLEET_UTILIZATION_ATTENTION_PERCENT - value;
+  if (headroomToAttention > 0) {
+    return {
+      value,
+      headroomToAttention,
+      limitingResource: limiting.shortLabel,
+      state: "below-attention",
+      description: `Overall utilization ${value.toFixed(1)} percent from ${limiting.label}, ${headroomToAttention.toFixed(1)} percentage points below the ${FLEET_UTILIZATION_ATTENTION_PERCENT} percent attention target.`,
+      compactLabel: `${headroomToAttention.toFixed(0)} pt · ${limiting.shortLabel}`,
+    };
+  }
+  if (headroomToAttention === 0) {
+    return {
+      value,
+      headroomToAttention,
+      limitingResource: limiting.shortLabel,
+      state: "attention",
+      description: `Overall utilization ${value.toFixed(1)} percent from ${limiting.label}, at the ${FLEET_UTILIZATION_ATTENTION_PERCENT} percent attention target.`,
+      compactLabel: `At target · ${limiting.shortLabel}`,
+    };
+  }
+  return {
+    value,
+    headroomToAttention,
+    limitingResource: limiting.shortLabel,
+    state: "attention",
+    description: `Overall utilization ${value.toFixed(1)} percent from ${limiting.label}, ${Math.abs(headroomToAttention).toFixed(1)} percentage points above the ${FLEET_UTILIZATION_ATTENTION_PERCENT} percent attention target.`,
+    compactLabel: `${Math.abs(headroomToAttention).toFixed(0)} pt · ${limiting.shortLabel}`,
+  };
+}
+
 function fleetAtlasPresentation(machine: FleetMachine): FleetAtlasPresentation {
-  const memoryPressure = latestMetricValue(machine, "memory.pressure.full.percent")
-    ?? latestMetricValue(machine, "memory.pressure.some.percent")
-    ?? percentageOf(latestMetricValue(machine, "memory.used.bytes"), latestMetricValue(machine, "memory.total.bytes"));
   const pressures = [
     pressure(latestMetricValue(machine, "cpu.utilization.percent"), "cpu", "CPU utilization", "CPU"),
-    pressure(memoryPressure, "memory", "Memory pressure", "MEM"),
-    pressure(percentageOf(latestMetricValue(machine, "disk.root.used.bytes"), latestMetricValue(machine, "disk.root.total.bytes")), "disk", "Root disk pressure", "DSK"),
+    pressure(percentageOf(latestMetricValue(machine, "memory.used.bytes"), latestMetricValue(machine, "memory.total.bytes")), "memory", "Memory utilization", "MEM"),
+    pressure(percentageOf(latestMetricValue(machine, "disk.root.used.bytes"), latestMetricValue(machine, "disk.root.total.bytes")), "disk", "Root disk utilization", "DSK"),
   ] as const;
   const pressureLevel = pressures.reduce<FleetAtlasPressure["level"]>((current, value) => {
     const weight = { unavailable: 0, nominal: 1, elevated: 2, critical: 3 } as const;
     return weight[value.level] > weight[current] ? value.level : current;
   }, "unavailable");
+  const utilization = fleetUtilization(pressures);
   const collectorState = machine.lastError != null
     || machine.warnings.some((warning) => warning.kind === "collector-error")
     ? "failure"
     : machine.warnings.length > 0 ? "warning" : "clear";
   if (machine.connection === "disconnected") {
-    return { pressures, state: "disconnected", stateLabel: "Disconnected", glyph: "×", collectorState, pressureLevel, anomalous: true };
+    return { pressures, state: "disconnected", stateLabel: "Disconnected", glyph: "×", collectorState, pressureLevel, utilization, anomalous: true };
   }
   if (machine.freshness === "stale") {
-    return { pressures, state: "stale", stateLabel: "Stale data", glyph: "~", collectorState, pressureLevel, anomalous: true };
+    return { pressures, state: "stale", stateLabel: "Stale data", glyph: "~", collectorState, pressureLevel, utilization, anomalous: true };
   }
   if (collectorState === "failure") {
-    return { pressures, state: "failure", stateLabel: "Collector failure", glyph: "!", collectorState, pressureLevel, anomalous: true };
+    return { pressures, state: "failure", stateLabel: "Collector failure", glyph: "!", collectorState, pressureLevel, utilization, anomalous: true };
   }
   if (collectorState === "warning") {
-    return { pressures, state: "warning", stateLabel: "Collector warning", glyph: "!", collectorState, pressureLevel, anomalous: true };
+    return { pressures, state: "warning", stateLabel: "Collector warning", glyph: "!", collectorState, pressureLevel, utilization, anomalous: true };
   }
   if (pressureLevel === "critical" || pressureLevel === "elevated") {
-    return { pressures, state: "pressure", stateLabel: `${pressureLevel === "critical" ? "Critical" : "Elevated"} resource pressure`, glyph: "↑", collectorState, pressureLevel, anomalous: true };
+    return { pressures, state: "pressure", stateLabel: `${pressureLevel === "critical" ? "Critical" : "Elevated"} resource pressure`, glyph: "↑", collectorState, pressureLevel, utilization, anomalous: true };
   }
-  return { pressures, state: "current", stateLabel: "Current", glyph: "•", collectorState, pressureLevel, anomalous: false };
+  return { pressures, state: "current", stateLabel: "Current", glyph: "•", collectorState, pressureLevel, utilization, anomalous: false };
 }
 
 function displayMetric(value: number | null, unit: ReturnType<typeof metricCatalogEntry>["unit"]): string {
@@ -435,6 +481,7 @@ const FleetPickerRow = memo(function FleetPickerRow({ machine, selected, onSelec
   const description = [
     `${connectionText(machine)}. ${atlas.stateLabel}.`,
     machine.lastError == null ? `${machine.warnings.length} collector warning${machine.warnings.length === 1 ? "" : "s"}.` : `Collector failure: ${machine.lastError}.`,
+    atlas.utilization.description,
     ...atlas.pressures.map(pressureText),
     selected ? "Selected; its full timeline inspector is shown below." : "Press to show this machine's full timeline inspector.",
   ].join(" ");
@@ -449,12 +496,13 @@ const FleetPickerRow = memo(function FleetPickerRow({ machine, selected, onSelec
       className="machine-monitor__atlas-button"
       type="button"
       aria-pressed={selected}
-      aria-label={`${machine.label}. ${machine.connection}. ${machine.freshness}. ${atlas.stateLabel}.`}
+      aria-label={`${machine.label}. ${machine.connection}. ${machine.freshness}. ${atlas.stateLabel}. ${atlas.utilization.value == null ? "Overall utilization unavailable." : `Overall utilization ${atlas.utilization.value.toFixed(1)} percent.`}`}
       aria-describedby={descriptionId}
       data-connection={machine.connection}
       data-freshness={machine.freshness}
       data-collector={atlas.collectorState}
       data-pressure={atlas.pressureLevel}
+      data-utilization={atlas.utilization.state}
       data-anomalous={atlas.anomalous || undefined}
       data-selected={selected || undefined}
       style={atlasBackgroundStyle}
@@ -462,8 +510,13 @@ const FleetPickerRow = memo(function FleetPickerRow({ machine, selected, onSelec
       onFocus={() => onIntent(machine)}
       onPointerEnter={() => onIntent(machine)}
     >
-      <span className="machine-monitor__atlas-state" aria-hidden="true"><b>{atlas.glyph}</b><span>{atlas.stateLabel}</span></span>
-      <strong><span>{machine.label}</span>{selected && <small>Inspecting</small>}</strong>
+      <span className="machine-monitor__atlas-identity" aria-hidden="true">
+        <b>{atlas.glyph}</b>
+        <span><strong>{machine.label}</strong><small>{selected ? "Inspecting" : atlas.stateLabel}</small></span>
+      </span>
+      <span className="machine-monitor__atlas-score" aria-hidden="true">
+        <strong>{atlas.utilization.value == null ? "—" : `${atlas.utilization.value.toFixed(1)}%`}</strong><small>{atlas.utilization.compactLabel}</small>
+      </span>
       <span className="machine-monitor__atlas-metrics" aria-hidden="true">
         {atlas.pressures.map((value) => <span
           className="machine-monitor__atlas-metric"
@@ -486,15 +539,43 @@ function FleetPicker({ overview, selectedMachineKey, onSelect, onIntent }: {
   onSelect: (machine: FleetMachine) => void;
   onIntent: (machine: FleetMachine) => void;
 }) {
-  const attentionCount = overview.machines.filter((machine) => fleetAtlasPresentation(machine).anomalous).length;
+  const utilizationAttentionCount = overview.machines.filter((machine) => fleetAtlasPresentation(machine).utilization.state === "attention").length;
+  const healthAttentionCount = overview.machines.filter((machine) => {
+    const atlas = fleetAtlasPresentation(machine);
+    return atlas.anomalous && atlas.utilization.state !== "attention";
+  }).length;
+  const utilizationMachines = useMemo(() => overview.machines.map((machine) => {
+    const atlas = fleetAtlasPresentation(machine);
+    const status: FleetUtilizationDatum["status"] = atlas.utilization.value == null
+      ? "unavailable"
+      : machine.connection === "disconnected"
+        ? "disconnected"
+        : machine.freshness === "stale" ? "stale" : "current";
+    return {
+      machineKey: machineIdentityKey(machine.machine),
+      label: machine.label,
+      // A stale or disconnected observation can remain useful in its native
+      // card, but must not become a bar that looks like a current low value.
+      utilization: status === "current" ? atlas.utilization.value : null,
+      headroomToAttention: status === "current" ? atlas.utilization.headroomToAttention : null,
+      status,
+      statusLabel: atlas.stateLabel,
+      selected: machineIdentityKey(machine.machine) === selectedMachineKey,
+    };
+  }), [overview.machines, selectedMachineKey]);
+  const selectUtilizationMachine = useCallback((machineKey: string) => {
+    const machine = overview.machines.find((candidate) => machineIdentityKey(candidate.machine) === machineKey);
+    if (machine != null) onSelect(machine);
+  }, [onSelect, overview.machines]);
   return <section className="machine-monitor__fleet-picker" data-inspecting={selectedMachineKey != null || undefined} aria-labelledby="machine-monitor-fleet-title">
     <header>
       <div>
-        <h2 id="machine-monitor-fleet-title">Fleet atlas</h2>
-        <p>{`${overview.machines.length} source${overview.machines.length === 1 ? "" : "s"} · source order is preserved for keyboard navigation`}</p>
+        <h2 id="machine-monitor-fleet-title">Fleet overview</h2>
+        <p>{`${overview.machines.length} source${overview.machines.length === 1 ? "" : "s"} · utilization, health, and switching in one view`}</p>
       </div>
-      <span className="machine-monitor__fleet-generation">{attentionCount === 0 ? "All current" : `${attentionCount} need attention`}</span>
+      <span className="machine-monitor__fleet-generation">{utilizationAttentionCount > 0 ? `${utilizationAttentionCount} at ≥${FLEET_UTILIZATION_ATTENTION_PERCENT}%` : "Utilization below 70%"}{healthAttentionCount > 0 ? ` · ${healthAttentionCount} health signal${healthAttentionCount === 1 ? "" : "s"}` : ""}</span>
     </header>
+    {overview.machines.length > 0 && <FleetUtilizationChart className="machine-monitor__fleet-utilization" machines={utilizationMachines} onSelectMachine={selectUtilizationMachine} />}
     {overview.machines.length === 0 ? <p className="machine-monitor__empty">No machines are registered yet.</p> : <ol>
       {overview.machines.map((machine) => <FleetPickerRow
         key={machineIdentityKey(machine.machine)}

@@ -21,7 +21,7 @@ const echartsMock = vi.hoisted(() => {
 
 vi.mock("echarts/core", () => ({ init: echartsMock.init, use: echartsMock.use }));
 
-import { MachineTimelineChart } from "../timeline-chart.tsx";
+import { FleetUtilizationChart, MachineTimelineChart } from "../timeline-chart.tsx";
 import type { MachineTimelineResult } from "../fleet-contract.ts";
 
 class ControlledResizeObserver {
@@ -225,6 +225,136 @@ test("defers zero-size initialization, coalesces resize, selects merge/replace, 
   expect(themeObserver.disconnect).toHaveBeenCalledTimes(1);
   expect(chart.off).toHaveBeenCalledWith("click", chart.on.mock.calls[0]![1]);
   expect(chart.dispose).toHaveBeenCalledTimes(1);
+});
+
+test("reuses the same ECharts lifecycle host for a bounded fleet utilization strip", () => {
+  const selected: string[] = [];
+  const machines = [
+    { machineKey: "machine-alpha", label: "Alpha", utilization: 40, headroomToAttention: 30, status: "current" as const, statusLabel: "Current", selected: true },
+    { machineKey: "machine-bravo", label: "Bravo", utilization: 92, headroomToAttention: -22, status: "current" as const, statusLabel: "Current", selected: false },
+    { machineKey: "machine-charlie", label: "Charlie", utilization: null, headroomToAttention: null, status: "unavailable" as const, statusLabel: "Disconnected", selected: false },
+  ] as const;
+  const rendered = render(<FleetUtilizationChart machines={machines} onSelectMachine={(machineKey) => selected.push(machineKey)} />);
+  const host = screen.getByRole("img", { name: /Fleet utilization for 3 machines/i });
+  let layout = { width: 640, height: 152 };
+  Object.defineProperty(host, "getBoundingClientRect", {
+    configurable: true,
+    value: () => ({ ...layout, top: 0, right: layout.width, bottom: layout.height, left: 0, x: 0, y: 0, toJSON: () => ({}) }),
+  });
+  const resizeObserver = ControlledResizeObserver.instances[0]!;
+  act(() => {
+    resizeObserver.emit(640, 152);
+    flushFrames();
+  });
+  const chart = echartsMock.instances[0]!;
+  const option = chart.setOption.mock.calls[0]![0] as { series: Array<{ id: string; data: Array<{ value: number | null; machineKey: string }>; markLine?: { data: Array<{ yAxis: number }> } }> };
+  const series = option.series.find((candidate) => candidate.id === "machine-monitor:fleet-utilization:series:utilization")!;
+  expect(series.data.map((datum) => datum.value)).toEqual([40, 92, null]);
+  expect(series.data.map((datum) => datum.machineKey)).toEqual(["machine-alpha", "machine-bravo", "machine-charlie"]);
+  expect(series.markLine?.data).toEqual([{ yAxis: 70 }]);
+
+  const click = chart.on.mock.calls.find(([name]) => name === "click")![1] as (event: unknown) => void;
+  click({ componentType: "series", seriesId: series.id, dataIndex: 1, data: { machineKey: "machine-bravo" } });
+  click({ componentType: "series", seriesId: series.id, dataIndex: 99, data: { machineKey: "machine-bravo" } });
+  click({ componentType: "series", seriesId: series.id, dataIndex: 1, data: { machineKey: "machine-alpha" } });
+  expect(selected).toEqual(["machine-bravo"]);
+
+  rendered.rerender(<FleetUtilizationChart machines={[...machines]} onSelectMachine={(machineKey) => selected.push(machineKey)} />);
+  act(flushFrames);
+  expect(chart.setOption).toHaveBeenCalledTimes(1);
+
+  rendered.rerender(<FleetUtilizationChart machines={[...machines].reverse()} onSelectMachine={(machineKey) => selected.push(machineKey)} />);
+  act(flushFrames);
+  expect(echartsMock.init).toHaveBeenCalledTimes(1);
+  expect(chart.setOption.mock.calls.at(-1)![1]).toEqual({ notMerge: true, lazyUpdate: false, silent: true });
+  // An old index after reorder must be refused; the current datum identity is
+  // the only permitted selection key.
+  click({ componentType: "series", seriesId: series.id, dataIndex: 0, data: { machineKey: "machine-alpha" } });
+  click({ componentType: "series", seriesId: series.id, dataIndex: 2, data: { machineKey: "machine-alpha" } });
+  expect(selected).toEqual(["machine-bravo", "machine-alpha"]);
+
+  rendered.unmount();
+  expect(resizeObserver.disconnect).toHaveBeenCalledTimes(1);
+  expect(chart.dispose).toHaveBeenCalledTimes(1);
+});
+
+test("keeps a 256-machine utilization overview dense, concise, and single-hosted", () => {
+  const machines = Array.from({ length: 256 }, (_, index) => ({
+    machineKey: `machine-${index}`,
+    label: `Machine ${index}`,
+    utilization: index % 101,
+    headroomToAttention: 70 - index % 101,
+    status: "current" as const,
+    statusLabel: "Current",
+    selected: index === 0,
+  }));
+  const rendered = render(<FleetUtilizationChart machines={machines} />);
+  const host = screen.getByRole("img", { name: /Fleet utilization for 256 machines/i });
+  Object.defineProperty(host, "getBoundingClientRect", {
+    configurable: true,
+    value: () => ({ width: 320, height: 152, top: 0, right: 320, bottom: 152, left: 0, x: 0, y: 0, toJSON: () => ({}) }),
+  });
+  act(() => {
+    ControlledResizeObserver.instances[0]!.emit(320, 152);
+    flushFrames();
+  });
+  const option = echartsMock.instances[0]!.setOption.mock.calls[0]![0] as {
+    xAxis: { data: string[]; axisLabel: { interval: number } };
+    series: Array<{ data: unknown[] }>;
+  };
+  expect(option.xAxis.data).toHaveLength(256);
+  expect(option.xAxis.axisLabel.interval).toBeGreaterThan(0);
+  expect(option.series[0]!.data).toHaveLength(256);
+  expect(echartsMock.init).toHaveBeenCalledTimes(1);
+  expect(host.getAttribute("aria-label")).not.toContain("Machine 255");
+  rendered.unmount();
+});
+
+test("resolves semantic chart colors from the host theme without a remount", () => {
+  const theme = {
+    color: "rgb(17, 24, 39)",
+    borderTopColor: "rgb(107, 114, 128)",
+    borderRightColor: "rgb(209, 213, 219)",
+    backgroundColor: "rgb(255, 255, 255)",
+    textDecorationColor: "rgb(156, 163, 175)",
+    borderBottomColor: "rgb(124, 58, 237)",
+    borderLeftColor: "rgb(185, 28, 28)",
+  };
+  const originalGetComputedStyle = window.getComputedStyle.bind(window);
+  const getStyle = vi.spyOn(window, "getComputedStyle").mockImplementation((element) => {
+    const computed = originalGetComputedStyle(element);
+    return new Proxy(computed, {
+      get(target, property, receiver) {
+        if (typeof property === "string" && property in theme) return theme[property as keyof typeof theme];
+        return Reflect.get(target, property, receiver);
+      },
+    });
+  });
+  const machines = [{ machineKey: "machine-alpha", label: "Alpha", utilization: 70, headroomToAttention: 0, status: "current" as const, statusLabel: "Current", selected: true }];
+  const rendered = render(<FleetUtilizationChart machines={machines} />);
+  const host = screen.getByRole("img", { name: /Fleet utilization for 1 machines/i });
+  Object.defineProperty(host, "getBoundingClientRect", {
+    configurable: true,
+    value: () => ({ width: 320, height: 152, top: 0, right: 320, bottom: 152, left: 0, x: 0, y: 0, toJSON: () => ({}) }),
+  });
+  act(() => {
+    ControlledResizeObserver.instances[0]!.emit(320, 152);
+    flushFrames();
+  });
+  const chart = echartsMock.instances[0]!;
+  const first = chart.setOption.mock.calls.at(-1)![0] as { series: Array<{ data: Array<{ itemStyle: { color: string } }> }> };
+  expect(first.series[0]!.data[0]!.itemStyle.color).toBe("rgb(185, 28, 28)");
+  theme.borderBottomColor = "rgb(12, 140, 233)";
+  theme.borderLeftColor = "rgb(224, 72, 72)";
+  act(() => {
+    ControlledMutationObserver.instances[0]!.callback([], ControlledMutationObserver.instances[0] as unknown as MutationObserver);
+    flushFrames();
+  });
+  const second = chart.setOption.mock.calls.at(-1)![0] as { series: Array<{ data: Array<{ itemStyle: { color: string } }> }> };
+  expect(second.series[0]!.data[0]!.itemStyle.color).toBe("rgb(224, 72, 72)");
+  expect(echartsMock.init).toHaveBeenCalledTimes(1);
+  rendered.unmount();
+  getStyle.mockRestore();
 });
 
 test("provides partial/stale/truncated disclosure and a native exact event action", () => {

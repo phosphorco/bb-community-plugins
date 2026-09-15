@@ -324,6 +324,7 @@ test("keeps the atlas in keyboard order while a stale, collector-failing source 
   const healthy = machine(alpha, "Alpha", {
     latestMetrics: [
       { metricId: "cpu.utilization.percent", value: 24, availability: { state: "available" as const, reason: null } },
+      { metricId: "memory.pressure.full.percent", value: 99, availability: { state: "available" as const, reason: null } },
       { metricId: "memory.used.bytes", value: 4, availability: { state: "available" as const, reason: null } },
       { metricId: "memory.total.bytes", value: 10, availability: { state: "available" as const, reason: null } },
       { metricId: "disk.root.used.bytes", value: 3, availability: { state: "available" as const, reason: null } },
@@ -360,8 +361,8 @@ test("keeps the atlas in keyboard order while a stale, collector-failing source 
   const description = document.getElementById(bravoButton.getAttribute("aria-describedby") ?? "");
   expect(description?.textContent).toContain("Collector failure: Collector timed out.");
   expect(description?.textContent).toContain("CPU utilization 96.0 percent");
-  expect(description?.textContent).toContain("Memory pressure 91.0 percent");
-  expect(description?.textContent).toContain("Root disk pressure 95.0 percent");
+  expect(description?.textContent).toContain("Memory utilization unavailable");
+  expect(description?.textContent).toContain("Root disk utilization 95.0 percent");
 
   const host = await slot.findByRole("img", { name: /Machine timeline/ });
   bravoButton.focus();
@@ -560,6 +561,67 @@ test("bounds focus/pointer prefetch and exposes disconnected, stale, unsupported
   await slot.findByText("Coverage: partial; the timeline does not represent the complete requested range.");
   fireEvent.click(slot.getByRole("button", { name: /Machine 9\. connected/ }));
   expect((await slot.findByRole("alert")).textContent).toContain("timeline RPC failed");
+  slot.lifecycle.unmount();
+});
+
+test("renders one generation-safe fleet utilization strip with a visible attention target and native-card-equivalent selection", async () => {
+  const healthy = machine(alpha, "Alpha", {
+    latestMetrics: [
+      { metricId: "cpu.utilization.percent", value: 24, availability: { state: "available" as const, reason: null } },
+      { metricId: "memory.used.bytes", value: 4, availability: { state: "available" as const, reason: null } },
+      { metricId: "memory.total.bytes", value: 10, availability: { state: "available" as const, reason: null } },
+      { metricId: "disk.root.used.bytes", value: 3, availability: { state: "available" as const, reason: null } },
+      { metricId: "disk.root.total.bytes", value: 10, availability: { state: "available" as const, reason: null } },
+    ],
+  });
+  const overTarget = machine(bravo, "Bravo", {
+    latestMetrics: [
+      { metricId: "cpu.utilization.percent", value: 92, availability: { state: "available" as const, reason: null } },
+      { metricId: "memory.used.bytes", value: 4, availability: { state: "available" as const, reason: null } },
+      { metricId: "memory.total.bytes", value: 10, availability: { state: "available" as const, reason: null } },
+      { metricId: "disk.root.used.bytes", value: 3, availability: { state: "available" as const, reason: null } },
+      { metricId: "disk.root.total.bytes", value: 10, availability: { state: "available" as const, reason: null } },
+    ],
+  });
+  const stale = machine({ source: "enrolled-host" as const, machineId: "machine-charlie" }, "Charlie", {
+    freshness: "stale" as const,
+    latestMetrics: [
+      { metricId: "cpu.utilization.percent", value: 5, availability: { state: "available" as const, reason: null } },
+      { metricId: "memory.used.bytes", value: 1, availability: { state: "available" as const, reason: null } },
+      { metricId: "memory.total.bytes", value: 10, availability: { state: "available" as const, reason: null } },
+      { metricId: "disk.root.used.bytes", value: 1, availability: { state: "available" as const, reason: null } },
+      { metricId: "disk.root.total.bytes", value: 10, availability: { state: "available" as const, reason: null } },
+    ],
+  });
+  const app = await loadPluginApp(() => import("../app.tsx"));
+  const slot = renderSlot(app.navPanels[0]!, { subPath: "" }, {
+    rpc: fleetRpc(() => overview([healthy, overTarget, stale]), (request) => timeline(request)),
+  } as any);
+
+  const chartHost = await slot.findByRole("img", { name: /Fleet utilization for 3 machines/i });
+  await waitFor(() => expect(echartsMock.instances.some((chart) => chart.setOption.mock.calls.some(([option]) => (
+    (option as { series?: Array<{ id?: string }> }).series?.some((series) => series.id === "machine-monitor:fleet-utilization:series:utilization")
+  )))).toBe(true));
+  const chart = echartsMock.instances.find((candidate) => candidate.setOption.mock.calls.some(([option]) => (
+    (option as { series?: Array<{ id?: string }> }).series?.some((series) => series.id === "machine-monitor:fleet-utilization:series:utilization")
+  )))!;
+  const option = chart.setOption.mock.calls.at(-1)![0] as { series: Array<{ id: string; data: Array<{ value: number | null; machineKey: string }>; markLine?: { data: Array<{ yAxis: number }> } }> };
+  const series = option.series.find((candidate) => candidate.id === "machine-monitor:fleet-utilization:series:utilization")!;
+  // 99% memory PSI must not replace the ratio-based 40% memory utilization.
+  expect(series.data.map((datum) => datum.value)).toEqual([40, 92, null]);
+  expect(series.data.map((datum) => datum.machineKey)).toEqual(["enrolled-host:machine-alpha", "enrolled-host:machine-bravo", "enrolled-host:machine-charlie"]);
+  expect(series.markLine?.data).toEqual([{ yAxis: 70 }]);
+  expect(chartHost.getAttribute("aria-label")).toContain("Use the native source controls below");
+  expect(slot.getByText("40.0%")).toBeTruthy();
+  expect(slot.getByText("22 pt · CPU")).toBeTruthy();
+  expect(slot.getByText(/1 at ≥70%/)).toBeTruthy();
+  expect(slot.getByRole("button", { name: /Charlie\. connected\. stale/i }).getAttribute("data-utilization")).toBe("below-attention");
+
+  const chartCount = echartsMock.init.mock.calls.length;
+  const click = chart.on.mock.calls.find(([name]) => name === "click")![1] as (event: unknown) => void;
+  click({ componentType: "series", seriesId: series.id, dataIndex: 1, data: { machineKey: "enrolled-host:machine-bravo" } });
+  await slot.findByRole("heading", { name: "Bravo" });
+  expect(echartsMock.init).toHaveBeenCalledTimes(chartCount);
   slot.lifecycle.unmount();
 });
 

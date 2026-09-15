@@ -25,6 +25,9 @@ test("narrow fleet atlas keeps native controls, layered status, and compact stru
   assert.match(app, /--machine-monitor-cpu-pressure/);
   assert.match(app, /--machine-monitor-memory-pressure/);
   assert.match(app, /--machine-monitor-disk-pressure/);
+  assert.match(app, /FleetUtilizationChart/);
+  assert.match(app, /FLEET_UTILIZATION_ATTENTION_PERCENT/);
+  assert.match(app, /data-utilization=\{atlas\.utilization\.state\}/);
   assert.match(app, /onFocus=\{\(\) => onIntent\(machine\)\}/);
   assert.match(app, /onPointerEnter=\{\(\) => onIntent\(machine\)\}/);
   assert.match(styles, /\.machine-monitor__atlas-button\s*\{[^}]*min-width:\s*0/);
@@ -36,7 +39,11 @@ test("narrow fleet atlas keeps native controls, layered status, and compact stru
   assert.match(styles, /\.machine-monitor__atlas-button\[data-freshness="stale"\]/);
   assert.match(styles, /\.machine-monitor__atlas-button\[data-collector="failure"\]/);
   assert.match(styles, /\.machine-monitor__atlas-metric\[data-level="unavailable"\][^}]*border-style:\s*dashed/);
-  assert.match(styles, /\.machine-monitor__atlas-button > strong > span[^}]*text-overflow:\s*ellipsis/);
+  assert.match(styles, /\.machine-monitor__fleet-utilization > div\[role="img"\]\s*\{[^}]*height:\s*152px/);
+  assert.match(styles, /\.machine-monitor__atlas-score\s*\{[^}]*grid-area:\s*score/);
+  assert.match(styles, /\.machine-monitor__atlas-button\[data-utilization="attention"\]/);
+  assert.match(styles, /\.machine-monitor__atlas-identity strong[^}]*text-overflow:\s*ellipsis/);
+  assert.match(styles, /\.machine-monitor__echarts-theme\s*\{[^}]*border-bottom-color:\s*var\(--primary\)/);
   assert.match(styles, /\.machine-monitor__fleet-picker button:focus-visible/);
   assert.match(styles, /\.machine-monitor__fleet-picker\[data-inspecting\] \.machine-monitor__atlas-button/);
   assert.match(styles, /@container \(max-width:\s*460px\)\s*\{[\s\S]*?\.machine-monitor__fleet-picker > header/);
