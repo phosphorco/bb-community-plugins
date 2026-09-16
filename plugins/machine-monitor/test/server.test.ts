@@ -8,6 +8,7 @@ import {
   FLEET_CONTRACT_VERSION,
   LOCAL_BB_SERVER_MACHINE_ID,
   type FleetOverviewResult,
+  type MachineInventoryResult,
   type MachineTimelineResult,
 } from "../fleet-contract.ts";
 import plugin, { createLegacyLocalProjection } from "../server.ts";
@@ -77,6 +78,21 @@ function hostPayload(method: string, input: unknown): unknown {
       processes: [],
     };
   }
+  if (method === "machineInventory") {
+    return {
+      contractVersion: FLEET_CONTRACT_VERSION,
+      collectorSessionId: "remote-session",
+      observedAtMs: 9_000_000,
+      visibility: "host-visible",
+      os: { name: "Test Linux", version: "1", kernel: "test", architecture: "x64" },
+      cpu: { logicalCores: 4, observedPhysicalCores: 2, observedPackages: 1, model: "Test CPU", speedMHz: 2400, availability: { state: "available", reason: null } },
+      memory: { usableBytes: 1_000_000, availability: { state: "available", reason: null } },
+      disks: [], disksAvailability: { state: "partial", reason: "No disks in test fixture." },
+      raid: { state: "not-detected", arrays: [], source: "linux-mdstat", reason: "No active Linux md arrays were reported." },
+      location: { value: null, source: "unavailable" },
+      limitations: ["Test inventory."],
+    };
+  }
   throw new Error(`Unexpected host method ${method}`);
 }
 
@@ -126,6 +142,13 @@ test("server runs one fleet service, targets authenticated enrolled hosts, and p
     assert.ok(calls.every((call) => call.hostId === "remote-auth"), "all remote collection calls use the SDK-selected host ID");
     const firstMemory = calls.find((call) => call.method === "memoryDiagnostics");
     assert.deepEqual(firstMemory?.input, { includeProcessDetails: true }, "the initial collection awaits the saved process-detail setting");
+    await waitFor(() => calls.some((call) => call.method === "machineInventory"));
+    const inventory = await host.harness.callRpc("machineInventory", {
+      contractVersion: FLEET_CONTRACT_VERSION,
+      machine: { source: "enrolled-host", machineId: "remote-auth" },
+    }) as MachineInventoryResult;
+    assert.equal(inventory.inventory?.cpu.logicalCores, 4, "inventory is persisted server-side for a selected-machine read");
+    assert.equal(inventory.inventory?.location.value, null, "the server does not invent machine location");
     assert.deepEqual(await host.harness.callRpc("getAttachments", null), {
       sourceRevision: 0,
       targets: [],

@@ -4,6 +4,7 @@ import { z } from "zod";
 import {
   FLEET_CONTRACT_VERSION,
   hostCollectionPayloadSchema,
+  machineInventoryPayloadSchema,
 } from "./fleet-contract.ts";
 
 /**
@@ -114,6 +115,9 @@ export const hostMemoryDiagnosticSchema = z.object({
   processes: z.array(hostMemoryProcessSchema).max(MAX_HOST_MEMORY_PROCESSES),
 }).strict();
 
+/** A low-churn, identity-free snapshot of the daemon-visible machine context. */
+export const hostMachineInventorySchema = machineInventoryPayloadSchema;
+
 /**
  * This contract owns daemon-local measurements only.  It is kept separate
  * from the browser/server fleet RPCs so an authenticated target must be
@@ -136,9 +140,14 @@ export const hostRpcContract = defineRpcContract({
     input: hostMemoryDiagnosticRequestSchema,
     output: hostMemoryDiagnosticSchema,
   },
+  machineInventory: {
+    input: z.null(),
+    output: hostMachineInventorySchema,
+  },
 });
 
 export type HostDescription = z.infer<typeof hostDescriptionSchema>;
 export type HostCoreSample = z.infer<typeof hostCoreSampleSchema>;
 export type HostDirectorySample = z.infer<typeof hostDirectorySampleSchema>;
 export type HostMemoryDiagnostic = z.infer<typeof hostMemoryDiagnosticSchema>;
+export type HostMachineInventory = z.infer<typeof hostMachineInventorySchema>;

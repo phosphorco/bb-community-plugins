@@ -60,9 +60,12 @@ test("dashboard and detail charts have definite responsive drawing rectangles an
   assert.match(app, /navigate\.toThread\(activation\.bbReference\.threadId\)/);
 });
 
-test("mobile operational cards and disk breakdown collapse without forcing a wide grid", () => {
+test("mobile operational cards, machine context, and disk breakdown collapse without forcing a wide grid", () => {
   const compact = styles.match(/@container \(max-width:\s*760px\)\s*\{([\s\S]*?)\n\}/)?.[1] ?? "";
   assert.match(compact, /\.machine-monitor__metrics[^\{]*\.machine-monitor__directories > ol[^\{]*\{\s*grid-template-columns:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\)/);
   assert.match(styles, /@container \(max-width:\s*460px\)\s*\{[\s\S]*?\.machine-monitor__dashboard-captions\s*\{[^}]*grid-template-columns:\s*1fr/);
   assert.match(styles, /@container \(max-width:\s*460px\)\s*\{[\s\S]*?\.machine-monitor__dashboard-chart > div\[role="img"\]\s*\{[^}]*min-height:\s*438px/);
+  assert.match(styles, /\.machine-monitor__machine-context\s*\{[^}]*min-width:\s*0/);
+  assert.match(styles, /@container \(max-width:\s*760px\)\s*\{[\s\S]*?\.machine-monitor__machine-facts[^}]*grid-template-columns:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\)/);
+  assert.match(styles, /@container \(max-width:\s*300px\)\s*\{[\s\S]*?\.machine-monitor__machine-facts[^}]*grid-template-columns:\s*1fr/);
 });

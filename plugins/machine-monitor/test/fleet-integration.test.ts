@@ -7,6 +7,7 @@ import { experimental_createHostEntryHarness } from "@get-bb/plugin-sdk/testing/
 import {
   FLEET_CONTRACT_VERSION,
   type FleetOverviewResult,
+  type MachineInventoryResult,
   type MachineTimelineResult,
 } from "../fleet-contract.ts";
 import {
@@ -46,15 +47,25 @@ function collectorFor(platform: RemotePlatform, sessionId: string, hostName: str
     loadavg: () => [1, 2, 3],
     totalmem: () => 1_000,
     freemem: () => platform === "darwin" ? 600 : platform === "wsl" ? 300 : 100,
-    cpus: () => [{ times: { user: 100 + cpuTick++ * 20, nice: 0, sys: 100, idle: 100, irq: 0 } }],
+    cpus: () => [{ model: `${platform} test CPU`, speed: 2400, times: { user: 100 + cpuTick++ * 20, nice: 0, sys: 100, idle: 100, irq: 0 } }],
+    arch: () => "x64",
     readText: async (path) => {
       if (path === "/proc/meminfo") return "MemTotal:       1000 kB\nMemAvailable:    100 kB\n";
       if (path === "/proc/stat") {
         const tick = cpuTick++;
         return `cpu  ${100 + tick * 20} 0 100 ${100 + tick * 5} 0 0 0 0 0 0\n`;
       }
+      if (path === "/etc/os-release") return "PRETTY_NAME=Test Linux\nVERSION_ID=1\n";
+      if (path === "/proc/mdstat") return "Personalities : [raid1]\nmd0 : active raid1\n";
+      if (path.endsWith("physical_package_id")) return "0\n";
+      if (path.endsWith("core_id")) return "0\n";
+      if (path === "/sys/block/sda/size") return "2048\n";
+      if (path.endsWith("/device/model")) return "Test disk\n";
+      if (path.endsWith("/queue/rotational")) return "0\n";
+      if (path.endsWith("/ro")) return "0\n";
       return "";
     },
+    readDirectory: async (path) => path === "/sys/devices/system/cpu" ? ["cpu0"] : path === "/sys/block" ? ["sda"] : [],
     statfs: async () => ({ bsize: 1, blocks: 1_000, bavail: platform === "darwin" ? 400 : 50 }),
   });
   return {
@@ -124,6 +135,7 @@ function createRemoteHost(args: {
       }
       if (method === "directorySample") return await entry.experimental_call("directorySample", input as never, { signal });
       if (method === "memoryDiagnostics") return await entry.experimental_call("memoryDiagnostics", input as never, { signal });
+      if (method === "machineInventory") return await entry.experimental_call("machineInventory", null, { signal });
       throw new Error(`unexpected representative host method ${method}`);
     },
   };
@@ -310,6 +322,15 @@ test("representative fleet crosses the installed server and authenticated host b
     && warning.metricId === "memory.pressure.some.percent"), "Darwin retains its capability gap as public truth");
   assert.ok(linuxOverview.warnings.some((warning) => warning.kind === "metric-threshold" && warning.metricId === "memory.used.bytes"),
     "server settings produce a per-machine RAM warning through the registered overview RPC");
+  await eventually(() => host.harness.experimental_hostRpcCalls.some((call) => call.method === "machineInventory"),
+    "the low-churn inventory lane did not run after operational telemetry");
+  const linuxInventory = await host.harness.callRpc("machineInventory", {
+    contractVersion: FLEET_CONTRACT_VERSION,
+    machine: linuxOverview.machine,
+  }) as MachineInventoryResult;
+  assert.equal(linuxInventory.inventory?.cpu.logicalCores, 1);
+  assert.equal(linuxInventory.inventory?.location.value, null, "location remains unavailable without trusted enrollment metadata");
+  assert.equal(linuxInventory.inventory?.disks[0]?.id, "disk-0", "disk identities are opaque ordinals rather than device paths");
 
   const range = { startMs: 900_000, endMs: clock + 60_000 };
   const linuxTimeline = await host.harness.callRpc("machineTimeline", {

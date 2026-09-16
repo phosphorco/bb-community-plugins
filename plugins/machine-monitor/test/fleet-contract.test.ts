@@ -311,7 +311,7 @@ test("fleet realtime invalidations reject malformed or unallowlisted bounded pay
     machine: { source: "enrolled-host" as const, machineId: "host-1" },
     dataRevision: 2,
     settingsRevision: 3,
-    kinds: ["collection", "settings"],
+    kinds: ["collection", "inventory", "settings"],
   };
   assert.equal(fleetInvalidationSignalSchema.safeParse(valid).success, true);
   assert.equal(fleetInvalidationSignalSchema.safeParse({ ...valid, kinds: ["made-up"] }).success, false);

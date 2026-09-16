@@ -11,6 +11,7 @@ import {
   type HostCoreSample,
   type HostDescription,
   type HostDirectorySample,
+  type HostMachineInventory,
   type HostMemoryDiagnostic,
 } from "./host-contract.ts";
 import {
@@ -36,6 +37,8 @@ export const FLEET_CORE_RESERVED_SLOTS = 2;
 export const FLEET_BACKOFF_MAX_MS = 5 * 60_000;
 /** Retention is a fleet-wide maintenance pass, never part of a host lane. */
 export const FLEET_RETENTION_INTERVAL_MS = 5 * 60_000;
+/** Static context refreshes on start/reconnect and then at most once per day. */
+export const FLEET_INVENTORY_INTERVAL_MS = 24 * 60 * 60_000;
 
 const SCHEDULER_RETRY_MS = 100;
 const JITTER_WINDOW_MS = 1_500;
@@ -44,8 +47,8 @@ const LOCAL_MACHINE: FleetMachineIdentity = {
   machineId: LOCAL_BB_SERVER_MACHINE_ID,
 };
 
-export type FleetLane = "describe" | "core" | "directory" | "memory";
-export type FleetInvalidationKind = "machine" | "collection" | "directory" | "memory" | "error" | "settings" | "retention";
+export type FleetLane = "describe" | "core" | "directory" | "memory" | "inventory";
+export type FleetInvalidationKind = "machine" | "collection" | "directory" | "memory" | "inventory" | "error" | "settings" | "retention";
 
 export type FleetInvalidation = {
   machine: FleetMachineIdentity;
@@ -64,6 +67,8 @@ export type FleetCollectorTarget = {
   core: (signal: AbortSignal) => Promise<HostCoreSample>;
   directory: (request: { directoryId: string; paths: readonly string[] }, signal: AbortSignal) => Promise<HostDirectorySample>;
   memory: (request: { includeProcessDetails: boolean }, signal: AbortSignal) => Promise<HostMemoryDiagnostic>;
+  /** Optional only for legacy/test targets; production targets always implement it. */
+  inventory?: (signal: AbortSignal) => Promise<HostMachineInventory>;
 };
 
 export type FleetCoordinatorDependencies = {
@@ -377,7 +382,7 @@ export class FleetCoordinator {
       const generation = this.dependencies.store.advanceSettingsGeneration(machine.machine);
       this.publish(machine.machine, generation, ["settings"]);
       const state = this.targets.get(targetKey(machine.machine));
-      if (state != null && state.connection !== "disconnected") this.schedulePrompt(state, now);
+      if (state != null && state.connection !== "disconnected") this.schedulePrompt(state, now, false);
     }
     this.requestReconcile();
   }
@@ -447,7 +452,9 @@ export class FleetCoordinator {
     if (this.nextRetentionAtMs <= now) this.prune(now);
     for (const state of this.targets.values()) {
       if (state.connection === "disconnected") continue;
-      for (const lane of ["describe", "core", "directory", "memory"] as const) {
+      for (const lane of ["describe", "core", "directory", "memory", "inventory"] as const) {
+        if (lane === "inventory" && state.target.inventory == null) continue;
+        if (lane === "inventory" && (state.currentSessionId == null || state.lanes.memory.sessionId !== state.currentSessionId)) continue;
         if (state.lanes[lane].dueAtMs <= now) this.launch(state, lane);
       }
     }
@@ -530,12 +537,15 @@ export class FleetCoordinator {
       currentSessionId: null,
       lifecycleEpoch: 0,
       lifecycle: new AbortController(),
-      lanes: { describe: laneState(now), core: laneState(now), directory: laneState(now), memory: laneState(now) },
+      lanes: { describe: laneState(now), core: laneState(now), directory: laneState(now), memory: laneState(now), inventory: laneState(now) },
     };
   }
 
-  private schedulePrompt(state: TargetState, now: number): void {
-    for (const lane of Object.values(state.lanes)) this.promptLane(lane, now);
+  private schedulePrompt(state: TargetState, now: number, includeInventory = true): void {
+    for (const [name, lane] of Object.entries(state.lanes) as Array<[FleetLane, LaneState]>) {
+      if (name === "inventory" && !includeInventory) continue;
+      this.promptLane(lane, now);
+    }
   }
 
   private promptLane(lane: LaneState, now: number): void {
@@ -627,7 +637,8 @@ export class FleetCoordinator {
       if (lane === "describe") await this.collectDescription(state, epoch, registerTransport);
       else if (lane === "core") await this.collectCore(state, epoch, registerTransport);
       else if (lane === "directory") await this.collectDirectories(state, epoch, registerTransport);
-      else await this.collectMemory(state, epoch, registerTransport);
+      else if (lane === "memory") await this.collectMemory(state, epoch, registerTransport);
+      else await this.collectInventory(state, epoch, registerTransport);
       if (this.current(state, epoch)) {
         state.lanes[lane].failures = 0;
         this.scheduleNext(state, lane, this.now());
@@ -647,6 +658,7 @@ export class FleetCoordinator {
     state.platform = description.platform;
     state.capabilities = [...description.capabilities].sort();
     this.upsert(state, this.now());
+    this.promptLane(state.lanes.inventory, this.now());
   }
 
   private async collectCore(state: TargetState, epoch: number, registerTransport: (settled: Promise<void>) => void): Promise<void> {
@@ -668,6 +680,7 @@ export class FleetCoordinator {
       // authoritative core session yet.
       this.promptLane(state.lanes.directory, receivedAtMs);
       this.promptLane(state.lanes.memory, receivedAtMs);
+      this.promptLane(state.lanes.inventory, receivedAtMs);
     }
     const normalizedAtMs = midpoint(sentAtMs, receivedAtMs);
     const result = this.dependencies.store.recordCollection({
@@ -792,6 +805,32 @@ export class FleetCoordinator {
     }
   }
 
+  private async collectInventory(state: TargetState, epoch: number, registerTransport: (settled: Promise<void>) => void): Promise<void> {
+    // Description/core are authoritative for a host worker lifecycle. Avoid
+    // accepting an inventory response from a worker we have not observed.
+    // Inventory is informational. Let the first memory pass take the shared
+    // non-core capacity so a static probe never delays operational telemetry.
+    if (state.currentSessionId == null || state.lanes.memory.sessionId !== state.currentSessionId) {
+      state.lanes.inventory.dueAtMs = this.now() + SCHEDULER_RETRY_MS;
+      return;
+    }
+    if (state.target.inventory == null) {
+      state.lanes.inventory.dueAtMs = this.now() + FLEET_INVENTORY_INTERVAL_MS;
+      return;
+    }
+    const sentAtMs = this.now();
+    const inventory = await callWithTimeout((signal) => state.target.inventory!(signal), this.laneSignal(state), this.dependencies.rpcTimeoutMs, registerTransport);
+    const receivedAtMs = this.now();
+    if (!this.current(state, epoch) || inventory.collectorSessionId !== state.currentSessionId) return;
+    const persisted = this.dependencies.store.recordInventory({
+      machine: state.machine,
+      inventory,
+      serverSentAtMs: sentAtMs,
+      serverReceivedAtMs: receivedAtMs,
+    });
+    if (persisted.outcome !== "unchanged") this.publish(state.machine, persisted.generation, ["inventory"]);
+  }
+
   private acceptSecondary(state: TargetState, laneName: "directory" | "memory", sessionId: string, sequence: number): boolean {
     const lane = state.lanes[laneName];
     // Do not let a detail lane establish a worker session. Core/describe own
@@ -810,6 +849,9 @@ export class FleetCoordinator {
     const message = errorText(cause);
     lane.failures += 1;
     lane.dueAtMs = now + this.backoff(lane, this.intervalFor(laneName));
+    const inventoryFailure = laneName === "inventory"
+      ? this.dependencies.store.recordInventoryFailure(state.machine, message, now)
+      : null;
     const result = this.dependencies.store.recordMachineError(state.machine, {
       errorId: `${laneName}-${now}-${lane.failures}`,
       occurredAtMs: now,
@@ -818,6 +860,7 @@ export class FleetCoordinator {
     });
     if (state.machine.source === "local-bb-server") this.dependencies.onLocalError?.(laneName, message, now);
     if (result.outcome === "inserted") this.publish(state.machine, result.generation, ["error"]);
+    else if (inventoryFailure?.changed) this.publish(state.machine, inventoryFailure.generation, ["inventory"]);
     this.dependencies.log?.("warn", `Machine Monitor ${laneName} collection failed for ${state.machine.machineId}: ${message}`);
   }
 
@@ -828,6 +871,7 @@ export class FleetCoordinator {
   private intervalFor(lane: FleetLane): number {
     if (lane === "core" || lane === "describe") return FLEET_CORE_INTERVAL_MS;
     if (lane === "directory") return FLEET_DIRECTORY_INTERVAL_MS;
+    if (lane === "inventory") return FLEET_INVENTORY_INTERVAL_MS;
     return MEMORY_DIAGNOSTICS_INTERVAL_MS;
   }
 

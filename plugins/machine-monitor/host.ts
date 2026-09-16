@@ -4,6 +4,7 @@ import {
   hostCoreSampleSchema,
   hostDescriptionSchema,
   hostDirectorySampleSchema,
+  hostMachineInventorySchema,
   hostMemoryDiagnosticSchema,
   hostRpcContract,
   HOST_CONTRACT_VERSION,
@@ -215,6 +216,31 @@ export function createMachineMonitorHostEntry(
           memorySequence += 1;
           return output;
         });
+      },
+
+      async machineInventory(_input, context) {
+        const signal = operationSignal(context);
+        throwIfAborted(signal);
+        const inventory = collector.collectInventory == null
+          ? {
+            contractVersion: HOST_CONTRACT_VERSION,
+            collectorSessionId: coreState.collectorSessionId,
+            observedAtMs: dependencies.now(),
+            visibility: "unknown" as const,
+            os: { name: collector.metadata.platformDetail, version: null, kernel: null, architecture: null },
+            cpu: { logicalCores: null, observedPhysicalCores: null, observedPackages: null, model: null, speedMHz: null, availability: { state: "unavailable" as const, reason: "This host collector has no inventory adapter." } },
+            memory: { usableBytes: null, availability: { state: "unavailable" as const, reason: "This host collector has no inventory adapter." } },
+            disks: [], disksAvailability: { state: "unavailable" as const, reason: "This host collector has no inventory adapter." },
+            raid: { state: "unavailable" as const, arrays: [], source: "unavailable" as const, reason: "This host collector has no inventory adapter." },
+            location: { value: null, source: "unavailable" as const },
+            limitations: ["This host collector has no inventory adapter."],
+          }
+          : await collector.collectInventory(coreState.collectorSessionId, {
+          observedAtMs: dependencies.now(),
+          signal,
+          });
+        throwIfAborted(signal);
+        return hostMachineInventorySchema.parse(inventory);
       },
     },
   });

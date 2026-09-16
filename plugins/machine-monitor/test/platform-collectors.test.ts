@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { hostCoreSampleSchema } from "../host-contract.ts";
+import { hostCoreSampleSchema, hostMachineInventorySchema } from "../host-contract.ts";
 import {
   createPlatformCollector,
   type PlatformAdapter,
@@ -17,7 +17,8 @@ function dependencies(overrides: Partial<PlatformCollectorDependencies> = {}): P
     loadavg: () => [1, 0.5, 0.25],
     totalmem: () => 16_000,
     freemem: () => 4_000,
-    cpus: () => [{ times: { user: 100, nice: 0, sys: 100, idle: 800, irq: 0 } }],
+    cpus: () => [{ model: "Test CPU", speed: 2400, times: { user: 100, nice: 0, sys: 100, idle: 800, irq: 0 } }],
+    arch: () => "x64",
     readText: async (path) => path === "/proc/stat"
       ? "cpu  100 0 100 800 0 0 0 0\n"
       : "MemTotal: 16000 kB\nMemAvailable: 4000 kB\n",
@@ -80,6 +81,42 @@ test("Darwin core adapter documents portable semantics and emits bounded catalog
   assert.equal(second.payload.metrics.length, 11);
 });
 
+test("collects a bounded daemon-visible static inventory without hardware identifiers or location probes", async () => {
+  const collector = createPlatformCollector(dependencies({
+    readText: async (path) => ({
+      "/etc/os-release": "PRETTY_NAME=Test Linux\nVERSION_ID=1\n",
+      "/proc/meminfo": "MemTotal: 16000 kB\nMemAvailable: 4000 kB\n",
+      "/proc/mdstat": "Personalities : [raid1]\nmd0 : active raid1 sda1[0] sdb1[1]\n",
+      "/sys/devices/system/cpu/cpu0/topology/physical_package_id": "0\n",
+      "/sys/devices/system/cpu/cpu0/topology/core_id": "0\n",
+      "/sys/block/sda/size": "2048\n",
+      "/sys/block/sda/device/model": "Test SSD\n",
+      "/sys/block/sda/queue/rotational": "0\n",
+      "/sys/block/sda/ro": "0\n",
+    })[path] ?? "",
+    readDirectory: async (path) => path === "/sys/devices/system/cpu" ? ["cpu0"] : path === "/sys/block" ? ["sda", "loop0"] : [],
+  }));
+  const inventory = await collector.collectInventory!("inventory-session", { observedAtMs: 1_000 });
+  assert.equal(hostMachineInventorySchema.safeParse(inventory).success, true);
+  assert.equal(inventory.visibility, "host-visible");
+  assert.deepEqual(inventory.cpu, {
+    logicalCores: 1, observedPhysicalCores: 1, observedPackages: 1, model: "Test CPU", speedMHz: 2400,
+    availability: { state: "available", reason: null },
+  });
+  assert.equal(inventory.memory.usableBytes, 16_384_000);
+  assert.deepEqual(inventory.disks, [{ id: "disk-0", kind: "block", sizeBytes: 1_048_576, model: "Test SSD", rotational: false, readOnly: false }]);
+  assert.deepEqual(inventory.raid, { state: "available", arrays: [{ name: "md0", status: "active raid1 sda1[0] sdb1[1]" }], source: "linux-mdstat", reason: null });
+  assert.deepEqual(inventory.location, { value: null, source: "unavailable" });
+  assert.ok(JSON.stringify(inventory).includes("serial") === false, "the static profile contains no serial identifier field");
+
+  const wsl = createPlatformCollector(dependencies({ release: () => "5.15-microsoft-standard-WSL2", readDirectory: async () => [] }));
+  assert.equal((await wsl.collectInventory!("wsl-session", { observedAtMs: 1_000 })).visibility, "guest-visible");
+  const darwin = createPlatformCollector(dependencies({ platform: () => "darwin", readDirectory: async () => [] }));
+  const darwinInventory = await darwin.collectInventory!("darwin-session", { observedAtMs: 1_000 });
+  assert.equal(darwinInventory.disksAvailability.state, "partial");
+  assert.equal(darwinInventory.raid.state, "unavailable");
+});
+
 test("Linux and WSL keep procfs core collection while pressure and process attribution remain capability-gated", async () => {
   const collector = createPlatformCollector(dependencies({
     release: () => "5.15.153.1-microsoft-standard-WSL2",
@@ -109,6 +146,11 @@ test("an unknown platform returns explicit unavailable facts without probing the
   assert.ok(result.payload.metrics.every((entry) => entry.value == null && entry.availability.state === "unavailable"));
   assert.ok(result.payload.metrics.every((entry) => entry.availability.reason === "Core sampling is unavailable on this platform."));
   assert.equal(hostCoreSampleSchema.safeParse(result.payload).success, true);
+  const inventory = await collector.collectInventory!("unknown-session", { observedAtMs: 1_001 });
+  assert.equal(inventory.visibility, "unknown");
+  assert.equal(inventory.cpu.availability.state, "unavailable");
+  assert.equal(inventory.disks.length, 0);
+  assert.equal(probes, 0, "unknown-platform inventory preserves the zero-probe boundary");
 });
 
 test("platform adapters and OS facts are dependency-injected, and cancellation happens before any probe", async () => {

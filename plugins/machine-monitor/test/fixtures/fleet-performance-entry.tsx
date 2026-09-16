@@ -58,6 +58,20 @@ const runtime: FleetPerformanceRuntime = {
           resolve(value);
         }));
       }
+      if (method === "machineInventory") {
+        const request = input as { machine: { source: string; machineId: string } };
+        const machine = fixture.machines().find((candidate) => candidate.machine.machineId === request.machine.machineId);
+        if (machine == null) throw new Error(`Unknown fixture machine inventory ${request.machine.machineId}.`);
+        return {
+          contractVersion: FLEET_CONTRACT_VERSION,
+          machine: request.machine,
+          generation: machine.generation,
+          inventory: null,
+          receivedAtMs: null,
+          lastError: null,
+          lastErrorAtMs: null,
+        };
+      }
       if (method === "getAttachments") return fixture.overview().attachments.snapshot;
       if (method === "health") return { hostName: "latency-fixture", latest: null, lastError: null, warnings: [] };
       if (method === "searchThreads") return { threads: [] };

@@ -45,6 +45,27 @@ and retained content before release. Controls click the current machine. The
 trace records a browser-frame useful-paint timestamp, native long tasks,
 network/host/chart deltas, DOM mutations, and Chromium heap telemetry.
 
+## Static-context extension check
+
+The selected-machine static-context panel never makes a host call on
+selection. Its committed-server read is coalesced and LRU-cached by machine
+plus an explicit inventory invalidation—not the frequently advancing telemetry
+revision. A first profile read yields to idle after the timeline commits, while
+a retained same-machine profile remains visible and truthfully says
+“Refreshing” during an inventory update. The browser fixture holds idle
+callbacks deliberately, so this low-churn read cannot contend with an active
+cached or warm-uncached chart measurement. The named lane continues to assert
+the existing 50ms cached and 110ms atlas ceilings, zero host calls, zero chart
+remounts, no long tasks, and quiet settled idle.
+
+Run: 2026-09-16. The context-stability refinement produced a temporary bundle
+SHA-256 `2791ed5faa6dda31561d8f434482a049580c0a4ef78dd1a9b499a9f7e249cc1e`.
+Cached selection p95 was **31.3ms** and warm-uncached selection p95 was
+**96.8ms**; both retained the selected ECharts host with zero host calls,
+chart remounts, or Long Tasks. The extra context shell is below the chart and
+layout-contained, so an idle profile response cannot move the operational
+header, KPI cards, or plotted history.
+
 ## Raw production-browser measurements
 
 Run: 2026-09-14, all values in milliseconds. Raw runner output is emitted as

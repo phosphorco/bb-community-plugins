@@ -11,6 +11,8 @@ import {
   fleetOverviewRequestSchema,
   fleetOverviewResultSchema,
   machineIdentityKey,
+  machineInventoryRequestSchema,
+  machineInventoryResultSchema,
   machineTimelineRequestSchema,
   machineTimelineResultSchema,
   metricObservationSchema,
@@ -19,6 +21,7 @@ import {
   type FleetOverviewResult,
   type MachineTimelineRequest,
   type MachineTimelineResult,
+  type MachineInventoryResult,
   type TimelineGeneration,
 } from "./fleet-contract.ts";
 import { FleetStore, type FleetMachineState } from "./fleet-store.ts";
@@ -845,6 +848,22 @@ export class TimelineQueryService {
       { kind: "timeline", machine: request.machine },
       () => this.buildMachineTimeline(request, generation),
     );
+  }
+
+  /** Inventory is one committed SQLite profile, never a host RPC on selection. */
+  machineInventory(input: unknown): MachineInventoryResult {
+    const request = machineInventoryRequestSchema.parse(input);
+    const generation = this.store.generation(request.machine);
+    const inventory = this.store.inventory(request.machine);
+    return machineInventoryResultSchema.parse({
+      contractVersion: FLEET_CONTRACT_VERSION,
+      machine: request.machine,
+      generation,
+      inventory: inventory?.inventory ?? null,
+      receivedAtMs: inventory?.receivedAtMs ?? null,
+      lastError: inventory?.lastError ?? null,
+      lastErrorAtMs: inventory?.lastErrorAtMs ?? null,
+    });
   }
 
   private async buildFleetOverview(generation: TimelineGeneration): Promise<FleetOverviewResult | null> {

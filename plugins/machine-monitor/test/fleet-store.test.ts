@@ -4,7 +4,7 @@ import test from "node:test";
 import Database from "better-sqlite3";
 
 import { FleetStore } from "../fleet-store.ts";
-import { FLEET_CONTRACT_VERSION, LOCAL_BB_SERVER_MACHINE_ID, MAX_FLEET_MACHINES, type FleetCollectionEnvelope, type FleetMachineIdentity } from "../fleet-contract.ts";
+import { FLEET_CONTRACT_VERSION, LOCAL_BB_SERVER_MACHINE_ID, MAX_FLEET_MACHINES, type FleetCollectionEnvelope, type FleetMachineIdentity, type MachineInventoryEnvelope } from "../fleet-contract.ts";
 import { MAX_REPORTED_DIRECTORIES } from "../monitor.ts";
 import { machineMonitorMigrations } from "../store.ts";
 
@@ -61,6 +61,48 @@ function register(store: FleetStore, machine: FleetMachineIdentity, connection: 
     serverObservedAtMs: 1_000,
   });
 }
+
+function inventory(machine: FleetMachineIdentity, observedAtMs = 2_000): MachineInventoryEnvelope {
+  return {
+    machine,
+    serverSentAtMs: observedAtMs - 10,
+    serverReceivedAtMs: observedAtMs,
+    inventory: {
+      contractVersion: FLEET_CONTRACT_VERSION,
+      collectorSessionId: "inventory-session",
+      observedAtMs: observedAtMs - 5,
+      visibility: "host-visible",
+      os: { name: "Test Linux", version: "1", kernel: "test", architecture: "x64" },
+      cpu: { logicalCores: 4, observedPhysicalCores: 2, observedPackages: 1, model: "Test CPU", speedMHz: 2400, availability: { state: "available", reason: null } },
+      memory: { usableBytes: 16_000, availability: { state: "available", reason: null } },
+      disks: [{ id: "disk-0", kind: "block", sizeBytes: 1_000, model: "Test disk", rotational: false, readOnly: false }],
+      disksAvailability: { state: "available", reason: null },
+      raid: { state: "not-detected", arrays: [], source: "linux-mdstat", reason: "No active Linux md arrays were reported." },
+      location: { value: null, source: "unavailable" },
+      limitations: ["Location is not inferred."],
+    },
+  };
+}
+
+test("persists one bounded static inventory per machine without revision churn on a routine refresh", (t) => {
+  const { db, store } = makeStore();
+  t.after(() => db.close());
+  register(store, host);
+  register(store, otherHost);
+  const before = store.generation(host);
+  const first = store.recordInventory(inventory(host));
+  assert.equal(first.outcome, "inserted");
+  assert.equal(first.generation.dataRevision, before.dataRevision + 1);
+  const refreshed = store.recordInventory(inventory(host, 3_000));
+  assert.equal(refreshed.outcome, "unchanged", "timing/session refreshes do not change static profile generations");
+  assert.equal(store.inventory(host)?.receivedAtMs, 3_000);
+  assert.equal(store.inventory(otherHost), null, "inventory remains machine-scoped");
+  const changed = store.recordInventory({ ...inventory(host, 4_000), inventory: { ...inventory(host, 4_000).inventory, memory: { usableBytes: 32_000, availability: { state: "available", reason: null } } } });
+  assert.equal(changed.outcome, "changed");
+  assert.equal(store.inventory(host)?.inventory.memory.usableBytes, 32_000);
+  assert.equal(store.inventory(host)?.inventory.location.value, null);
+  assert.equal((db.prepare("SELECT COUNT(*) AS count FROM machine_monitor_fleet_inventory").get() as { count: number }).count, 1);
+});
 
 test("requires server registration, validates trusted timing, and makes collection retries idempotent", (t) => {
   const { db, store } = makeStore();

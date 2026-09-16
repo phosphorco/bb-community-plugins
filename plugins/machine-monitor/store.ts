@@ -327,6 +327,22 @@ export const machineMonitorMigrations = [
   )`,
   `CREATE INDEX IF NOT EXISTS machine_monitor_fleet_memory_observations_machine_time
     ON machine_monitor_fleet_memory_observations(machine_source, machine_id, normalized_at, collector_session_id, sequence)`,
+  `CREATE TABLE IF NOT EXISTS machine_monitor_fleet_inventory (
+    machine_source TEXT NOT NULL,
+    machine_id TEXT NOT NULL,
+    collector_session_id TEXT NOT NULL,
+    host_observed_at INTEGER NOT NULL,
+    server_sent_at INTEGER NOT NULL,
+    server_received_at INTEGER NOT NULL,
+    payload_digest TEXT NOT NULL CHECK (length(payload_digest) = 64),
+    payload_json TEXT NOT NULL,
+    last_error TEXT,
+    last_error_at INTEGER,
+    PRIMARY KEY (machine_source, machine_id),
+    FOREIGN KEY (machine_source, machine_id) REFERENCES machine_monitor_fleet_machines(machine_source, machine_id),
+    CHECK (host_observed_at >= 0 AND server_sent_at >= 0 AND server_received_at >= server_sent_at),
+    CHECK (last_error_at IS NULL OR last_error_at >= 0)
+  )`,
 ];
 
 export class MachineMonitorStore {

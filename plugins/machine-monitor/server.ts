@@ -15,6 +15,7 @@ import { FLEET_CONTRACT_VERSION } from "./fleet-contract.ts";
 import {
   type HostCoreSample,
   type HostDirectorySample,
+  type HostMachineInventory,
   type HostMemoryDiagnostic,
   hostRpcContract,
 } from "./host-contract.ts";
@@ -247,6 +248,9 @@ export default async function machineMonitorPlugin(bb: BbPluginApi): Promise<voi
         processes: diagnostics.processes,
       };
     },
+    async inventory(signal: AbortSignal): Promise<HostMachineInventory> {
+      return await localCollector.collectInventory!(localCoreState.collectorSessionId, { observedAtMs: Date.now(), signal });
+    },
   };
   const fleetCoordinator = new FleetCoordinator({
     store: fleetStore,
@@ -256,6 +260,7 @@ export default async function machineMonitorPlugin(bb: BbPluginApi): Promise<voi
       core: (signal) => hostClient.call("coreSample", null, { hostId, signal }),
       directory: (request, signal) => hostClient.call("directorySample", { ...request, paths: [...request.paths] }, { hostId, signal }),
       memory: (request, signal) => hostClient.call("memoryDiagnostics", request, { hostId, signal }),
+      inventory: (signal) => hostClient.call("machineInventory", null, { hostId, signal }),
     }),
     local: localTarget,
     directories: async () => targetMonitoredDirectories((await settings.get()).additionalDirectories),
@@ -369,6 +374,7 @@ export default async function machineMonitorPlugin(bb: BbPluginApi): Promise<voi
     snapshot: ({ rangeHours }) => snapshot(rangeHours),
     fleetOverview: (input) => timelineQueryService.fleetOverview(input),
     machineTimeline: (input) => timelineQueryService.machineTimeline(input),
+    machineInventory: (input) => timelineQueryService.machineInventory(input),
     searchThreads: async ({ query }) => {
       const result = await bb.sdk.threads.search({
         query: query.trim(),

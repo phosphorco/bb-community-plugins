@@ -9,11 +9,15 @@ import {
   MAX_FLEET_MACHINES,
   MAX_TIMELINE_EVENTS,
   collectionEnvelopeSchema,
+  machineInventoryEnvelopeSchema,
+  machineInventoryPayloadSchema,
   machineIdentitySchema,
   metricObservationSchema,
   timelineEventSchema,
   type FleetCollectionEnvelope,
   type FleetMachineIdentity,
+  type MachineInventoryEnvelope,
+  type MachineInventoryPayload,
   type FleetMetricId,
   type TimelineGeneration,
 } from "./fleet-contract.ts";
@@ -62,6 +66,12 @@ export type FleetMachineError = {
 
 export type FleetDirectoryDetail = DirectorySample;
 export type FleetMemoryDetail = MemoryDiagnostics;
+export type FleetMachineInventory = {
+  inventory: MachineInventoryPayload;
+  receivedAtMs: number;
+  lastError: string | null;
+  lastErrorAtMs: number | null;
+};
 /**
  * The memory lane has its own cadence and sequence, so it cannot reuse a
  * core collection identity. Keep its privacy-safe catalog values separate
@@ -129,6 +139,14 @@ type MetricRow = {
 };
 
 type EventRow = { eventJson: string };
+type InventoryRow = {
+  collectorSessionId: string;
+  hostObservedAtMs: number;
+  serverReceivedAtMs: number;
+  payloadJson: string;
+  lastError: string | null;
+  lastErrorAtMs: number | null;
+};
 
 const CONTROL_CHARACTER = /\p{Cc}/u;
 const MAX_CAPABILITIES = 32;
@@ -425,6 +443,84 @@ export class FleetStore {
       this.requireMachine(parsed);
       return this.bumpSettingsRevision(parsed);
     })();
+  }
+
+  /**
+   * Store one latest low-churn inventory snapshot per authenticated machine.
+   * Its digest intentionally excludes request timing and collector session, so
+   * routine refreshes do not churn fleet/UI revisions.
+   */
+  recordInventory(input: MachineInventoryEnvelope): { outcome: "inserted" | "changed" | "unchanged"; generation: TimelineGeneration } {
+    const envelope = machineInventoryEnvelopeSchema.parse(input);
+    const payloadJson = canonicalJson(envelope.inventory);
+    const payloadDigest = digest({
+      visibility: envelope.inventory.visibility,
+      os: envelope.inventory.os,
+      cpu: envelope.inventory.cpu,
+      memory: envelope.inventory.memory,
+      disks: envelope.inventory.disks,
+      disksAvailability: envelope.inventory.disksAvailability,
+      raid: envelope.inventory.raid,
+      location: envelope.inventory.location,
+      limitations: envelope.inventory.limitations,
+    });
+    return this.db.transaction((entry: MachineInventoryEnvelope) => {
+      this.requireMachine(entry.machine);
+      const existing = this.db.prepare(`SELECT payload_digest AS payloadDigest, last_error AS lastError
+        FROM machine_monitor_fleet_inventory WHERE machine_source = ? AND machine_id = ?`)
+        .get(entry.machine.source, entry.machine.machineId) as { payloadDigest: string; lastError: string | null } | undefined;
+      if (existing == null) {
+        this.db.prepare(`INSERT INTO machine_monitor_fleet_inventory
+          (machine_source, machine_id, collector_session_id, host_observed_at, server_sent_at, server_received_at,
+           payload_digest, payload_json, last_error, last_error_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL)`)
+          .run(entry.machine.source, entry.machine.machineId, entry.inventory.collectorSessionId, entry.inventory.observedAtMs,
+            entry.serverSentAtMs, entry.serverReceivedAtMs, payloadDigest, payloadJson);
+        return { outcome: "inserted" as const, generation: this.bumpDataRevision(entry.machine) };
+      }
+      const changed = existing.payloadDigest !== payloadDigest || existing.lastError != null;
+      this.db.prepare(`UPDATE machine_monitor_fleet_inventory SET collector_session_id = ?, host_observed_at = ?,
+        server_sent_at = ?, server_received_at = ?, payload_digest = ?, payload_json = ?, last_error = NULL, last_error_at = NULL
+        WHERE machine_source = ? AND machine_id = ?`)
+        .run(entry.inventory.collectorSessionId, entry.inventory.observedAtMs, entry.serverSentAtMs, entry.serverReceivedAtMs,
+          payloadDigest, payloadJson, entry.machine.source, entry.machine.machineId);
+      return { outcome: changed ? "changed" as const : "unchanged" as const, generation: changed ? this.bumpDataRevision(entry.machine) : this.generation(entry.machine) };
+    })(envelope);
+  }
+
+  recordInventoryFailure(machine: FleetMachineIdentity, message: string, occurredAtMs: number): { changed: boolean; generation: TimelineGeneration } {
+    const parsed = machineIdentitySchema.parse(machine);
+    assertBoundedText(message, "inventory error", MAX_ERROR_MESSAGE_LENGTH);
+    assertSafeTimestamp(occurredAtMs, "inventory error time");
+    return this.db.transaction(() => {
+      this.requireMachine(parsed);
+      const result = this.db.prepare(`UPDATE machine_monitor_fleet_inventory SET last_error = ?, last_error_at = ?
+        WHERE machine_source = ? AND machine_id = ? AND (last_error IS NULL OR last_error <> ? OR last_error_at <> ?)`)
+        .run(message, occurredAtMs, parsed.source, parsed.machineId, message, occurredAtMs);
+      const changed = result.changes > 0;
+      return { changed, generation: changed ? this.bumpDataRevision(parsed) : this.generation(parsed) };
+    })();
+  }
+
+  inventory(machine: FleetMachineIdentity): FleetMachineInventory | null {
+    const parsed = machineIdentitySchema.parse(machine);
+    const row = this.db.prepare(`SELECT collector_session_id AS collectorSessionId, host_observed_at AS hostObservedAtMs,
+      server_received_at AS serverReceivedAtMs, payload_json AS payloadJson, last_error AS lastError, last_error_at AS lastErrorAtMs
+      FROM machine_monitor_fleet_inventory WHERE machine_source = ? AND machine_id = ?`)
+      .get(parsed.source, parsed.machineId) as InventoryRow | undefined;
+    if (row == null) return null;
+    let inventory: unknown;
+    try {
+      inventory = JSON.parse(row.payloadJson);
+    } catch (cause) {
+      throw new Error(`Machine inventory is corrupt: ${cause instanceof Error ? cause.message : String(cause)}`);
+    }
+    return {
+      inventory: machineInventoryPayloadSchema.parse(inventory),
+      receivedAtMs: row.serverReceivedAtMs,
+      lastError: row.lastError,
+      lastErrorAtMs: row.lastErrorAtMs,
+    };
   }
 
   recordCollection(input: FleetCollectionEnvelope): { outcome: "inserted" | "duplicate"; generation: TimelineGeneration } {

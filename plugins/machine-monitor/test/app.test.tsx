@@ -115,6 +115,23 @@ function fleetRpc(overviews: () => unknown, onTimeline: (request: any) => unknow
   return {
     fleetOverview: () => overviews(),
     machineTimeline: (request: any) => onTimeline(request),
+    machineInventory: ({ machine: identity }: any) => ({
+      contractVersion: 1,
+      machine: identity,
+      generation: { dataRevision: 1, settingsRevision: 1 },
+      receivedAtMs: 1_000,
+      lastError: null,
+      lastErrorAtMs: null,
+      inventory: {
+        contractVersion: 1, collectorSessionId: "inventory-session", observedAtMs: 1_000, visibility: "host-visible",
+        os: { name: "Test Linux", version: "1", kernel: "test", architecture: "x64" },
+        cpu: { logicalCores: 4, observedPhysicalCores: 2, observedPackages: 1, model: "Test CPU", speedMHz: 2400, availability: { state: "available", reason: null } },
+        memory: { usableBytes: 16_000, availability: { state: "available", reason: null } },
+        disks: [], disksAvailability: { state: "partial", reason: "No disks in fixture." },
+        raid: { state: "not-detected", arrays: [], source: "linux-mdstat", reason: "No active Linux md arrays were reported." },
+        location: { value: null, source: "unavailable" }, limitations: ["Location is not inferred."],
+      },
+    }),
     getAttachments: () => attachmentSnapshot,
     searchThreads: () => ({ threads: [] }),
     health: () => ({ hostName: "test", latest: null, lastError: null, warnings: [] }),
@@ -314,6 +331,10 @@ test("keeps overview resident and reuses a cached timeline without a third RPC",
   await slot.findByRole("button", { name: /Alpha\. connected/ });
   await waitFor(() => expect(calls).toEqual(["machine-alpha"]));
   await slot.findByRole("img", { name: /Operational history for machine-alpha/ });
+  // Context owns a stable shell while its deliberately idle inventory read is
+  // pending; the selected chart does not move or remount when it arrives.
+  expect(slot.getByRole("heading", { name: "Machine context" })).toBeTruthy();
+  expect(slot.getByText("Loading machine context…")).toBeTruthy();
   const selectedPanel = slot.getByRole("heading", { name: "Alpha" }).closest(".machine-monitor__selected-machine")!;
   const fleetPanel = slot.getByRole("heading", { name: "Fleet overview" }).closest(".machine-monitor__fleet-picker")!;
   expect(selectedPanel.compareDocumentPosition(fleetPanel) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
@@ -333,6 +354,55 @@ test("keeps overview resident and reuses a cached timeline without a third RPC",
   expect(calls).toEqual(["machine-alpha", "machine-bravo"]);
   expect(slot.getByRole("heading", { name: "Alpha" })).toBeTruthy();
   expect(slot.getByRole("img", { name: /Operational history for machine-alpha/ })).toBeTruthy();
+  slot.lifecycle.unmount();
+});
+
+test("renders the daemon-visible static profile after timeline work yields to idle", async () => {
+  vi.stubGlobal("requestIdleCallback", (callback: (deadline: IdleDeadline) => void) => {
+    queueMicrotask(() => callback({ didTimeout: false, timeRemaining: () => 50 }));
+    return 1;
+  });
+  const app = await loadPluginApp(() => import("../app.tsx"));
+  const slot = renderSlot(app.navPanels[0]!, { subPath: "" }, {
+    rpc: fleetRpc(() => overview(), (request) => timeline(request)),
+  } as any);
+
+  expect(await slot.findByText("4 logical cores")).toBeTruthy();
+  expect(slot.getByText("Not reported")).toBeTruthy();
+  expect(slot.getByText(/Usable memory visible to this daemon/)).toBeTruthy();
+  slot.lifecycle.unmount();
+});
+
+test("retains machine context through telemetry reconciliation without re-reading static inventory", async () => {
+  vi.stubGlobal("requestIdleCallback", (callback: (deadline: IdleDeadline) => void) => {
+    queueMicrotask(() => callback({ didTimeout: false, timeRemaining: () => 50 }));
+    return 1;
+  });
+  const initial = overview([machine(alpha, "Alpha")]);
+  const reconciled = overview([machine(alpha, "Alpha current", { generation: { dataRevision: 2, settingsRevision: 1 } })], { dataRevision: 2, settingsRevision: 1 });
+  let current = initial;
+  let inventoryCalls = 0;
+  const app = await loadPluginApp(() => import("../app.tsx"));
+  const rpc = fleetRpc(() => current, (request) => timeline(request));
+  const originalInventory = rpc.machineInventory;
+  rpc.machineInventory = (request: unknown) => {
+    inventoryCalls += 1;
+    return originalInventory(request);
+  };
+  const slot = renderSlot(app.navPanels[0]!, { subPath: "" }, { rpc } as any);
+
+  await slot.findByText("4 logical cores");
+  expect(inventoryCalls).toBe(1);
+  const context = slot.getByRole("heading", { name: "Machine context" }).closest(".machine-monitor__machine-context")!;
+  const chart = slot.getByRole("img", { name: /Operational history for machine-alpha/ });
+
+  current = reconciled;
+  void slot.behavior.emitRealtime("machine-monitor-fleet", { machine: alpha, dataRevision: 2, settingsRevision: 1, kinds: ["collection"] });
+  await slot.findByRole("heading", { name: "Alpha current" });
+  await waitFor(() => expect(slot.getByRole("img", { name: /Operational history for machine-alpha/ })).toBe(chart));
+  expect(slot.getByRole("heading", { name: "Machine context" }).closest(".machine-monitor__machine-context")).toBe(context);
+  expect(slot.getByText("4 logical cores")).toBeTruthy();
+  expect(inventoryCalls).toBe(1);
   slot.lifecycle.unmount();
 });
 
@@ -387,7 +457,11 @@ test("keeps the atlas in keyboard order while a stale, collector-failing source 
   await slot.findByRole("heading", { name: "Bravo" });
   expect(alphaButton.getAttribute("aria-pressed")).toBe("false");
   expect(bravoButton.getAttribute("aria-pressed")).toBe("true");
-  expect(slot.getByRole("img", { name: /Operational history for machine-bravo/ })).toBeTruthy();
+  const dashboard = slot.getByRole("img", { name: /Operational history for machine-bravo/ });
+  const notices = slot.getByLabelText("Machine notices");
+  expect(dashboard.compareDocumentPosition(notices) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(notices.textContent).toContain("Collector error: Collector timed out");
+  expect(notices.textContent).toContain("No current collection.");
   expect(slot.getByRole("heading", { name: "Bravo" }).closest(".machine-monitor__selected-machine")?.getAttribute("data-stale")).toBe("true");
   slot.lifecycle.unmount();
 });

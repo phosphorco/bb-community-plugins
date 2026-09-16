@@ -65,6 +65,7 @@
 .machine-monitor__machine-facts { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 7px; }
 .machine-monitor__machine-facts p { min-width: 0; padding: 7px; border-radius: 6px; background: color-mix(in srgb, var(--muted) 42%, transparent); }
 .machine-monitor__machine-facts strong { color: var(--foreground); }
+.machine-monitor__notice-rail { display: grid; gap: 6px; min-width: 0; }
 .machine-monitor__warnings { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
 .machine-monitor__warnings li { display: flex; gap: 7px; min-width: 0; padding: 7px; border: 1px solid color-mix(in srgb, var(--destructive) 36%, var(--border)); border-radius: 6px; color: var(--destructive); font-size: 11px; }
 .machine-monitor__warnings li strong { flex: 0 0 auto; text-transform: capitalize; }
@@ -131,6 +132,29 @@
 .machine-monitor__directories strong { font-size: 14px; font-variant-numeric: tabular-nums; }
 .machine-monitor__directories li > i { display: block; width: 100%; height: 4px; overflow: hidden; border-radius: 999px; background: color-mix(in srgb, var(--muted) 58%, transparent); }
 .machine-monitor__directories li > i > i { display: block; width: var(--machine-monitor-directory-rank); min-width: 2px; height: 100%; border-radius: inherit; background: var(--primary); }
+.machine-monitor__machine-context { display: grid; min-width: 0; min-block-size: 118px; gap: 10px; margin-top: 10px; padding: 12px; border: 1px solid var(--border); border-radius: 9px; background: var(--card); color: var(--card-foreground); contain: layout paint; }
+.machine-monitor__machine-context[data-loading] { background: color-mix(in srgb, var(--card) 92%, var(--muted)); }
+.machine-monitor__machine-context[data-visibility="guest-visible"] { border-style: dashed; }
+.machine-monitor__machine-context > header { display: flex; align-items: start; justify-content: space-between; gap: 12px; }
+.machine-monitor__machine-context h2 { font-size: 12px; font-weight: 650; }
+.machine-monitor__machine-context header p, .machine-monitor__machine-context header > span, .machine-monitor__machine-context dt, .machine-monitor__machine-context small, .machine-monitor__inventory-disclosure > div > p, .machine-monitor__inventory-disclosure li { color: var(--muted-foreground); font-size: 10px; }
+.machine-monitor__machine-context header p { margin-top: 3px; }
+.machine-monitor__machine-context header > span { white-space: nowrap; }
+.machine-monitor__machine-facts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin: 0; }
+.machine-monitor__machine-facts > div { display: grid; align-content: start; gap: 3px; min-width: 0; padding: 8px; border-radius: 6px; background: color-mix(in srgb, var(--muted) 42%, transparent); }
+.machine-monitor__machine-facts dt { margin: 0; }
+.machine-monitor__machine-facts dd { min-width: 0; margin: 0; overflow-wrap: anywhere; font-size: 13px; font-variant-numeric: tabular-nums; }
+.machine-monitor__machine-facts small { min-width: 0; overflow-wrap: anywhere; }
+.machine-monitor__inventory-disclosure { min-width: 0; border-top: 1px solid var(--border); }
+.machine-monitor__inventory-disclosure > summary { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 34px; cursor: pointer; color: var(--foreground); font-size: 11px; font-weight: 650; }
+.machine-monitor__inventory-disclosure > summary > span { color: var(--muted-foreground); font-size: 10px; font-weight: 500; }
+.machine-monitor__inventory-disclosure > summary:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+.machine-monitor__inventory-disclosure > div { display: grid; gap: 8px; padding-bottom: 4px; }
+.machine-monitor__inventory-disclosure ol { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 150px), 1fr)); gap: 7px; margin: 0; padding: 0; list-style: none; }
+.machine-monitor__inventory-disclosure ol li { display: grid; gap: 3px; min-width: 0; padding: 7px; border-radius: 6px; background: color-mix(in srgb, var(--muted) 42%, transparent); }
+.machine-monitor__inventory-disclosure strong { color: var(--foreground); font-size: 12px; font-variant-numeric: tabular-nums; }
+.machine-monitor__inventory-disclosure li span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.machine-monitor__inventory-disclosure ul { display: grid; gap: 3px; margin: 0; padding-left: 18px; color: var(--muted-foreground); font-size: 10px; }
 .machine-monitor__history-data { min-width: 0; border-top: 1px solid var(--border); }
 .machine-monitor__history-data > summary { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 38px; cursor: pointer; color: var(--foreground); font-size: 12px; font-weight: 650; }
 .machine-monitor__history-data > summary > span { color: var(--muted-foreground); font-size: 10px; font-weight: 500; }
@@ -161,7 +185,8 @@
 .machine-monitor__processes-note { margin-top: 7px !important; }
 .machine-monitor__echarts-theme { color: var(--card-foreground); border-top-color: var(--muted-foreground); border-right-color: var(--border); border-bottom-color: var(--primary); border-left-color: var(--destructive); text-decoration-color: color-mix(in srgb, var(--muted-foreground) 66%, var(--border)); background: var(--card); }
 .machine-monitor__sidebar-warning { display: block; width: 7px; height: 7px; border-radius: 50%; background: var(--destructive); box-shadow: 0 0 0 2px color-mix(in srgb, var(--destructive) 20%, transparent); }
-.machine-monitor__error { margin: 0 0 10px; padding: 8px 10px; border: 1px solid color-mix(in srgb, var(--destructive) 38%, var(--border)); border-radius: 7px; color: var(--destructive); font-size: 12px; }
+.machine-monitor__page-notices { display: grid; gap: 8px; margin-top: 10px; }
+.machine-monitor__error { margin: 0; padding: 8px 10px; border: 1px solid color-mix(in srgb, var(--destructive) 38%, var(--border)); border-radius: 7px; color: var(--destructive); font-size: 12px; }
 .machine-monitor__empty { margin: 24px 0; color: var(--muted-foreground); font-size: 13px; }
 .machine-monitor__footnote { margin-top: 12px; }
 .machine-monitor__references { display: grid; gap: 10px; margin-top: 10px; padding: 12px; border: 1px solid var(--border); border-radius: 9px; background: var(--card); color: var(--card-foreground); }

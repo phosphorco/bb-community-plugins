@@ -22,6 +22,7 @@ import {
   type FleetMetricId,
   type FleetMachineIdentity,
   type FleetOverviewResult,
+  type MachineInventoryResult,
   type MachineTimelineResult,
 } from "./fleet-contract.ts";
 import type { MachineMonitorHealth, rpcContract } from "./rpc-contract.ts";
@@ -33,8 +34,95 @@ const RANGES = [1, 6, 24, 24 * 7, 24 * 30] as const;
 type RangeHours = typeof RANGES[number];
 type FleetMachine = FleetOverviewResult["machines"][number];
 type TimelineView = Readonly<{ timeline: MachineTimelineResult; stale: boolean }> | null;
+type InventoryView = Readonly<{ key: string | null; value: MachineInventoryResult | null; loading: boolean; error: string | null }>;
 
 const PREFETCH_LIMIT = 6;
+const INVENTORY_CACHE_LIMIT = 64;
+
+/**
+ * Inventory is a committed server read, so selection never asks a daemon to
+ * probe hardware. Its cache identity is deliberately independent of live
+ * telemetry revisions: core samples advance every few seconds while this
+ * profile changes only through an explicit `inventory` invalidation.
+ */
+function useMachineInventory(machine: FleetMachine | null, inventoryRevision: number): Omit<InventoryView, "key"> {
+  const rpc = useRpc<typeof rpcContract>();
+  const [view, setView] = useState<InventoryView>({ key: null, value: null, loading: false, error: null });
+  const cache = useRef(new Map<string, MachineInventoryResult>());
+  const flights = useRef(new Map<string, Promise<MachineInventoryResult>>());
+  const key = machine == null ? null : `${machineIdentityKey(machine.machine)}:${inventoryRevision}`;
+  const read = useCallback((next: FleetMachine): Promise<MachineInventoryResult> => {
+    const nextKey = `${machineIdentityKey(next.machine)}:${inventoryRevision}`;
+    const cached = cache.current.get(nextKey);
+    if (cached != null) {
+      cache.current.delete(nextKey);
+      cache.current.set(nextKey, cached);
+      return Promise.resolve(cached);
+    }
+    const existing = flights.current.get(nextKey);
+    if (existing != null) return existing;
+    const flight = rpc.call("machineInventory", { contractVersion: FLEET_CONTRACT_VERSION, machine: next.machine }).then((result) => {
+      if (machineIdentityKey(result.machine) !== machineIdentityKey(next.machine)) throw new Error("Machine context response did not match its request.");
+      cache.current.set(nextKey, result);
+      while (cache.current.size > INVENTORY_CACHE_LIMIT) {
+        const oldest = cache.current.keys().next().value;
+        if (oldest == null) break;
+        cache.current.delete(oldest);
+      }
+      return result;
+    });
+    flights.current.set(nextKey, flight);
+    void flight.finally(() => {
+      if (flights.current.get(nextKey) === flight) flights.current.delete(nextKey);
+    }).catch(() => undefined);
+    return flight;
+  }, [inventoryRevision, rpc]);
+  useEffect(() => {
+    if (machine == null || key == null) {
+      setView({ key: null, value: null, loading: false, error: null });
+      return;
+    }
+    const cached = cache.current.get(key);
+    if (cached != null) {
+      cache.current.delete(key);
+      cache.current.set(key, cached);
+      return;
+    }
+    let current = true;
+    // A profile from the same machine remains visible while an explicitly
+    // invalidated inventory refreshes. It is truthful (the header says
+    // Refreshing) and avoids removing/reinserting the context panel below the
+    // chart on an otherwise ordinary overview reconciliation.
+    setView((previous) => previous.value != null && machineIdentityKey(previous.value.machine) === machineIdentityKey(machine.machine)
+      ? { key, value: previous.value, loading: true, error: null }
+      : { key, value: null, loading: true, error: null });
+    const collect = () => {
+      void read(machine).then((result) => {
+        if (!current || machineIdentityKey(result.machine) !== machineIdentityKey(machine.machine)) return;
+        setView({ key, value: result, loading: false, error: null });
+      }).catch((cause) => {
+        if (current) setView((previous) => previous.value != null && machineIdentityKey(previous.value.machine) === machineIdentityKey(machine.machine)
+          ? { key, value: previous.value, loading: false, error: cause instanceof Error ? cause.message : String(cause) }
+          : { key, value: null, loading: false, error: cause instanceof Error ? cause.message : String(cause) });
+      });
+    };
+    // The profile is useful context, but it must never contend with the
+    // selected machine's retained-or-fresh timeline on the interaction path.
+    // Cached profiles return synchronously above; first reads yield to idle.
+    if (typeof window.requestIdleCallback === "function") {
+      const idle = window.requestIdleCallback(collect, { timeout: 1_200 });
+      return () => { current = false; window.cancelIdleCallback(idle); };
+    }
+    const timer = window.setTimeout(collect, 0);
+    return () => { current = false; window.clearTimeout(timer); };
+  }, [key, machine, read]);
+  const cached = key == null ? null : cache.current.get(key) ?? null;
+  const retainedSameMachine = machine != null && view.value != null && machineIdentityKey(view.value.machine) === machineIdentityKey(machine.machine);
+  const current = cached == null
+    ? view.key === key ? view : retainedSameMachine ? { key, value: view.value, loading: true, error: view.error } : { key, value: null, loading: machine != null, error: null }
+    : { key, value: cached, loading: false, error: null };
+  return { value: current.value, loading: current.loading, error: current.error };
+}
 
 function rangeFor(hours: RangeHours, serverNowMs: number): TimelineRange {
   // Fleet history is normalized to local-server time. Never let a skewed
@@ -309,6 +397,10 @@ function useFleetMonitor() {
   const [timelineView, setTimelineView] = useState<TimelineView>(null);
   const [timelineLoading, setTimelineLoading] = useState(false);
   const [timelineError, setTimelineError] = useState<string | null>(null);
+  // Static inventory is invalidated independently of rapidly changing metric
+  // generations. Keeping a per-machine revision prevents every core sample
+  // from causing a context RPC or temporarily removing its presentation.
+  const [inventoryRevisions, setInventoryRevisions] = useState<ReadonlyMap<string, number>>(() => new Map());
 
   const commitTimelineView = useCallback((next: TimelineView) => {
     timelineViewRef.current = next;
@@ -488,6 +580,14 @@ function useFleetMonitor() {
   const onFleetInvalidation = useCallback((payload: unknown) => {
     if (!isFleetSignal(payload)) return;
     client.invalidateMachine(payload.machine);
+    if (payload.kinds.includes("inventory")) {
+      const key = machineIdentityKey(payload.machine);
+      setInventoryRevisions((previous) => {
+        const next = new Map(previous);
+        next.set(key, (next.get(key) ?? 0) + 1);
+        return next;
+      });
+    }
     const changedSelected = selectedKeyRef.current === machineIdentityKey(payload.machine);
     if (changedSelected) {
       selectedTimelineReconciliationKey.current = selectedKeyRef.current;
@@ -530,6 +630,7 @@ function useFleetMonitor() {
     timelineView,
     timelineLoading,
     timelineError,
+    inventoryRevision: selectedMachineKey == null ? 0 : inventoryRevisions.get(selectedMachineKey) ?? 0,
     chooseMachine,
     chooseRange,
     prefetchMachine,
@@ -680,6 +781,55 @@ const RootDiskBreakdown = memo(function RootDiskBreakdown({ timeline }: { timeli
   </section>;
 });
 
+const MachineContext = memo(function MachineContext({ inventory, loading, error }: {
+  inventory: MachineInventoryResult | null;
+  loading: boolean;
+  error: string | null;
+}) {
+  if (inventory == null) {
+    return <section className="machine-monitor__machine-context" aria-labelledby="machine-monitor-context-title" aria-busy={loading} data-loading={loading || undefined}>
+      <header><div><h2 id="machine-monitor-context-title">Machine context</h2><p>Daemon-visible hardware and operating-system facts are collected separately from live telemetry.</p></div></header>
+      <p className="machine-monitor__timeline-status" role="status">{loading ? "Loading machine context…" : error == null ? "Machine context has not been collected yet." : `Machine context could not be read: ${error}`}</p>
+    </section>;
+  }
+  const snapshot = inventory.inventory;
+  if (snapshot == null) {
+    return <section className="machine-monitor__machine-context" aria-labelledby="machine-monitor-context-title" aria-busy={loading} data-loading={loading || undefined}>
+      <header><div><h2 id="machine-monitor-context-title">Machine context</h2><p>Daemon-visible hardware and operating-system facts are collected separately from live telemetry.</p></div><span>{loading ? "Refreshing" : "Unavailable"}</span></header>
+      <p className="machine-monitor__timeline-status" role="status">{inventory.lastError ?? "No inventory snapshot has been retained for this machine yet."}</p>
+    </section>;
+  }
+  const cpu = snapshot.cpu.logicalCores == null ? "Unavailable" : `${snapshot.cpu.logicalCores} logical core${snapshot.cpu.logicalCores === 1 ? "" : "s"}`;
+  const topology = snapshot.cpu.observedPhysicalCores == null
+    ? "Observed physical topology unavailable"
+    : `${snapshot.cpu.observedPhysicalCores} observed physical core${snapshot.cpu.observedPhysicalCores === 1 ? "" : "s"}${snapshot.cpu.observedPackages == null ? "" : ` · ${snapshot.cpu.observedPackages} package${snapshot.cpu.observedPackages === 1 ? "" : "s"}`}`;
+  const model = [snapshot.cpu.model, snapshot.cpu.speedMHz == null ? null : `${snapshot.cpu.speedMHz.toFixed(0)} MHz`].filter((value): value is string => value != null).join(" · ") || "Model and speed unavailable";
+  const ram = snapshot.memory.usableBytes == null ? "Unavailable" : displayMetric(snapshot.memory.usableBytes, "bytes");
+  const os = [snapshot.os.name, snapshot.os.version, snapshot.os.kernel == null ? null : `kernel ${snapshot.os.kernel}`, snapshot.os.architecture].filter((value): value is string => value != null).join(" · ");
+  return <section className="machine-monitor__machine-context" aria-labelledby="machine-monitor-context-title" data-visibility={snapshot.visibility} aria-busy={loading}>
+    <header>
+      <div><h2 id="machine-monitor-context-title">Machine context</h2><p>{`${snapshot.visibility === "guest-visible" ? "Guest-visible" : snapshot.visibility === "host-visible" ? "Daemon-visible" : "Visibility unknown"} · observed ${latestTime(snapshot.observedAtMs)}`}</p></div>
+      <span>{loading ? "Refreshing" : inventory.lastError == null ? "Static profile" : "Last refresh failed"}</span>
+    </header>
+    <dl className="machine-monitor__machine-facts">
+      <div><dt>CPU</dt><dd>{cpu}</dd><small>{topology}</small></div>
+      <div><dt>CPU model</dt><dd>{model}</dd><small>{snapshot.cpu.availability.state === "available" ? "Logical CPU entries from the runtime" : snapshot.cpu.availability.reason}</small></div>
+      <div><dt>Visible RAM</dt><dd>{ram}</dd><small>{snapshot.memory.availability.state === "available" ? "Usable memory visible to this daemon" : snapshot.memory.availability.reason}</small></div>
+      <div><dt>Operating system</dt><dd>{os}</dd><small>{snapshot.visibility === "guest-visible" ? "This is the WSL/VM view, not the Windows host." : "Kernel and architecture reported by the daemon."}</small></div>
+      <div><dt>Location</dt><dd>Not reported</dd><small>Location is never inferred from IPs or cloud metadata.</small></div>
+      <div><dt>RAID</dt><dd>{snapshot.raid.state === "available" ? `${snapshot.raid.arrays.length} Linux md array${snapshot.raid.arrays.length === 1 ? "" : "s"}` : snapshot.raid.state === "not-detected" ? "No Linux md array detected" : "Unavailable"}</dd><small>{snapshot.raid.reason ?? "Linux md status only; hardware RAID, LVM, and ZFS are not inferred."}</small></div>
+    </dl>
+    <details className="machine-monitor__inventory-disclosure">
+      <summary>Disks and inventory limits <span>{snapshot.disksAvailability.state === "available" ? `${snapshot.disks.length} visible disk${snapshot.disks.length === 1 ? "" : "s"}` : snapshot.disksAvailability.state}</span></summary>
+      <div>
+        {snapshot.disks.length === 0 ? <p>{snapshot.disksAvailability.reason}</p> : <ol>{snapshot.disks.map((disk) => <li key={disk.id}><strong>{displayMetric(disk.sizeBytes, "bytes")}</strong><span>{disk.model ?? "Model unavailable"}</span><small>{`${disk.kind}${disk.rotational == null ? "" : disk.rotational ? " · rotational" : " · solid-state"}${disk.readOnly == null ? "" : disk.readOnly ? " · read-only" : ""}`}</small></li>)}</ol>}
+        {snapshot.raid.arrays.length > 0 && <p>{snapshot.raid.arrays.map((array) => `${array.name}: ${array.status}`).join(" · ")}</p>}
+        {snapshot.limitations.length > 0 && <ul>{snapshot.limitations.map((limitation) => <li key={limitation}>{limitation}</li>)}</ul>}
+      </div>
+    </details>
+  </section>;
+});
+
 function timelineBucketAverage(timeline: MachineTimelineResult, metricId: FleetMetricId, index: number): number | null {
   const value = timeline.metrics.find((metric) => metric.metricId === metricId)?.buckets[index]?.average;
   return value == null || !Number.isFinite(value) ? null : value;
@@ -744,12 +894,44 @@ function selectedMachineStatus(machine: FleetMachine): string {
   return `Current · as of ${asOf}`;
 }
 
-const SelectedMachineOverview = memo(function SelectedMachineOverview({ machine, rangeHours, timelineView, timelineLoading, timelineError, connection, onRange, onActivateEvent }: {
+const MachineNoticeRail = memo(function MachineNoticeRail({ machine, connection, chartProvenance, timelineLoading, timelineError }: {
+  machine: FleetMachine;
+  connection: string;
+  chartProvenance: string | null;
+  timelineLoading: boolean;
+  timelineError: string | null;
+}) {
+  const hasNotices = machine.lastError != null
+    || machine.warnings.length > 0
+    || machine.connection === "disconnected"
+    || machine.freshness === "stale"
+    || chartProvenance != null
+    || timelineLoading
+    || timelineError != null;
+  if (!hasNotices) return null;
+  return <aside className="machine-monitor__notice-rail" aria-label="Machine notices">
+    {machine.lastError != null && <p className="machine-monitor__error" role="alert">Collector error: {machine.lastError}</p>}
+    {machine.warnings.length > 0 && <ul className="machine-monitor__warnings" aria-label="Machine warnings">
+      {machine.warnings.map((warning, index) => <li key={`${warning.kind}:${warning.metricId ?? "machine"}:${index}`}><strong>{warning.kind}</strong><span>{warning.message}</span></li>)}
+    </ul>}
+    {machine.connection === "disconnected" && <p className="machine-monitor__timeline-status" role="status">Machine is disconnected. Retained history remains available when the local server can read it.</p>}
+    {machine.freshness === "stale" && <p className="machine-monitor__timeline-status" role="status">Machine data is stale; the latest retained history is labeled below.</p>}
+    {chartProvenance != null && <p className="machine-monitor__timeline-status" role="status">{chartProvenance}</p>}
+    {timelineLoading && <p className="machine-monitor__timeline-status" role="status">Loading timeline for {machine.label}…</p>}
+    {timelineError != null && <p className="machine-monitor__error" role="alert">Timeline refresh error: {timelineError}</p>}
+    {connection !== "connected" && <p className="machine-monitor__timeline-status" role="status">Realtime transport is {connection}; the timeline will reconcile when it reconnects.</p>}
+  </aside>;
+});
+
+const SelectedMachineOverview = memo(function SelectedMachineOverview({ machine, rangeHours, timelineView, timelineLoading, timelineError, inventory, inventoryLoading, inventoryError, connection, onRange, onActivateEvent }: {
   machine: FleetMachine;
   rangeHours: RangeHours;
   timelineView: TimelineView;
   timelineLoading: boolean;
   timelineError: string | null;
+  inventory: MachineInventoryResult | null;
+  inventoryLoading: boolean;
+  inventoryError: string | null;
   connection: string;
   onRange: (hours: RangeHours) => void;
   onActivateEvent: (activation: TimelineEventActivation) => void;
@@ -787,22 +969,15 @@ const SelectedMachineOverview = memo(function SelectedMachineOverview({ machine,
         </label>
       </div>
     </header>
-    {machine.lastError != null && <p className="machine-monitor__error" role="alert">Collector error: {machine.lastError}</p>}
-    {machine.warnings.length > 0 && <ul className="machine-monitor__warnings" aria-label="Machine warnings">
-      {machine.warnings.map((warning, index) => <li key={`${warning.kind}:${warning.metricId ?? "machine"}:${index}`}><strong>{warning.kind}</strong><span>{warning.message}</span></li>)}
-    </ul>}
     <section className="machine-monitor__metrics" aria-label={`Operational summary for ${machine.label}`}>
       {dashboardMetrics.map((metric) => <DashboardMetricCard key={metric.id} metric={metric} />)}
     </section>
     <section className="machine-monitor__timeline" aria-labelledby="machine-monitor-history-title">
       <header><div><h2 id="machine-monitor-history-title">Operational history</h2><p>{`CPU, memory, and root disk share a ${FLEET_UTILIZATION_ATTENTION_PERCENT}% attention line.`}</p></div><span>{rangeLabel(rangeHours)}</span></header>
-      {machine.connection === "disconnected" && <p className="machine-monitor__timeline-status" role="status">Machine is disconnected. Retained history remains available when the local server can read it.</p>}
-      {machine.freshness === "stale" && <p className="machine-monitor__timeline-status" role="status">Machine data is stale; the latest retained history is labeled below.</p>}
-      {chartProvenance != null && <p className="machine-monitor__timeline-status" role="status">{chartProvenance}</p>}
-      {timelineLoading && <p className="machine-monitor__timeline-status" role="status">Loading timeline for {machine.label}…</p>}
-      {timelineError != null && <p className="machine-monitor__error" role="alert">Timeline refresh error: {timelineError}</p>}
-      {visibleTimeline == null ? <p className="machine-monitor__empty">No retained timeline is available yet.</p> : <>
+      {visibleTimeline == null ? <><p className="machine-monitor__empty">No retained timeline is available yet.</p><MachineNoticeRail machine={machine} connection={connection} chartProvenance={chartProvenance} timelineLoading={timelineLoading} timelineError={timelineError} /><MachineContext inventory={inventory} loading={inventoryLoading} error={inventoryError} /></> : <>
         <MachineDashboardChart className="machine-monitor__dashboard-chart" timeline={visibleTimeline} stale={historyStale || retainedForOtherMachine} />
+        <MachineNoticeRail machine={machine} connection={connection} chartProvenance={chartProvenance} timelineLoading={timelineLoading} timelineError={timelineError} />
+        <MachineContext inventory={inventory} loading={inventoryLoading} error={inventoryError} />
         {!retainedForOtherMachine && visibleSelectedTimeline != null && <RootDiskBreakdown timeline={visibleSelectedTimeline} />}
         {!retainedForOtherMachine && visibleSelectedTimeline != null && <HistoryDataDisclosure timeline={visibleSelectedTimeline} />}
         {!retainedForOtherMachine && visibleSelectedTimeline != null && <details className="machine-monitor__full-timeline" open={detailOpen} onToggle={(event) => setDetailOpen((event.currentTarget as HTMLDetailsElement).open)}>
@@ -829,13 +1004,13 @@ function MachineMonitorPanel() {
     navigate.toThread(activation.bbReference.threadId);
   }, [fleet.canActivateEvent, navigate]);
   const selected = fleet.selectedMachine();
+  const inventory = useMachineInventory(selected, fleet.inventoryRevision);
 
   return <main className="machine-monitor">
     <header className="machine-monitor__page-header">
       <div><h1>Machine Monitor</h1><p>Fleet atlas and machine history.</p></div>
       <span role="status">Realtime {fleet.connection}</span>
     </header>
-    {fleet.overviewError != null && <p className="machine-monitor__error" role="alert">{fleet.overviewError}</p>}
     {fleet.overviewLoading && fleet.overview == null && <p className="machine-monitor__empty" role="status">Loading the fleet overview…</p>}
     {selected != null && <SelectedMachineOverview
       machine={selected}
@@ -843,11 +1018,15 @@ function MachineMonitorPanel() {
       timelineView={fleet.timelineView}
       timelineLoading={fleet.timelineLoading}
       timelineError={fleet.timelineError}
+      inventory={inventory.value}
+      inventoryLoading={inventory.loading}
+      inventoryError={inventory.error}
       connection={fleet.connection}
       onRange={fleet.chooseRange}
       onActivateEvent={activateEvent}
     />}
     {fleet.overview != null && <FleetPicker overview={fleet.overview} selectedMachineKey={fleet.selectedMachineKey} onSelect={fleet.chooseMachine} onIntent={fleet.prefetchMachine} />}
+    {fleet.overviewError != null && <aside className="machine-monitor__page-notices" aria-label="Fleet notices"><p className="machine-monitor__error" role="alert">{fleet.overviewError}</p></aside>}
     <MachineMonitorReferences />
   </main>;
 }

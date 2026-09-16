@@ -4,6 +4,25 @@ Machine Monitor is a deliberately small BB community plugin that records CPU, me
 
 It samples CPU/RAM/root disk every 30 seconds and cache directories every 15 minutes, retains 30 days in the plugin SQLite database, and aggregates each requested range to no more than 720 ECharts points. A separate Linux memory diagnostic samples kernel pressure/reclaim counters every minute and increases only those lightweight measurements to five seconds while the kernel reports memory stalls. A bounded process ranking remains at once per minute, retaining seven days or at most 20,000 compact snapshots. The panel shows root disk and per-directory average growth per day over the selected history. The browser has no foreground polling: it refreshes from emitted collection changes.
 
+## Machine context
+
+Each selected machine also has a low-churn **Machine context** profile. It is
+collected after operational telemetry is healthy, on daemon reconnect, and at
+most daily; selecting a machine reads the committed local-server profile and
+never probes the daemon directly. Linux reports logical CPU count/model/speed,
+observed CPU topology when sysfs exposes it, visible/usable RAM, allowlisted
+OS/kernel facts, bounded block-device capacities, and Linux `md` status. WSL
+is explicitly labeled **guest-visible**: these are VM facts, not claims about
+the Windows host. macOS reports the portable Node baseline plus a clearly
+partial root-volume capacity; device and RAID topology are unavailable until a
+future bounded native adapter is added.
+
+The profile intentionally omits serial numbers, MAC addresses, WWNs, UUIDs,
+raw filesystem paths, IP geolocation, cloud metadata, and arbitrary system
+reports. “No Linux md array detected” does not mean there is no hardware RAID,
+LVM, or ZFS. Data-center location is **Not reported** unless it arrives later
+from trusted operator/enrollment metadata; Machine Monitor never infers it.
+
 ## Fleet timelines and event boundary
 
 Fleet collection, `fleetOverview`, and `machineTimeline` are implemented. The strict, versioned contract in `fleet-contract.ts` is backed by the server-owned coordinator, durable fleet store, registered RPC methods, and selected-machine timeline UI.

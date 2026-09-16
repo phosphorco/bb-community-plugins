@@ -5,6 +5,8 @@ import { attachmentRpcSchemas } from "./attachment-contract.ts";
 import {
   fleetOverviewRequestSchema,
   fleetOverviewResultSchema,
+  machineInventoryRequestSchema,
+  machineInventoryResultSchema,
   machineTimelineRequestSchema,
   machineTimelineResultSchema,
 } from "./fleet-contract.ts";
@@ -50,6 +52,10 @@ export const fleetRpcSchemas = {
   machineTimeline: {
     input: machineTimelineRequestSchema,
     output: machineTimelineResultSchema,
+  },
+  machineInventory: {
+    input: machineInventoryRequestSchema,
+    output: machineInventoryResultSchema,
   },
 } as const;
 

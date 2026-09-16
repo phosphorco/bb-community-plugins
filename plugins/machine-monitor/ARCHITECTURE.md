@@ -21,6 +21,29 @@ admission and ingestion policy enforces quota, event retention, bounded
 timestamps and durations, explicit overflow/cursor behavior, and exact BB
 project/thread validation. The typed lane alone is not that policy.
 
+## Static machine context
+
+`machineInventory` is an independent, identity-free host RPC and a separate
+coordinator lane. It is deliberately not embedded in the 30-second core
+payload: the coordinator waits for operational telemetry's first memory pass,
+then collects context after a reconnect and at most every 24 hours. Its one
+latest snapshot is durably stored per server-bound machine identity. A
+canonical profile digest prevents ordinary refresh time/session changes from
+churning the machine generation; a changed profile publishes an `inventory`
+invalidation after the SQLite transaction commits. A selected browser machine
+reads this committed profile from the server—never from a daemon RPC.
+
+The contract describes the daemon-visible environment: OS/kernel/architecture,
+logical CPU model/speed, nullable observed Linux topology, visible/usable RAM,
+bounded disk summaries, and bounded Linux `md` status. WSL is labeled
+`guest-visible`; unknown platforms do no inventory probes; Darwin uses only the
+portable Node baseline and a partial root-volume fact until a bounded native
+adapter exists. Location is an explicit unavailable fact rather than a network
+or cloud-metadata probe. The schema prohibits hardware identifiers and raw
+paths by construction: no serial, MAC, WWN, UUID, mount path, IP address, raw
+system report, or arbitrary command output is stored or rendered. Linux md
+facts never imply the absence of hardware RAID, LVM, or ZFS.
+
 ## Identity and collection provenance
 
 There are exactly two machine identity shapes:

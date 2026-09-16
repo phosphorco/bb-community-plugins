@@ -284,10 +284,11 @@ export const fleetInvalidationSignalSchema = z.object({
     "collection",
     "directory",
     "memory",
+    "inventory",
     "error",
     "settings",
     "retention",
-  ])).min(1).max(7).superRefine((kinds, context) => {
+  ])).min(1).max(8).superRefine((kinds, context) => {
     if (new Set(kinds).size !== kinds.length) {
       context.addIssue({ code: "custom", message: "kinds must not contain duplicates" });
     }
@@ -477,6 +478,123 @@ export const fleetMachineWarningSchema = z.object({
   kind: z.enum(["disconnected", "stale", "collector-error", "metric-threshold", "unsupported-capability"]),
   message: z.string().min(1).max(256),
   metricId: metricIdSchema.nullable(),
+}).strict();
+
+/**
+ * Slow-changing machine context is deliberately separate from the telemetry
+ * cadence.  These values describe what the daemon can see, not an asserted
+ * physical inventory: in particular a container or WSL guest must not claim
+ * its host's hardware.
+ */
+export const MAX_MACHINE_INVENTORY_DISKS = 24;
+export const MAX_MACHINE_INVENTORY_RAID_ARRAYS = 8;
+export const MAX_MACHINE_INVENTORY_LIMITATIONS = 16;
+
+const inventoryAvailabilitySchema = z.object({
+  state: z.enum(["available", "partial", "unavailable"]),
+  reason: z.string().min(1).max(256).nullable(),
+}).strict().superRefine((value, context) => {
+  if ((value.state === "available") !== (value.reason == null)) {
+    context.addIssue({ code: "custom", message: "available inventory facts have no reason; non-available facts require one", path: ["reason"] });
+  }
+});
+
+const nullableInventoryText = z.string().min(1).max(256).nullable();
+const nullableInventoryCount = z.number().int().min(0).max(65_536).nullable();
+
+export const machineInventoryPayloadSchema = z.object({
+  contractVersion: contractVersionSchema,
+  collectorSessionId: opaqueIdSchema(128),
+  observedAtMs: timestampSchema,
+  visibility: z.enum(["host-visible", "guest-visible", "unknown"]),
+  os: z.object({
+    name: z.string().min(1).max(128),
+    version: nullableInventoryText,
+    kernel: nullableInventoryText,
+    architecture: nullableInventoryText,
+  }).strict(),
+  cpu: z.object({
+    logicalCores: nullableInventoryCount,
+    /** Linux topology IDs are observed facts and can be unavailable. */
+    observedPhysicalCores: nullableInventoryCount,
+    observedPackages: nullableInventoryCount,
+    model: nullableInventoryText,
+    speedMHz: z.number().finite().min(0).max(100_000).nullable(),
+    availability: inventoryAvailabilitySchema,
+  }).strict(),
+  memory: z.object({
+    /** Visible/usable memory, never a claim about installed DIMMs. */
+    usableBytes: nonnegativeFiniteNumberSchema.nullable(),
+    availability: inventoryAvailabilitySchema,
+  }).strict(),
+  disks: z.array(z.object({
+    /** Opaque ordinal only: no serial, WWN, UUID, or filesystem path. */
+    id: z.string().regex(/^disk-[0-9]+$/u).max(32),
+    kind: z.enum(["block", "volume"]),
+    sizeBytes: nonnegativeFiniteNumberSchema,
+    model: nullableInventoryText,
+    rotational: z.boolean().nullable(),
+    readOnly: z.boolean().nullable(),
+  }).strict()).max(MAX_MACHINE_INVENTORY_DISKS),
+  disksAvailability: inventoryAvailabilitySchema,
+  raid: z.object({
+    state: z.enum(["available", "not-detected", "unavailable"]),
+    /** A bounded status summary from Linux md only, never a controller claim. */
+    arrays: z.array(z.object({
+      name: z.string().min(1).max(128),
+      status: z.string().min(1).max(256),
+    }).strict()).max(MAX_MACHINE_INVENTORY_RAID_ARRAYS),
+    source: z.enum(["linux-mdstat", "unavailable"]),
+    reason: z.string().min(1).max(256).nullable(),
+  }).strict(),
+  /** Location is operator/enrollment supplied only; probes and IP geolocation are prohibited. */
+  location: z.object({
+    value: z.null(),
+    source: z.literal("unavailable"),
+  }).strict(),
+  limitations: z.array(z.string().min(1).max(256)).max(MAX_MACHINE_INVENTORY_LIMITATIONS),
+}).strict().superRefine((value, context) => {
+  const ids = new Set<string>();
+  for (const [index, disk] of value.disks.entries()) {
+    if (ids.has(disk.id)) context.addIssue({ code: "custom", message: "disk IDs must be unique", path: ["disks", index, "id"] });
+    ids.add(disk.id);
+  }
+  if (value.disksAvailability.state === "available" && value.disks.length === 0) {
+    context.addIssue({ code: "custom", message: "available disk inventory requires at least one disk", path: ["disks"] });
+  }
+  if (value.disksAvailability.state === "unavailable" && value.disks.length > 0) {
+    context.addIssue({ code: "custom", message: "unavailable disk inventory cannot carry disks", path: ["disks"] });
+  }
+  if (value.raid.state === "unavailable" && value.raid.source !== "unavailable") {
+    context.addIssue({ code: "custom", message: "unavailable RAID must name the unavailable source", path: ["raid", "source"] });
+  }
+});
+
+/** Server-bound envelope; hosts never choose the machine receiving an inventory. */
+export const machineInventoryEnvelopeSchema = z.object({
+  machine: machineIdentitySchema,
+  inventory: machineInventoryPayloadSchema,
+  serverSentAtMs: timestampSchema,
+  serverReceivedAtMs: timestampSchema,
+}).strict().superRefine((value, context) => {
+  if (value.serverReceivedAtMs < value.serverSentAtMs) {
+    context.addIssue({ code: "custom", message: "inventory response cannot precede its request", path: ["serverReceivedAtMs"] });
+  }
+});
+
+export const machineInventoryRequestSchema = z.object({
+  contractVersion: contractVersionSchema,
+  machine: machineIdentitySchema,
+}).strict();
+
+export const machineInventoryResultSchema = z.object({
+  contractVersion: contractVersionSchema,
+  machine: machineIdentitySchema,
+  generation: timelineGenerationSchema,
+  inventory: machineInventoryPayloadSchema.nullable(),
+  receivedAtMs: timestampSchema.nullable(),
+  lastError: z.string().max(1_024).nullable(),
+  lastErrorAtMs: timestampSchema.nullable(),
 }).strict();
 
 export const fleetMachineOverviewSchema = z.object({
@@ -728,3 +846,7 @@ export const machineTimelineResultSchema = z.object({
 
 export type FleetOverviewResult = z.infer<typeof fleetOverviewResultSchema>;
 export type MachineTimelineResult = z.infer<typeof machineTimelineResultSchema>;
+export type MachineInventoryPayload = z.infer<typeof machineInventoryPayloadSchema>;
+export type MachineInventoryEnvelope = z.infer<typeof machineInventoryEnvelopeSchema>;
+export type MachineInventoryRequest = z.infer<typeof machineInventoryRequestSchema>;
+export type MachineInventoryResult = z.infer<typeof machineInventoryResultSchema>;
