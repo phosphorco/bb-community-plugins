@@ -33,7 +33,7 @@ Fleet collection, `fleetOverview`, and `machineTimeline` are implemented. The st
 - `fleetOverview` and `machineTimeline` are separate bounded RPC methods registered alongside the legacy `health`, `snapshot`, and attachment methods, so those existing consumers remain compatible.
 - The typed timeline event lane is a tested internal extension seam only. Its durable reader, renderer, and synthetic end-to-end test exercise producer identity, event deduplication, bounded reads, and linked-thread activation, but no production event producer is enabled.
 - A production event producer must remain disabled until a server-owned admission and ingestion policy enforces quota, event retention, bounded timestamps and durations, explicit overflow/cursor behavior, and exact BB project/thread validation.
-- Linked threads are still the existing manual attachment snapshot, explicitly scoped to the whole fleet. They are not silently converted into per-machine timeline-event provenance.
+- Linked references are one manual attachment snapshot scoped to the whole fleet. Search can attach an active or archived BB thread, a pasted same-host BB thread URL resolves to that thread identity, and any other safe HTTP(S) URL can be attached with a user-supplied name. These references are not silently converted into per-machine timeline-event provenance.
 
 The full data-boundary rationale and limits are in [ARCHITECTURE.md](./ARCHITECTURE.md).
 

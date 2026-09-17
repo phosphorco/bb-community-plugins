@@ -710,7 +710,7 @@ export const fleetAttachmentSnapshotSchema = z.object({
   }).strict(),
 }).strict();
 
-/** Existing manual Linked threads are one fleet-level snapshot, never events. */
+/** Manual linked references are one fleet-level snapshot, never events. */
 export const fleetAttachmentStateSchema = z.object({
   scope: z.literal("fleet"),
   snapshot: fleetAttachmentSnapshotSchema,

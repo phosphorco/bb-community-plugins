@@ -4,7 +4,7 @@ import {
   canonicalizeResource,
   CROSS_REFERENCES_PLUGIN_ID,
   getProjectionResponseSchema,
-  isExactBbThreadResource,
+  isMachineMonitorAttachmentTarget,
   machineMonitorResource,
   MACHINE_MONITOR_PRODUCER_ID,
   projectionPayloadDigest,
@@ -73,7 +73,7 @@ function isValidMachineMonitorProjection(projection: {
     const targets = projection.targets.map(canonicalizeResource);
     const targetIdentities = new Set<string>();
     for (const target of targets) {
-      if (!isExactBbThreadResource(target) || targetIdentities.has(target.canonicalIdentityJson)) return false;
+      if (!isMachineMonitorAttachmentTarget(target) || targetIdentities.has(target.canonicalIdentityJson)) return false;
       targetIdentities.add(target.canonicalIdentityJson);
     }
     if (projection.tombstone && targets.length !== 0) return false;

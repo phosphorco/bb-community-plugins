@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+// @vitest-environment-options { "url": "https://bb-next.banjo-tint.ts.net/" }
 
 import { cleanup, fireEvent, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
@@ -283,7 +284,7 @@ test("bounds live detail flights while an invalidated request waits to settle", 
   expect(client.getTimeline(alpha, range, currentGeneration)).toBeTruthy();
 });
 
-test("keeps Linked threads fleet-scoped while preserving add, native navigation, and remove", async () => {
+test("keeps linked references fleet-scoped while preserving add, native navigation, and remove", async () => {
   const app = await loadPluginApp(() => import("../app.tsx"));
   const target = {
     provider: "bb",
@@ -305,8 +306,8 @@ test("keeps Linked threads fleet-scoped while preserving add, native navigation,
     },
   } as any);
 
-  expect(await slot.findByText("Keep the BB threads that explain or repair this fleet close at hand.")).toBeTruthy();
-  fireEvent.change(slot.getByRole("searchbox", { name: "Add a BB thread" }), { target: { value: "disk" } });
+  expect(await slot.findByText("Keep the BB threads and external resources that explain or repair this fleet close at hand.")).toBeTruthy();
+  fireEvent.change(slot.getByRole("searchbox", { name: "Add a thread or link" }), { target: { value: "disk" } });
   await slot.findByText(/Root disk warning/);
   fireEvent.click(slot.getByRole("button", { name: "Link Fix disk pressure" }));
   await waitFor(() => expect(replacements).toHaveLength(1));
@@ -316,6 +317,146 @@ test("keeps Linked threads fleet-scoped while preserving add, native navigation,
   fireEvent.click(slot.getByRole("button", { name: "Remove Fix disk pressure" }));
   await waitFor(() => expect(replacements).toHaveLength(2));
   slot.lifecycle.unmount();
+});
+
+test("resolves a same-host BB thread URL without sending it through text search", async () => {
+  const app = await loadPluginApp(() => import("../app.tsx"));
+  const thread = { id: "thr_qpij5ir9qw", projectId: "proj_p9meq6nys2", title: "URL-selected repair", detail: "Resolved by ID", archived: false };
+  const target = {
+    provider: "bb",
+    keys: { project: thread.projectId, thread: thread.id },
+    presentation: { label: thread.title, detail: `Project ${thread.projectId}` },
+  };
+  const replacements: unknown[] = [];
+  let lookups = 0;
+  const slot = renderSlot(app.navPanels[0]!, { subPath: "" }, {
+    rpc: {
+      ...fleetRpc(() => overview(), (request) => timeline(request)),
+      getAttachments: () => replacements.length === 0
+        ? attachmentSnapshot
+        : { ...attachmentSnapshot, sourceRevision: 1, targets: [target], status: { ...attachmentSnapshot.status, sourceRevision: 1, desiredRevision: 1 } },
+      searchThreads: () => { throw new Error("same-host URLs must not use text search"); },
+      getThread: () => { lookups += 1; return thread; },
+      replaceAttachments: (input: unknown) => {
+        replacements.push(input);
+        return { outcome: "applied", sourceRevision: 1, targets: [target], status: { ...attachmentSnapshot.status, sourceRevision: 1, desiredRevision: 1 } };
+      },
+    },
+  } as any);
+
+  const url = `${window.location.origin}/projects/${thread.projectId}/threads/${thread.id}`;
+  fireEvent.change(await slot.findByRole("searchbox", { name: "Add a thread or link" }), { target: { value: url } });
+  await waitFor(() => expect(slot.inspection.rpcCalls.filter((call) => call.method === "getThread")).toHaveLength(1));
+  await waitFor(() => expect(slot.container.textContent).toContain("1 matching thread."));
+  await slot.findByText("URL-selected repair");
+  expect(lookups).toBe(1);
+  fireEvent.click(slot.getByRole("button", { name: "Link URL-selected repair" }));
+  await waitFor(() => expect(replacements).toHaveLength(1));
+  expect(lookups).toBe(2);
+  expect(replacements[0]).toEqual({ expectedSourceRevision: 0, targets: [target] });
+});
+
+test("offers arbitrary safe URLs as named external forward references", async () => {
+  const app = await loadPluginApp(() => import("../app.tsx"));
+  const href = "https://example.test/operations/runbook";
+  const target = {
+    provider: "url",
+    keys: { href },
+    presentation: { label: "Collector runbook", detail: "example.test", url: href },
+  };
+  const replacements: unknown[] = [];
+  const slot = renderSlot(app.navPanels[0]!, { subPath: "" }, {
+    rpc: {
+      ...fleetRpc(() => overview(), (request) => timeline(request)),
+      getAttachments: () => replacements.length === 0
+        ? attachmentSnapshot
+        : { ...attachmentSnapshot, sourceRevision: 1, targets: [target], status: { ...attachmentSnapshot.status, sourceRevision: 1, desiredRevision: 1 } },
+      replaceAttachments: (input: unknown) => {
+        replacements.push(input);
+        return { outcome: "applied", sourceRevision: 1, targets: [target], status: { ...attachmentSnapshot.status, sourceRevision: 1, desiredRevision: 1 } };
+      },
+    },
+  } as any);
+
+  fireEvent.change(await slot.findByRole("searchbox", { name: "Add a thread or link" }), { target: { value: href } });
+  expect(await slot.findByText("External link")).toBeTruthy();
+  fireEvent.change(slot.getByRole("textbox", { name: "Reference name" }), { target: { value: "Collector runbook" } });
+  fireEvent.click(slot.getByRole("button", { name: "Link Collector runbook" }));
+  await waitFor(() => expect(replacements).toHaveLength(1));
+  expect(replacements[0]).toEqual({ expectedSourceRevision: 0, targets: [target] });
+  expect((await slot.findByRole("link", { name: "Collector runbook" })).getAttribute("href")).toBe(href);
+});
+
+test("derives a delayed add from the latest attachment snapshot", async () => {
+  const app = await loadPluginApp(() => import("../app.tsx"));
+  const lookup = deferred<any>();
+  const existing = {
+    provider: "bb",
+    keys: { project: "proj_existing", thread: "thr_existing" },
+    presentation: { label: "Existing incident", detail: "Project proj_existing" },
+  };
+  const latest = { ...attachmentSnapshot, sourceRevision: 1, targets: [existing], status: { ...attachmentSnapshot.status, sourceRevision: 1, desiredRevision: 1 } };
+  const added = { id: "thr_added", projectId: "proj_added", title: "Added after refresh", archived: false };
+  const addedTarget = {
+    provider: "bb",
+    keys: { project: added.projectId, thread: added.id },
+    presentation: { label: added.title, detail: `Project ${added.projectId}` },
+  };
+  let snapshot: any = attachmentSnapshot;
+  const replacements: any[] = [];
+  let attachmentReads = 0;
+  const slot = renderSlot(app.navPanels[0]!, { subPath: "" }, {
+    rpc: {
+      ...fleetRpc(() => overview(), (request) => timeline(request)),
+      getAttachments: () => { attachmentReads += 1; return snapshot; },
+      searchThreads: () => ({ threads: [added] }),
+      getThread: () => lookup.promise,
+      replaceAttachments: (input: unknown) => {
+        replacements.push(input);
+        return { outcome: "applied", sourceRevision: 2, targets: [existing, addedTarget], status: { ...attachmentSnapshot.status, sourceRevision: 2, desiredRevision: 2 } };
+      },
+    },
+  } as any);
+
+  fireEvent.change(await slot.findByRole("searchbox", { name: "Add a thread or link" }), { target: { value: "refresh" } });
+  await slot.findByText("Added after refresh");
+  fireEvent.click(slot.getByRole("button", { name: "Link Added after refresh" }));
+  snapshot = latest;
+  await slot.behavior.emitRealtime("machine-monitor-attachments", { sourceRevision: 1 });
+  await waitFor(() => expect(attachmentReads).toBeGreaterThanOrEqual(2));
+  await slot.findByRole("link", { name: "Existing incident" });
+  lookup.resolve(added);
+  await waitFor(() => expect(replacements).toHaveLength(1));
+  expect(replacements[0]).toEqual({ expectedSourceRevision: 1, targets: [existing, addedTarget] });
+});
+
+test("never exposes stale search results after the normalized query changes", async () => {
+  const app = await loadPluginApp(() => import("../app.tsx"));
+  const first = deferred<any>();
+  const second = deferred<any>();
+  const searches: string[] = [];
+  const slot = renderSlot(app.navPanels[0]!, { subPath: "" }, {
+    rpc: {
+      ...fleetRpc(() => overview(), (request) => timeline(request)),
+      getAttachments: () => attachmentSnapshot,
+      searchThreads: ({ query }: { query: string }) => {
+        searches.push(query);
+        return searches.length === 1 ? first.promise : second.promise;
+      },
+    },
+  } as any);
+
+  const search = await slot.findByRole("searchbox", { name: "Add a thread or link" });
+  fireEvent.change(search, { target: { value: "disk" } });
+  await waitFor(() => expect(searches).toEqual(["disk"]));
+  fireEvent.change(search, { target: { value: "  memory  " } });
+  expect(slot.queryByText("Stale disk result")).toBeNull();
+  await waitFor(() => expect(searches).toEqual(["disk", "memory"]));
+  first.resolve({ threads: [{ id: "thr_stale", projectId: "proj_stale", title: "Stale disk result", archived: false }] });
+  await Promise.resolve();
+  expect(slot.queryByText("Stale disk result")).toBeNull();
+  second.resolve({ threads: [{ id: "thr_current", projectId: "proj_current", title: "Current memory result", archived: false }] });
+  expect(await slot.findByText("Current memory result")).toBeTruthy();
 });
 
 test("keeps overview resident and reuses a cached timeline without a third RPC", async () => {

@@ -140,7 +140,7 @@ ranks or returns a machine's retained metric history. It is recomputed for
 each read because `generatedAtMs` and fresh/stale state are clock-derived;
 only generation-keyed timeline detail is cached.
 
-Manual Linked threads remain one existing attachment snapshot under
+Manual Linked references remain one attachment snapshot under
 `{ scope: "fleet", snapshot }`. That state is neither machine-scoped nor a
 timeline event: attachments keep their existing optimistic delivery and
 revision behavior, while event provenance is immutable measurement history.

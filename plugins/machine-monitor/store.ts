@@ -3,7 +3,7 @@ import type Database from "better-sqlite3";
 import {
   canonicalizeResource,
   createProjectionCommand,
-  isExactBbThreadResource,
+  isMachineMonitorAttachmentTarget,
   machineMonitorResource,
   MACHINE_MONITOR_PRODUCER_ID,
   MAX_ATTACHMENT_TARGETS,
@@ -499,7 +499,7 @@ function parseResource(row: ReferenceLinkRow): CanonicalResource {
     throw new Error(`Machine Monitor reference row is corrupt: ${cause instanceof Error ? cause.message : String(cause)}`);
   }
   const resource = canonicalizeResource({ provider: row.targetProvider, keys, presentation } as Resource);
-  if (!isExactBbThreadResource(resource)) throw new Error("Machine Monitor reference row is not an exact BB thread.");
+  if (!isMachineMonitorAttachmentTarget(resource)) throw new Error("Machine Monitor reference row is not a supported attachment target.");
   return resource;
 }
 
@@ -592,12 +592,12 @@ export class MachineMonitorReferenceStore {
     if (!Array.isArray(input.targets) || input.targets.length > MAX_ATTACHMENT_TARGETS) throw new Error(`targets must contain at most ${MAX_ATTACHMENT_TARGETS} resources.`);
     const targets = input.targets.map((target) => {
       const canonical = canonicalizeResource(target);
-      if (!isExactBbThreadResource(canonical)) throw new Error("Machine Monitor attachments must target exact BB threads.");
+      if (!isMachineMonitorAttachmentTarget(canonical)) throw new Error("Machine Monitor attachments must target exact BB threads or safe HTTP(S) URLs.");
       return canonical;
     });
     const identities = new Set<string>();
     for (const target of targets) {
-      if (identities.has(target.canonicalIdentityJson)) throw new Error("Machine Monitor attachments must not contain duplicate threads.");
+      if (identities.has(target.canonicalIdentityJson)) throw new Error("Machine Monitor attachments must not contain duplicate targets.");
       identities.add(target.canonicalIdentityJson);
     }
     let outcome: "applied" | "unchanged" | "cas-mismatch" = "applied";

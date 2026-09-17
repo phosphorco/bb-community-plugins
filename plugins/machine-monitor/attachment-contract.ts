@@ -28,6 +28,13 @@ const digestPattern = /^[0-9a-f]{64}$/;
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const controlPattern = /\p{Cc}/u;
 const encoder = new TextEncoder();
+const sensitiveUrlParameterNames = new Set([
+  "access_token", "api_key", "apikey", "authorization", "code", "cookie",
+  "id_token", "password", "passwd", "refresh_token", "secret", "session",
+  "sessionid", "sid", "sig", "signature", "token", "x-amz-credential",
+  "x-amz-security-token", "x-amz-signature", "x-goog-credential",
+  "x-goog-signature", "x-ms-signature",
+]);
 const safeRevision = (schema: z.ZodNumber) => schema.refine(Number.isSafeInteger, { message: "must be a safe integer" });
 
 export type Presentation = {
@@ -187,6 +194,33 @@ function validateBbIdentity(provider: string, keys: Record<string, string>): voi
   fail("provider bb must use a v1 project, thread, or Machine Monitor identity.");
 }
 
+function hasSensitiveUrlParameter(params: URLSearchParams): boolean {
+  for (const name of params.keys()) {
+    if (sensitiveUrlParameterNames.has(name.toLowerCase())) return true;
+  }
+  return false;
+}
+
+function validateUrlIdentity(provider: string, keys: Record<string, string>): void {
+  if (provider !== "url") return;
+  const names = Object.keys(keys);
+  if (names.length !== 1 || names[0] !== "href") fail("provider url must use exactly the href key.");
+  const href = keys.href!;
+  let parsed: URL;
+  try {
+    parsed = new URL(href);
+  } catch {
+    fail("url href must be a valid HTTP(S) URL.");
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") fail("url href must use HTTP(S).");
+  if (parsed.username !== "" || parsed.password !== "") fail("url href must not contain credentials.");
+  if (hasSensitiveUrlParameter(parsed.searchParams)
+    || (parsed.hash.startsWith("#") && hasSensitiveUrlParameter(new URLSearchParams(parsed.hash.slice(1))))) {
+    fail("url href must not contain credential-shaped query or fragment parameters.");
+  }
+  if (parsed.href !== href) fail("url href must use canonical URL serialization.");
+}
+
 function canonicalizeKeys(value: unknown): { keys: Record<string, string>; canonicalKeysJson: string } {
   assertPlainObject(value, "resource.keys");
   const names = Object.keys(value);
@@ -245,10 +279,14 @@ export function canonicalizeResource(value: Resource): CanonicalResource {
   const provider = validateName(value.provider, "resource.provider");
   const identity = canonicalizeKeys(value.keys);
   validateBbIdentity(provider, identity.keys);
+  validateUrlIdentity(provider, identity.keys);
   const identityObject = { provider, keys: identity.keys };
   const canonicalIdentityJson = JSON.stringify(identityObject);
   if (byteLength(canonicalIdentityJson) > MAX_CANONICAL_IDENTITY_BYTES) fail("resource identity is too large.");
   const presentation = canonicalizePresentation(value.presentation);
+  if (provider === "url" && presentation.presentation.url !== identity.keys.href) {
+    fail("provider url presentation.url must equal its canonical href identity.");
+  }
   return {
     provider,
     keys: identity.keys,
@@ -308,11 +346,29 @@ export function isExactBbThreadResource(resource: CanonicalResource): boolean {
     && idPattern.test(resource.keys.project!) && idPattern.test(resource.keys.thread!);
 }
 
+export function isUrlResource(resource: CanonicalResource): boolean {
+  return resource.provider === "url" && Object.keys(resource.keys).length === 1
+    && resource.keys.href != null && resource.presentation.url === resource.keys.href;
+}
+
+export function isMachineMonitorAttachmentTarget(resource: CanonicalResource): boolean {
+  return isExactBbThreadResource(resource) || isUrlResource(resource);
+}
+
 export function threadResource(projectId: string, threadId: string, presentation: Presentation): Resource {
   return {
     provider: "bb",
     keys: { project: validateId(projectId, "projectId"), thread: validateId(threadId, "threadId") },
     presentation,
+  };
+}
+
+export function urlResource(href: string, presentation: Omit<Presentation, "url">): Resource {
+  const canonicalHref = new URL(href).href;
+  return {
+    provider: "url",
+    keys: { href: canonicalHref },
+    presentation: { ...presentation, url: canonicalHref },
   };
 }
 

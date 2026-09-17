@@ -13,6 +13,7 @@ import {
   machineMonitorResource,
   projectionPayloadDigest,
   threadResource,
+  urlResource,
   type Resource,
 } from "../attachment-contract.ts";
 import { ABSENT_RETRY_MS, MachineMonitorReferenceStore, machineMonitorMigrations, type ClaimedProjection } from "../store.ts";
@@ -25,6 +26,10 @@ function makeStore(): { db: Database.Database; store: MachineMonitorReferenceSto
 
 function thread(id: string, label = id): Resource {
   return threadResource("proj_12345678", id, { label, detail: "BB thread" });
+}
+
+function external(href = "https://example.test/runbook", label = "Operations runbook"): Resource {
+  return urlResource(href, { label, detail: "External link" });
 }
 
 function command(store: MachineMonitorReferenceStore, now: number): ClaimedProjection {
@@ -70,27 +75,41 @@ test("attaches exact BB threads locally with source CAS, active-empty removal, a
   assert.equal(removed.snapshot.status.pending, true);
 });
 
-test("local replacement is transactionally atomic and rejects non-thread resources", (t) => {
+test("local replacement persists thread and safe external URL targets atomically", (t) => {
   const { db, store } = makeStore();
   t.after(() => db.close());
   store.replaceAttachments({ expectedSourceRevision: 0, targets: [thread("thr_atomic01")] }, 100);
-  assert.throws(() => store.replaceAttachments({
+  const mixed = store.replaceAttachments({
     expectedSourceRevision: 1,
+    targets: [thread("thr_atomic01"), external()],
+  }, 101);
+  assert.equal(mixed.outcome, "applied");
+  assert.deepEqual(mixed.snapshot.targets.map((target) => target.provider), ["bb", "url"]);
+  assert.throws(() => store.replaceAttachments({
+    expectedSourceRevision: 2,
     targets: [{ provider: "github", keys: { owner: "x" }, presentation: { label: "Not a BB thread" } }],
-  }, 101), /exact BB threads/);
+  }, 102), /exact BB threads or safe HTTP\(S\) URLs/);
+  assert.throws(() => store.replaceAttachments({
+    expectedSourceRevision: 2,
+    targets: [{
+      provider: "url",
+      keys: { href: "https://example.test/private?token=secret" },
+      presentation: { label: "Unsafe", url: "https://example.test/private?token=secret" },
+    }],
+  }, 102), /credential-shaped/);
   assert.throws(() => canonicalizeResource({
     provider: "bb",
     keys: { project: "proj with space" },
     presentation: { label: "Invalid BB identity" },
   }), /invalid BB id|v1 project/);
-  assert.deepEqual(store.snapshot(101).targets.map((target) => target.keys.thread), ["thr_atomic01"]);
+  assert.deepEqual(store.snapshot(102).targets.map((target) => target.provider), ["bb", "url"]);
 
   db.exec(`CREATE TRIGGER prevent_reference_link_insert BEFORE INSERT ON machine_monitor_reference_links
     BEGIN SELECT RAISE(ABORT, 'injected insert failure'); END`);
-  assert.throws(() => store.replaceAttachments({ expectedSourceRevision: 1, targets: [thread("thr_atomic02")] }, 102), /injected insert failure/);
-  assert.deepEqual(store.snapshot(102).targets.map((target) => target.keys.thread), ["thr_atomic01"]);
-  assert.equal(store.snapshot(102).sourceRevision, 1);
-  assert.equal((db.prepare("SELECT revision FROM machine_monitor_reference_outbox WHERE slot = 'pending'").get() as { revision: number }).revision, 1);
+  assert.throws(() => store.replaceAttachments({ expectedSourceRevision: 2, targets: [thread("thr_atomic02")] }, 103), /injected insert failure/);
+  assert.deepEqual(store.snapshot(103).targets.map((target) => target.provider), ["bb", "url"]);
+  assert.equal(store.snapshot(103).sourceRevision, 2);
+  assert.equal((db.prepare("SELECT revision FROM machine_monitor_reference_outbox WHERE slot = 'pending'").get() as { revision: number }).revision, 2);
 });
 
 test("retries the immutable tuple with bounded exponential backoff and recovers expired leases", (t) => {
