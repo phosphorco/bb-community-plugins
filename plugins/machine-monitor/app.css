@@ -207,14 +207,14 @@
 .machine-monitor__reference-picker { display: grid; gap: 4px; padding-top: 2px; }
 .machine-monitor__reference-picker > label { color: var(--foreground); font-size: 11px; }
 .machine-monitor__reference-picker input { width: 100%; min-height: 32px; padding: 0 9px; border: 1px solid var(--input); border-radius: 7px; color: var(--foreground); background: var(--background); font: inherit; }
-.machine-monitor__reference-picker input:focus-visible, .machine-monitor__reference-list button:focus-visible, .machine-monitor__reference-search-results button:focus-visible, .machine-monitor__reference-external button:focus-visible, .machine-monitor__reference-link:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+.machine-monitor__reference-picker input:focus-visible, .machine-monitor__reference-list button:focus-visible, .machine-monitor__reference-search-results button:focus-visible, .machine-monitor__reference-external button:focus-visible, .machine-monitor__reference-retry:focus-visible, .machine-monitor__reference-link:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
 .machine-monitor__reference-help { margin: 0; }
 .machine-monitor__reference-error { margin: 0; overflow-wrap: anywhere; }
 .machine-monitor__reference-search-results { max-height: 230px; overflow-y: auto; overscroll-behavior: contain; }
 .machine-monitor__reference-search-results strong { min-width: 0; overflow: hidden; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
-.machine-monitor__reference-list button, .machine-monitor__reference-search-results button, .machine-monitor__reference-external button { flex: 0 0 auto; min-height: 28px; padding: 4px 8px; border: 1px solid var(--border); border-radius: 6px; color: var(--foreground); background: var(--background); font: inherit; font-size: 10px; cursor: pointer; }
-.machine-monitor__reference-search-results button:not(:disabled):hover, .machine-monitor__reference-list button:not(:disabled):hover, .machine-monitor__reference-external button:not(:disabled):hover { background: var(--accent); color: var(--accent-foreground); }
-.machine-monitor__reference-list button:disabled, .machine-monitor__reference-search-results button:disabled, .machine-monitor__reference-external button:disabled { cursor: default; opacity: .58; }
+.machine-monitor__reference-list button, .machine-monitor__reference-search-results button, .machine-monitor__reference-external button, .machine-monitor__reference-retry { flex: 0 0 auto; min-height: 28px; padding: 4px 8px; border: 1px solid var(--border); border-radius: 6px; color: var(--foreground); background: var(--background); font: inherit; font-size: 10px; cursor: pointer; }
+.machine-monitor__reference-search-results button:not(:disabled):hover, .machine-monitor__reference-list button:not(:disabled):hover, .machine-monitor__reference-external button:not(:disabled):hover, .machine-monitor__reference-retry:not(:disabled):hover { background: var(--accent); color: var(--accent-foreground); }
+.machine-monitor__reference-list button:disabled, .machine-monitor__reference-search-results button:disabled, .machine-monitor__reference-external button:disabled, .machine-monitor__reference-retry:disabled { cursor: default; opacity: .58; }
 .machine-monitor__reference-add { color: var(--primary); }
 .machine-monitor__reference-remove { color: var(--destructive) !important; }
 .machine-monitor__reference-external { display: grid; gap: 6px; padding: 8px; border-radius: 6px; background: color-mix(in srgb, var(--muted) 36%, transparent); }

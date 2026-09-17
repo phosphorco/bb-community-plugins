@@ -296,7 +296,7 @@ test("keeps linked references fleet-scoped while preserving add, native navigati
   const slot = renderSlot(app.navPanels[0]!, { subPath: "" }, {
     rpc: {
       ...fleetRpc(() => overview(), (request) => timeline(request)),
-      getAttachments: () => replacements.length === 0 ? attachmentSnapshot : updated,
+      getAttachments: () => replacements.length === 1 ? updated : attachmentSnapshot,
       searchThreads: () => ({ threads: [{ id: "thr_picker01", projectId: "proj_picker01", title: "Fix disk pressure", detail: "Root disk warning", archived: false }] }),
       getThread: () => ({ id: "thr_picker01", projectId: "proj_picker01", title: "Fix disk pressure", detail: "Root disk warning", archived: false }),
       replaceAttachments: (input: unknown) => {
@@ -314,8 +314,11 @@ test("keeps linked references fleet-scoped while preserving add, native navigati
   expect(replacements[0]).toEqual({ expectedSourceRevision: 0, targets: [target] });
   fireEvent.click(await slot.findByRole("link", { name: "Fix disk pressure" }));
   expect(slot.inspection.navigateCalls).toContainEqual({ method: "toThread", threadId: "thr_picker01" });
-  fireEvent.click(slot.getByRole("button", { name: "Remove Fix disk pressure" }));
+  const removeButton = slot.getByRole("button", { name: "Remove Fix disk pressure" });
+  removeButton.focus();
+  fireEvent.click(removeButton, { detail: 0 });
   await waitFor(() => expect(replacements).toHaveLength(2));
+  await waitFor(() => expect(document.activeElement).toBe(slot.getByRole("searchbox", { name: "Add a thread or link" })));
   slot.lifecycle.unmount();
 });
 
@@ -385,6 +388,117 @@ test("offers arbitrary safe URLs as named external forward references", async ()
   await waitFor(() => expect(replacements).toHaveLength(1));
   expect(replacements[0]).toEqual({ expectedSourceRevision: 0, targets: [target] });
   expect((await slot.findByRole("link", { name: "Collector runbook" })).getAttribute("href")).toBe(href);
+});
+
+test("validates external URLs and names against persistence byte limits", async () => {
+  const app = await loadPluginApp(() => import("../app.tsx"));
+  const replacements: any[] = [];
+  const slot = renderSlot(app.navPanels[0]!, { subPath: "" }, {
+    rpc: {
+      ...fleetRpc(() => overview(), (request) => timeline(request)),
+      getAttachments: () => attachmentSnapshot,
+      replaceAttachments: (input: any) => {
+        replacements.push(input);
+        return { outcome: "applied", sourceRevision: 1, targets: input.targets, status: { ...attachmentSnapshot.status, sourceRevision: 1, desiredRevision: 1 } };
+      },
+    },
+  } as any);
+
+  const search = await slot.findByRole("searchbox", { name: "Add a thread or link" });
+  const prefix = "https://example.test/";
+  const exact = `${prefix}${"a".repeat(512 - prefix.length)}`;
+  fireEvent.change(search, { target: { value: exact } });
+  expect(await slot.findByText("External link")).toBeTruthy();
+  fireEvent.change(search, { target: { value: `${exact}a` } });
+  expect(await slot.findByText(/limited to 512 UTF-8 bytes/)).toBeTruthy();
+  expect(search.getAttribute("aria-invalid")).toBe("true");
+  fireEvent.change(search, { target: { value: `https://example.test/${"é".repeat(100)}` } });
+  expect(await slot.findByText(/after URL encoding/)).toBeTruthy();
+
+  fireEvent.change(search, { target: { value: "https://example.test/runbook" } });
+  const name = await slot.findByRole("textbox", { name: "Reference name" });
+  fireEvent.change(name, { target: { value: "" } });
+  fireEvent.click(slot.getByRole("button", { name: "Link example.test" }));
+  expect(await slot.findByText("Give this external reference a name.")).toBeTruthy();
+  expect(name.getAttribute("aria-invalid")).toBe("true");
+  fireEvent.change(name, { target: { value: "é".repeat(129) } });
+  expect(name.getAttribute("aria-invalid")).toBeNull();
+  fireEvent.click(slot.getByRole("button", { name: new RegExp(`^Link ${"é".repeat(129)}$`) }));
+  expect(await slot.findByText(/limited to 256 UTF-8 bytes/)).toBeTruthy();
+  fireEvent.change(name, { target: { value: "é".repeat(128) } });
+  fireEvent.click(slot.getByRole("button", { name: new RegExp(`^Link ${"é".repeat(128)}$`) }));
+  await waitFor(() => expect(replacements).toHaveLength(1));
+  expect(replacements[0].targets[0].presentation.label).toBe("é".repeat(128));
+});
+
+test("keeps newer search input when a delayed thread selection completes", async () => {
+  const app = await loadPluginApp(() => import("../app.tsx"));
+  const lookup = deferred<any>();
+  const thread = { id: "thr_delayed", projectId: "proj_delayed", title: "Delayed repair", archived: false };
+  const replacements: any[] = [];
+  const slot = renderSlot(app.navPanels[0]!, { subPath: "" }, {
+    rpc: {
+      ...fleetRpc(() => overview(), (request) => timeline(request)),
+      searchThreads: ({ query }: { query: string }) => ({ threads: query === "disk" ? [thread] : [] }),
+      getThread: () => lookup.promise,
+      replaceAttachments: (input: any) => {
+        replacements.push(input);
+        return { outcome: "applied", sourceRevision: 1, targets: input.targets, status: { ...attachmentSnapshot.status, sourceRevision: 1, desiredRevision: 1 } };
+      },
+    },
+  } as any);
+
+  const search = await slot.findByRole("searchbox", { name: "Add a thread or link" });
+  fireEvent.change(search, { target: { value: "disk" } });
+  const link = await slot.findByRole("button", { name: "Link Delayed repair" });
+  fireEvent.click(link);
+  fireEvent.change(search, { target: { value: "memory" } });
+  lookup.resolve(thread);
+  await waitFor(() => expect(replacements).toHaveLength(1));
+  expect((search as HTMLInputElement).value).toBe("memory");
+});
+
+test("announces failed BB URL resolution and retries without editing", async () => {
+  const app = await loadPluginApp(() => import("../app.tsx"));
+  const thread = { id: "thr_retry_url", projectId: "proj_retry_url", title: "Recovered thread", archived: false };
+  let lookups = 0;
+  const slot = renderSlot(app.navPanels[0]!, { subPath: "" }, {
+    rpc: {
+      ...fleetRpc(() => overview(), (request) => timeline(request)),
+      getThread: () => {
+        lookups += 1;
+        if (lookups === 1) throw new Error("temporary lookup failure");
+        return thread;
+      },
+    },
+  } as any);
+
+  const search = await slot.findByRole("searchbox", { name: "Add a thread or link" });
+  fireEvent.change(search, { target: { value: `${window.location.origin}/projects/${thread.projectId}/threads/${thread.id}` } });
+  expect((await slot.findByRole("alert")).textContent).toContain("Could not resolve this BB thread");
+  fireEvent.click(slot.getByRole("button", { name: "Retry thread lookup" }));
+  expect(await slot.findByText("Recovered thread")).toBeTruthy();
+  expect(lookups).toBe(2);
+});
+
+test("returns keyboard focus to search after adding a thread", async () => {
+  const app = await loadPluginApp(() => import("../app.tsx"));
+  const thread = { id: "thr_focus", projectId: "proj_focus", title: "Keyboard repair", archived: false };
+  const slot = renderSlot(app.navPanels[0]!, { subPath: "" }, {
+    rpc: {
+      ...fleetRpc(() => overview(), (request) => timeline(request)),
+      searchThreads: () => ({ threads: [thread] }),
+      getThread: () => thread,
+      replaceAttachments: (input: any) => ({ outcome: "applied", sourceRevision: 1, targets: input.targets, status: { ...attachmentSnapshot.status, sourceRevision: 1, desiredRevision: 1 } }),
+    },
+  } as any);
+
+  const search = await slot.findByRole("searchbox", { name: "Add a thread or link" });
+  fireEvent.change(search, { target: { value: "keyboard" } });
+  const link = await slot.findByRole("button", { name: "Link Keyboard repair" });
+  link.focus();
+  fireEvent.click(link, { detail: 0 });
+  await waitFor(() => expect(document.activeElement).toBe(search));
 });
 
 test("derives a delayed add from the latest attachment snapshot", async () => {
@@ -457,6 +571,47 @@ test("never exposes stale search results after the normalized query changes", as
   expect(slot.queryByText("Stale disk result")).toBeNull();
   second.resolve({ threads: [{ id: "thr_current", projectId: "proj_current", title: "Current memory result", archived: false }] });
   expect(await slot.findByText("Current memory result")).toBeTruthy();
+});
+
+test("retries a failed reconnect refresh and ignores the obsolete pre-reconnect read", async () => {
+  const app = await loadPluginApp(() => import("../app.tsx"));
+  const obsolete = deferred<any>();
+  const staleTarget = {
+    provider: "bb",
+    keys: { project: "proj_stale", thread: "thr_stale" },
+    presentation: { label: "Obsolete reference", detail: "Project proj_stale" },
+  };
+  const recoveredTarget = {
+    provider: "bb",
+    keys: { project: "proj_current", thread: "thr_current" },
+    presentation: { label: "Recovered reference", detail: "Project proj_current" },
+  };
+  let reads = 0;
+  const slot = renderSlot(app.navPanels[0]!, { subPath: "" }, {
+    rpc: {
+      ...fleetRpc(() => overview(), (request) => timeline(request)),
+      getAttachments: () => {
+        reads += 1;
+        if (reads === 1) return attachmentSnapshot;
+        if (reads === 2) return obsolete.promise;
+        if (reads === 3) throw new Error("refresh unavailable");
+        return { ...attachmentSnapshot, sourceRevision: 2, targets: [recoveredTarget], status: { ...attachmentSnapshot.status, sourceRevision: 2, desiredRevision: 2 } };
+      },
+    },
+  } as any);
+
+  await slot.findByText("No references linked yet.");
+  void slot.behavior.emitRealtime("machine-monitor-attachments", { sourceRevision: 1 });
+  await waitFor(() => expect(reads).toBe(2));
+  await slot.behavior.setRealtimeConnectionState("reconnecting");
+  await slot.behavior.setRealtimeConnectionState("connected");
+  expect(await slot.findByText("refresh unavailable")).toBeTruthy();
+  obsolete.resolve({ ...attachmentSnapshot, sourceRevision: 1, targets: [staleTarget], status: { ...attachmentSnapshot.status, sourceRevision: 1, desiredRevision: 1 } });
+  await Promise.resolve();
+  expect(slot.queryByText("Obsolete reference")).toBeNull();
+  fireEvent.click(slot.getByRole("button", { name: "Try again" }));
+  expect(await slot.findByRole("link", { name: "Recovered reference" })).toBeTruthy();
+  expect(reads).toBe(4);
 });
 
 test("keeps overview resident and reuses a cached timeline without a third RPC", async () => {

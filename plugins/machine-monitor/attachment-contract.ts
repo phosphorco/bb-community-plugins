@@ -2,6 +2,13 @@ import { createHash, randomUUID } from "node:crypto";
 
 import { z } from "zod";
 
+import {
+  hasSensitiveUrlParameter,
+  MAX_REFERENCE_LABEL_BYTES,
+  MAX_REFERENCE_URL_BYTES,
+  utf8ByteLength,
+} from "./reference-validation.ts";
+
 /**
  * This is the deliberately small client-side copy of the frozen Cross
  * References v1 wire contract.  Machine Monitor treats Cross References as an
@@ -13,8 +20,8 @@ export const CROSS_REFERENCES_PROTOCOL_VERSION = 1 as const;
 export const MACHINE_MONITOR_PRODUCER_ID = "machine-monitor";
 export const MACHINE_MONITOR_ROUTE = "/plugins/machine-monitor/machine-monitor";
 export const MAX_ATTACHMENT_TARGETS = 256;
-export const MAX_KEY_VALUE_BYTES = 512;
-export const MAX_PRESENTATION_LABEL_BYTES = 256;
+export const MAX_KEY_VALUE_BYTES = MAX_REFERENCE_URL_BYTES;
+export const MAX_PRESENTATION_LABEL_BYTES = MAX_REFERENCE_LABEL_BYTES;
 export const MAX_PRESENTATION_DETAIL_BYTES = 1_024;
 export const MAX_PRESENTATION_URL_BYTES = 2_048;
 export const MAX_PRESENTATION_BYTES = 4 * 1_024;
@@ -27,14 +34,6 @@ const idPattern = /^[A-Za-z0-9_-]{1,128}$/;
 const digestPattern = /^[0-9a-f]{64}$/;
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const controlPattern = /\p{Cc}/u;
-const encoder = new TextEncoder();
-const sensitiveUrlParameterNames = new Set([
-  "access_token", "api_key", "apikey", "authorization", "code", "cookie",
-  "id_token", "password", "passwd", "refresh_token", "secret", "session",
-  "sessionid", "sid", "sig", "signature", "token", "x-amz-credential",
-  "x-amz-security-token", "x-amz-signature", "x-goog-credential",
-  "x-goog-signature", "x-ms-signature",
-]);
 const safeRevision = (schema: z.ZodNumber) => schema.refine(Number.isSafeInteger, { message: "must be a safe integer" });
 
 export type Presentation = {
@@ -130,7 +129,7 @@ function fail(message: string): never {
 }
 
 function byteLength(value: string): number {
-  return encoder.encode(value).byteLength;
+  return utf8ByteLength(value);
 }
 
 function assertPlainObject(value: unknown, label: string): asserts value is Record<string, unknown> {
@@ -194,13 +193,6 @@ function validateBbIdentity(provider: string, keys: Record<string, string>): voi
   fail("provider bb must use a v1 project, thread, or Machine Monitor identity.");
 }
 
-function hasSensitiveUrlParameter(params: URLSearchParams): boolean {
-  for (const name of params.keys()) {
-    if (sensitiveUrlParameterNames.has(name.toLowerCase())) return true;
-  }
-  return false;
-}
-
 function validateUrlIdentity(provider: string, keys: Record<string, string>): void {
   if (provider !== "url") return;
   const names = Object.keys(keys);
@@ -214,8 +206,7 @@ function validateUrlIdentity(provider: string, keys: Record<string, string>): vo
   }
   if (parsed.protocol !== "http:" && parsed.protocol !== "https:") fail("url href must use HTTP(S).");
   if (parsed.username !== "" || parsed.password !== "") fail("url href must not contain credentials.");
-  if (hasSensitiveUrlParameter(parsed.searchParams)
-    || (parsed.hash.startsWith("#") && hasSensitiveUrlParameter(new URLSearchParams(parsed.hash.slice(1))))) {
+  if (hasSensitiveUrlParameter(parsed)) {
     fail("url href must not contain credential-shaped query or fragment parameters.");
   }
   if (parsed.href !== href) fail("url href must use canonical URL serialization.");

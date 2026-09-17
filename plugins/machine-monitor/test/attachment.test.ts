@@ -112,6 +112,14 @@ test("local replacement persists thread and safe external URL targets atomically
   assert.equal((db.prepare("SELECT revision FROM machine_monitor_reference_outbox WHERE slot = 'pending'").get() as { revision: number }).revision, 2);
 });
 
+test("external reference byte limits match the picker boundary", () => {
+  const prefix = "https://example.test/";
+  const exactHref = `${prefix}${"a".repeat(512 - prefix.length)}`;
+  assert.equal(canonicalizeResource(external(exactHref, "é".repeat(128))).keys.href, exactHref);
+  assert.throws(() => canonicalizeResource(external(`${exactHref}a`)), /512-byte limit/);
+  assert.throws(() => canonicalizeResource(external("https://example.test/runbook", "é".repeat(129))), /256-byte limit/);
+});
+
 test("retries the immutable tuple with bounded exponential backoff and recovers expired leases", (t) => {
   const { db, store } = makeStore();
   t.after(() => db.close());

@@ -64,6 +64,7 @@
     "fleet-client.ts",
     "store.ts",
     "attachment-contract.ts",
+    "reference-validation.ts",
     "attachment-delivery.ts",
     "rpc-contract.ts",
     "test/"

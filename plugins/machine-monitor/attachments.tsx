@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type RefObject } from "react";
 import {
   useBbNavigate,
   useRealtime,
@@ -11,6 +11,12 @@ import type {
   Resource,
 } from "./attachment-contract.ts";
 import type { rpcContract } from "./rpc-contract.ts";
+import {
+  hasSensitiveUrlParameter,
+  MAX_REFERENCE_URL_BYTES,
+  referenceLabelError,
+  utf8ByteLength,
+} from "./reference-validation.ts";
 
 type PickerThread = {
   id: string;
@@ -22,13 +28,6 @@ type PickerThread = {
 
 const MAX_SEARCH_RESULTS = 24;
 const MAX_REFERENCE_INPUT_LENGTH = 2_048;
-const SENSITIVE_URL_PARAMETERS = new Set([
-  "access_token", "api_key", "apikey", "authorization", "code", "cookie",
-  "id_token", "password", "passwd", "refresh_token", "secret", "session",
-  "sessionid", "sid", "sig", "signature", "token", "x-amz-credential",
-  "x-amz-security-token", "x-amz-signature", "x-goog-credential",
-  "x-goog-signature", "x-ms-signature",
-]);
 
 function targetThread(target: Resource): { projectId: string; threadId: string } | null {
   if (target.provider !== "bb" || Object.keys(target.keys).length !== 2) return null;
@@ -68,18 +67,6 @@ type ReferenceInput =
   | { kind: "external-url"; href: string; suggestedLabel: string }
   | { kind: "invalid"; input: string; message: string };
 
-function hasSensitiveUrlParameter(url: URL): boolean {
-  for (const name of url.searchParams.keys()) {
-    if (SENSITIVE_URL_PARAMETERS.has(name.toLowerCase())) return true;
-  }
-  if (url.hash.startsWith("#")) {
-    for (const name of new URLSearchParams(url.hash.slice(1)).keys()) {
-      if (SENSITIVE_URL_PARAMETERS.has(name.toLowerCase())) return true;
-    }
-  }
-  return false;
-}
-
 function referenceInput(value: string, origin: string): ReferenceInput {
   const input = value.trim();
   if (input.length === 0) return { kind: "empty" };
@@ -96,8 +83,8 @@ function referenceInput(value: string, origin: string): ReferenceInput {
   if (url.username !== "" || url.password !== "" || hasSensitiveUrlParameter(url)) {
     return { kind: "invalid", input, message: "Links containing credentials or sensitive parameters cannot be attached." };
   }
-  if (url.href.length > MAX_REFERENCE_INPUT_LENGTH) {
-    return { kind: "invalid", input, message: "This URL is too long to attach." };
+  if (utf8ByteLength(url.href) > MAX_REFERENCE_URL_BYTES) {
+    return { kind: "invalid", input, message: `Links are limited to ${MAX_REFERENCE_URL_BYTES} UTF-8 bytes after URL encoding.` };
   }
   if (url.origin === origin) {
     const projectRoute = url.pathname.match(/^\/projects\/([A-Za-z0-9_-]{1,128})\/threads\/([A-Za-z0-9_-]{1,128})\/?$/u);
@@ -119,10 +106,10 @@ type ThreadSearchState =
   | { status: "waiting"; input: string }
   | { status: "searching"; input: string }
   | { status: "ready"; input: string; threads: PickerThread[] }
-  | { status: "external"; input: string; href: string; suggestedLabel: string }
+  | { status: "external"; input: string; href: string; suggestedLabel: string; resolutionError?: string; canRetry?: boolean }
   | { status: "error"; input: string; message: string };
 
-function useThreadSearch(query: string): ThreadSearchState {
+function useThreadSearch(query: string, retry: number): ThreadSearchState {
   const rpc = useRpc<typeof rpcContract>();
   const rpcRef = useRef(rpc);
   rpcRef.current = rpc;
@@ -166,7 +153,14 @@ function useThreadSearch(query: string): ThreadSearchState {
             setState({ status: "external", input, href, suggestedLabel: "BB thread link" });
           }
         }, () => {
-          if (active) setState({ status: "external", input, href, suggestedLabel: "BB thread link" });
+          if (active) setState({
+            status: "external",
+            input,
+            href,
+            suggestedLabel: "BB thread link",
+            resolutionError: "Could not resolve this BB thread. Retry the lookup or save the URL as an external reference.",
+            canRetry: true,
+          });
         });
         return;
       }
@@ -184,7 +178,7 @@ function useThreadSearch(query: string): ThreadSearchState {
       active = false;
       window.clearTimeout(timer);
     };
-  }, [connection, input]);
+  }, [connection, input, retry]);
 
   return state.input === input ? state : { status: "searching", input };
 }
@@ -333,7 +327,7 @@ function useMachineMonitorAttachments() {
     return targets.filter((candidate) => resourceKey(candidate) !== key);
   }), [mutate]);
 
-  return { snapshot, loading, readError, mutationError, stale, saving, add, addResource, remove };
+  return { snapshot, loading, readError, mutationError, stale, saving, refresh, add, addResource, remove };
 }
 
 const PERSONAL_PROJECT_ID = "proj_personal";
@@ -385,11 +379,13 @@ function ThreadPicker({
   disabled,
   onAdd,
   onAddResource,
+  searchInputRef,
 }: {
   attached: ReadonlySet<string>;
   disabled: boolean;
   onAdd: (thread: PickerThread) => Promise<boolean>;
   onAddResource: (resource: Resource) => Promise<boolean>;
+  searchInputRef: RefObject<HTMLInputElement | null>;
 }) {
   const rpc = useRpc<typeof rpcContract>();
   const rpcRef = useRef(rpc);
@@ -397,8 +393,12 @@ function ThreadPicker({
   const searchId = `machine-monitor-thread-search-${useId().replaceAll(":", "")}`;
   const nameId = `${searchId}-external-name`;
   const [query, setQuery] = useState("");
-  const search = useThreadSearch(query);
+  const queryRef = useRef(query);
+  queryRef.current = query;
+  const [searchRetry, setSearchRetry] = useState(0);
+  const search = useThreadSearch(query, searchRetry);
   const [externalName, setExternalName] = useState("");
+  const [externalNameError, setExternalNameError] = useState<string | null>(null);
   const [selectingId, setSelectingId] = useState<string | null>(null);
   const [selectionError, setSelectionError] = useState<string | null>(null);
   const selectionSequence = useRef(0);
@@ -408,17 +408,24 @@ function ThreadPicker({
   }, []);
 
   useEffect(() => {
-    if (search.status === "external") setExternalName(search.suggestedLabel);
+    if (search.status === "external") {
+      setExternalName(search.suggestedLabel);
+      setExternalNameError(null);
+    }
   }, [search.status === "external" ? search.href : null]);
 
-  const select = async (thread: PickerThread) => {
+  const select = async (thread: PickerThread, restoreKeyboardFocus: boolean) => {
     const sequence = ++selectionSequence.current;
+    const selectedQuery = queryRef.current;
     setSelectingId(thread.id);
     setSelectionError(null);
     try {
       const fresh = await rpcRef.current.call("getThread", { threadId: thread.id });
       if (sequence !== selectionSequence.current) return;
-      if (await onAdd(fresh)) setQuery("");
+      if (await onAdd(fresh) && queryRef.current === selectedQuery) {
+        setQuery("");
+        if (restoreKeyboardFocus) requestAnimationFrame(() => searchInputRef.current?.focus());
+      }
     } catch (cause) {
       if (sequence === selectionSequence.current) {
         setSelectionError(cause instanceof Error ? cause.message : "Could not attach this thread.");
@@ -428,14 +435,16 @@ function ThreadPicker({
     }
   };
 
-  const attachExternal = async () => {
+  const attachExternal = async (restoreKeyboardFocus: boolean) => {
     if (search.status !== "external") return;
     const label = externalName.trim();
-    if (label.length === 0) {
-      setSelectionError("Give this external reference a name.");
+    const labelError = referenceLabelError(label);
+    if (labelError != null) {
+      setExternalNameError(labelError);
       return;
     }
     const sequence = ++selectionSequence.current;
+    const selectedQuery = queryRef.current;
     setSelectingId(search.href);
     setSelectionError(null);
     const resource: Resource = {
@@ -444,7 +453,10 @@ function ThreadPicker({
       presentation: { label, detail: new URL(search.href).hostname, url: search.href },
     };
     try {
-      if (await onAddResource(resource) && sequence === selectionSequence.current) setQuery("");
+      if (await onAddResource(resource) && sequence === selectionSequence.current && queryRef.current === selectedQuery) {
+        setQuery("");
+        if (restoreKeyboardFocus) requestAnimationFrame(() => searchInputRef.current?.focus());
+      }
     } finally {
       if (sequence === selectionSequence.current) setSelectingId(null);
     }
@@ -470,6 +482,7 @@ function ThreadPicker({
     <div className="machine-monitor__reference-picker">
       <label htmlFor={searchId}>Add a thread or link</label>
       <input
+        ref={searchInputRef}
         id={searchId}
         type="search"
         value={query}
@@ -480,13 +493,14 @@ function ThreadPicker({
           setSelectionError(null);
         }}
         placeholder="Search threads or paste a URL…"
-        aria-describedby={`${searchId}-help`}
+        aria-invalid={search.status === "error" || undefined}
+        aria-describedby={`${searchId}-help${search.status === "error" ? ` ${searchId}-error` : ""}`}
       />
       <p id={`${searchId}-help`} className="machine-monitor__reference-help">
         Search active and archived threads, or paste a link. BB thread links on this host resolve to their thread.
       </p>
       <p className="machine-monitor__reference-status" role="status" aria-live="polite">{statusText}</p>
-      {search.status === "error" && <p className="machine-monitor__reference-error" role="alert">{search.message}</p>}
+      {search.status === "error" && <p id={`${searchId}-error`} className="machine-monitor__reference-error" role="alert">{search.message}</p>}
       {selectionError != null && <p className="machine-monitor__reference-error" role="alert">{selectionError}</p>}
       {results.length > 0 && (
         <ul className="machine-monitor__reference-search-results">
@@ -503,7 +517,7 @@ function ThreadPicker({
                   type="button"
                   className="machine-monitor__reference-add"
                   disabled={disabled || isAttached || selectingId !== null}
-                  onClick={() => void select(thread)}
+                  onClick={(event) => void select(thread, event.detail === 0)}
                   aria-label={isAttached ? `${thread.title} is already linked` : `Link ${thread.title}`}
                   aria-describedby={`${searchId}-result-${thread.id}`}
                 >
@@ -517,26 +531,37 @@ function ThreadPicker({
       {search.status === "external" && (
         <div className="machine-monitor__reference-external">
           <span><strong>External link</strong><small>{search.href}</small></span>
+          {search.resolutionError != null && (
+            <p className="machine-monitor__reference-error" role="alert">
+              {search.resolutionError}
+              {search.canRetry === true && <> <button type="button" className="machine-monitor__reference-retry" onClick={() => setSearchRetry((value) => value + 1)}>Retry thread lookup</button></>}
+            </p>
+          )}
           <label htmlFor={nameId}>Reference name</label>
           <div>
             <input
               id={nameId}
               type="text"
               value={externalName}
-              maxLength={256}
               disabled={disabled || selectingId !== null}
-              onChange={(event) => setExternalName(event.target.value)}
+              aria-invalid={externalNameError != null || undefined}
+              aria-describedby={externalNameError == null ? undefined : `${nameId}-error`}
+              onChange={(event) => {
+                setExternalName(event.target.value);
+                setExternalNameError(null);
+              }}
             />
             <button
               type="button"
               className="machine-monitor__reference-add"
               disabled={disabled || selectingId !== null || externalAttached}
-              onClick={() => void attachExternal()}
+              onClick={(event) => void attachExternal(event.detail === 0)}
               aria-label={externalAttached ? `${externalName || search.suggestedLabel} is already linked` : `Link ${externalName || search.suggestedLabel}`}
             >
               {externalAttached ? "Linked" : selectingId === search.href ? "Adding…" : "Link"}
             </button>
           </div>
+          {externalNameError != null && <p id={`${nameId}-error`} className="machine-monitor__reference-error" role="alert">{externalNameError}</p>}
         </div>
       )}
     </div>
@@ -553,12 +578,27 @@ function attachmentStatusText(snapshot: AttachmentSnapshot): string {
 }
 
 export function MachineMonitorReferences() {
-  const { snapshot, loading, readError, mutationError, stale, saving, add, addResource, remove } = useMachineMonitorAttachments();
+  const { snapshot, loading, readError, mutationError, stale, saving, refresh, add, addResource, remove } = useMachineMonitorAttachments();
+  const sectionRef = useRef<HTMLElement>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  const [removalFocus, setRemovalFocus] = useState<{ index: number; button: HTMLButtonElement } | null>(null);
   const targets = snapshot?.targets ?? [];
   const attached = useMemo(() => new Set(targets.map(resourceKey)), [snapshot?.targets]);
 
+  useEffect(() => {
+    if (removalFocus == null) return;
+    if (document.activeElement !== document.body && document.activeElement !== removalFocus.button) {
+      setRemovalFocus(null);
+      return;
+    }
+    const remaining = [...(sectionRef.current?.querySelectorAll<HTMLButtonElement>(".machine-monitor__reference-remove") ?? [])];
+    remaining[Math.min(removalFocus.index, remaining.length - 1)]?.focus();
+    if (remaining.length === 0) searchInputRef.current?.focus();
+    setRemovalFocus(null);
+  }, [removalFocus, targets.length]);
+
   return (
-    <section className="machine-monitor__references" aria-labelledby="machine-monitor-references-title">
+    <section ref={sectionRef} className="machine-monitor__references" aria-labelledby="machine-monitor-references-title">
       <header>
         <div>
           <h2 id="machine-monitor-references-title">Linked references</h2>
@@ -569,7 +609,11 @@ export function MachineMonitorReferences() {
       {loading && snapshot == null && <p className="machine-monitor__reference-status" role="status">Loading saved references…</p>}
       {snapshot != null && <p className={`machine-monitor__reference-status machine-monitor__reference-status--${snapshot.status.state}`} role="status">{attachmentStatusText(snapshot)}</p>}
       {stale && <p className="machine-monitor__reference-status" role="status">The connection is recovering; this list may be briefly out of date.</p>}
-      {readError != null && <p className="machine-monitor__reference-error" role="alert">{readError}</p>}
+      {readError != null && (
+        <p className="machine-monitor__reference-error" role="alert">
+          {readError} <button type="button" className="machine-monitor__reference-retry" disabled={saving} onClick={() => void refresh()}>Try again</button>
+        </p>
+      )}
       {mutationError != null && <p className="machine-monitor__reference-error" role="alert">{mutationError}</p>}
       {targets.length === 0 && snapshot != null && <p className="machine-monitor__reference-empty">No references linked yet.</p>}
       {targets.length > 0 && (
@@ -585,7 +629,16 @@ export function MachineMonitorReferences() {
                   type="button"
                   className="machine-monitor__reference-remove"
                   disabled={saving}
-                  onClick={() => { void remove(target); }}
+                  onClick={(event) => {
+                    const restoreKeyboardFocus = event.detail === 0;
+                    const button = event.currentTarget;
+                    const buttons = [...(sectionRef.current?.querySelectorAll<HTMLButtonElement>(".machine-monitor__reference-remove") ?? [])];
+                    const index = buttons.indexOf(button);
+                    void remove(target).then((removed) => {
+                      if (!removed || !restoreKeyboardFocus) return;
+                      setRemovalFocus({ index, button });
+                    });
+                  }}
                   aria-label={`Remove ${target.presentation.label}`}
                 >
                   Remove
@@ -595,7 +648,7 @@ export function MachineMonitorReferences() {
           })}
         </ul>
       )}
-      <ThreadPicker attached={attached} disabled={saving || snapshot == null} onAdd={add} onAddResource={addResource} />
+      <ThreadPicker attached={attached} disabled={saving || snapshot == null} onAdd={add} onAddResource={addResource} searchInputRef={searchInputRef} />
     </section>
   );
 }
