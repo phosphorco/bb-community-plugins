@@ -137,14 +137,27 @@
 .machine-monitor__machine-context[data-visibility="guest-visible"] { border-style: dashed; }
 .machine-monitor__machine-context > header { display: flex; align-items: start; justify-content: space-between; gap: 12px; }
 .machine-monitor__machine-context h2 { font-size: 12px; font-weight: 650; }
-.machine-monitor__machine-context header p, .machine-monitor__machine-context header > span, .machine-monitor__machine-context dt, .machine-monitor__machine-context small, .machine-monitor__inventory-disclosure > div > p, .machine-monitor__inventory-disclosure li { color: var(--muted-foreground); font-size: 10px; }
+.machine-monitor__machine-context header p, .machine-monitor__machine-context header > span, .machine-monitor__machine-context dt, .machine-monitor__machine-context small, .machine-monitor__inventory-disclosure > div > p, .machine-monitor__inventory-disclosure li, .machine-monitor__context-definitions dd { color: var(--muted-foreground); font-size: 10px; }
 .machine-monitor__machine-context header p { margin-top: 3px; }
 .machine-monitor__machine-context header > span { white-space: nowrap; }
 .machine-monitor__machine-facts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin: 0; }
 .machine-monitor__machine-facts > div { display: grid; align-content: start; gap: 3px; min-width: 0; padding: 8px; border-radius: 6px; background: color-mix(in srgb, var(--muted) 42%, transparent); }
 .machine-monitor__machine-facts dt { margin: 0; }
-.machine-monitor__machine-facts dd { min-width: 0; margin: 0; overflow-wrap: anywhere; font-size: 13px; font-variant-numeric: tabular-nums; }
+.machine-monitor__machine-facts dd { min-width: 0; margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; font-variant-numeric: tabular-nums; }
+.machine-monitor__machine-facts > .machine-monitor__machine-fact--wrap dd { overflow: visible; text-overflow: clip; white-space: normal; overflow-wrap: anywhere; }
 .machine-monitor__machine-facts small { min-width: 0; overflow-wrap: anywhere; }
+.machine-monitor__core-count { display: flex; flex-wrap: wrap; align-items: baseline; gap: 3px 7px; }
+.machine-monitor__core-count span { display: inline-flex; align-items: baseline; gap: 1px; }
+.machine-monitor__core-count strong { color: var(--foreground); font-size: 17px; line-height: 1; }
+.machine-monitor__core-count abbr { color: var(--muted-foreground); font-size: 9px; font-weight: 700; text-decoration: none; }
+.machine-monitor__context-definitions { min-width: 0; border-top: 1px solid var(--border); }
+.machine-monitor__context-definitions > summary { min-height: 32px; cursor: pointer; color: var(--muted-foreground); font-size: 10px; font-weight: 600; }
+.machine-monitor__context-definitions > summary:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+.machine-monitor__context-definitions > dl { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; margin: 0; padding: 0 0 5px; }
+.machine-monitor__context-definitions > dl > div { min-width: 0; padding: 7px; border-radius: 6px; background: color-mix(in srgb, var(--muted) 34%, transparent); }
+.machine-monitor__context-definitions dt { color: var(--foreground); font-size: 10px; font-weight: 650; }
+.machine-monitor__context-definitions dd { margin: 3px 0 0; overflow-wrap: anywhere; }
+.machine-monitor__context-definitions abbr { text-decoration: underline dotted; text-underline-offset: 2px; }
 .machine-monitor__inventory-disclosure { min-width: 0; border-top: 1px solid var(--border); }
 .machine-monitor__inventory-disclosure > summary { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 34px; cursor: pointer; color: var(--foreground); font-size: 11px; font-weight: 650; }
 .machine-monitor__inventory-disclosure > summary > span { color: var(--muted-foreground); font-size: 10px; font-weight: 500; }
@@ -249,6 +262,7 @@
   .machine-monitor__selected-controls > label { min-width: 0; }
   .machine-monitor__selected-status { max-width: none; text-align: start; }
   .machine-monitor__dashboard-captions { grid-template-columns: 1fr; }
+  .machine-monitor__context-definitions > dl { grid-template-columns: 1fr; }
   .machine-monitor__dashboard-chart > div[role="img"] { min-height: 438px; height: 458px; }
   .machine-monitor__timeline-chart > div[role="img"] { min-height: 240px; height: 260px; }
   .machine-monitor__memory-pressure > header { flex-direction: column; gap: 4px; }

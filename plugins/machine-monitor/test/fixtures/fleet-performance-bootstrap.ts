@@ -25,10 +25,10 @@ export const FLEET_PERFORMANCE_BOOTSTRAP = String.raw`(() => {
     return originalClearInterval(id);
   };
   let nextIdle = 0;
-  const idleCallbacks = new Set();
-  window.requestIdleCallback = () => {
+  const idleCallbacks = new Map();
+  window.requestIdleCallback = (callback) => {
     const id = ++nextIdle;
-    idleCallbacks.add(id);
+    idleCallbacks.set(id, callback);
     state.counters.idleCallbacks += 1;
     return id;
   };
@@ -102,6 +102,12 @@ export const FLEET_PERFORMANCE_BOOTSTRAP = String.raw`(() => {
     },
     preflight() {
       return { version: state.version, instrumentation: structuredClone(state.instrumentation), counters: counters(), hasPerformanceMemory: performance.memory != null };
+    },
+    flushIdle() {
+      const callbacks = [...idleCallbacks.values()];
+      idleCallbacks.clear();
+      for (const callback of callbacks) callback({ didTimeout: false, timeRemaining: () => 50 });
+      return callbacks.length;
     },
     quietSnapshot() { return counters(); },
     quietDelta(before) { return diff(before, counters()); },

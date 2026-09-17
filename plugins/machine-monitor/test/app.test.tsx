@@ -663,9 +663,17 @@ test("renders the daemon-visible static profile after timeline work yields to id
     rpc: fleetRpc(() => overview(), (request) => timeline(request)),
   } as any);
 
-  expect(await slot.findByText("4 logical cores")).toBeTruthy();
-  expect(slot.getByText("Not reported")).toBeTruthy();
-  expect(slot.getByText(/Usable memory visible to this daemon/)).toBeTruthy();
+  await waitFor(() => expect(slot.getAllByText(/Test CPU/).length).toBe(2));
+  const context = slot.getByRole("heading", { name: "Machine context" }).closest(".machine-monitor__machine-context")!;
+  expect(context.querySelector('abbr[title="Logical CPU cores"]')).toBeTruthy();
+  expect(slot.getByLabelText(/Location is not operator-reported/)).toBeTruthy();
+  const definitions = slot.getByText("Full facts and definitions").closest("details") as HTMLDetailsElement;
+  expect(definitions.open).toBe(false);
+  fireEvent.click(definitions.querySelector("summary")!);
+  expect(slot.getByText(/usable memory is visible to this daemon/i)).toBeTruthy();
+  expect(definitions.textContent).toContain("Test CPU · 2.4 GHz");
+  expect(definitions.textContent).toContain("Test Linux · 1 · kernel test · x64");
+  expect(definitions.textContent).toContain("Server received this profile");
   slot.lifecycle.unmount();
 });
 
@@ -687,7 +695,7 @@ test("retains machine context through telemetry reconciliation without re-readin
   };
   const slot = renderSlot(app.navPanels[0]!, { subPath: "" }, { rpc } as any);
 
-  await slot.findByText("4 logical cores");
+  await waitFor(() => expect(slot.getAllByText(/Test CPU/).length).toBe(2));
   expect(inventoryCalls).toBe(1);
   const context = slot.getByRole("heading", { name: "Machine context" }).closest(".machine-monitor__machine-context")!;
   const chart = slot.getByRole("img", { name: /Operational history for machine-alpha/ });
@@ -697,8 +705,50 @@ test("retains machine context through telemetry reconciliation without re-readin
   await slot.findByRole("heading", { name: "Alpha current" });
   await waitFor(() => expect(slot.getByRole("img", { name: /Operational history for machine-alpha/ })).toBe(chart));
   expect(slot.getByRole("heading", { name: "Machine context" }).closest(".machine-monitor__machine-context")).toBe(context);
-  expect(slot.getByText("4 logical cores")).toBeTruthy();
+  expect(context.querySelector('abbr[title="Logical CPU cores"]')).toBeTruthy();
   expect(inventoryCalls).toBe(1);
+  slot.lifecycle.unmount();
+});
+
+test("refreshes retained context after reconnect and discloses a retained-profile refresh failure", async () => {
+  vi.stubGlobal("requestIdleCallback", (callback: (deadline: IdleDeadline) => void) => {
+    queueMicrotask(() => callback({ didTimeout: false, timeRemaining: () => 50 }));
+    return 1;
+  });
+  let logicalCores = 4;
+  let failure: string | null = null;
+  let inventoryCalls = 0;
+  const app = await loadPluginApp(() => import("../app.tsx"));
+  const rpc = fleetRpc(() => overview([machine(alpha, "Alpha")]), (request) => timeline(request));
+  const originalInventory = rpc.machineInventory;
+  rpc.machineInventory = (request: unknown) => {
+    inventoryCalls += 1;
+    const result = originalInventory(request) as any;
+    return {
+      ...result,
+      receivedAtMs: 2_000 + inventoryCalls,
+      lastError: failure,
+      lastErrorAtMs: failure == null ? null : 2_000 + inventoryCalls,
+      inventory: { ...result.inventory, cpu: { ...result.inventory.cpu, logicalCores } },
+    };
+  };
+  const slot = renderSlot(app.navPanels[0]!, { subPath: "" }, { rpc } as any);
+
+  await slot.findByLabelText(/4 logical cores/);
+  expect(inventoryCalls).toBe(1);
+  await slot.behavior.setRealtimeConnectionState("reconnecting");
+  logicalCores = 12345;
+  await slot.behavior.setRealtimeConnectionState("connected");
+  await slot.findByLabelText(/12345 logical cores/);
+  expect(inventoryCalls).toBe(2);
+
+  failure = "Inventory probe timed out";
+  void slot.behavior.emitRealtime("machine-monitor-fleet", { machine: alpha, dataRevision: 2, settingsRevision: 1, kinds: ["inventory", "error"] });
+  await slot.findByText("Refresh failed");
+  const definitions = slot.getByText("Full facts and definitions").closest("details") as HTMLDetailsElement;
+  fireEvent.click(definitions.querySelector("summary")!);
+  expect(definitions.textContent).toContain("Last profile refresh failed");
+  expect(definitions.textContent).toContain("Inventory probe timed out");
   slot.lifecycle.unmount();
 });
 

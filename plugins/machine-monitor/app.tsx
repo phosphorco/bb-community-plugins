@@ -45,7 +45,7 @@ const INVENTORY_CACHE_LIMIT = 64;
  * telemetry revisions: core samples advance every few seconds while this
  * profile changes only through an explicit `inventory` invalidation.
  */
-function useMachineInventory(machine: FleetMachine | null, inventoryRevision: number): Omit<InventoryView, "key"> {
+function useMachineInventory(machine: FleetMachine | null, inventoryRevision: string): Omit<InventoryView, "key"> {
   const rpc = useRpc<typeof rpcContract>();
   const [view, setView] = useState<InventoryView>({ key: null, value: null, loading: false, error: null });
   const cache = useRef(new Map<string, MachineInventoryResult>());
@@ -401,6 +401,20 @@ function useFleetMonitor() {
   // generations. Keeping a per-machine revision prevents every core sample
   // from causing a context RPC or temporarily removing its presentation.
   const [inventoryRevisions, setInventoryRevisions] = useState<ReadonlyMap<string, number>>(() => new Map());
+  // A connection recovery can make a previously cached static profile stale
+  // even when its persisted inventory digest did not change. This distinct
+  // epoch makes the post-reconnect read deliberate without tying context to
+  // every telemetry generation.
+  const [inventoryReconnectEpoch, setInventoryReconnectEpoch] = useState(0);
+
+  const invalidateInventory = useCallback((machine: FleetMachineIdentity) => {
+    const key = machineIdentityKey(machine);
+    setInventoryRevisions((previous) => {
+      const next = new Map(previous);
+      next.set(key, (next.get(key) ?? 0) + 1);
+      return next;
+    });
+  }, []);
 
   const commitTimelineView = useCallback((next: TimelineView) => {
     timelineViewRef.current = next;
@@ -572,6 +586,7 @@ function useFleetMonitor() {
     } else if (previousConnection.current !== "connected") {
       const selected = selectedMachine();
       if (selected != null) client.invalidateMachine(selected.machine);
+      setInventoryReconnectEpoch((previous) => previous + 1);
       void refreshOverview(undefined, true);
     }
     previousConnection.current = connection;
@@ -581,12 +596,7 @@ function useFleetMonitor() {
     if (!isFleetSignal(payload)) return;
     client.invalidateMachine(payload.machine);
     if (payload.kinds.includes("inventory")) {
-      const key = machineIdentityKey(payload.machine);
-      setInventoryRevisions((previous) => {
-        const next = new Map(previous);
-        next.set(key, (next.get(key) ?? 0) + 1);
-        return next;
-      });
+      invalidateInventory(payload.machine);
     }
     const changedSelected = selectedKeyRef.current === machineIdentityKey(payload.machine);
     if (changedSelected) {
@@ -601,7 +611,7 @@ function useFleetMonitor() {
       commitTimelineView({ timeline: timelineViewRef.current.timeline, stale: true });
     }
     void refreshOverviewRef.current?.(payload.machine, changedSelected);
-  }, [client, commitTimelineView]);
+  }, [client, commitTimelineView, invalidateInventory]);
   useRealtime("machine-monitor-fleet", onFleetInvalidation);
 
   // A one-shot idle opportunity warms at most two nearby rows. There is no
@@ -630,7 +640,9 @@ function useFleetMonitor() {
     timelineView,
     timelineLoading,
     timelineError,
-    inventoryRevision: selectedMachineKey == null ? 0 : inventoryRevisions.get(selectedMachineKey) ?? 0,
+    inventoryRevision: selectedMachineKey == null
+      ? `0:${inventoryReconnectEpoch}`
+      : `${inventoryRevisions.get(selectedMachineKey) ?? 0}:${inventoryReconnectEpoch}`,
     chooseMachine,
     chooseRange,
     prefetchMachine,
@@ -799,26 +811,46 @@ const MachineContext = memo(function MachineContext({ inventory, loading, error 
       <p className="machine-monitor__timeline-status" role="status">{inventory.lastError ?? "No inventory snapshot has been retained for this machine yet."}</p>
     </section>;
   }
-  const cpu = snapshot.cpu.logicalCores == null ? "Unavailable" : `${snapshot.cpu.logicalCores} logical core${snapshot.cpu.logicalCores === 1 ? "" : "s"}`;
-  const topology = snapshot.cpu.observedPhysicalCores == null
-    ? "Observed physical topology unavailable"
-    : `${snapshot.cpu.observedPhysicalCores} observed physical core${snapshot.cpu.observedPhysicalCores === 1 ? "" : "s"}${snapshot.cpu.observedPackages == null ? "" : ` · ${snapshot.cpu.observedPackages} package${snapshot.cpu.observedPackages === 1 ? "" : "s"}`}`;
-  const model = [snapshot.cpu.model, snapshot.cpu.speedMHz == null ? null : `${snapshot.cpu.speedMHz.toFixed(0)} MHz`].filter((value): value is string => value != null).join(" · ") || "Model and speed unavailable";
+  const logicalCores = snapshot.cpu.logicalCores;
+  const physicalCores = snapshot.cpu.observedPhysicalCores;
+  const packages = snapshot.cpu.observedPackages;
+  const cpuDescription = logicalCores == null
+    ? snapshot.cpu.availability.reason ?? "CPU inventory is unavailable."
+    : `${logicalCores} logical core${logicalCores === 1 ? "" : "s"}${physicalCores == null ? "" : `; ${physicalCores} observed physical core${physicalCores === 1 ? "" : "s"}`}${packages == null ? "" : ` across ${packages} observed package${packages === 1 ? "" : "s"}`}.`;
+  const speed = snapshot.cpu.speedMHz == null ? null : snapshot.cpu.speedMHz >= 1_000
+    ? `${(snapshot.cpu.speedMHz / 1_000).toFixed(snapshot.cpu.speedMHz % 1_000 === 0 ? 0 : 1)} GHz`
+    : `${snapshot.cpu.speedMHz.toFixed(0)} MHz`;
+  const model = [snapshot.cpu.model, speed].filter((value): value is string => value != null).join(" · ") || "Unavailable";
   const ram = snapshot.memory.usableBytes == null ? "Unavailable" : displayMetric(snapshot.memory.usableBytes, "bytes");
   const os = [snapshot.os.name, snapshot.os.version, snapshot.os.kernel == null ? null : `kernel ${snapshot.os.kernel}`, snapshot.os.architecture].filter((value): value is string => value != null).join(" · ");
+  const locationDescription = "Location is not operator-reported and is never inferred from IPs or cloud metadata.";
+  const raidDescription = snapshot.raid.reason ?? "Linux md status only; hardware RAID, LVM, and ZFS are not inferred.";
+  const raid = snapshot.raid.state === "available" ? `${snapshot.raid.arrays.length} md` : snapshot.raid.state === "not-detected" ? "None detected" : "Unavailable";
+  const receipt = inventory.receivedAtMs == null ? "Server receipt time unavailable." : `Server received this profile ${latestTime(inventory.receivedAtMs)}.`;
   return <section className="machine-monitor__machine-context" aria-labelledby="machine-monitor-context-title" data-visibility={snapshot.visibility} aria-busy={loading}>
     <header>
-      <div><h2 id="machine-monitor-context-title">Machine context</h2><p>{`${snapshot.visibility === "guest-visible" ? "Guest-visible" : snapshot.visibility === "host-visible" ? "Daemon-visible" : "Visibility unknown"} · observed ${latestTime(snapshot.observedAtMs)}`}</p></div>
-      <span>{loading ? "Refreshing" : inventory.lastError == null ? "Static profile" : "Last refresh failed"}</span>
+      <div><h2 id="machine-monitor-context-title">Machine context</h2><p>{`${snapshot.visibility === "guest-visible" ? "Guest-visible" : snapshot.visibility === "host-visible" ? "Daemon-visible" : "Visibility unknown"} · host-reported observed ${latestTime(snapshot.observedAtMs)}`}</p></div>
+      <span>{loading ? "Refreshing" : inventory.lastError == null ? "Static profile" : "Refresh failed"}</span>
     </header>
     <dl className="machine-monitor__machine-facts">
-      <div><dt>CPU</dt><dd>{cpu}</dd><small>{topology}</small></div>
-      <div><dt>CPU model</dt><dd>{model}</dd><small>{snapshot.cpu.availability.state === "available" ? "Logical CPU entries from the runtime" : snapshot.cpu.availability.reason}</small></div>
-      <div><dt>Visible RAM</dt><dd>{ram}</dd><small>{snapshot.memory.availability.state === "available" ? "Usable memory visible to this daemon" : snapshot.memory.availability.reason}</small></div>
-      <div><dt>Operating system</dt><dd>{os}</dd><small>{snapshot.visibility === "guest-visible" ? "This is the WSL/VM view, not the Windows host." : "Kernel and architecture reported by the daemon."}</small></div>
-      <div><dt>Location</dt><dd>Not reported</dd><small>Location is never inferred from IPs or cloud metadata.</small></div>
-      <div><dt>RAID</dt><dd>{snapshot.raid.state === "available" ? `${snapshot.raid.arrays.length} Linux md array${snapshot.raid.arrays.length === 1 ? "" : "s"}` : snapshot.raid.state === "not-detected" ? "No Linux md array detected" : "Unavailable"}</dd><small>{snapshot.raid.reason ?? "Linux md status only; hardware RAID, LVM, and ZFS are not inferred."}</small></div>
+      <div><dt>CPU</dt><dd className="machine-monitor__core-count" aria-label={cpuDescription}>{logicalCores == null ? "Unavailable" : <><span><strong>{logicalCores}</strong><abbr title="Logical CPU cores">L</abbr></span>{physicalCores != null && <span><strong>{physicalCores}</strong><abbr title="Observed physical CPU cores">P</abbr></span>}{packages != null && <span><strong>{packages}</strong><abbr title="Observed CPU packages">S</abbr></span>}</>}</dd></div>
+      <div className="machine-monitor__machine-fact--wrap"><dt>CPU spec</dt><dd>{model}</dd></div>
+      <div><dt>Visible RAM</dt><dd title={ram}>{ram}</dd></div>
+      <div className="machine-monitor__machine-fact--wrap"><dt>Operating system</dt><dd>{os || "Unavailable"}</dd></div>
+      <div><dt>Location</dt><dd aria-label={locationDescription}>Not set</dd></div>
+      <div><dt>Linux md RAID</dt><dd aria-label={raidDescription}>{raid}</dd></div>
     </dl>
+    <details className="machine-monitor__context-definitions">
+      <summary>Full facts and definitions</summary>
+      <dl>
+        <div><dt>CPU labels</dt><dd>{`${cpuDescription} `}<abbr title="Logical CPU cores">L</abbr> is runtime-visible; <abbr title="Observed physical CPU cores">P</abbr> and <abbr title="Observed CPU packages">S</abbr> are best-effort observed topology.</dd></div>
+        <div><dt>CPU spec</dt><dd>{snapshot.cpu.availability.state === "available" ? `${model}. Model and nominal speed come from the daemon runtime; they are not a benchmark.` : snapshot.cpu.availability.reason}</dd></div>
+        <div><dt>Visible RAM</dt><dd>{snapshot.memory.availability.state === "available" ? `${ram} usable memory is visible to this daemon, not a DIMM inventory.` : snapshot.memory.availability.reason}</dd></div>
+        <div><dt>Operating system</dt><dd>{`${os || "Unavailable"}. `}{snapshot.visibility === "guest-visible" ? "This is the WSL/VM guest view, not the Windows host." : "Kernel and architecture are reported by the daemon."}</dd></div>
+        <div><dt>Receipt and refresh</dt><dd>{`${receipt} ${inventory.lastError == null ? "Last profile refresh succeeded." : `Last profile refresh failed ${inventory.lastErrorAtMs == null ? "at an unknown time" : latestTime(inventory.lastErrorAtMs)}: ${inventory.lastError}`}`}</dd></div>
+        <div><dt>Location and RAID</dt><dd>{`${locationDescription} ${raidDescription}`}</dd></div>
+      </dl>
+    </details>
     <details className="machine-monitor__inventory-disclosure">
       <summary>Disks and inventory limits <span>{snapshot.disksAvailability.state === "available" ? `${snapshot.disks.length} visible disk${snapshot.disks.length === 1 ? "" : "s"}` : snapshot.disksAvailability.state}</span></summary>
       <div>

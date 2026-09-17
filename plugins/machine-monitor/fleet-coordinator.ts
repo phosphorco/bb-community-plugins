@@ -859,7 +859,10 @@ export class FleetCoordinator {
       message,
     });
     if (state.machine.source === "local-bb-server") this.dependencies.onLocalError?.(laneName, message, now);
-    if (result.outcome === "inserted") this.publish(state.machine, result.generation, ["error"]);
+    // A retained static profile can carry its own failure state. Publish that
+    // fact with the ordinary collector error so clients refresh the profile
+    // rather than continuing to present a silently successful old snapshot.
+    if (result.outcome === "inserted") this.publish(state.machine, result.generation, inventoryFailure?.changed ? ["error", "inventory"] : ["error"]);
     else if (inventoryFailure?.changed) this.publish(state.machine, inventoryFailure.generation, ["inventory"]);
     this.dependencies.log?.("warn", `Machine Monitor ${laneName} collection failed for ${state.machine.machineId}: ${message}`);
   }

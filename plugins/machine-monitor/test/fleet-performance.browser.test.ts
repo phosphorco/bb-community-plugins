@@ -387,6 +387,32 @@ test("production Chromium fleet selection witness meets the latency, cache, inva
   assert.equal(idleDelta.chartInit, 0, "settled idle remounted a chart");
   assert.equal(idleDelta.chartUpdate, 0, "settled idle repeated a chart update");
   assert.equal(idleDelta.domMutations, 0, "settled idle repeated visible render work");
+
+  // Context is deliberately idle work. At a narrow production viewport it
+  // still needs to preserve every compact core token and long fact without
+  // creating horizontal page overflow or a second chart instance.
+  await page.setViewportSize({ width: 375, height: 800 });
+  await page.evaluate(() => (globalThis as any).__fleetPerformance.flushIdle());
+  await page.getByRole("heading", { name: "Machine context" }).waitFor();
+  await page.getByLabel(/12345 logical cores/).waitFor();
+  const compactContext = await page.evaluate(() => {
+    const root = document.documentElement;
+    const context = document.querySelector<HTMLElement>(".machine-monitor__machine-context");
+    const cpu = context?.querySelector<HTMLElement>(".machine-monitor__core-count");
+    const cpuSpec = context?.querySelector<HTMLElement>(".machine-monitor__machine-fact--wrap dd");
+    return {
+      pageOverflow: root.scrollWidth > innerWidth,
+      cpuWrapped: cpu == null ? null : getComputedStyle(cpu).flexWrap,
+      cpuSpecWhitespace: cpuSpec == null ? null : getComputedStyle(cpuSpec).whiteSpace,
+      cpuSpecOverflows: cpuSpec == null ? null : cpuSpec.scrollWidth > cpuSpec.clientWidth,
+    };
+  });
+  assert.deepEqual(compactContext, {
+    pageOverflow: false,
+    cpuWrapped: "wrap",
+    cpuSpecWhitespace: "normal",
+    cpuSpecOverflows: false,
+  }, "narrow context lost a compact fact or overflowed the page");
   assert.deepEqual(pageErrors, [], "the browser witness encountered a page error");
 
   const raw = {

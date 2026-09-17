@@ -66,6 +66,23 @@ chart remounts, or Long Tasks. The extra context shell is below the chart and
 layout-contained, so an idle profile response cannot move the operational
 header, KPI cards, or plotted history.
 
+Run: 2026-09-17. The reconnect/profile-truth refinement produced temporary
+bundle SHA-256 `bff4921859b22bf80a61e760f12b11e2faf10afc6e7ba02579cbe4b3dc8ed267`.
+Cached selection p95 was **31.5ms** and warm-uncached p95 was **82.0ms**.
+The profile cache key now includes an explicit per-connection recovery epoch,
+so a reconnect rereads committed context while retaining the existing profile
+on screen. The same Chromium run narrows to 375px, flushes only the deferred
+context work, and proves a five-digit L/P/S topology plus long CPU/OS facts
+wrap without horizontal page overflow or a chart remount.
+
+Post-integration repeat: 2026-09-17 at source commit `63b32ed`. The temporary
+bundle SHA-256 was `a879881a89f0af152837a2ded5fcedb9c3bce519b34dee75947b37cc599fd1d6`.
+Cached selection p95 was **32.2ms** and warm-uncached p95 was **95.7ms**.
+This retained the same no-host-call, no-chart-remount, no-Long-Task, and
+375px wrapping assertions. An earlier isolated 116.1ms warm-uncached sample
+did not reproduce across the subsequent fixed-fixture runs; the established
+110ms regression ceiling remains the release gate rather than being relaxed.
+
 ## Raw production-browser measurements
 
 Run: 2026-09-14, all values in milliseconds. Raw runner output is emitted as

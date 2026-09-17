@@ -74,6 +74,23 @@ function memory(session = "session-1", sequence = 0, pressure = false) {
   };
 }
 
+function inventory(session = "session-1", logicalCores = 4) {
+  return {
+    contractVersion: FLEET_CONTRACT_VERSION,
+    collectorSessionId: session,
+    observedAtMs: 1_000,
+    visibility: "host-visible" as const,
+    os: { name: "Test Linux", version: "1", kernel: "test", architecture: "x64" },
+    cpu: { logicalCores, observedPhysicalCores: 2, observedPackages: 1, model: "Test CPU", speedMHz: 2_400, availability: { state: "available" as const, reason: null } },
+    memory: { usableBytes: 16_000, availability: { state: "available" as const, reason: null } },
+    disks: [],
+    disksAvailability: { state: "partial" as const, reason: "No disks in test fixture." },
+    raid: { state: "not-detected" as const, arrays: [], source: "linux-mdstat" as const, reason: "No active Linux md arrays were reported." },
+    location: { value: null, source: "unavailable" as const },
+    limitations: ["Test inventory."],
+  };
+}
+
 function immediateTarget(session = "local-session"): FleetCollectorTarget {
   return {
     description: async () => description(session),
@@ -392,6 +409,44 @@ test("a host-connected event prompts collection even when a periodic list never 
   assert.equal(coreCalls, 2);
   lifecycle.abort();
   await running;
+});
+
+test("an inventory refresh failure publishes its retained-profile error with inventory invalidation", async (t) => {
+  const store = makeStore(t);
+  const invalidations: Array<readonly string[]> = [];
+  let failInventory = false;
+  const coordinator = new FleetCoordinator({
+    store,
+    listEnrolledHosts: async () => [{ id: "host-inventory-error", name: "Inventory error", status: "connected" }],
+    remote: () => ({
+      description: async () => description("inventory-worker"),
+      core: async () => core("inventory-worker"),
+      directory: async (request) => ({ ...directory("inventory-worker"), directoryId: request.directoryId }),
+      memory: async () => memory("inventory-worker"),
+      inventory: async () => {
+        if (failInventory) throw new Error("Inventory probe timed out");
+        return inventory("inventory-worker");
+      },
+    }),
+    local: { ...immediateTarget(), label: "BB server", capabilities: ["core-sampling"] },
+    directories: () => [],
+    publish: ({ machine, kinds }) => {
+      if (machine.machineId === "host-inventory-error") invalidations.push(kinds);
+    },
+  });
+  const lifecycle = new AbortController();
+  const running = coordinator.start(lifecycle.signal);
+  const remote = { source: "enrolled-host" as const, machineId: "host-inventory-error" };
+  try {
+    await waitFor(() => store.inventory(remote) != null, "the initial inventory did not persist");
+    failInventory = true;
+    coordinator.noteHostConnected(remote.machineId);
+    await waitFor(() => invalidations.some((kinds) => kinds.includes("error") && kinds.includes("inventory")), "inventory failure did not invalidate both consumers");
+    assert.equal(store.inventory(remote)?.lastError, "Inventory probe timed out");
+  } finally {
+    lifecycle.abort();
+    await running;
+  }
 });
 
 test("a host-connected lifecycle boundary aborts an old core before its late response can persist", async (t) => {

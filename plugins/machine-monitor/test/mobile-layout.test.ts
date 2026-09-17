@@ -68,4 +68,11 @@ test("mobile operational cards, machine context, and disk breakdown collapse wit
   assert.match(styles, /\.machine-monitor__machine-context\s*\{[^}]*min-width:\s*0/);
   assert.match(styles, /@container \(max-width:\s*760px\)\s*\{[\s\S]*?\.machine-monitor__machine-facts[^}]*grid-template-columns:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\)/);
   assert.match(styles, /@container \(max-width:\s*300px\)\s*\{[\s\S]*?\.machine-monitor__machine-facts[^}]*grid-template-columns:\s*1fr/);
+  assert.match(styles, /\.machine-monitor__core-count\s*\{[^}]*display:\s*flex/);
+  assert.match(styles, /\.machine-monitor__core-count\s*\{[^}]*flex-wrap:\s*wrap/);
+  assert.match(styles, /\.machine-monitor__machine-facts > \.machine-monitor__machine-fact--wrap dd\s*\{[^}]*white-space:\s*normal/);
+  assert.match(styles, /\.machine-monitor__context-definitions > dl\s*\{[^}]*grid-template-columns:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\)/);
+  assert.match(styles, /@container \(max-width:\s*460px\)\s*\{[\s\S]*?\.machine-monitor__context-definitions > dl\s*\{[^}]*grid-template-columns:\s*1fr/);
+  assert.match(app, /Full facts and definitions/);
+  assert.match(app, /title="Logical CPU cores"/);
 });
