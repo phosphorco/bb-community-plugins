@@ -9,6 +9,7 @@
     { "name": "perspectives", "source": "./plugins/perspectives" },
     { "name": "machine-monitor", "source": "./plugins/machine-monitor" },
     { "name": "sticky-notes", "source": "./plugins/sticky-notes" },
-    { "name": "bb-ui-reference", "source": "./plugins/bb-ui-reference" }
+    { "name": "bb-ui-reference", "source": "./plugins/bb-ui-reference" },
+    { "name": "attach-text-snippets", "source": "./plugins/attach-text-snippets" }
   ]
 }

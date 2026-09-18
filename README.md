@@ -17,6 +17,7 @@
 | [BB UI Reference](plugins/bb-ui-reference/) | Explore BB's plugin surfaces and active semantic theme palette. |
 | [Analytics](plugins/analytics/) | Explore fast, code-authored dashboards for agent tool reliability and performance. |
 | [Restart Resume](plugins/restart-resume/) | Resume threads left interrupted by a host daemon restart, with project-specific recovery messages. |
+| [Attach Text Snippets](plugins/attach-text-snippets/) | Paste long text into durable thread files and attach compact references to conversations. |
 
 ## Install directly
 
@@ -31,6 +32,7 @@ bb plugin install npm:@phosphorco/bb-plugin-sticky-notes@^0.1.1
 bb plugin install npm:@phosphorco/bb-plugin-bb-ui-reference@^0.1.1
 bb plugin install npm:@phosphorco/bb-plugin-analytics@^0.1.0
 bb plugin install npm:@phosphorco/bb-plugin-restart-resume@^0.1.0
+bb plugin install npm:@phosphorco/bb-plugin-attach-text-snippets@^0.1.0
 ```
 
 The plugins are also submitted to the BB Community marketplace for installation from bb.

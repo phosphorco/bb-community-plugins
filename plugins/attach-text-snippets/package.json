@@ -1,0 +1,74 @@
+{
+  "name": "@phosphorco/bb-plugin-attach-text-snippets",
+  "version": "0.1.0",
+  "type": "module",
+  "license": "MIT",
+  "description": "Paste long text into durable thread files and attach compact references to conversations.",
+  "author": "Phosphor",
+  "homepage": "https://github.com/phosphorco/bb-community-plugins/tree/main/plugins/attach-text-snippets#readme",
+  "bugs": {
+    "url": "https://github.com/phosphorco/bb-community-plugins/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/phosphorco/bb-community-plugins.git",
+    "directory": "plugins/attach-text-snippets"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org"
+  },
+  "keywords": [
+    "bb",
+    "bb-plugin",
+    "text-snippets",
+    "mentions",
+    "thread-storage",
+    "composer"
+  ],
+  "engines": {
+    "bb": ">=0.42.0 <1.0.0",
+    "bbPluginSdk": ">=0.4.47"
+  },
+  "bb": {
+    "name": "Attach Text Snippets",
+    "description": "Paste long text into durable thread files and attach compact references to conversations.",
+    "branding": {
+      "icon": "FileText"
+    },
+    "server": "./server.ts",
+    "app": "./app.tsx",
+    "skills": []
+  },
+  "files": [
+    "dist/",
+    "README.md",
+    "LICENSE",
+    "server.ts",
+    "app.tsx",
+    "app.css",
+    "rpc-contract.ts",
+    "snippet-model.ts",
+    "test/"
+  ],
+  "dependencies": {
+    "zod": "4.3.6"
+  },
+  "devDependencies": {
+    "@get-bb/plugin-sdk": "0.4.47",
+    "@types/better-sqlite3": "^7.6.12",
+    "@types/node": "^22",
+    "@types/react": "19.2.2",
+    "@types/react-dom": "19.2.2",
+    "better-sqlite3": "^12.0.0",
+    "react": "19.2.1",
+    "react-dom": "19.2.1",
+    "typescript": "^5.9.3"
+  },
+  "scripts": {
+    "build": "node ../../tools/bb-target-cli.mjs plugin build .",
+    "dev": "node ../../tools/bb-target-cli.mjs plugin dev .",
+    "test": "node --test --experimental-strip-types test/*.test.ts",
+    "typecheck": "tsc --noEmit"
+  }
+}
