@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useId, useMemo, useRef, useState, type CSSProperties } from "react";
+import { memo, useCallback, useEffect, useId, useMemo, useRef, useState, type ChangeEvent, type CSSProperties } from "react";
 import {
   definePluginApp,
   useBbNavigate,
@@ -955,8 +955,9 @@ const MachineNoticeRail = memo(function MachineNoticeRail({ machine, connection,
   </aside>;
 });
 
-const SelectedMachineOverview = memo(function SelectedMachineOverview({ machine, rangeHours, timelineView, timelineLoading, timelineError, inventory, inventoryLoading, inventoryError, connection, onRange, onActivateEvent }: {
+const SelectedMachineOverview = memo(function SelectedMachineOverview({ machine, machines, rangeHours, timelineView, timelineLoading, timelineError, inventory, inventoryLoading, inventoryError, connection, onSelect, onRange, onActivateEvent }: {
   machine: FleetMachine;
+  machines: readonly FleetMachine[];
   rangeHours: RangeHours;
   timelineView: TimelineView;
   timelineLoading: boolean;
@@ -965,6 +966,7 @@ const SelectedMachineOverview = memo(function SelectedMachineOverview({ machine,
   inventoryLoading: boolean;
   inventoryError: string | null;
   connection: string;
+  onSelect: (machine: FleetMachine) => void;
   onRange: (hours: RangeHours) => void;
   onActivateEvent: (activation: TimelineEventActivation) => void;
 }) {
@@ -985,10 +987,20 @@ const SelectedMachineOverview = memo(function SelectedMachineOverview({ machine,
   const visibleTimeline = timelineView?.timeline ?? null;
   const visibleSelectedTimeline = timelineView != null && !retainedForOtherMachine ? timelineView.timeline : null;
   const eventSummary = visibleSelectedTimeline == null ? null : `${visibleSelectedTimeline.events.totalCount} exact event${visibleSelectedTimeline.events.totalCount === 1 ? "" : "s"}`;
-  return <section className="machine-monitor__selected-machine" data-stale={historyStale || undefined} aria-labelledby="machine-monitor-selected-title">
+  const selectMachine = useCallback((event: ChangeEvent<HTMLSelectElement>) => {
+    const next = machines.find((candidate) => machineIdentityKey(candidate.machine) === event.target.value);
+    if (next != null) onSelect(next);
+  }, [machines, onSelect]);
+  return <section className="machine-monitor__selected-machine" data-stale={historyStale || undefined} aria-labelledby="machine-monitor-selected-heading">
     <header>
       <div>
-        <h1 id="machine-monitor-selected-title">{machine.label}</h1>
+        <h2 id="machine-monitor-selected-heading" className="machine-monitor__visually-hidden">{machine.label}</h2>
+        <label className="machine-monitor__selected-machine-picker">
+          <span className="machine-monitor__visually-hidden">Selected machine</span>
+          <select id="machine-monitor-selected-title" value={selectedMachineKey} onChange={selectMachine}>
+            {machines.map((candidate) => <option key={machineIdentityKey(candidate.machine)} value={machineIdentityKey(candidate.machine)}>{candidate.label}</option>)}
+          </select>
+        </label>
         <p>{`${connectionText(machine)} · ${generationText(machine)}`}</p>
       </div>
       <div className="machine-monitor__selected-controls">
@@ -1046,6 +1058,7 @@ function MachineMonitorPanel() {
     {fleet.overviewLoading && fleet.overview == null && <p className="machine-monitor__empty" role="status">Loading the fleet overview…</p>}
     {selected != null && <SelectedMachineOverview
       machine={selected}
+      machines={fleet.overview?.machines ?? [selected]}
       rangeHours={fleet.rangeHours}
       timelineView={fleet.timelineView}
       timelineLoading={fleet.timelineLoading}
@@ -1054,6 +1067,7 @@ function MachineMonitorPanel() {
       inventoryLoading={inventory.loading}
       inventoryError={inventory.error}
       connection={fleet.connection}
+      onSelect={fleet.chooseMachine}
       onRange={fleet.chooseRange}
       onActivateEvent={activateEvent}
     />}

@@ -215,6 +215,33 @@ async function measureSwitch(page: any, id: string, current: string, target: str
   return { ...await page.evaluate((sampleId: string) => (globalThis as any).__fleetPerformance.finish(sampleId), id), retainedContentBeforeResponse } as BrowserMeasurement;
 }
 
+/** Measure the title selector's native `change` path independently of the atlas cards. */
+async function measureSelectorSwitch(page: any, id: string, current: string, target: string, held = false): Promise<BrowserMeasurement> {
+  const targetLabel = machineLabel(target);
+  await page.evaluate((value: { id: string; targetLabel: string; expectedLabel: string; expectedMachineId: string; inputKind: "selector" }) =>
+    (globalThis as any).__fleetPerformance.begin(value), {
+    id,
+    targetLabel,
+    expectedLabel: targetLabel,
+    expectedMachineId: target,
+    inputKind: "selector",
+  });
+  const selector = page.getByRole("combobox", { name: "Selected machine" });
+  const beforeHeldChange = held ? await page.evaluate(() => (globalThis as any).__fleetPerformanceControl.counters()) : null;
+  let retainedContentBeforeResponse = false;
+  await selector.selectOption({ label: targetLabel });
+  if (held) {
+    await page.getByText(new RegExp(`Showing retained timeline for ${current}`)).waitFor();
+    retainedContentBeforeResponse = true;
+    const counters = await page.evaluate(() => (globalThis as any).__fleetPerformanceControl.counters());
+    assert.equal((counters.rpc.machineTimeline ?? 0) - (beforeHeldChange!.rpc.machineTimeline ?? 0), 1,
+      "one held selector change must issue exactly one local-server RPC before its response is released");
+    await page.evaluate((machine: string) => (globalThis as any).__fleetPerformanceControl.release(machine), target);
+  }
+  await page.waitForFunction((sampleId: string) => (globalThis as any).__fleetPerformance.ready(sampleId), id);
+  return { ...await page.evaluate((sampleId: string) => (globalThis as any).__fleetPerformance.finish(sampleId), id), retainedContentBeforeResponse } as BrowserMeasurement;
+}
+
 function assertNoLongTask(values: readonly BrowserMeasurement[], label: string): void {
   for (const value of values) {
     assert.equal(value.longTasks.length, 0, `${label} ${value.id} recorded a >=50ms browser task: ${JSON.stringify(value.longTasks)}`);
@@ -301,6 +328,17 @@ test("production Chromium fleet selection witness meets the latency, cache, inva
   assert.deepEqual(preflight.browser, { viewport: { width: 1280, height: 900, dpr: 1 }, theme: "light", reducedMotion: true });
   assert.equal(preflight.probe.counters.chartInit, 2, "the initial surface must mount one shared fleet chart plus one two-grid operational dashboard");
 
+  const titleSelector = page.getByRole("combobox", { name: "Selected machine" });
+  await titleSelector.focus();
+  await page.keyboard.press("ArrowDown");
+  await waitForInitialMachine(page, machineId(1));
+  assert.equal(await titleSelector.evaluate((element: HTMLSelectElement) => document.activeElement === element), true,
+    "keyboard machine selection did not retain focus on the title selector");
+  await page.keyboard.press("Tab");
+  const historySelector = page.getByRole("combobox", { name: "History" });
+  assert.equal(await historySelector.evaluate((element: HTMLSelectElement) => document.activeElement === element), true,
+    "Tab after the title selector did not reach the History control");
+
   // The rendered SVG datum carries its machine key through ECharts hit testing.
   // A separate compiler regression covers a late event after source reordering.
   await clickFleetUtilizationBar(page, 1);
@@ -337,6 +375,24 @@ test("production Chromium fleet selection witness meets the latency, cache, inva
   assert.ok(cachedSummary.p95UsefulPaintMs <= 50, `cached switch p95 ${cachedSummary.p95UsefulPaintMs}ms exceeds 50ms`);
   assertNoAtlasP95Regression(cachedSummary, atlasP95RegressionCeilings.cached, "cached atlas switch");
 
+  const selectorCachedCandidate: BrowserMeasurement[] = [];
+  let selectorCurrent = current;
+  for (let index = 0; index < samplesPerDistribution; index += 1) {
+    const target = selectorCurrent === machineId(3) ? machineId(4) : machineId(3);
+    selectorCachedCandidate.push(await measureSelectorSwitch(page, `selector-cached-${index}`, selectorCurrent, target));
+    selectorCurrent = target;
+  }
+  for (const sample of selectorCachedCandidate) {
+    assert.equal(sample.counterDelta.rpc.machineTimeline ?? 0, 0, `${sample.id} issued a detail RPC despite a revision-current cache hit`);
+    assert.equal(sample.counterDelta.hostCalls, 0, `${sample.id} contacted a daemon/host`);
+    assert.equal(sample.counterDelta.chartInit, 0, `${sample.id} remounted the chart`);
+    assert.equal(sample.counterDelta.chartDispose, 0, `${sample.id} disposed/remounted the chart`);
+  }
+  assertNoLongTask(selectorCachedCandidate, "cached selector candidate");
+  const selectorCachedSummary = measurementSummary(selectorCachedCandidate);
+  assert.ok(selectorCachedSummary.p95UsefulPaintMs <= 50, `cached selector switch p95 ${selectorCachedSummary.p95UsefulPaintMs}ms exceeds 50ms`);
+  assertNoAtlasP95Regression(selectorCachedSummary, atlasP95RegressionCeilings.cached, "cached selector switch");
+
   const uncachedControl: BrowserMeasurement[] = [];
   const uncachedCandidate: BrowserMeasurement[] = [];
   for (let index = 0; index < samplesPerDistribution; index += 1) {
@@ -358,6 +414,26 @@ test("production Chromium fleet selection witness meets the latency, cache, inva
   const uncachedSummary = measurementSummary(uncachedCandidate);
   assert.ok(uncachedSummary.p95UsefulPaintMs <= 250, `warm uncached switch p95 ${uncachedSummary.p95UsefulPaintMs}ms exceeds 250ms`);
   assertNoAtlasP95Regression(uncachedSummary, atlasP95RegressionCeilings.uncached, "warm uncached atlas switch");
+
+  const selectorUncachedCandidate: BrowserMeasurement[] = [];
+  const selectorUncachedTargets = [22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 6, 7].map(machineId);
+  let selectorUncachedCurrent = current;
+  for (const [index, target] of selectorUncachedTargets.entries()) {
+    await page.evaluate((machine: string) => (globalThis as any).__fleetPerformanceControl.hold(machine), target);
+    selectorUncachedCandidate.push(await measureSelectorSwitch(page, `selector-uncached-${index}`, selectorUncachedCurrent, target, true));
+    selectorUncachedCurrent = target;
+  }
+  for (const sample of selectorUncachedCandidate) {
+    assert.equal(sample.counterDelta.rpc.machineTimeline ?? 0, 1, `${sample.id} must issue one local-server RPC for an uncached selector transition`);
+    assert.equal(sample.counterDelta.hostCalls, 0, `${sample.id} contacted a daemon/host`);
+    assert.equal(sample.counterDelta.chartInit, 0, `${sample.id} remounted the chart while replacing retained content`);
+    assert.ok(sample.overviewRetained || sample.retainedContentBeforeResponse,
+      `${sample.id} lost both useful overview and retained stale content`);
+  }
+  assertNoLongTask(selectorUncachedCandidate, "uncached selector candidate");
+  const selectorUncachedSummary = measurementSummary(selectorUncachedCandidate);
+  assert.ok(selectorUncachedSummary.p95UsefulPaintMs <= 250, `warm uncached selector switch p95 ${selectorUncachedSummary.p95UsefulPaintMs}ms exceeds 250ms`);
+  assertNoAtlasP95Regression(selectorUncachedSummary, atlasP95RegressionCeilings.uncached, "warm uncached selector switch");
 
   // Rewarm a small known resident set, then advance only machine 05. Its exact
   // revision becomes a miss while 03/04 stay revision-current cache hits.
@@ -400,11 +476,34 @@ test("production Chromium fleet selection witness meets the latency, cache, inva
     const context = document.querySelector<HTMLElement>(".machine-monitor__machine-context");
     const cpu = context?.querySelector<HTMLElement>(".machine-monitor__core-count");
     const cpuSpec = context?.querySelector<HTMLElement>(".machine-monitor__machine-fact--wrap dd");
+    const title = document.querySelector<HTMLSelectElement>("#machine-monitor-selected-title");
+    const titlePicker = title?.closest<HTMLElement>(".machine-monitor__selected-machine-picker");
+    title?.focus();
+    if (title?.selectedOptions[0] != null) title.selectedOptions[0].textContent = "A deliberately long machine name that must not widen the narrow page";
+    root.style.setProperty("--background", "rgb(15, 23, 42)");
+    root.style.setProperty("--foreground", "rgb(248, 250, 252)");
+    root.style.setProperty("--border", "rgb(71, 85, 105)");
+    root.style.setProperty("--accent", "rgb(30, 41, 59)");
+    root.style.setProperty("--accent-foreground", "rgb(248, 250, 252)");
+    root.style.setProperty("--ring", "rgb(125, 211, 252)");
+    const titleStyle = title == null ? null : getComputedStyle(title);
+    const titleBounds = title?.getBoundingClientRect();
     return {
       pageOverflow: root.scrollWidth > innerWidth,
       cpuWrapped: cpu == null ? null : getComputedStyle(cpu).flexWrap,
       cpuSpecWhitespace: cpuSpec == null ? null : getComputedStyle(cpuSpec).whiteSpace,
       cpuSpecOverflows: cpuSpec == null ? null : cpuSpec.scrollWidth > cpuSpec.clientWidth,
+      title: titleStyle == null || titleBounds == null ? null : {
+        fontSize: titleStyle.fontSize,
+        minHeight: titleStyle.minHeight,
+        paddingRight: titleStyle.paddingRight,
+        background: titleStyle.backgroundColor,
+        color: titleStyle.color,
+        outlineWidth: titleStyle.outlineWidth,
+        pickerDisplay: titlePicker == null ? null : getComputedStyle(titlePicker).display,
+        pickerGridTemplateColumns: titlePicker == null ? null : getComputedStyle(titlePicker).gridTemplateColumns,
+        fitsViewport: titleBounds.left >= 0 && titleBounds.right <= innerWidth,
+      },
     };
   });
   assert.deepEqual(compactContext, {
@@ -412,6 +511,17 @@ test("production Chromium fleet selection witness meets the latency, cache, inva
     cpuWrapped: "wrap",
     cpuSpecWhitespace: "normal",
     cpuSpecOverflows: false,
+    title: {
+      fontSize: "20px",
+      minHeight: "40px",
+      paddingRight: "28px",
+      background: "rgb(15, 23, 42)",
+      color: "rgb(248, 250, 252)",
+      outlineWidth: "2px",
+      pickerDisplay: "block",
+      pickerGridTemplateColumns: "none",
+      fitsViewport: true,
+    },
   }, "narrow context lost a compact fact or overflowed the page");
   assert.deepEqual(pageErrors, [], "the browser witness encountered a page error");
 
@@ -432,6 +542,7 @@ test("production Chromium fleet selection witness meets the latency, cache, inva
     atlas: { initial: initialAtlas, p95RegressionCeilings: atlasP95RegressionCeilings },
     cached: { control: cachedControl, controlSummary: measurementSummary(cachedControl), candidate: cachedCandidate, summary: cachedSummary },
     uncached: { control: uncachedControl, controlSummary: measurementSummary(uncachedControl), candidate: uncachedCandidate, summary: uncachedSummary },
+    selector: { cached: { candidate: selectorCachedCandidate, summary: selectorCachedSummary }, uncached: { candidate: selectorUncachedCandidate, summary: selectorUncachedSummary } },
     revision: { unaffectedCurrent, unaffectedOther, revisionTarget },
     idleDelta,
   };

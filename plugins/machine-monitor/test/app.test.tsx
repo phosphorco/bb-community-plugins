@@ -632,6 +632,8 @@ test("keeps overview resident and reuses a cached timeline without a third RPC",
   expect(slot.getByRole("heading", { name: "Machine context" })).toBeTruthy();
   expect(slot.getByText("Loading machine context…")).toBeTruthy();
   const selectedPanel = slot.getByRole("heading", { name: "Alpha" }).closest(".machine-monitor__selected-machine")!;
+  expect(slot.getByRole("heading", { name: "Alpha", level: 2 })).toBeTruthy();
+  expect(slot.getByRole("region", { name: "Alpha" })).toBe(selectedPanel);
   const fleetPanel = slot.getByRole("heading", { name: "Fleet overview" }).closest(".machine-monitor__fleet-picker")!;
   expect(selectedPanel.compareDocumentPosition(fleetPanel) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
   const historySummary = slot.getByText(/^History data/).closest("summary")!;
@@ -641,15 +643,29 @@ test("keeps overview resident and reuses a cached timeline without a third RPC",
   expect(slot.getByRole("table")).toBeTruthy();
   expect(slot.getByText(/Coverage is complete for the requested bounded range/)).toBeTruthy();
 
-  fireEvent.click(slot.getByRole("button", { name: /Bravo\. connected/ }));
+  const selectedMachine = slot.getByRole("combobox", { name: "Selected machine" }) as HTMLSelectElement;
+  expect(selectedMachine.selectedOptions[0]?.textContent).toBe("Alpha");
+  const bravoOption = Array.from(selectedMachine.options).find((option) => option.textContent === "Bravo");
+  if (bravoOption == null) throw new Error("The selected-machine control did not include Bravo.");
+  selectedMachine.focus();
+  fireEvent.change(selectedMachine, { target: { value: bravoOption.value } });
   await waitFor(() => expect(calls).toEqual(["machine-alpha", "machine-bravo"]));
+  expect(document.activeElement).toBe(selectedMachine);
   expect(slot.getByRole("button", { name: /Alpha\. connected/ })).toBeTruthy();
   expect(slot.getByRole("img", { name: /Operational history for machine-bravo/ })).toBeTruthy();
+  expect(selectedMachine.selectedOptions[0]?.textContent).toBe("Bravo");
 
   fireEvent.click(slot.getByRole("button", { name: /Alpha\. connected/ }));
   expect(calls).toEqual(["machine-alpha", "machine-bravo"]);
   expect(slot.getByRole("heading", { name: "Alpha" })).toBeTruthy();
   expect(slot.getByRole("img", { name: /Operational history for machine-alpha/ })).toBeTruthy();
+  expect(selectedMachine.selectedOptions[0]?.textContent).toBe("Alpha");
+
+  selectedMachine.focus();
+  fireEvent.change(selectedMachine, { target: { value: bravoOption.value } });
+  expect(calls).toEqual(["machine-alpha", "machine-bravo"]);
+  expect(selectedMachine.selectedOptions[0]?.textContent).toBe("Bravo");
+  expect(document.activeElement).toBe(selectedMachine);
   slot.lifecycle.unmount();
 });
 

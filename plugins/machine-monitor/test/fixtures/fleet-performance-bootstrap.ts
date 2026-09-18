@@ -55,9 +55,10 @@ export const FLEET_PERFORMANCE_BOOTSTRAP = String.raw`(() => {
   }
   function match(measurement) {
     if (measurement.inputAt == null) return;
-    const heading = document.querySelector("#machine-monitor-selected-title");
+    const title = document.querySelector("#machine-monitor-selected-title");
+    const selectedLabel = title instanceof HTMLSelectElement ? title.selectedOptions[0]?.textContent : title?.textContent;
     const chart = document.querySelector('.machine-monitor__dashboard-chart [aria-label*="' + measurement.expectedMachineId + '"]');
-    if (heading?.textContent !== measurement.expectedLabel || chart == null || measurement.usefulDomAt != null) return;
+    if (selectedLabel !== measurement.expectedLabel || chart == null || measurement.usefulDomAt != null) return;
     measurement.usefulDomAt = performance.now();
     requestAnimationFrame(() => requestAnimationFrame(() => {
       if (state.measurement === measurement && measurement.paintAt == null) measurement.paintAt = performance.now();
@@ -66,16 +67,25 @@ export const FLEET_PERFORMANCE_BOOTSTRAP = String.raw`(() => {
   document.addEventListener("click", (event) => {
     const measurement = state.measurement;
     const button = event.target instanceof Element ? event.target.closest("button") : null;
-    if (measurement == null || button == null || measurement.inputAt != null || !button.getAttribute("aria-label")?.startsWith(measurement.targetLabel)) return;
+    if (measurement == null || measurement.inputKind !== "card" || button == null || measurement.inputAt != null || !button.getAttribute("aria-label")?.startsWith(measurement.targetLabel)) return;
+    measurement.inputAt = performance.now();
+    measurement.overviewAtInput = document.querySelector(".machine-monitor__fleet-picker") != null;
+    measurement.chartAtInput = document.querySelector('.machine-monitor__dashboard-chart') != null;
+    match(measurement);
+  }, true);
+  document.addEventListener("change", (event) => {
+    const measurement = state.measurement;
+    const selector = event.target instanceof HTMLSelectElement && event.target.id === "machine-monitor-selected-title" ? event.target : null;
+    if (measurement == null || measurement.inputKind !== "selector" || selector == null || measurement.inputAt != null || selector.selectedOptions[0]?.textContent !== measurement.expectedLabel) return;
     measurement.inputAt = performance.now();
     measurement.overviewAtInput = document.querySelector(".machine-monitor__fleet-picker") != null;
     measurement.chartAtInput = document.querySelector('.machine-monitor__dashboard-chart') != null;
     match(measurement);
   }, true);
   window.__fleetPerformance = Object.assign(state, {
-    begin({ id, targetLabel, expectedLabel, expectedMachineId }) {
+    begin({ id, targetLabel, expectedLabel, expectedMachineId, inputKind = "card" }) {
       if (state.measurement != null) throw new Error("A fleet performance measurement is already active.");
-      state.measurement = { id, targetLabel, expectedLabel, expectedMachineId, before: counters(), inputAt: null, usefulDomAt: null, paintAt: null, overviewAtInput: false, chartAtInput: false };
+      state.measurement = { id, targetLabel, expectedLabel, expectedMachineId, inputKind, before: counters(), inputAt: null, usefulDomAt: null, paintAt: null, overviewAtInput: false, chartAtInput: false };
       return state.measurement;
     },
     ready(id) { return state.measurement?.id === id && state.measurement.paintAt != null; },
