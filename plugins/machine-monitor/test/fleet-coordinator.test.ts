@@ -119,6 +119,92 @@ async function waitFor(predicate: () => boolean, message = "timed out waiting fo
   assert.fail(message);
 }
 
+test("prunes API-classified ephemeral machines without discarding missing persistent history", async (t) => {
+  const store = makeStore(t);
+  const ephemeral = { source: "enrolled-host" as const, machineId: "host-ephemeral" };
+  const persistent = { source: "enrolled-host" as const, machineId: "host-persistent" };
+  for (const machine of [ephemeral, persistent]) {
+    store.registerMachine({ machine, label: machine.machineId, connection: "connected", capabilities: [], serverObservedAtMs: 1_000 });
+  }
+  let remoteCalls = 0;
+  let failRemovalInvalidation = true;
+  const invalidations: string[] = [];
+  const coordinator = new FleetCoordinator({
+    store,
+    now: () => 2_000,
+    listEnrolledHosts: async () => [
+      { id: ephemeral.machineId, name: "Sandbox", status: "disconnected", type: "ephemeral" },
+      { id: ephemeral.machineId, name: "Conflicting duplicate", status: "connected", type: "persistent" },
+      { id: persistent.machineId, name: "Legacy persistent", status: "disconnected" },
+    ],
+    remote: () => {
+      remoteCalls += 1;
+      return immediateTarget("unexpected-remote");
+    },
+    local: { ...immediateTarget(), label: "BB server", capabilities: ["core-sampling"] },
+    directories: () => [],
+    publish: ({ machine, kinds }) => {
+      if (!kinds.includes("retention")) return;
+      if (failRemovalInvalidation) {
+        failRemovalInvalidation = false;
+        throw new Error("realtime unavailable");
+      }
+      invalidations.push(machine.machineId);
+    },
+  });
+
+  await coordinator.runOnce();
+  await coordinator.whenIdle();
+
+  assert.equal(store.machine(ephemeral), null, "the sandbox registry row and retained telemetry are pruned");
+  assert.equal(store.machine(persistent)?.connection, "disconnected", "a host with no type keeps the prior persistent behavior");
+  assert.equal(remoteCalls, 1, "only the untyped persistent host receives a dormant target; the ephemeral host is never scheduled");
+  assert.deepEqual(invalidations, [], "the committed removal retains its failed invalidation for retry");
+  await coordinator.runOnce();
+  assert.deepEqual(invalidations, [ephemeral.machineId]);
+});
+
+test("an ephemeral reclassification fences an in-flight persistent-host response", async (t) => {
+  const store = makeStore(t);
+  const machine = { source: "enrolled-host" as const, machineId: "host-reclassified" };
+  let hostType: "persistent" | "ephemeral" = "persistent";
+  let releaseCore: (() => void) | undefined;
+  let markCoreStarted: (() => void) | undefined;
+  const coreStarted = new Promise<void>((resolve) => { markCoreStarted = resolve; });
+  const coordinator = new FleetCoordinator({
+    store,
+    listEnrolledHosts: async () => [{ id: machine.machineId, name: "Reclassified", status: "connected", type: hostType }],
+    remote: () => ({
+      description: async () => description("reclassified-worker"),
+      core: async () => {
+        markCoreStarted?.();
+        return await new Promise<ReturnType<typeof core>>((resolve) => { releaseCore = () => resolve(core("reclassified-worker")); });
+      },
+      directory: async (request) => ({ ...directory("reclassified-worker"), directoryId: request.directoryId }),
+      memory: async () => memory("reclassified-worker"),
+    }),
+    local: { ...immediateTarget(), label: "BB server", capabilities: ["core-sampling"] },
+    directories: () => [],
+  });
+  const lifecycle = new AbortController();
+  const running = coordinator.start(lifecycle.signal);
+  try {
+    await coreStarted;
+    assert.notEqual(store.machine(machine), null);
+    hostType = "ephemeral";
+    coordinator.requestReconcile();
+    await waitFor(() => store.machine(machine) == null, "the ephemeral reclassification did not remove the machine");
+    await coordinator.whenIdle();
+    releaseCore?.();
+    await allowWork();
+    assert.equal(store.machine(machine), null, "the late response cannot recreate pruned telemetry");
+  } finally {
+    lifecycle.abort();
+    releaseCore?.();
+    await running;
+  }
+});
+
 test("binds a remote payload to its authenticated target, midpoint-normalizes time, and invalidates after the commit", async (t) => {
   const store = makeStore(t);
   const invalidations: Array<{ machineId: string; collections: number }> = [];

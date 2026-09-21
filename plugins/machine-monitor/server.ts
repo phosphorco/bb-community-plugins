@@ -38,6 +38,11 @@ import { rpcContract } from "./rpc-contract.ts";
 import { MachineMonitorReferenceStore, MachineMonitorStore, machineMonitorMigrations } from "./store.ts";
 import { SqliteTimelineQuerySource, TimelineQueryService } from "./timeline-query.ts";
 
+export function classifyFleetHostType(host: unknown): "persistent" | "ephemeral" {
+  if (host == null || typeof host !== "object") return "persistent";
+  return (host as { type?: unknown }).type === "ephemeral" ? "ephemeral" : "persistent";
+}
+
 const THREAD_SEARCH_LIMIT_PER_GROUP = 12;
 
 /**
@@ -254,7 +259,12 @@ export default async function machineMonitorPlugin(bb: BbPluginApi): Promise<voi
   };
   const fleetCoordinator = new FleetCoordinator({
     store: fleetStore,
-    listEnrolledHosts: async (signal) => (await bb.sdk.hosts.list({ signal })).map(({ id, name, status }) => ({ id, name, status })),
+    listEnrolledHosts: async (signal) => (await bb.sdk.hosts.list({ signal })).map((host) => {
+      // Newer BB versions distinguish provider-created ephemeral machines.
+      // Keep this structural read compatible with the older minimum SDK while
+      // the runtime supplies the newer host record.
+      return { id: host.id, name: host.name, status: host.status, type: classifyFleetHostType(host) };
+    }),
     remote: (hostId) => ({
       description: (signal) => hostClient.call("describe", null, { hostId, signal }),
       core: (signal) => hostClient.call("coreSample", null, { hostId, signal }),

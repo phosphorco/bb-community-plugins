@@ -15,6 +15,7 @@ const otherHost: FleetMachineIdentity = { source: "enrolled-host", machineId: "h
 function makeStore(): { db: Database.Database; store: FleetStore } {
   const db = new Database(":memory:");
   for (const migration of machineMonitorMigrations) db.exec(migration);
+  db.pragma("foreign_keys = ON");
   return { db, store: new FleetStore(db) };
 }
 
@@ -128,6 +129,74 @@ test("requires server registration, validates trusted timing, and makes collecti
   assert.throws(() => store.recordCollection({ ...collection(host, 1), normalizedAtMs: 2_000 }), /inside its request\/response interval/);
   assert.equal(store.recordCollection(collection(host, 2, 1_025)).outcome, "inserted");
   assert.throws(() => store.recordCollection(collection(host, 1, 1_015)), /out-of-order sequence/);
+});
+
+test("authoritatively removes an ephemeral enrolled machine and all of its retained data", (t) => {
+  const { db, store } = makeStore();
+  t.after(() => db.close());
+  register(store, host);
+  register(store, otherHost);
+  store.recordCollection(collection(host, 0));
+  store.recordInventory(inventory(host));
+  store.recordDirectoryDetails(host, [{ collectedAt: 1_020, location: "cache", bytes: 10, onRootFilesystem: true, partial: false }]);
+  store.recordMemory(host, memoryObservation(0), {
+    collectedAt: 1_105,
+    processDetailsCollectedAt: null,
+    sampleIntervalMs: 30_000,
+    pressureSomePercent: 2,
+    pressureFullPercent: 0,
+    swapInPagesPerSecond: 3,
+    swapOutPagesPerSecond: 4,
+    refaultPagesPerSecond: 0,
+    reclaimPagesPerSecond: 0,
+    bbCgroupMemoryBytes: 1,
+    processes: [],
+  });
+  store.recordMachineError(host, { errorId: "collector-1", occurredAtMs: 1_120, kind: "collector", message: "timeout" });
+  store.appendTimelineEvent(host, {
+    contractVersion: FLEET_CONTRACT_VERSION,
+    producer: { id: "fleet-store-test", version: 1 },
+    eventId: "ephemeral-event",
+    time: { kind: "instant", atMs: 1_130 },
+    category: "unknown",
+    status: "info",
+    title: "Ephemeral event",
+    detail: null,
+    provenance: { kind: "system", component: "fleet-store-test" },
+    bbReference: null,
+  });
+  const before = store.fleetGeneration();
+
+  const dependentTables = [
+    "machine_monitor_fleet_collections",
+    "machine_monitor_fleet_metric_values",
+    "machine_monitor_fleet_directory_details",
+    "machine_monitor_fleet_memory_details",
+    "machine_monitor_fleet_memory_observations",
+    "machine_monitor_fleet_events",
+    "machine_monitor_fleet_errors",
+    "machine_monitor_fleet_inventory",
+  ];
+  for (const table of dependentTables) {
+    const row = db.prepare(`SELECT COUNT(*) AS count FROM ${table} WHERE machine_source = ? AND machine_id = ?`)
+      .get(host.source, host.machineId) as { count: number };
+    assert.ok(row.count > 0, `${table} exercises the removal transaction`);
+  }
+
+  const result = store.removeEnrolledMachine(host);
+
+  assert.equal(result.removed, true);
+  assert.equal(result.generation.dataRevision, before.dataRevision + 1);
+  assert.equal(store.machine(host), null);
+  assert.notEqual(store.machine(otherHost), null, "persistent peers remain registered");
+  for (const table of dependentTables) {
+    const row = db.prepare(`SELECT COUNT(*) AS count FROM ${table} WHERE machine_source = ? AND machine_id = ?`)
+      .get(host.source, host.machineId) as { count: number };
+    assert.equal(row.count, 0, `${table} no longer retains the ephemeral host`);
+  }
+  assert.deepEqual(db.pragma("foreign_key_check"), [], "removal leaves the fleet schema referentially intact");
+  assert.deepEqual(store.removeEnrolledMachine(host), { removed: false, generation: result.generation }, "removal is idempotent");
+  assert.throws(() => store.removeEnrolledMachine(local), /cannot be removed/);
 });
 
 test("stores bounded normalized memory observations atomically with private detail rows", (t) => {

@@ -102,6 +102,11 @@ export type FleetPruneResult = {
   affectedMachines: number;
 };
 
+export type FleetMachineRemovalResult = {
+  removed: boolean;
+  generation: TimelineGeneration;
+};
+
 type MachineRow = {
   machineSource: string;
   machineId: string;
@@ -340,7 +345,7 @@ function metricFromRow(row: MetricRow): FleetMetricObservation {
 }
 
 /**
- * Central durable truth for the local BB server and every authenticated host.
+ * Central durable truth for the local BB server and monitored persistent hosts.
  * The coordinator must register identities from its own host directory before
  * writing payloads; collection payloads themselves never create machines.
  */
@@ -423,6 +428,32 @@ export class FleetStore {
       data_revision AS dataRevision, settings_revision AS settingsRevision
       FROM machine_monitor_fleet_machines ORDER BY machine_source ASC, machine_id ASC`).all() as MachineRow[];
     return rows.map(rowMachine);
+  }
+
+  /**
+   * Forget one enrolled host and every retained observation for it. This is
+   * intentionally separate from time-based retention: callers use it only
+   * when BB's host directory authoritatively classifies a machine as
+   * ephemeral, never merely because a persistent host disappeared offline.
+   */
+  removeEnrolledMachine(machine: FleetMachineIdentity): FleetMachineRemovalResult {
+    const parsed = machineIdentitySchema.parse(machine);
+    if (parsed.source !== "enrolled-host") throw new Error("The local BB server cannot be removed from the fleet registry.");
+    return this.db.transaction(() => {
+      if (this.findMachine(parsed) == null) return { removed: false, generation: this.fleetGeneration() };
+      const bindings = [parsed.source, parsed.machineId] as const;
+      this.db.prepare("DELETE FROM machine_monitor_fleet_metric_values WHERE machine_source = ? AND machine_id = ?").run(...bindings);
+      this.db.prepare("DELETE FROM machine_monitor_fleet_collections WHERE machine_source = ? AND machine_id = ?").run(...bindings);
+      this.db.prepare("DELETE FROM machine_monitor_fleet_directory_details WHERE machine_source = ? AND machine_id = ?").run(...bindings);
+      this.db.prepare("DELETE FROM machine_monitor_fleet_memory_details WHERE machine_source = ? AND machine_id = ?").run(...bindings);
+      this.db.prepare("DELETE FROM machine_monitor_fleet_memory_observations WHERE machine_source = ? AND machine_id = ?").run(...bindings);
+      this.db.prepare("DELETE FROM machine_monitor_fleet_events WHERE machine_source = ? AND machine_id = ?").run(...bindings);
+      this.db.prepare("DELETE FROM machine_monitor_fleet_errors WHERE machine_source = ? AND machine_id = ?").run(...bindings);
+      this.db.prepare("DELETE FROM machine_monitor_fleet_inventory WHERE machine_source = ? AND machine_id = ?").run(...bindings);
+      this.db.prepare("DELETE FROM machine_monitor_fleet_machines WHERE machine_source = ? AND machine_id = ?").run(...bindings);
+      this.db.prepare("UPDATE machine_monitor_fleet_state SET data_revision = data_revision + 1 WHERE singleton = 1").run();
+      return { removed: true, generation: this.fleetGeneration() };
+    })();
   }
 
   generation(machine: FleetMachineIdentity): TimelineGeneration {

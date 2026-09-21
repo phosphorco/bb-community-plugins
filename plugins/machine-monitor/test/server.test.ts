@@ -11,7 +11,7 @@ import {
   type MachineInventoryResult,
   type MachineTimelineResult,
 } from "../fleet-contract.ts";
-import plugin, { createLegacyLocalProjection } from "../server.ts";
+import plugin, { classifyFleetHostType, createLegacyLocalProjection } from "../server.ts";
 import { FleetStore } from "../fleet-store.ts";
 import { MachineMonitorStore, machineMonitorMigrations } from "../store.ts";
 
@@ -117,6 +117,15 @@ function enrolledHost(id: string, name: string) {
     updatedAt: 0,
   };
 }
+
+test("host type classification is conservative across BB API versions", () => {
+  assert.equal(classifyFleetHostType({ type: "ephemeral" }), "ephemeral");
+  assert.equal(classifyFleetHostType({ type: "persistent" }), "persistent");
+  assert.equal(classifyFleetHostType({}), "persistent");
+  assert.equal(classifyFleetHostType({ type: null }), "persistent");
+  assert.equal(classifyFleetHostType({ type: "future-host-kind" }), "persistent");
+  assert.equal(classifyFleetHostType(null), "persistent");
+});
 
 test("server runs one fleet service, targets authenticated enrolled hosts, and preserves attachment RPCs", async (t) => {
   const host = createFakePluginHost({

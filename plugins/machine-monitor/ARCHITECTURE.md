@@ -6,7 +6,9 @@
 `rpc-contract.ts` define the durable fleet/timeline wire boundary. The
 coordinator, fleet store, query service, registered browser RPCs, and
 selected-machine UI implement collection and timelines for the local BB server
-and authenticated enrolled hosts.
+and authenticated persistent enrolled hosts. An explicit BB host
+`type: "ephemeral"` removes that identity and its retained observations from
+the monitor; an absent type preserves compatibility by behaving as persistent.
 
 `fleetOverview` and `machineTimeline` are registered independently alongside
 the legacy `health`, `snapshot`, thread-search, and attachment RPC methods.
@@ -53,8 +55,8 @@ There are exactly two machine identity shapes:
 { source: "enrolled-host",    machineId: <authenticated BB host ID> }
 ```
 
-The server chooses the second form from `bb.sdk.hosts.list` and the explicit
-target of its host RPC. A host worker can report its display name, platform,
+The server chooses the second form from persistent entries in
+`bb.sdk.hosts.list` and the explicit target of its host RPC. A host worker can report its display name, platform,
 capabilities, session, sequence, and measurements, but all host response
 schemas are strict and omit `machine` / `machineId`. The coordinator binds the
 identity with `bindCollectionToMachine`; a host cannot redirect storage by

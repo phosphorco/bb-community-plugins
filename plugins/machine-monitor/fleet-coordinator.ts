@@ -60,6 +60,8 @@ export type EnrolledFleetHost = {
   id: string;
   name: string;
   status: "connected" | "disconnected";
+  /** Added by BB's machine-provider API; absent means an older persistent host. */
+  type?: "persistent" | "ephemeral";
 };
 
 export type FleetCollectorTarget = {
@@ -127,6 +129,18 @@ function laneState(now: number): LaneState {
 
 function targetKey(machine: FleetMachineIdentity): string {
   return `${machine.source}:${machine.machineId}`;
+}
+
+function normalizeEnrolledHosts(hosts: readonly EnrolledFleetHost[]): EnrolledFleetHost[] {
+  const byId = new Map<string, EnrolledFleetHost>();
+  for (const host of hosts) {
+    const existing = byId.get(host.id);
+    // Host IDs should be unique, but destructive safety wins if a malformed
+    // directory reports conflicting duplicates: any explicit ephemeral record
+    // prevents the same ID from being recreated by a persistent duplicate.
+    if (existing == null || (host.type === "ephemeral" && existing.type !== "ephemeral")) byId.set(host.id, host);
+  }
+  return [...byId.values()];
 }
 
 function errorText(cause: unknown): string {
@@ -280,7 +294,7 @@ async function callWithTimeout<T>(
 
 /**
  * The sole durable-writer/scheduler for both the local BB server source and
- * authenticated enrolled daemons. Responses contain no machine identity: the
+ * authenticated persistent daemons. Responses contain no machine identity: the
  * target selected from `hosts.list` (or the reserved local source) always wins.
  */
 export class FleetCoordinator {
@@ -299,6 +313,7 @@ export class FleetCoordinator {
   private parentAbort: (() => void) | null = null;
   private wakePending = false;
   private readonly promptHostIds = new Set<string>();
+  private readonly pendingInvalidations = new Map<string, FleetInvalidation>();
   private lastNowMs: number | null = null;
 
   constructor(dependencies: FleetCoordinatorDependencies) {
@@ -446,6 +461,7 @@ export class FleetCoordinator {
 
   private async tickWork(): Promise<void> {
     if (this.controller.signal.aborted) return;
+    this.flushPendingInvalidations();
     if (this.nextReconcileAtMs <= this.now()) await this.reconcile();
     if (this.controller.signal.aborted) return;
     const now = this.now();
@@ -472,10 +488,21 @@ export class FleetCoordinator {
     const now = this.now();
     this.upsert(this.localState(now), now);
     try {
-      const listed = await this.dependencies.listEnrolledHosts(this.controller.signal);
+      const listed = normalizeEnrolledHosts(await this.dependencies.listEnrolledHosts(this.controller.signal));
       if (this.controller.signal.aborted) return;
       const activeIds = new Set(listed.map((host) => host.id));
-      for (const host of listed) {
+      for (const host of listed.filter((candidate) => candidate.type === "ephemeral")) {
+        const machine: FleetMachineIdentity = { source: "enrolled-host", machineId: host.id };
+        const state = this.targets.get(targetKey(machine));
+        if (state != null) {
+          this.invalidateLifecycle(state, now);
+          this.targets.delete(targetKey(machine));
+        }
+        this.promptHostIds.delete(host.id);
+        const removed = this.dependencies.store.removeEnrolledMachine(machine);
+        if (removed.removed) this.publish(machine, removed.generation, ["machine", "retention"]);
+      }
+      for (const host of listed.filter((candidate) => candidate.type !== "ephemeral")) {
         const machine: FleetMachineIdentity = { source: "enrolled-host", machineId: host.id };
         let state = this.targets.get(targetKey(machine));
         const wasConnected = state?.connection === "connected";
@@ -915,8 +942,32 @@ export class FleetCoordinator {
   }
 
   private publish(machine: FleetMachineIdentity, generation: { dataRevision: number; settingsRevision: number }, kinds: readonly FleetInvalidationKind[]): void {
-    // FleetStore methods commit synchronously before returning their generation.
-    this.dependencies.publish?.({ machine, generation, kinds });
+    if (this.dependencies.publish == null) return;
+    const key = targetKey(machine);
+    const pending = this.pendingInvalidations.get(key);
+    const invalidation: FleetInvalidation = pending == null ? { machine, generation, kinds } : {
+      machine,
+      generation: {
+        dataRevision: Math.max(pending.generation.dataRevision, generation.dataRevision),
+        settingsRevision: Math.max(pending.generation.settingsRevision, generation.settingsRevision),
+      },
+      kinds: [...new Set([...pending.kinds, ...kinds])],
+    };
+    try {
+      // FleetStore methods commit synchronously before returning their generation.
+      this.dependencies.publish(invalidation);
+      this.pendingInvalidations.delete(key);
+    } catch (cause) {
+      this.pendingInvalidations.set(key, invalidation);
+      this.dependencies.log?.("warn", `Could not publish Machine Monitor invalidation for ${machine.machineId}: ${errorText(cause)}`);
+    }
+  }
+
+  private flushPendingInvalidations(): void {
+    if (this.dependencies.publish == null || this.pendingInvalidations.size === 0) return;
+    for (const invalidation of [...this.pendingInvalidations.values()]) {
+      this.publish(invalidation.machine, invalidation.generation, invalidation.kinds);
+    }
   }
 
   private async stop(): Promise<void> {
