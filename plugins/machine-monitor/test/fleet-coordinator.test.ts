@@ -134,7 +134,6 @@ test("prunes API-classified ephemeral machines without discarding missing persis
     now: () => 2_000,
     listEnrolledHosts: async () => [
       { id: ephemeral.machineId, name: "Sandbox", status: "disconnected", type: "ephemeral" },
-      { id: ephemeral.machineId, name: "Conflicting duplicate", status: "connected", type: "persistent" },
       { id: persistent.machineId, name: "Legacy persistent", status: "disconnected" },
     ],
     remote: () => {
@@ -162,6 +161,36 @@ test("prunes API-classified ephemeral machines without discarding missing persis
   assert.deepEqual(invalidations, [], "the committed removal retains its failed invalidation for retry");
   await coordinator.runOnce();
   assert.deepEqual(invalidations, [ephemeral.machineId]);
+});
+
+test("quarantines contradictory duplicate host types without collecting or deleting history", async (t) => {
+  const store = makeStore(t);
+  const machine = { source: "enrolled-host" as const, machineId: "host-conflict" };
+  store.registerMachine({ machine, label: "Existing history", connection: "connected", capabilities: [], serverObservedAtMs: 1_000 });
+  let remoteCalls = 0;
+  const logs: string[] = [];
+  const coordinator = new FleetCoordinator({
+    store,
+    now: () => 2_000,
+    listEnrolledHosts: async () => [
+      { id: machine.machineId, name: "Sandbox", status: "disconnected", type: "ephemeral" },
+      { id: machine.machineId, name: "Persistent", status: "connected", type: "persistent" },
+    ],
+    remote: () => {
+      remoteCalls += 1;
+      return immediateTarget("unexpected-remote");
+    },
+    local: { ...immediateTarget(), label: "BB server", capabilities: ["core-sampling"] },
+    directories: () => [],
+    log: (level, message) => logs.push(`${level}:${message}`),
+  });
+
+  await coordinator.runOnce();
+  await coordinator.whenIdle();
+
+  assert.equal(store.machine(machine)?.label, "Existing history", "ambiguous directory data cannot authorize deletion or replacement");
+  assert.equal(remoteCalls, 0, "a quarantined identity is not scheduled for collection");
+  assert.match(logs.join("\n"), /warn:Quarantined conflicting .*host-conflict/);
 });
 
 test("an ephemeral reclassification fences an in-flight persistent-host response", async (t) => {

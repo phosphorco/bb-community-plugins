@@ -131,16 +131,26 @@ function targetKey(machine: FleetMachineIdentity): string {
   return `${machine.source}:${machine.machineId}`;
 }
 
-function normalizeEnrolledHosts(hosts: readonly EnrolledFleetHost[]): EnrolledFleetHost[] {
+function normalizeEnrolledHosts(hosts: readonly EnrolledFleetHost[]): {
+  hosts: EnrolledFleetHost[];
+  conflictingIds: string[];
+} {
   const byId = new Map<string, EnrolledFleetHost>();
+  const conflictingIds = new Set<string>();
   for (const host of hosts) {
     const existing = byId.get(host.id);
-    // Host IDs should be unique, but destructive safety wins if a malformed
-    // directory reports conflicting duplicates: any explicit ephemeral record
-    // prevents the same ID from being recreated by a persistent duplicate.
-    if (existing == null || (host.type === "ephemeral" && existing.type !== "ephemeral")) byId.set(host.id, host);
+    if (existing == null) {
+      byId.set(host.id, host);
+      continue;
+    }
+    // Host IDs should be unique. A contradictory directory response is not
+    // authoritative enough to either delete history or schedule collection.
+    if ((existing.type === "ephemeral") !== (host.type === "ephemeral")) conflictingIds.add(host.id);
   }
-  return [...byId.values()];
+  return {
+    hosts: [...byId.values()].filter((host) => !conflictingIds.has(host.id)),
+    conflictingIds: [...conflictingIds],
+  };
 }
 
 function errorText(cause: unknown): string {
@@ -488,9 +498,21 @@ export class FleetCoordinator {
     const now = this.now();
     this.upsert(this.localState(now), now);
     try {
-      const listed = normalizeEnrolledHosts(await this.dependencies.listEnrolledHosts(this.controller.signal));
+      const directory = normalizeEnrolledHosts(await this.dependencies.listEnrolledHosts(this.controller.signal));
       if (this.controller.signal.aborted) return;
+      const listed = directory.hosts;
+      for (const hostId of directory.conflictingIds) {
+        const machine: FleetMachineIdentity = { source: "enrolled-host", machineId: hostId };
+        const state = this.targets.get(targetKey(machine));
+        if (state != null) {
+          this.invalidateLifecycle(state, now);
+          this.targets.delete(targetKey(machine));
+        }
+        this.promptHostIds.delete(hostId);
+        this.dependencies.log?.("warn", `Quarantined conflicting Machine Monitor host directory records for ${hostId}`);
+      }
       const activeIds = new Set(listed.map((host) => host.id));
+      for (const hostId of directory.conflictingIds) activeIds.add(hostId);
       for (const host of listed.filter((candidate) => candidate.type === "ephemeral")) {
         const machine: FleetMachineIdentity = { source: "enrolled-host", machineId: host.id };
         const state = this.targets.get(targetKey(machine));

@@ -9,6 +9,8 @@ selected-machine UI implement collection and timelines for the local BB server
 and authenticated persistent enrolled hosts. An explicit BB host
 `type: "ephemeral"` removes that identity and its retained observations from
 the monitor; an absent type preserves compatibility by behaving as persistent.
+Contradictory duplicate records for one host ID are quarantined until a later
+reconciliation instead of authorizing either collection or deletion.
 
 `fleetOverview` and `machineTimeline` are registered independently alongside
 the legacy `health`, `snapshot`, thread-search, and attachment RPC methods.
