@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { createRealtimeRefreshGate } from "../lib/public-loop.ts";
+
 import {
   createCoalescingQueue,
   createKeyedRequestCache,
@@ -15,6 +17,17 @@ import {
   toolbarTextFieldIsBusy,
   upsertLocalAnnotation,
 } from "../lib/toolbar-sync.ts";
+
+test("staged annotations refresh initially and after each reconnect", () => {
+  const gate = createRealtimeRefreshGate();
+
+  assert.equal(gate.observe("connected"), true);
+  assert.equal(gate.observe("connected"), false);
+  assert.equal(gate.observe("reconnecting"), false);
+  assert.equal(gate.observe("connected"), true);
+  assert.equal(gate.observe("connecting"), false);
+  assert.equal(gate.observe("connected"), true);
+});
 
 function field(
   overrides: Partial<Parameters<typeof toolbarTextFieldIsBusy>[0]> = {},

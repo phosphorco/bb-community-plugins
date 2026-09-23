@@ -3,6 +3,17 @@
 Imported from Agentation by Scott Sunarto through version 0.2.2; derivative
 releases use the separate `agentation-mentions` package and tag prefix.
 
+## Unreleased
+
+- Stop contributing unresolved annotation counts and proactive lookup
+  instructions to unrelated agent turns. Annotation context is now attached
+  only through an explicit mention or delivery action.
+- Replace the one-click composer action with a selectable popover that can add
+  annotations to the prompt or remove selected staged feedback after confirmation.
+- Keep the composer list current across reconnects and overlapping responses,
+  require an exact reviewed selection at attachment time, and bind removal to
+  the confirmed selection.
+
 ## 0.2.2
 
 ### Patch Changes

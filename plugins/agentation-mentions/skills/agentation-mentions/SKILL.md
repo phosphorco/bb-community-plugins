@@ -1,6 +1,6 @@
 ---
 name: agentation-mentions
-description: Read and act on visual feedback captured by Agentation → Mentions, the Scott Sunarto Agentation derivative that delivers annotations through bb mentions, queueing, structured author snapshots, and sender envelopes. Use when the user refers to its annotation batch, asks to address visual feedback, or requests watch mode.
+description: Read and act on visual feedback captured by Agentation → Mentions. Use only when the user explicitly attaches an Agentation mention, supplies an Agentation annotation batch, names Agentation, or requests its watch mode.
 ---
 
 # Agentation → Mentions
@@ -30,8 +30,8 @@ create a hidden mention or merge different authors into one envelope.
    - If the human's message contains an Agentation annotation batch, treat it
      as the complete assignment. Work only on its listed annotation IDs and do
      not call `agentation_mentions_get_all_pending`.
-   - Otherwise, call `agentation_mentions_get_all_pending` before searching the code;
-     the annotation already tells you where to look.
+   - Otherwise, use `agentation_mentions_get_all_pending` only when the human
+     explicitly asks you to inspect Agentation feedback without attaching a batch.
 2. `agentation_mentions_acknowledge` — for each item you are taking on, so the human sees
    you picked it up.
 3. Find the code, make the change.

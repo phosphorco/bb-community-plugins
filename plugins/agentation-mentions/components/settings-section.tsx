@@ -9,13 +9,13 @@ export function AgentationSettingsSection() {
       </p>
       <p>
         New annotations enter a shared staging area. The thread prompt action
-        shows how many are waiting; click it, add any instructions you want,
-        and send the native prompt.
+        opens a popover where you can select feedback to attach or remove
+        selected items from staging.
       </p>
       <p>
-        Agents use the <code>agentation_mentions_*</code> tools to read, reply to, and
-        resolve feedback. Resolving an annotation removes its marker from every
-        open bb window.
+        Annotation context reaches an agent only after you attach its native
+        mention or explicitly send it. Agents can then use the{" "}
+        <code>agentation_mentions_*</code> tools to reply to and resolve it.
       </p>
     </div>
   );

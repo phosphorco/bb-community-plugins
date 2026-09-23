@@ -43,6 +43,23 @@ test("Agentation to Mentions has one distinct package, collection, runtime, and 
   assert.match(server, /name: "agentation_mentions_get_all_pending"/);
 });
 
+test("Agentation context is explicit and the prompt action manages staged feedback", () => {
+  const server = readFileSync(join(pluginRoot, "server.ts"), "utf8");
+  const promptAction = readFileSync(
+    join(pluginRoot, "components/annotation-prompt-action.tsx"),
+    "utf8",
+  );
+
+  assert.doesNotMatch(server, /agents\.contributeInstructions/u);
+  assert.doesNotMatch(
+    server,
+    /name: "agentation_mentions_get_all_pending"[\s\S]*?instructions:/u,
+  );
+  assert.match(promptAction, /<Popover\.Root/u);
+  assert.match(promptAction, /Remove selected/u);
+  assert.match(promptAction, /discardStagedAnnotations/u);
+});
+
 test("the bundled Agentation dependency preserves React 19 component paths in production", () => {
   const vendorBundle = join(pluginRoot, "vendor/agentation/dist/index.mjs");
   assert.equal(

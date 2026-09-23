@@ -14,8 +14,12 @@ plugin.
 
 ## What the derivative adds
 
-- A composer action attaches staged annotations as a native bb mention. The
-  mention resolves the current annotation bodies as plain provider context; native prompt assembly wraps it once in `<attached>` when the prompt is submitted.
+- A composer-action popover previews staged annotations, lets the human choose
+  which ones to attach, and can remove selected items from staging after a
+  confirmation. Attached annotations become one native bb mention.
+- Annotation contents enter agent context only when the human attaches that
+  mention or explicitly sends/queues the feedback. Pending annotations do not
+  contribute ambient agent instructions.
 - `bb agentation-mentions send --queue` uses bb's durable queued-message API;
   omitting `--queue` sends immediately.
 - At annotation admission, the plugin uses the public bb-identity request
@@ -59,9 +63,10 @@ bb plugin install path:. --plugin agentation-mentions --yes
 1. Open the toolbar at the bottom-right of bb, select an element, and write the
    feedback. The annotation records its DOM selector, available React/source
    path, bb route, and owning plugin.
-2. In a thread composer, use the Agentation → Mentions action to insert the
-   staged batch, then submit or queue the prompt normally. Deleting the mention
-   leaves the annotations staged.
+2. In a thread composer, open the Agentation → Mentions action, select the
+   feedback to include, and add it to the prompt. You can also remove selected
+   staged feedback from this popover; removed items remain in history as
+   dismissed. Deleting an attached mention leaves its annotations staged.
 3. An agent reads the supplied batch with the `agentation_mentions_*` tools and
    resolves each item after fixing it. The marker disappears from open windows.
 
@@ -88,7 +93,8 @@ bb agentation-mentions toolbar [on|off]
   snapshots), and retention state are stored locally in this plugin's bb database/KV namespace.
 - The toolbar and review panel use bb's plugin RPC, realtime, and same-origin
   event stream. The plugin contacts no third-party service of its own. Retrieved annotation context is attached
-  explicitly; it is never expanded into hidden mentions or a second sender. The
+  explicitly; unresolved counts and annotation bodies are never injected into
+  unrelated agent turns. Context is never expanded into hidden mentions or a second sender. The
   former captured-author mention provider was not emitted by this toolbar; old
   encoded author references are not re-resolved as sender text.
 - Delivery mutates only the target bb thread: immediate mode sends a prompt;

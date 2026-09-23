@@ -758,9 +758,7 @@ export default async function plugin(bb: BbPluginApi) {
   bb.agents.registerTool({
     name: "agentation_mentions_get_all_pending",
     description:
-      "Get every open annotation across all bb pages. Use this when the human refers to UI feedback but did not supply a self-contained Agentation annotation batch.",
-    instructions:
-      "When the human refers to feedback they left on the bb interface and their message does not already contain an Agentation annotation batch, read it with agentation_mentions_get_all_pending before searching the code. A supplied batch is self-contained; do not fetch other pending feedback. Each annotation names the bb route and, for plugin surfaces, the owning plugin id.",
+      "Get every open annotation across all bb pages, optionally filtered to one plugin.",
     presentation: { label: {
       pending: "Reading all pending annotations",
       completed: "Read all pending annotations",
@@ -964,16 +962,6 @@ export default async function plugin(bb: BbPluginApi) {
       if (disposed) finish(false);
     });
   }
-
-  bb.agents.contributeInstructions(() => {
-    try {
-      const pending = countByStatus(db).pending;
-      if (pending === 0) return null;
-      return `The human has ${pending} unresolved Agentation annotation${pending === 1 ? "" : "s"} on the bb interface. Before acting on a request about the bb UI, call agentation_mentions_get_all_pending only when the request does not already contain an Agentation annotation batch. A supplied batch is self-contained; work only on its listed annotation IDs. Resolve each annotation you fix.`;
-    } catch {
-      return null;
-    }
-  });
 
   // -------------------------------------------------------------------------
   // CLI
