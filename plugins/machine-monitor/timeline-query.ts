@@ -372,22 +372,26 @@ const OVERVIEW_LATEST_METRICS_SQL = `
       ORDER BY candidate.normalized_at DESC, candidate.collector_session_id DESC, candidate.sequence DESC
       LIMIT 1
     )
-  ), recent_cpu AS (
-    SELECT latest.machine_source, latest.machine_id,
-      AVG(cpu.value) AS cpuFiveMinuteAverage
+  ), recent_cpu_collections AS MATERIALIZED (
+    SELECT recent.machine_source, recent.machine_id,
+      recent.collector_session_id, recent.sequence
     FROM latest_collections latest
     JOIN machine_monitor_fleet_collections recent
       ON recent.machine_source = latest.machine_source
       AND recent.machine_id = latest.machine_id
       AND recent.normalized_at BETWEEN @overviewNowMs - ${CPU_ROLLING_WINDOW_MS} AND @overviewNowMs
-    JOIN machine_monitor_fleet_metric_values cpu
+  ), recent_cpu AS (
+    SELECT recent.machine_source, recent.machine_id,
+      AVG(cpu.value) AS cpuFiveMinuteAverage
+    FROM recent_cpu_collections recent
+    CROSS JOIN machine_monitor_fleet_metric_values cpu
       ON cpu.machine_source = recent.machine_source
       AND cpu.machine_id = recent.machine_id
       AND cpu.collector_session_id = recent.collector_session_id
       AND cpu.sequence = recent.sequence
       AND cpu.metric_id = 'cpu.utilization.percent'
       AND cpu.availability_state = 'available'
-    GROUP BY latest.machine_source, latest.machine_id
+    GROUP BY recent.machine_source, recent.machine_id
   ), core_metrics AS (
     SELECT latest.machine_source, latest.machine_id, metric.metric_id,
       metric.value, metric.availability_state, metric.availability_reason
