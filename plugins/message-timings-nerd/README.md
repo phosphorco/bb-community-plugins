@@ -17,8 +17,8 @@ independently implemented for Phosphor.
 For example, a message at 10:00, an agent finish at 10:03, and a follow-up at
 10:10 show `3m from your message · 7m until next message` below the agent reply,
 and `10m since previous message · 7m after agent finished` below the follow-up.
-Hover a label for the full local date and time. Use the clock button in each
-thread header to hide/show its labels, or retry an unavailable timing lookup.
+Hover a label for the full local date and time. Timing labels appear automatically
+when the plugin is enabled; there is no per-thread toggle.
 
 ## Develop
 
@@ -50,7 +50,7 @@ intervals are omitted rather than invented.
 
 The backend joins the public timeline with recorded `turn/completed` events.
 A folded work summary is not a completion event. Reads are bounded to 12 timeline
-pages, 1,000 completions, and 1,000 request/acceptance events; the header indicates incomplete older history.
+pages, 1,000 completions, and 1,000 request/acceptance events; older history may be incomplete.
 Accepted steering is joined back to its original request by request identity;
 acceptance time is not used as send time. When that request is outside the
 available history, send-based intervals remain unknown. Completions without a
@@ -58,8 +58,9 @@ visible row still establish wait boundaries. Unknown predecessors remain unknown
 plugin's RPC or stored by the plugin. Classification follows BB's recorded
 `initiator`; legacy automated notifications recorded by BB as `user` also count.
 
-BB currently has no native message-footer slot. The native thread-header slot
-provides exact thread identity and per-pane lifecycle; the DOM adapter appends
+BB currently has no native message-footer slot. An invisible mount in the native
+thread-header slot provides exact thread identity and per-pane lifecycle; its
+empty host action wrapper is hidden. The DOM adapter appends
 only plugin-owned labels to `data-timeline-row-id` wrappers within the owning
 `data-split-pane-id` pane (or its non-hosted `data-conversation-collapsed`
 fallback). Hosted headers may be siblings of the conversation. It respects `data-timeline-windowed-realized`.
@@ -89,8 +90,8 @@ used to identify a thread. A future footer slot can replace this narrow adapter.
 - Unmount, hide, navigation, and reload remove owned labels, observers, timers,
   and listeners. Selected timing text is held until selection ends, retaining
   its spans and text nodes. Transient RPC errors retain the last successful
-  footers and flag potentially stale data in the header; fatal decoration
-  errors clean up locally and allow manual retry. Reconnect requests fresh data; async results are tied to the
+  footers; fatal decoration errors clean up locally and retry at most twice.
+  Reconnect requests fresh data; async results are tied to the
   component generation that requested them.
 
 Tests cover source-order timing, steering, folded work, child isolation,
@@ -105,13 +106,13 @@ Independent timing, DOM/performance, and backend/release reviews identified and
 led to fixes for acceptance-vs-send time, rejected steering, invisible completion
 boundaries, hosted-pane discovery, cache concurrency across invalidation, and
 scroll-triggered history reads. The requested integration/accessibility review
-was unavailable; keyboard toggling, desktop/mobile layout, and actual installed
-plugin reload are covered by browser verification. The focused suite additionally
+was unavailable; desktop/mobile layout and actual installed plugin reload were
+covered by browser verification before the toggle was removed. The focused suite additionally
 covers request limits, in-turn page boundaries, and equal-snapshot DOM writes.
 
 The host DOM adapter is verified against Phosphor's materialized BB 0.39 runtime
-and SDK 0.4.15. Stock/future BB DOM layouts are not claimed to be verified. The
-header reports unsupported layouts rather than silently omitting timestamps.
+and SDK 0.4.15. Stock/future BB DOM layouts are not claimed to be verified.
+Unsupported layouts cannot be decorated until the host exposes a footer slot.
 
 A second four-lens performance review led to stable refresh-error handling,
 selection preservation, computation reuse, bounded head probes, a two-load

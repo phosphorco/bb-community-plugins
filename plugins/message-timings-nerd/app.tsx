@@ -6,17 +6,15 @@ import { createDecorations } from "./decorations.ts";
 import { findTimingPane } from "./pane.ts";
 import "./app.css";
 
-function TimingHeader({ threadId }: PluginThreadHeaderActionProps) {
+function TimingMount({ threadId }: PluginThreadHeaderActionProps) {
   const rpc = useRpc<typeof rpcContract>();
   const rpcRef = useRef(rpc);
   rpcRef.current = rpc;
-  const [enabled, setEnabled] = useState(true);
-  const [attempt, setAttempt] = useState(0);
-  const [state, setState] = useState<"ready" | "partial" | "error" | "unsupported">("ready");
   const refreshRef = useRef<() => void>(() => {});
-  const buttonRef = useRef<HTMLButtonElement>(null);
+  const anchorRef = useRef<HTMLSpanElement>(null);
+  const [attempt, setAttempt] = useState(0);
+  const retryCount = useRef(0);
   useEffect(() => {
-    if (!enabled) return;
     let disposed = false;
     let failed = false;
     let busy = false;
@@ -25,12 +23,16 @@ function TimingHeader({ threadId }: PluginThreadHeaderActionProps) {
     let timer: ReturnType<typeof setTimeout> | undefined;
     // A header and its timeline share a pane ancestor. Stay within that pane
     // rather than observing/scanning every other thread during streaming.
-    const root = buttonRef.current ? findTimingPane(buttonRef.current) : null;
-    if (!root) { setState("unsupported"); return; }
+    const root = anchorRef.current ? findTimingPane(anchorRef.current) : null;
+    if (!root) return;
     const decorations = createDecorations(root, request, () => {
       failed = true;
       clearTimeout(timer);
-      setState("error");
+      console.warn("Message timings could not decorate this timeline; retrying a bounded number of times.");
+      if (retryCount.current < 2) {
+        retryCount.current++;
+        timer = setTimeout(() => setAttempt(value => value + 1), 10_000);
+      }
     });
     function request() {
       if (failed) return;
@@ -47,12 +49,10 @@ function TimingHeader({ threadId }: PluginThreadHeaderActionProps) {
         if (disposed || failed) return;
         consecutiveFailures = 0;
         decorations.update(result.stamps, result.coveredIds, result.historyStartId);
-        if (failed) return;
-        setState(result.truncated ? "partial" : "ready");
+        if (!failed) retryCount.current = 0;
       } catch {
         if (!disposed) {
           // A failed read must not remove stable footers or change row heights.
-          setState("error");
           // Same-bundle reloads can retain this frontend while replacing the
           // backend handle. Recover one transient read without a polling loop.
           if (++consecutiveFailures === 1) pending = true;
@@ -73,7 +73,7 @@ function TimingHeader({ threadId }: PluginThreadHeaderActionProps) {
       document.removeEventListener("visibilitychange", visible);
       refreshRef.current = () => {};
     };
-  }, [threadId, enabled, attempt]);
+  }, [threadId, attempt]);
 
   useRealtime("timings-changed", useCallback((payload: unknown) => {
     if (payload && typeof payload === "object" && "threadId" in payload && payload.threadId === threadId) refreshRef.current();
@@ -84,15 +84,9 @@ function TimingHeader({ threadId }: PluginThreadHeaderActionProps) {
     if (connection === "connected" && previousConnection.current !== "connected") refreshRef.current();
     previousConnection.current = connection;
   }, [connection]);
-  const title = !enabled ? "Show message timestamps" : state === "unsupported" ? "Message timestamps are unavailable in this layout." : state === "error" ? "Message timestamps may be stale or unavailable. Click to retry." : state === "partial"
-    ? "Message timestamps (older history is incomplete). Click to hide." : "Hide message timestamps";
-  return <button ref={buttonRef} type="button" className="message-timings-nerd__toggle" aria-label={title} title={title} aria-pressed={enabled}
-    onClick={() => { if (state === "error") setAttempt(value => value + 1); else setEnabled(value => !value); }}>
-    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true"><circle cx="12" cy="12" r="8" /><path d="M12 7v5l3 2" /></svg>
-    {state !== "ready" && <span aria-hidden="true">!</span>}
-  </button>;
+  return <span ref={anchorRef} data-message-timings-nerd-mount="" hidden aria-hidden="true" />;
 }
 
 export default definePluginApp(app => {
-  app.slots.experimental_threadHeaderAction({ id: "message-timings-nerd", title: "Message Timings Nerd", component: TimingHeader });
+  app.slots.experimental_threadHeaderAction({ id: "message-timings-nerd", title: "Message timings", component: TimingMount });
 });
