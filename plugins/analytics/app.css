@@ -9,6 +9,31 @@
   background: var(--background);
 }
 
+.analytics-page-nav {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  display: flex;
+  gap: 4px;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--background) 92%, transparent);
+  backdrop-filter: blur(10px);
+}
+.analytics-page-nav button {
+  min-height: 30px;
+  padding: 0 10px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  color: var(--muted-foreground);
+  background: transparent;
+  font: inherit;
+  cursor: pointer;
+}
+.analytics-page-nav button:hover { border-color: var(--border); color: var(--foreground); background: var(--accent); }
+.analytics-page-nav button[aria-current="page"] { color: var(--foreground); background: var(--accent); }
+.analytics-page-nav button:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+
 .analytics-toolbar {
   position: sticky;
   top: 0;
@@ -172,6 +197,9 @@
 .analytics-metric small { color: var(--muted-foreground); }
 
 .analytics-echart { min-width: 0; height: 260px; margin: 3px 8px 6px; overflow: hidden; }
+.analytics-echart-loading { display: grid; min-width: 0; min-height: 260px; place-items: center start; margin: 3px 8px 6px; padding: 12px; border: 1px solid var(--border); border-radius: 7px; color: var(--muted-foreground); background: color-mix(in srgb, var(--muted) 28%, transparent); font-size: 11px; }
+.analytics-echart-loading button { margin-left: 4px; border: 0; padding: 0; color: var(--primary); background: transparent; font: inherit; text-decoration: underline; cursor: pointer; }
+.analytics-echart-loading button:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
 .analytics-echart-theme-probe {
   position: absolute;
   width: 0;

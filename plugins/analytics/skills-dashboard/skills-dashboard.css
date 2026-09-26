@@ -1,0 +1,35 @@
+.skills-dashboard {
+  color: var(--foreground, CanvasText);
+  display: grid;
+  gap: 1rem;
+}
+
+.skills-dashboard h2, .skills-dashboard h3, .skills-dashboard p { margin: 0; }
+.skills-dashboard__header, .skills-dashboard__section { display: grid; gap: .5rem; }
+.skills-dashboard__header p, .skills-dashboard small, .skills-dashboard__notice, .skills-dashboard__measurement-help { color: var(--muted-foreground, GrayText); }
+.skills-dashboard__filters, .skills-dashboard__cards { display: flex; flex-wrap: wrap; gap: .75rem; }
+.skills-dashboard__filters { border: 1px solid var(--border, ButtonBorder); border-radius: .5rem; padding: .75rem; }
+.skills-dashboard__filters label { display: grid; gap: .25rem; font-size: .875rem; }
+.skills-dashboard__filters input, .skills-dashboard__filters select, .skills-dashboard button { min-height: 2rem; }
+.skills-dashboard__cards { align-items: stretch; }
+.skills-dashboard__card { border: 1px solid var(--border, ButtonBorder); border-radius: .5rem; display: grid; flex: 1 1 13rem; gap: .5rem; padding: .75rem; }
+.skills-dashboard__value { font-size: 1.5rem; font-weight: 650; }
+.skills-dashboard__table-wrap { max-width: 100%; overflow: auto; outline-offset: 2px; }
+.skills-dashboard table { border-collapse: collapse; min-width: 54rem; width: 100%; }
+.skills-dashboard th, .skills-dashboard td { border-bottom: 1px solid var(--border, ButtonBorder); padding: .5rem; text-align: left; vertical-align: top; }
+.skills-dashboard th small, .skills-dashboard td small { display: block; max-inline-size: 20rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.skills-dashboard code { display: block; max-inline-size: 11rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.skills-dashboard__tabs { display: flex; flex-wrap: wrap; gap: .5rem; }
+.skills-dashboard__tabs [aria-selected="true"] { outline: 2px solid var(--ring, Highlight); outline-offset: 1px; }
+.skills-dashboard__error { border: 1px solid var(--destructive, currentColor); display: flex; gap: .75rem; justify-content: space-between; padding: .75rem; }
+.skills-dashboard__backdrop { align-items: stretch; background: color-mix(in srgb, var(--background, Canvas) 30%, transparent); display: flex; inset: 0; justify-content: end; position: fixed; z-index: 20; }
+.skills-dashboard__drawer { background: var(--background, Canvas); border-inline-start: 1px solid var(--border, ButtonBorder); box-shadow: 0 0 2rem color-mix(in srgb, CanvasText 20%, transparent); display: grid; gap: 1rem; max-width: min(48rem, 100vw); overflow: auto; padding: 1rem; width: 100%; }
+.skills-dashboard__drawer header { align-items: start; display: flex; gap: 1rem; justify-content: space-between; }
+.skills-dashboard__drawer-list { display: grid; gap: .75rem; }
+.skills-dashboard__drawer-list article { border: 1px solid var(--border, ButtonBorder); padding: .75rem; }
+.skills-dashboard__drawer-list h4 { margin: 0 0 .5rem; overflow-wrap: anywhere; }
+.skills-dashboard__drawer-list dl { display: grid; gap: .25rem .75rem; grid-template-columns: max-content minmax(0, 1fr); margin: 0; }
+.skills-dashboard__drawer-list dd { margin: 0; overflow-wrap: anywhere; }
+.skills-dashboard__sr-only { height: 1px; margin: -1px; overflow: hidden; padding: 0; position: absolute; width: 1px; clip: rect(0, 0, 0, 0); white-space: nowrap; }
+
+@media (max-width: 40rem) { .skills-dashboard__drawer { max-width: 100vw; } }

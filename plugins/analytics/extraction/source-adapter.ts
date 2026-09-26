@@ -8,6 +8,12 @@ type EventsListArgs = Parameters<SdkThreads["events"]["list"]>[0];
 export type RetainedSourceThread = Awaited<ReturnType<SdkThreads["list"]>>[number];
 export type RetainedSourceThreadResult = Awaited<ReturnType<SdkThreads["get"]>>;
 export type RetainedSourceEvent = Awaited<ReturnType<SdkThreads["events"]["list"]>>[number];
+/**
+ * The public server contract accepts its registered event-type strings. Keep
+ * this adapter surface forward-compatible when an installed SDK declaration
+ * predates a newly durable event (for example `skill/observed`).
+ */
+export type RetainedSourceEventTypes = readonly [string, ...string[]];
 
 /** The smallest public SDK port needed by retained extraction. */
 export type RetainedSourceSdk = {
@@ -82,6 +88,7 @@ export interface RetainedSourceEventPage {
     operation: "events";
     threadId: string;
     requestedAfterSeq: string | null;
+    eventTypes: RetainedSourceEventTypes | null;
     returnedMaxSeq: string | null;
     /** The input cursor carried forward when the response is empty. */
     sourceAfterSeq: string | null;
@@ -260,6 +267,21 @@ function assertCursor(cursor: string | null | undefined): string | null {
     throw new TypeError("afterSeq exceeds the supported sequence range.");
   }
   return sequence.toString();
+}
+
+function assertEventTypes(types: RetainedSourceEventTypes | undefined): RetainedSourceEventTypes | undefined {
+  if (types === undefined) return undefined;
+  if (!Array.isArray(types) || types.length === 0 || types.length > 16) {
+    throw new TypeError("eventTypes must contain from one through sixteen public event types.");
+  }
+  const seen = new Set<string>();
+  for (const type of types) {
+    if (typeof type !== "string" || type.length === 0 || Buffer.byteLength(type, "utf8") > RETAINED_SOURCE_MAX_IDENTIFIER_BYTES || seen.has(type)) {
+      throw new TypeError("eventTypes must contain unique bounded public event types.");
+    }
+    seen.add(type);
+  }
+  return [...types] as unknown as RetainedSourceEventTypes;
 }
 
 function validateEventRows(
@@ -443,6 +465,8 @@ class RetainedSourceAdapterImpl {
   async eventPage(input: {
     threadId: string;
     afterSeq?: string | null;
+    /** Optional public SDK filter; omitted preserves the tool extractor path. */
+    eventTypes?: RetainedSourceEventTypes;
     signal?: AbortSignal;
   }): Promise<RetainedSourceEventPage> {
     throwIfAborted(input.signal);
@@ -450,18 +474,20 @@ class RetainedSourceAdapterImpl {
     try {
       const threadId = assertThreadId(input.threadId);
       const afterSeq = assertCursor(input.afterSeq);
+      const eventTypes = assertEventTypes(input.eventTypes);
       const remainingRows = this.limits.maxRows - this.usage.rows;
       if (remainingRows <= 0) {
         throw new RetainedSourceBudgetError("max-rows", "events", this.snapshot());
       }
       const limit = Math.min(this.limits.eventPageSize, remainingRows);
-      const args: EventsListArgs = {
+      const args = {
         threadId,
         limit: String(limit),
         order: "asc",
         ...(afterSeq == null ? {} : { afterSeq }),
+        ...(eventTypes === undefined ? {} : { types: eventTypes }),
         ...(input.signal === undefined ? {} : { signal: input.signal }),
-      };
+      } as EventsListArgs;
       const page = this.reserveOperation("events", true);
       const rows = assertArray<RetainedSourceEvent>(
         await this.sdk.threads.events.list(args),
@@ -476,6 +502,7 @@ class RetainedSourceAdapterImpl {
           page: page!,
           threadId,
           requestedAfterSeq: afterSeq,
+          eventTypes: eventTypes ?? null,
           returnedMaxSeq: cursor.returnedMaxSeq,
           sourceAfterSeq: cursor.sourceAfterSeq,
           requestedLimit: limit,
@@ -518,7 +545,7 @@ class RetainedSourceAdapterImpl {
 
 export interface RetainedSourceAdapter {
   listPage(input: { offset: number; signal?: AbortSignal }): Promise<RetainedSourceListPage>;
-  eventPage(input: { threadId: string; afterSeq?: string | null; signal?: AbortSignal }): Promise<RetainedSourceEventPage>;
+  eventPage(input: { threadId: string; afterSeq?: string | null; eventTypes?: RetainedSourceEventTypes; signal?: AbortSignal }): Promise<RetainedSourceEventPage>;
   getThread(input: { threadId: string; signal?: AbortSignal }): Promise<RetainedSourceThreadObservation>;
 }
 

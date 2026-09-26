@@ -12,6 +12,7 @@ const browserRoot = dirname(sourcePath);
 const analyticsRoot = resolve(browserRoot, "../../..");
 const communityRoot = resolve(analyticsRoot, "../..");
 const communityNodeModules = resolve(communityRoot, "node_modules");
+const analyticsNodeModules = resolve(analyticsRoot, "node_modules");
 const manifestPath = resolve(analyticsRoot, "package.json");
 const requireFromAnalytics = createRequire(manifestPath);
 
@@ -33,7 +34,7 @@ const MARKER_TEXT = "analytics-browser-tooling-ready";
 const PLAYWRIGHT_BROWSERS_PATH = "0";
 
 const EXPECTED_DIRECT_DEPENDENCIES = Object.freeze({
-  "@get-bb/plugin-sdk": "0.4.15",
+  "@get-bb/plugin-sdk": "file:../../../sdk-artifacts/get-bb-plugin-sdk-0.5.24+phosphor.747ead9adb7b.sdk.68c85e61a3da.tgz",
   "@playwright/test": "1.63.0",
   "@testing-library/react": "16.3.3",
   vite: "8.2.2",
@@ -42,7 +43,8 @@ const EXPECTED_DIRECT_DEPENDENCIES = Object.freeze({
 });
 
 const EXPECTED_PACKAGE_VERSIONS = Object.freeze({
-  ...EXPECTED_DIRECT_DEPENDENCIES,
+  ...Object.fromEntries(Object.entries(EXPECTED_DIRECT_DEPENDENCIES).filter(([name]) => name !== "@get-bb/plugin-sdk")),
+  "@get-bb/plugin-sdk": "0.5.24+phosphor.747ead9adb7b.sdk.68c85e61a3da",
   playwright: "1.63.0",
   "playwright-core": "1.63.0",
   react: "19.2.1",
@@ -137,13 +139,16 @@ function isMissingResolutionError(error) {
 }
 
 async function packageDirectoryExists(packageName) {
-  try {
-    await lstat(resolve(communityNodeModules, packageName));
-    return true;
-  } catch (error) {
-    if (error?.code === "ENOENT") return false;
-    throw new SmokeError(`could not inspect community package directory for ${packageName}: ${boundedText(error)}`);
+  for (const nodeModulesRoot of [analyticsNodeModules, communityNodeModules]) {
+    try {
+      await lstat(resolve(nodeModulesRoot, packageName));
+      return true;
+    } catch (error) {
+      if (error?.code === "ENOENT") continue;
+      throw new SmokeError(`could not inspect approved package directory for ${packageName}: ${boundedText(error)}`);
+    }
   }
+  return false;
 }
 
 async function resolveSpecifier(specifier, label, { packageName, missingIsBlocked = false } = {}) {
@@ -164,11 +169,11 @@ async function resolveSpecifier(specifier, label, { packageName, missingIsBlocke
 }
 
 async function findOwningPackageMetadata(resolvedEntry, packageName) {
-  if (!isWithin(resolvedEntry, communityNodeModules)) {
-    throw new SmokeError(`package ${packageName} resolved outside community node_modules: ${resolvedEntry}`);
-  }
+  const nodeModulesRoot = [analyticsNodeModules, communityNodeModules]
+    .find((candidate) => isWithin(resolvedEntry, candidate));
+  if (nodeModulesRoot == null) throw new SmokeError(`package ${packageName} resolved outside approved Analytics dependency roots: ${resolvedEntry}`);
   let current = dirname(resolvedEntry);
-  for (let depth = 0; depth < MAX_PACKAGE_METADATA_ANCESTORS && isWithin(current, communityNodeModules); depth += 1) {
+  for (let depth = 0; depth < MAX_PACKAGE_METADATA_ANCESTORS && isWithin(current, nodeModulesRoot); depth += 1) {
     const candidate = resolve(current, "package.json");
     let resolvedPackageJson;
     try {
@@ -180,8 +185,8 @@ async function findOwningPackageMetadata(resolvedEntry, packageName) {
       }
       throw new SmokeError(`package metadata path for ${packageName} is not readable: ${boundedText(error)}`);
     }
-    if (!isWithin(resolvedPackageJson, communityNodeModules)) {
-      throw new SmokeError(`package metadata for ${packageName} resolved outside community node_modules: ${resolvedPackageJson}`);
+    if (!isWithin(resolvedPackageJson, nodeModulesRoot)) {
+      throw new SmokeError(`package metadata for ${packageName} resolved outside approved Analytics dependency roots: ${resolvedPackageJson}`);
     }
     let metadata;
     try {

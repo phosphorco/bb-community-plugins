@@ -48,6 +48,7 @@
     "server.ts",
     "app.tsx",
     "app.css",
+    "frontend/",
     "chart-painting-animation.tsx",
     "echarts-figure.tsx",
     "echarts-options.ts",
@@ -56,6 +57,18 @@
     "analytics-model.ts",
     "analytics-verifier.ts",
     "execution-contract.ts",
+    "execution-service.ts",
+    "execution-store.ts",
+    "snapshot-provider.ts",
+    "retained-query-cache.ts",
+    "extraction/",
+    "skill-fact-projection.ts",
+    "skill-fact-schema.ts",
+    "skill-observation-contract.ts",
+    "skill-query-schema.ts",
+    "skill-query-service.ts",
+    "skills-dashboard/",
+    "docs/isolation/",
     "analytics-reference.ts",
     "analytics-status.ts",
     "analytics-export.ts",
@@ -70,8 +83,7 @@
     "fact-projection.ts",
     "fact-schema.ts",
     "rpc-contract.ts",
-    "store.ts",
-    "test/"
+    "store.ts"
   ],
   "dependencies": {
     "@duckdb/duckdb-wasm": "1.33.1-dev57.0",
@@ -79,7 +91,7 @@
     "zod": "4.3.6"
   },
   "devDependencies": {
-    "@get-bb/plugin-sdk": "0.4.47",
+    "@get-bb/plugin-sdk": "file:../../../sdk-artifacts/get-bb-plugin-sdk-0.5.24+phosphor.747ead9adb7b.sdk.68c85e61a3da.tgz",
     "@types/better-sqlite3": "^7.6.12",
     "@types/node": "^22",
     "@types/react": "19.2.2",

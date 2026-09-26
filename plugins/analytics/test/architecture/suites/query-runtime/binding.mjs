@@ -9,7 +9,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
  * retains observations made by that constructor's real lifecycle hooks.
  *
  * The ordinary internal constructor expected by this binding is
- * createQueryRuntime({ observer? }), returning { admitQuery, worker,
+ * createProbeQueryRuntime({ observer? }), returning { admitQuery, worker,
  * coordinator, close }. `admitQuery({sql, parameters, cacheability})` is the
  * ordinary locked-child pre-resolution boundary; it returns the immutable
  * parser attestation used to construct a resolved input exactly once.
@@ -38,7 +38,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
  * parent resumes only by echoing that token on its closed IPC path; the test
  * hook receives no facts, SQL, paths, or callable child capability.
  */
-const productionEntry = new URL("../../../../query-runtime/index.mjs", import.meta.url);
+const productionEntry = new URL("../../../probes/legacy-query-runtime.mjs", import.meta.url);
 const maxObserverEvents = 512;
 const maxObserverBytes = 128 * 1024;
 
@@ -50,7 +50,7 @@ export async function loadProductionRuntimeBinding() {
     return {
       kind: "missing-boundary",
       details:
-        "Missing production boundary: query-runtime/index.mjs must export createQueryRuntime().",
+        "Missing probe boundary: test/probes/legacy-query-runtime.mjs must export createProbeQueryRuntime().",
       entryPath,
     };
   }
@@ -65,11 +65,11 @@ export async function loadProductionRuntimeBinding() {
       entryPath,
     };
   }
-  if (typeof production.createQueryRuntime !== "function") {
+  if (typeof production.createProbeQueryRuntime !== "function") {
     return {
       kind: "missing-boundary",
       details:
-        "Production runtime entry lacks createQueryRuntime(); the test binding will not emulate it.",
+        "Probe runtime entry lacks createProbeQueryRuntime(); the test binding will not emulate it.",
       entryPath,
     };
   }
@@ -84,7 +84,7 @@ export async function loadProductionRuntimeBinding() {
       const waiters = new Set();
       let observationFailure = null;
       let capturedEventBytes = 0;
-      const runtime = await production.createQueryRuntime({
+      const runtime = await production.createProbeQueryRuntime({
         observer: (event) => {
           if (observationFailure != null) return;
           let copy;

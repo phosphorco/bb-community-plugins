@@ -9,6 +9,12 @@ import {
   executeQueryResponseSchema,
   executionLocatorSchema,
 } from "./execution-contract.ts";
+import {
+  skillQueryFilterSchema,
+  skillQueryResultSchema,
+  skillRawContributorRequestSchema,
+  skillRawContributorResultSchema,
+} from "./skill-query-schema.ts";
 
 const indexStateSchema = z.object({
   status: z.enum(["empty", "indexing", "ready", "error"]),
@@ -72,6 +78,23 @@ export const rpcContract = defineRpcContract({
       label: z.string(),
     }).strict(),
   },
+  /**
+   * Skills use their own bounded retained-SQLite surface.  Keeping these
+   * endpoints in the established public contract means both the plugin app
+   * and any future internal consumer receive Zod-validated values.
+   */
+  skillsQuery: {
+    input: skillQueryFilterSchema,
+    output: skillQueryResultSchema,
+  },
+  refreshSkills: {
+    input: z.object({ projectId: z.string().min(1).max(512), environmentId: z.string().min(1).max(512).nullable() }).strict(),
+    output: z.object({ status: z.enum(["completed", "busy", "cooldown", "failed"]), message: z.string().max(1024) }).strict(),
+  },
+  skillsRawContributors: {
+    input: skillRawContributorRequestSchema,
+    output: skillRawContributorResultSchema,
+  },
 });
 
 /**
@@ -91,6 +114,8 @@ export const executionRpcContract = defineRpcContract({
 
 export type AnalyticsCatalogResponse = z.infer<typeof rpcContract.catalog.output>;
 export type AnalyticsBundleResponse = z.infer<typeof rpcContract.getBundle.output>;
+export type SkillsQueryResponse = z.infer<typeof rpcContract.skillsQuery.output>;
+export type SkillsRawContributorsResponse = z.infer<typeof rpcContract.skillsRawContributors.output>;
 export type AnalyticsExecuteQueryResponse = z.infer<
   typeof executionRpcContract.executeQuery.output
 >;

@@ -13,6 +13,7 @@ const sourcePath = fileURLToPath(import.meta.url);
 const browserRoot = dirname(sourcePath);
 const analyticsRoot = resolve(browserRoot, "../../../..");
 const communityNodeModules = resolve(analyticsRoot, "../../node_modules");
+const analyticsNodeModules = resolve(analyticsRoot, "node_modules");
 const manifestPath = resolve(analyticsRoot, "package.json");
 const requireFromAnalytics = createRequire(manifestPath);
 const CHILD_ARGUMENT = "--child";
@@ -101,9 +102,11 @@ function isWithin(child, parent) {
 }
 
 async function packageMetadata(resolvedEntry, packageName) {
-  if (!isWithin(resolvedEntry, communityNodeModules)) throw new DriverError(`${packageName} resolved outside community node_modules: ${resolvedEntry}`);
+  const nodeModulesRoot = [analyticsNodeModules, communityNodeModules]
+    .find((candidate) => isWithin(resolvedEntry, candidate));
+  if (nodeModulesRoot == null) throw new DriverError(`${packageName} resolved outside approved Analytics dependency roots: ${resolvedEntry}`);
   let current = dirname(resolvedEntry);
-  for (let depth = 0; depth < 8 && isWithin(current, communityNodeModules); depth += 1) {
+  for (let depth = 0; depth < 8 && isWithin(current, nodeModulesRoot); depth += 1) {
     const packageJson = resolve(current, "package.json");
     try {
       const metadata = JSON.parse(await readFile(packageJson, "utf8"));
@@ -130,11 +133,11 @@ async function resolvePackage(name, version, specifier = name) {
 
 async function resolveToolchain() {
   const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
-  const expected = { "@get-bb/plugin-sdk": "0.4.15", "@playwright/test": "1.63.0", vite: "8.2.2" };
+  const expected = { "@get-bb/plugin-sdk": "file:../../../sdk-artifacts/get-bb-plugin-sdk-0.5.24+phosphor.747ead9adb7b.sdk.68c85e61a3da.tgz", "@playwright/test": "1.63.0", vite: "8.2.2" };
   for (const [name, version] of Object.entries(expected)) {
     if (manifest.devDependencies?.[name] !== version) throw new DriverError(`${name} is not pinned to ${version}`);
   }
-  const sdk = await resolvePackage("@get-bb/plugin-sdk", "0.4.15", "@get-bb/plugin-sdk/testing/app");
+  const sdk = await resolvePackage("@get-bb/plugin-sdk", "0.5.24+phosphor.747ead9adb7b.sdk.68c85e61a3da", "@get-bb/plugin-sdk/testing/app");
   const playwright = await resolvePackage("@playwright/test", "1.63.0");
   const playwrightCore = await resolvePackage("playwright-core", "1.63.0");
   const vite = await resolvePackage("vite", "8.2.2");

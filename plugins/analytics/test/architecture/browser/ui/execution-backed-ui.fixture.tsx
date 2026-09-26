@@ -28,7 +28,7 @@ import type {
 import type {
   ExecutionBackedDashboardProps,
   ExecutionLocatorSource,
-} from "../../../../app.tsx";
+} from "../../../../frontend/analytics-panel.tsx";
 
 type ControlledExecutionRequest = Readonly<{
   locator: ExecutionLocator;
@@ -197,7 +197,7 @@ export async function mountExecutionBackedDashboard(
   input: MountExecutionDashboardInput,
 ): Promise<MountedExecutionDashboard> {
   installTestPluginRuntime();
-  const module = await import("../../../../app.tsx");
+  const module = await import("../../../../frontend/analytics-panel.tsx");
   const Component = module.ExecutionBackedDashboard;
   const TestExecutionSlot = (props: ExecutionBackedDashboardProps) => createElement(Component, props);
   const propsFor = (next: Readonly<{

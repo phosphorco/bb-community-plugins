@@ -13,14 +13,14 @@ import { SELECTED_EXECUTION_RUNTIME, deriveExecutionDatumKeys, parameterDeclarat
  */
 export async function runSchedulerControls({ fixture, makeInput, canonicalJson }) {
   return withMockedSpawn(async (mock) => {
-    const { createQueryRuntime } = await import(new URL("../../../../query-runtime/index.mjs?unit=" + Date.now() + "-" + Math.random(), import.meta.url));
+    const { createProbeQueryRuntime } = await import(new URL("../../../probes/legacy-query-runtime.mjs?unit=" + Date.now() + "-" + Math.random(), import.meta.url));
     const checks = [];
-    checks.push(await closeBeforeDispatch(createQueryRuntime, fixture, makeInput, mock));
-    checks.push(await privatePrepareLimitsAreExact(createQueryRuntime, fixture, makeInput, mock));
-    checks.push(await sharedSubscriberIdentity(createQueryRuntime, fixture, makeInput, canonicalJson, mock));
-    checks.push(await oversizedCacheDoesNotLoop(createQueryRuntime, fixture, makeInput, mock));
-    checks.push(await lastAbortDetachesAndDrains(createQueryRuntime, fixture, makeInput, mock));
-    checks.push(await earlyChildCloseFailsStartup(createQueryRuntime, fixture, makeInput, mock));
+    checks.push(await closeBeforeDispatch(createProbeQueryRuntime, fixture, makeInput, mock));
+    checks.push(await privatePrepareLimitsAreExact(createProbeQueryRuntime, fixture, makeInput, mock));
+    checks.push(await sharedSubscriberIdentity(createProbeQueryRuntime, fixture, makeInput, canonicalJson, mock));
+    checks.push(await oversizedCacheDoesNotLoop(createProbeQueryRuntime, fixture, makeInput, mock));
+    checks.push(await lastAbortDetachesAndDrains(createProbeQueryRuntime, fixture, makeInput, mock));
+    checks.push(await earlyChildCloseFailsStartup(createProbeQueryRuntime, fixture, makeInput, mock));
     return checks;
   });
 }

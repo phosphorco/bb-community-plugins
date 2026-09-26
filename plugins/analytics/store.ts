@@ -4,6 +4,15 @@ import type Database from "better-sqlite3";
 import type { AnalyticsBundle } from "./bundle-contract.ts";
 import type { AnalyticsReferenceCapsule } from "./analytics-reference.ts";
 import type { ToolExecutionFact } from "./fact-projection.ts";
+import type { LifecycleObservationFact, SkillMeasurementFact } from "./skill-observation-contract.ts";
+import type {
+  AggregateTokenEvidence,
+  PromptMentionEvidence,
+  PublicSkillCatalogCapture,
+  RegisteredPathCommandCandidate,
+} from "./skill-observation-contract.ts";
+import type { ProjectedSkillObservation, SkillCoverageEpoch } from "./skill-fact-projection.ts";
+import type { AnalyticsSnapshotCoverage, JsonValue } from "./snapshot-provider.ts";
 import {
   canonicalizeRetainedProjectionCheckpoint,
   canonicalizeRetainedRefRelease,
@@ -718,6 +727,258 @@ analyticsMigrations.push(...retainedAccountingV1Migrations());
 export const RETAINED_ACCOUNTING_V2_MIGRATION_START = analyticsMigrations.length;
 analyticsMigrations.push(...retainedAccountingV2Migrations());
 
+/**
+ * Skill facts are deliberately additive: the retained tool fact contract and
+ * every existing saved bundle/reference remain byte-for-byte untouched.
+ * `active_generation` makes reconciliation and deletion atomic without
+ * erasing the append-only observation rows used for drilldown and recovery.
+ */
+export const SKILL_FACT_PROJECTION_MIGRATION_START = analyticsMigrations.length;
+analyticsMigrations.push(
+  `CREATE TABLE analytics_skill_projection_state (
+    singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+    projection_version INTEGER NOT NULL DEFAULT 0,
+    generation_id INTEGER NOT NULL DEFAULT 0,
+    published_at_ms INTEGER,
+    source_digest TEXT,
+    CHECK (projection_version >= 0), CHECK (generation_id >= 0)
+  ) STRICT`,
+  `INSERT INTO analytics_skill_projection_state (singleton) VALUES (1)`,
+  `CREATE TABLE analytics_skill_coverage_epochs_v1 (
+    epoch_id TEXT PRIMARY KEY NOT NULL,
+    started_at_ms INTEGER NOT NULL,
+    ended_at_ms INTEGER,
+    lifecycle_coverage TEXT NOT NULL CHECK (lifecycle_coverage IN ('observed','unsupported','unknown','pre-instrumentation')),
+    activation_coverage TEXT NOT NULL CHECK (activation_coverage IN ('observed','unsupported','unknown','pre-instrumentation')),
+    CHECK (started_at_ms >= 0), CHECK (ended_at_ms IS NULL OR ended_at_ms >= started_at_ms)
+  ) STRICT`,
+  `CREATE TABLE analytics_skill_source_events_v1 (
+    source_event_id TEXT PRIMARY KEY NOT NULL,
+    source_sequence INTEGER NOT NULL,
+    source_digest TEXT NOT NULL,
+    source_event_json TEXT NOT NULL,
+    active_generation INTEGER NOT NULL,
+    first_seen_at_ms INTEGER NOT NULL,
+    CHECK (source_sequence >= 0), CHECK (active_generation >= 0), CHECK (first_seen_at_ms >= 0)
+  ) STRICT`,
+  `CREATE INDEX analytics_skill_source_events_active ON analytics_skill_source_events_v1 (active_generation, source_event_id)`,
+  `CREATE TABLE analytics_skill_lifecycle_facts_v1 (
+    fact_id TEXT PRIMARY KEY NOT NULL,
+    observation_id TEXT NOT NULL,
+    source_event_id TEXT NOT NULL,
+    coverage_epoch_id TEXT NOT NULL,
+    observed_at_ms INTEGER NOT NULL,
+    session_id TEXT NOT NULL, thread_id TEXT NOT NULL, provider_turn_id TEXT,
+    principal_id TEXT NOT NULL, provider_id TEXT NOT NULL, provider_model TEXT,
+    evidence_kind TEXT NOT NULL, status TEXT NOT NULL, activation_observability TEXT NOT NULL,
+    capture_trigger TEXT NOT NULL, provider_event_id TEXT, failure TEXT,
+    revision_json TEXT NOT NULL, active_generation INTEGER NOT NULL,
+    CHECK (observed_at_ms >= 0), CHECK (active_generation >= 0),
+    FOREIGN KEY (source_event_id) REFERENCES analytics_skill_source_events_v1(source_event_id),
+    FOREIGN KEY (coverage_epoch_id) REFERENCES analytics_skill_coverage_epochs_v1(epoch_id)
+  ) STRICT`,
+  `CREATE INDEX analytics_skill_lifecycle_active ON analytics_skill_lifecycle_facts_v1 (active_generation, observed_at_ms DESC, fact_id)`,
+  `CREATE TABLE analytics_skill_measurement_facts_v1 (
+    fact_id TEXT PRIMARY KEY NOT NULL,
+    observation_id TEXT NOT NULL,
+    source_event_id TEXT NOT NULL,
+    coverage_epoch_id TEXT NOT NULL,
+    observed_at_ms INTEGER NOT NULL,
+    session_id TEXT NOT NULL, thread_id TEXT NOT NULL, provider_turn_id TEXT,
+    principal_id TEXT NOT NULL, provider_id TEXT NOT NULL, provider_model TEXT,
+    family TEXT NOT NULL, method TEXT NOT NULL, serializer TEXT NOT NULL, tokenizer TEXT NOT NULL,
+    content_component TEXT, bytes INTEGER, tokens INTEGER, status TEXT NOT NULL,
+    estimated INTEGER NOT NULL CHECK (estimated IN (0,1)), raw_observation_id TEXT,
+    revision_json TEXT NOT NULL, active_generation INTEGER NOT NULL,
+    CHECK (observed_at_ms >= 0), CHECK (bytes IS NULL OR bytes >= 0), CHECK (tokens IS NULL OR tokens >= 0), CHECK (active_generation >= 0),
+    FOREIGN KEY (source_event_id) REFERENCES analytics_skill_source_events_v1(source_event_id),
+    FOREIGN KEY (coverage_epoch_id) REFERENCES analytics_skill_coverage_epochs_v1(epoch_id)
+  ) STRICT`,
+  `CREATE INDEX analytics_skill_measurement_active ON analytics_skill_measurement_facts_v1 (active_generation, observed_at_ms DESC, fact_id)`,
+);
+
+// The original v1 skill tables were released before retained extraction had a
+// public authoritative thread-metadata path. Keep historical append-only rows
+// readable (their dimensions are null) while every new projection publication
+// supplies the exact values from `threads.get`.
+analyticsMigrations.push(
+  `ALTER TABLE analytics_skill_lifecycle_facts_v1 ADD COLUMN project_id TEXT`,
+  `ALTER TABLE analytics_skill_lifecycle_facts_v1 ADD COLUMN environment_id TEXT`,
+  `ALTER TABLE analytics_skill_measurement_facts_v1 ADD COLUMN project_id TEXT`,
+  `ALTER TABLE analytics_skill_measurement_facts_v1 ADD COLUMN environment_id TEXT`,
+);
+
+/**
+ * Fork-free facts intentionally do not reuse lifecycle tables: their source is
+ * the public SDK, their catalog is current-at-capture-time only, and they must
+ * never imply private staged membership or per-skill token consumption.
+ */
+export const FORK_FREE_SKILL_PROJECTION_MIGRATION_START = analyticsMigrations.length;
+analyticsMigrations.push(
+  `CREATE TABLE analytics_fork_free_skill_projection_state_v1 (
+    singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+    generation_id INTEGER NOT NULL DEFAULT 0,
+    published_at_ms INTEGER,
+    source_digest TEXT,
+    CHECK (generation_id >= 0)
+  ) STRICT`,
+  `INSERT INTO analytics_fork_free_skill_projection_state_v1 (singleton) VALUES (1)`,
+  `CREATE TABLE analytics_fork_free_catalog_captures_v1 (
+    capture_id TEXT PRIMARY KEY NOT NULL,
+    thread_id TEXT,
+    provider_id TEXT,
+    project_id TEXT NOT NULL,
+    environment_id TEXT,
+    trigger TEXT NOT NULL CHECK (trigger IN ('thread.created','thread.active','refresh')),
+    captured_at_ms INTEGER NOT NULL,
+    completeness TEXT NOT NULL CHECK (completeness IN ('complete','failed')),
+    error_text TEXT,
+    snapshot_json TEXT,
+    snapshot_digest TEXT,
+    CHECK (captured_at_ms >= 0),
+    CHECK ((completeness='complete' AND error_text IS NULL AND snapshot_json IS NOT NULL AND snapshot_digest IS NOT NULL) OR (completeness='failed' AND error_text IS NOT NULL AND snapshot_json IS NULL AND snapshot_digest IS NULL))
+  ) STRICT`,
+  `CREATE TABLE analytics_fork_free_catalog_entries_v1 (
+    capture_id TEXT NOT NULL,
+    skill_id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    scope TEXT NOT NULL,
+    provider_id TEXT,
+    plugin_id TEXT,
+    file_path TEXT NOT NULL,
+    content_revision TEXT,
+    content_bytes INTEGER,
+    registered_paths_json TEXT NOT NULL,
+    PRIMARY KEY (capture_id,skill_id),
+    FOREIGN KEY (capture_id) REFERENCES analytics_fork_free_catalog_captures_v1(capture_id),
+    CHECK (content_bytes IS NULL OR content_bytes >= 0)
+  ) STRICT`,
+  `CREATE TABLE analytics_fork_free_source_events_v1 (
+    source_event_id TEXT PRIMARY KEY NOT NULL,
+    thread_id TEXT NOT NULL,
+    project_id TEXT NOT NULL,
+    environment_id TEXT,
+    provider_id TEXT NOT NULL,
+    source_sequence INTEGER NOT NULL,
+    created_at_ms INTEGER NOT NULL,
+    source_type TEXT NOT NULL,
+    source_digest TEXT NOT NULL,
+    active_generation INTEGER NOT NULL,
+    first_seen_at_ms INTEGER NOT NULL,
+    CHECK (source_sequence >= 1 AND created_at_ms >= 0 AND active_generation >= 0 AND first_seen_at_ms >= 0)
+  ) STRICT`,
+  `CREATE INDEX analytics_fork_free_source_events_active_v1 ON analytics_fork_free_source_events_v1(active_generation,thread_id,source_sequence)`,
+  `CREATE TABLE analytics_fork_free_prompt_mentions_v1 (
+    source_event_id TEXT NOT NULL,
+    skill_id TEXT NOT NULL,
+    mention TEXT NOT NULL,
+    thread_id TEXT NOT NULL,
+    source_sequence INTEGER NOT NULL,
+    historical_revision TEXT,
+    active_generation INTEGER NOT NULL,
+    PRIMARY KEY (source_event_id,skill_id,mention),
+    FOREIGN KEY (source_event_id) REFERENCES analytics_fork_free_source_events_v1(source_event_id),
+    CHECK (historical_revision IS NULL AND active_generation >= 0)
+  ) STRICT`,
+  `CREATE TABLE analytics_fork_free_command_candidates_v1 (
+    source_started_event_id TEXT NOT NULL,
+    skill_id TEXT NOT NULL,
+    registered_path TEXT NOT NULL,
+    source_completed_event_id TEXT,
+    thread_id TEXT NOT NULL,
+    start_sequence INTEGER NOT NULL,
+    completed_sequence INTEGER,
+    item_id TEXT NOT NULL,
+    command_shell_wrapped INTEGER NOT NULL CHECK (command_shell_wrapped IN (0,1)),
+    command_joined INTEGER NOT NULL CHECK (command_joined IN (0,1)),
+    execution_status TEXT NOT NULL CHECK (execution_status IN ('pending','completed','failed','declined','incomplete')),
+    exit_code INTEGER,
+    output_bytes INTEGER,
+    output_truncated INTEGER CHECK (output_truncated IN (0,1)),
+    historical_revision TEXT,
+    active_generation INTEGER NOT NULL,
+    PRIMARY KEY (source_started_event_id,skill_id,registered_path),
+    FOREIGN KEY (source_started_event_id) REFERENCES analytics_fork_free_source_events_v1(source_event_id),
+    CHECK (historical_revision IS NULL AND active_generation >= 0 AND (output_bytes IS NULL OR output_bytes >= 0))
+  ) STRICT`,
+  `CREATE TABLE analytics_fork_free_aggregate_tokens_v1 (
+    source_event_id TEXT PRIMARY KEY NOT NULL,
+    thread_id TEXT NOT NULL,
+    source_sequence INTEGER NOT NULL,
+    aggregate_tokens INTEGER,
+    active_generation INTEGER NOT NULL,
+    FOREIGN KEY (source_event_id) REFERENCES analytics_fork_free_source_events_v1(source_event_id),
+    CHECK (aggregate_tokens IS NULL OR aggregate_tokens >= 0),
+    CHECK (active_generation >= 0)
+  ) STRICT`,
+  `CREATE INDEX analytics_fork_free_catalog_latest_v1 ON analytics_fork_free_catalog_captures_v1(completeness,project_id,environment_id,captured_at_ms DESC,capture_id DESC)`,
+  `CREATE INDEX analytics_fork_free_catalog_entries_query_v1 ON analytics_fork_free_catalog_entries_v1(capture_id,provider_id,skill_id,content_revision)`,
+  `CREATE INDEX analytics_fork_free_source_events_query_v1 ON analytics_fork_free_source_events_v1(created_at_ms,provider_id,project_id,environment_id,source_event_id)`,
+  `DELETE FROM analytics_fork_free_catalog_entries_v1 WHERE capture_id IN (
+    SELECT capture_id FROM (
+      SELECT capture_id,ROW_NUMBER() OVER (PARTITION BY project_id,environment_id,completeness ORDER BY captured_at_ms DESC,capture_id DESC) retained_rank
+      FROM analytics_fork_free_catalog_captures_v1
+    ) WHERE retained_rank>1
+  )`,
+  `DELETE FROM analytics_fork_free_catalog_captures_v1 WHERE capture_id IN (
+    SELECT capture_id FROM (
+      SELECT capture_id,ROW_NUMBER() OVER (PARTITION BY project_id,environment_id,completeness ORDER BY captured_at_ms DESC,capture_id DESC) retained_rank
+      FROM analytics_fork_free_catalog_captures_v1
+    ) WHERE retained_rank>1
+  )`,
+);
+
+/**
+ * Platform-owned source cursor and immutable analytics artifacts. These were
+ * introduced after the fork-free migrations had shipped, so they must remain
+ * appended after that immutable migration prefix.
+ */
+analyticsMigrations.push(
+  `CREATE TABLE analytics_snapshot_provider_state_v1 (
+    dataset TEXT NOT NULL,
+    source_scope TEXT NOT NULL,
+    cursor TEXT,
+    source_generation TEXT,
+    latest_snapshot_id TEXT,
+    last_checked_at_ms INTEGER,
+    last_failure_at_ms INTEGER,
+    last_failure TEXT,
+    PRIMARY KEY (dataset,source_scope),
+    CHECK (last_checked_at_ms IS NULL OR last_checked_at_ms >= 0),
+    CHECK (last_failure_at_ms IS NULL OR last_failure_at_ms >= 0)
+  ) STRICT`,
+  `CREATE TABLE analytics_snapshot_generations_v1 (
+    snapshot_id TEXT PRIMARY KEY NOT NULL,
+    dataset TEXT NOT NULL,
+    source_scope TEXT NOT NULL,
+    generation_id INTEGER NOT NULL,
+    source_generation TEXT NOT NULL,
+    fact_projection_version INTEGER NOT NULL,
+    cursor TEXT NOT NULL,
+    published_at_ms INTEGER NOT NULL,
+    row_count INTEGER NOT NULL,
+    byte_count INTEGER NOT NULL,
+    integrity_digest TEXT NOT NULL,
+    coverage_json TEXT NOT NULL,
+    facts_json TEXT NOT NULL,
+    UNIQUE (dataset,source_scope,generation_id),
+    CHECK (generation_id >= 1 AND fact_projection_version >= 1 AND published_at_ms >= 0 AND row_count >= 0 AND byte_count >= 0)
+  ) STRICT`,
+  `CREATE INDEX analytics_snapshot_generations_retention_v1 ON analytics_snapshot_generations_v1 (dataset,source_scope,published_at_ms DESC,generation_id DESC)`,
+  `CREATE TABLE analytics_snapshot_leases_v1 (
+    lease_id TEXT PRIMARY KEY NOT NULL,
+    snapshot_id TEXT NOT NULL,
+    leased_at_ms INTEGER NOT NULL,
+    FOREIGN KEY (snapshot_id) REFERENCES analytics_snapshot_generations_v1(snapshot_id),
+    CHECK (leased_at_ms >= 0)
+  ) STRICT`,
+  `CREATE INDEX analytics_snapshot_leases_snapshot_v1 ON analytics_snapshot_leases_v1 (snapshot_id)`,
+  `ALTER TABLE analytics_snapshot_provider_state_v1 ADD COLUMN reset_source_generation TEXT`,
+  `ALTER TABLE analytics_snapshot_provider_state_v1 ADD COLUMN reset_cursor TEXT`,
+  `ALTER TABLE analytics_snapshot_provider_state_v1 ADD COLUMN reset_requested_at_ms INTEGER`,
+  `ALTER TABLE analytics_snapshot_provider_state_v1 ADD COLUMN reset_error TEXT`,
+);
+
 export interface AnalyticsIndexState {
   status: "empty" | "indexing" | "ready" | "error";
   startedAt: number | null;
@@ -807,6 +1068,88 @@ export interface AnalyticsSnapshotCommit {
 export interface SnapshotFreshnessState {
   snapshotUpdatedAt: number | null;
 }
+
+export interface SkillProjectionState {
+  projectionVersion: number;
+  generationId: number;
+  publishedAtMs: number | null;
+  sourceDigest: string | null;
+}
+
+export interface SkillProjectionCommit {
+  /** Complete current retained view; absence retracts prior active rows. */
+  observations: readonly ProjectedSkillObservation[];
+  coverageEpochs: readonly SkillCoverageEpoch[];
+  completedAtMs: number;
+  sourceDigest: string;
+  projectionVersion: number;
+}
+
+export interface ForkFreeCatalogCaptureRecord extends PublicSkillCatalogCapture {
+  /** Null for refresh; lifecycle captures are post-transition public DTOs. */
+  threadId: string | null;
+  providerId: string | null;
+  projectId: string;
+  environmentId: string | null;
+}
+
+export interface ForkFreeSkillEvidenceCommit {
+  projectId: string;
+  environmentId: string | null;
+  captures: readonly ForkFreeCatalogCaptureRecord[];
+  sourceEvents: readonly { id: string; threadId: string; projectId: string; environmentId: string | null; providerId: string; seq: number; createdAt: number; type: string; digest: string }[];
+  mentions: readonly PromptMentionEvidence[];
+  candidates: readonly RegisteredPathCommandCandidate[];
+  aggregateTokens: readonly AggregateTokenEvidence[];
+  /** Deletion requires the exact public threads.get 404 witness. */
+  deletedThreadIds: readonly string[];
+  completedAtMs: number;
+  sourceDigest: string;
+}
+
+export interface StoredAnalyticsSnapshot {
+  snapshotId: string;
+  dataset: string;
+  sourceScope: string;
+  generationId: number;
+  sourceGeneration: string;
+  factProjectionVersion: number;
+  cursor: string;
+  publishedAtMs: number;
+  rowCount: number;
+  byteCount: number;
+  integrityDigest: string;
+  coverage: AnalyticsSnapshotCoverage;
+  facts: readonly Readonly<Record<string, JsonValue>>[];
+}
+
+export interface PublishAnalyticsSnapshotInput extends Omit<StoredAnalyticsSnapshot, "generationId"> {
+  maxRetainedGenerations: number;
+  maxRetainedBytes: number;
+  maxRetainedAgeMs: number;
+}
+
+export interface AnalyticsSnapshotRetention {
+  maxRetainedGenerations: number;
+  maxRetainedBytes: number;
+  maxRetainedAgeMs: number;
+}
+
+export interface AnalyticsSnapshotReset {
+  sourceGeneration: string;
+  cursor: string;
+  requestedAtMs: number;
+  error: string;
+}
+
+/** A live lease makes a replacement unsafe until its qualified worker exits. */
+export class AnalyticsSnapshotRetentionBlockedError extends Error {}
+
+/** A delta must never publish over a separately admitted cursor reset. */
+export class AnalyticsSnapshotResetPendingError extends Error {}
+
+/** A newer expiry notice superseded the reset this rebuild was based on. */
+export class AnalyticsSnapshotResetSupersededError extends Error {}
 
 const LEGACY_RETAINED_STAGE_ALGORITHM = "legacy-retained-stage-v1";
 
@@ -1220,6 +1563,235 @@ export class AnalyticsStore {
 
   constructor(db: Database.Database) {
     this.db = db;
+  }
+
+  readSkillProjectionState(): SkillProjectionState {
+    const row = this.db.prepare(`SELECT projection_version,generation_id,published_at_ms,source_digest FROM analytics_skill_projection_state WHERE singleton=1`).get() as {
+      projection_version: number; generation_id: number; published_at_ms: number | null; source_digest: string | null;
+    } | undefined;
+    if (row == null) throw new Error("Skill projection state is missing.");
+    return { projectionVersion: row.projection_version, generationId: row.generation_id, publishedAtMs: row.published_at_ms, sourceDigest: row.source_digest };
+  }
+
+  listSkillCoverageEpochs(): SkillCoverageEpoch[] {
+    const rows = this.db.prepare(`SELECT epoch_id,started_at_ms,ended_at_ms,lifecycle_coverage,activation_coverage FROM analytics_skill_coverage_epochs_v1 ORDER BY started_at_ms,epoch_id`).all() as Array<{
+      epoch_id: string; started_at_ms: number; ended_at_ms: number | null; lifecycle_coverage: SkillCoverageEpoch["lifecycle"]; activation_coverage: SkillCoverageEpoch["activation"];
+    }>;
+    return rows.map((row) => ({ id: row.epoch_id, startedAtMs: row.started_at_ms, endedAtMs: row.ended_at_ms, lifecycle: row.lifecycle_coverage, activation: row.activation_coverage }));
+  }
+
+  /** Thread identities with currently active raw skill events, for exact deletion checks. */
+  listActiveSkillSourceThreadIds(): string[] {
+    const rows = this.db.prepare(`SELECT source_event_json FROM analytics_skill_source_events_v1 WHERE active_generation > 0 ORDER BY source_event_id`).all() as Array<{ source_event_json: string }>;
+    const threadIds = new Set<string>();
+    for (const row of rows) {
+      const source = JSON.parse(row.source_event_json) as { threadId?: unknown };
+      if (typeof source.threadId !== "string" || source.threadId.length === 0) {
+        throw new Error("Stored skill source event has no thread identity.");
+      }
+      threadIds.add(source.threadId);
+    }
+    return [...threadIds].sort();
+  }
+
+  /** Establishes unknown coverage prospectively; past data remains pre-instrumentation. */
+  initializeSkillProjectionCoverage(startedAtMs: number, epochId = `coverage-prospective-${startedAtMs}`): SkillCoverageEpoch[] {
+    if (!Number.isSafeInteger(startedAtMs) || startedAtMs < 0 || epochId.length === 0) throw new Error("Invalid skill projection coverage start.");
+    this.db.transaction(() => {
+      const count = (this.db.prepare(`SELECT COUNT(*) AS count FROM analytics_skill_coverage_epochs_v1`).get() as { count: number }).count;
+      if (count !== 0) return;
+      this.db.prepare(`INSERT INTO analytics_skill_coverage_epochs_v1 (epoch_id,started_at_ms,ended_at_ms,lifecycle_coverage,activation_coverage) VALUES (?,?,?,?,?)`).run("coverage-pre-instrumentation", 0, startedAtMs, "pre-instrumentation", "pre-instrumentation");
+      this.db.prepare(`INSERT INTO analytics_skill_coverage_epochs_v1 (epoch_id,started_at_ms,ended_at_ms,lifecycle_coverage,activation_coverage) VALUES (?,?,?,?,?)`).run(epochId, startedAtMs, null, "unknown", "unknown");
+    })();
+    return this.listSkillCoverageEpochs();
+  }
+
+  /** Opens a new epoch only forward from the current open interval. */
+  openSkillCoverageEpoch(epoch: Omit<SkillCoverageEpoch, "endedAtMs">): SkillCoverageEpoch[] {
+    if (!Number.isSafeInteger(epoch.startedAtMs) || epoch.startedAtMs < 0 || epoch.id.length === 0) throw new Error("Invalid skill coverage epoch.");
+    this.db.transaction(() => {
+      const current = this.db.prepare(`SELECT epoch_id,started_at_ms FROM analytics_skill_coverage_epochs_v1 WHERE ended_at_ms IS NULL ORDER BY started_at_ms DESC LIMIT 1`).get() as { epoch_id: string; started_at_ms: number } | undefined;
+      if (current == null || epoch.startedAtMs < current.started_at_ms) throw new Error("Skill coverage epochs must move prospectively.");
+      const closed = this.db.prepare(`UPDATE analytics_skill_coverage_epochs_v1 SET ended_at_ms=? WHERE epoch_id=? AND ended_at_ms IS NULL`).run(epoch.startedAtMs, current.epoch_id);
+      if (closed.changes !== 1) throw new Error("Skill coverage epoch compare-and-swap failed.");
+      this.db.prepare(`INSERT INTO analytics_skill_coverage_epochs_v1 (epoch_id,started_at_ms,ended_at_ms,lifecycle_coverage,activation_coverage) VALUES (?,?,?,?,?)`).run(epoch.id, epoch.startedAtMs, null, epoch.lifecycle, epoch.activation);
+    })();
+    return this.listSkillCoverageEpochs();
+  }
+
+  /**
+   * Publish the exact reconciled retained view in one transaction. A retry
+   * with identical source event IDs is a no-op at the row level; a changed
+   * source payload for an existing ID is refused rather than silently merged.
+   */
+  commitSkillProjection(input: SkillProjectionCommit): void {
+    if (!Number.isSafeInteger(input.completedAtMs) || input.completedAtMs < 0 || !Number.isSafeInteger(input.projectionVersion) || input.projectionVersion < 1 || !/^[a-f0-9]{64}$/u.test(input.sourceDigest)) {
+      throw new Error("Invalid skill projection commit metadata.");
+    }
+    const commit = this.db.transaction(() => {
+      const storedEpochs = this.listSkillCoverageEpochs();
+      if (JSON.stringify(storedEpochs) !== JSON.stringify(input.coverageEpochs)) throw new Error("Skill projection coverage epochs must be installed before publication.");
+      const state = this.readSkillProjectionState();
+      const generation = state.generationId + 1;
+      const sourceInsert = this.db.prepare(`INSERT INTO analytics_skill_source_events_v1 (source_event_id,source_sequence,source_digest,source_event_json,active_generation,first_seen_at_ms) VALUES (?,?,?,?,?,?)`);
+      const sourceRead = this.db.prepare(`SELECT source_digest FROM analytics_skill_source_events_v1 WHERE source_event_id=?`);
+      const sourceActivate = this.db.prepare(`UPDATE analytics_skill_source_events_v1 SET active_generation=? WHERE source_event_id=?`);
+      const lifecycleInsert = this.db.prepare(`INSERT OR IGNORE INTO analytics_skill_lifecycle_facts_v1 (fact_id,observation_id,source_event_id,coverage_epoch_id,observed_at_ms,session_id,thread_id,provider_turn_id,principal_id,project_id,environment_id,provider_id,provider_model,evidence_kind,status,activation_observability,capture_trigger,provider_event_id,failure,revision_json,active_generation) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`);
+      const lifecycleActivate = this.db.prepare(`UPDATE analytics_skill_lifecycle_facts_v1 SET active_generation=? WHERE fact_id=?`);
+      const measurementInsert = this.db.prepare(`INSERT OR IGNORE INTO analytics_skill_measurement_facts_v1 (fact_id,observation_id,source_event_id,coverage_epoch_id,observed_at_ms,session_id,thread_id,provider_turn_id,principal_id,project_id,environment_id,provider_id,provider_model,family,method,serializer,tokenizer,content_component,bytes,tokens,status,estimated,raw_observation_id,revision_json,active_generation) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`);
+      const measurementActivate = this.db.prepare(`UPDATE analytics_skill_measurement_facts_v1 SET active_generation=? WHERE fact_id=?`);
+      this.db.prepare(`UPDATE analytics_skill_source_events_v1 SET active_generation=0 WHERE active_generation > 0`).run();
+      this.db.prepare(`UPDATE analytics_skill_lifecycle_facts_v1 SET active_generation=0 WHERE active_generation > 0`).run();
+      this.db.prepare(`UPDATE analytics_skill_measurement_facts_v1 SET active_generation=0 WHERE active_generation > 0`).run();
+      for (const projected of input.observations) {
+        const existing = sourceRead.get(projected.sourceEventId) as { source_digest: string } | undefined;
+        if (existing == null) sourceInsert.run(projected.sourceEventId, projected.sourceSequence, projected.sourceDigest, projected.sourceEventJson, generation, input.completedAtMs);
+        else {
+          if (existing.source_digest !== projected.sourceDigest) throw new Error(`Conflicting duplicate skill source event ${projected.sourceEventId}.`);
+          sourceActivate.run(generation, projected.sourceEventId);
+        }
+        const lifecycle = projected.lifecycle;
+        if (lifecycle != null) {
+          lifecycleInsert.run(lifecycle.factId, lifecycle.observationId, lifecycle.sourceEventId, lifecycle.coverageEpochId, lifecycle.observedAtMs, lifecycle.sessionId, lifecycle.threadId, lifecycle.providerTurnId, lifecycle.principalId, lifecycle.projectId, lifecycle.environmentId, lifecycle.providerId, lifecycle.providerModel, lifecycle.evidenceKind, lifecycle.status, lifecycle.activationObservability, lifecycle.captureTrigger, lifecycle.providerEventId, lifecycle.failure, JSON.stringify(lifecycle.revision), generation);
+          lifecycleActivate.run(generation, lifecycle.factId);
+        }
+        const measurement = projected.measurement;
+        if (measurement != null) {
+          measurementInsert.run(measurement.factId, measurement.observationId, measurement.sourceEventId, measurement.coverageEpochId, measurement.observedAtMs, measurement.sessionId, measurement.threadId, measurement.providerTurnId, measurement.principalId, measurement.projectId, measurement.environmentId, measurement.providerId, measurement.providerModel, measurement.family, measurement.method, measurement.serializer, measurement.tokenizer, measurement.contentComponent, measurement.bytes, measurement.tokens, measurement.status, measurement.estimated ? 1 : 0, measurement.rawObservationId, JSON.stringify(measurement.revision), generation);
+          measurementActivate.run(generation, measurement.factId);
+        }
+      }
+      this.db.prepare(`UPDATE analytics_skill_projection_state SET projection_version=?,generation_id=?,published_at_ms=?,source_digest=? WHERE singleton=1`).run(input.projectionVersion, generation, input.completedAtMs, input.sourceDigest);
+    });
+    commit();
+  }
+
+  /** Source thread IDs are retained only as bounded public event identities. */
+  listActiveForkFreeSourceThreadIds(projectId: string, environmentId: string | null): string[] {
+    return (this.db.prepare(`SELECT DISTINCT thread_id FROM analytics_fork_free_source_events_v1 WHERE active_generation>0 AND project_id=? AND environment_id IS ? ORDER BY thread_id`).all(projectId, environmentId) as Array<{ thread_id: string }>)
+      .map((row) => row.thread_id);
+  }
+
+  /**
+   * Atomically publishes a conservative public-SDK view. Raw prompt, command,
+   * and output bodies are deliberately absent from all supplied row types and
+   * all persisted columns. A source-ID conflict refuses the entire batch.
+   */
+  commitForkFreeSkillEvidence(input: ForkFreeSkillEvidenceCommit): void {
+    if (!Number.isSafeInteger(input.completedAtMs) || input.completedAtMs < 0 || !/^[a-f0-9]{64}$/u.test(input.sourceDigest) || typeof input.projectId !== "string" || input.projectId.length === 0) {
+      throw new Error("Invalid fork-free skill projection commit metadata.");
+    }
+    const commit = this.db.transaction(() => {
+      const state = this.db.prepare(`SELECT generation_id FROM analytics_fork_free_skill_projection_state_v1 WHERE singleton=1`).get() as { generation_id: number } | undefined;
+      if (state == null) throw new Error("Fork-free skill projection state is missing.");
+      const generation = state.generation_id + 1;
+      const captureRead = this.db.prepare(`SELECT thread_id,provider_id,project_id,environment_id,trigger,captured_at_ms,completeness,error_text,snapshot_json,snapshot_digest FROM analytics_fork_free_catalog_captures_v1 WHERE capture_id=?`);
+      const captureInsert = this.db.prepare(`INSERT INTO analytics_fork_free_catalog_captures_v1 (capture_id,thread_id,provider_id,project_id,environment_id,trigger,captured_at_ms,completeness,error_text,snapshot_json,snapshot_digest) VALUES (?,?,?,?,?,?,?,?,?,?,?)`);
+      const entryInsert = this.db.prepare(`INSERT INTO analytics_fork_free_catalog_entries_v1 (capture_id,skill_id,name,scope,provider_id,plugin_id,file_path,content_revision,content_bytes,registered_paths_json) VALUES (?,?,?,?,?,?,?,?,?,?)`);
+      for (const capture of input.captures) {
+        if (capture.projectId !== input.projectId || capture.environmentId !== input.environmentId) throw new Error("Fork-free capture workspace does not match its publication partition.");
+        const snapshotJson = capture.snapshot === null ? null : JSON.stringify(capture.snapshot);
+        const snapshotDigest = snapshotJson === null ? null : sha256(snapshotJson);
+        const fields = [capture.threadId, capture.providerId, capture.projectId, capture.environmentId, capture.trigger, capture.capturedAtMs, capture.completeness, capture.error, snapshotJson, snapshotDigest];
+        const existing = captureRead.get(capture.captureId) as Record<string, unknown> | undefined;
+        if (existing != null) {
+          const previous = [existing.thread_id, existing.provider_id, existing.project_id, existing.environment_id, existing.trigger, existing.captured_at_ms, existing.completeness, existing.error_text, existing.snapshot_json, existing.snapshot_digest];
+          if (JSON.stringify(previous) !== JSON.stringify(fields)) throw new Error(`Conflicting public catalog capture ${capture.captureId}.`);
+          continue;
+        }
+        captureInsert.run(capture.captureId, ...fields);
+        if (capture.snapshot !== null) for (const entry of capture.snapshot.entries) {
+          entryInsert.run(capture.captureId, entry.skillId, entry.name, entry.scope, entry.provider, entry.pluginId, entry.filePath, entry.contentRevision, entry.contentBytes, JSON.stringify(entry.registeredPaths));
+        }
+      }
+
+      // Catalog snapshots are current-state evidence, not an append-only raw
+      // event lake. Retain the latest complete and latest failed capture per
+      // project/environment so lifecycle recapture cannot grow one full skill
+      // tree per event forever. A failed latest capture coexists with the
+      // last-good complete snapshot used by stale-while-refresh queries.
+      const staleCaptures = `SELECT capture_id FROM (
+        SELECT capture_id,ROW_NUMBER() OVER (PARTITION BY completeness ORDER BY captured_at_ms DESC,capture_id DESC) retained_rank
+        FROM analytics_fork_free_catalog_captures_v1 WHERE project_id=? AND environment_id IS ?
+      ) WHERE retained_rank>1`;
+      this.db.prepare(`DELETE FROM analytics_fork_free_catalog_entries_v1 WHERE capture_id IN (${staleCaptures})`).run(input.projectId, input.environmentId);
+      this.db.prepare(`DELETE FROM analytics_fork_free_catalog_captures_v1 WHERE capture_id IN (${staleCaptures})`).run(input.projectId, input.environmentId);
+
+      // A failed catalog fetch is coverage information only. It must never
+      // turn a transient public SDK failure into absence of prior evidence.
+      if (input.captures.every((capture) => capture.completeness === "failed")) return;
+
+      const sourceRead = this.db.prepare(`SELECT source_digest,thread_id,project_id,environment_id,provider_id FROM analytics_fork_free_source_events_v1 WHERE source_event_id=?`);
+      const sourceInsert = this.db.prepare(`INSERT INTO analytics_fork_free_source_events_v1 (source_event_id,thread_id,project_id,environment_id,provider_id,source_sequence,created_at_ms,source_type,source_digest,active_generation,first_seen_at_ms) VALUES (?,?,?,?,?,?,?,?,?,?,?)`);
+      const sourceActivate = this.db.prepare(`UPDATE analytics_fork_free_source_events_v1 SET active_generation=? WHERE source_event_id=?`);
+      const eventIds = new Set<string>();
+      const scopedSource = `SELECT source_event_id FROM analytics_fork_free_source_events_v1 WHERE project_id=? AND environment_id IS ?`;
+      this.db.prepare(`UPDATE analytics_fork_free_source_events_v1 SET active_generation=0 WHERE active_generation>0 AND project_id=? AND environment_id IS ?`).run(input.projectId, input.environmentId);
+      this.db.prepare(`UPDATE analytics_fork_free_prompt_mentions_v1 SET active_generation=0 WHERE active_generation>0 AND source_event_id IN (${scopedSource})`).run(input.projectId, input.environmentId);
+      this.db.prepare(`UPDATE analytics_fork_free_command_candidates_v1 SET active_generation=0 WHERE active_generation>0 AND source_started_event_id IN (${scopedSource})`).run(input.projectId, input.environmentId);
+      this.db.prepare(`UPDATE analytics_fork_free_aggregate_tokens_v1 SET active_generation=0 WHERE active_generation>0 AND source_event_id IN (${scopedSource})`).run(input.projectId, input.environmentId);
+      for (const event of input.sourceEvents) {
+        if (event.projectId !== input.projectId || event.environmentId !== input.environmentId) throw new Error("Fork-free source event workspace does not match its publication partition.");
+        if (eventIds.has(event.id) || !Number.isSafeInteger(event.seq) || event.seq < 1 || !Number.isSafeInteger(event.createdAt) || event.createdAt < 0 || !/^[a-f0-9]{64}$/u.test(event.digest)) throw new Error("Invalid or duplicate fork-free source event.");
+        eventIds.add(event.id);
+        const existing = sourceRead.get(event.id) as { source_digest: string; thread_id: string; project_id: string; environment_id: string | null; provider_id: string } | undefined;
+        if (existing == null) sourceInsert.run(event.id, event.threadId, event.projectId, event.environmentId, event.providerId, event.seq, event.createdAt, event.type, event.digest, generation, input.completedAtMs);
+        else {
+          if (existing.source_digest !== event.digest || existing.thread_id !== event.threadId || existing.project_id !== event.projectId || existing.environment_id !== event.environmentId || existing.provider_id !== event.providerId) throw new Error(`Conflicting fork-free source event ${event.id}.`);
+          sourceActivate.run(generation, event.id);
+        }
+      }
+      for (const threadId of input.deletedThreadIds) {
+        if (typeof threadId !== "string" || threadId.length === 0) throw new Error("Invalid confirmed deleted thread ID.");
+      }
+      const mentionInsert = this.db.prepare(`INSERT OR IGNORE INTO analytics_fork_free_prompt_mentions_v1 (source_event_id,skill_id,mention,thread_id,source_sequence,historical_revision,active_generation) VALUES (?,?,?,?,?,?,?)`);
+      const mentionActivate = this.db.prepare(`UPDATE analytics_fork_free_prompt_mentions_v1 SET active_generation=? WHERE source_event_id=? AND skill_id=? AND mention=?`);
+      for (const mention of input.mentions) {
+        if (!eventIds.has(mention.sourceEventId) || mention.historicalRevision !== null) throw new Error("Fork-free prompt mention has an invalid historical revision or source.");
+        mentionInsert.run(mention.sourceEventId, mention.skillId, mention.mention, mention.threadId, mention.seq, null, generation);
+        mentionActivate.run(generation, mention.sourceEventId, mention.skillId, mention.mention);
+      }
+      const candidateRead = this.db.prepare(`SELECT source_completed_event_id,completed_sequence,execution_status,exit_code,output_bytes,output_truncated FROM analytics_fork_free_command_candidates_v1 WHERE source_started_event_id=? AND skill_id=? AND registered_path=?`);
+      const candidateInsert = this.db.prepare(`INSERT OR IGNORE INTO analytics_fork_free_command_candidates_v1 (source_started_event_id,skill_id,registered_path,source_completed_event_id,thread_id,start_sequence,completed_sequence,item_id,command_shell_wrapped,command_joined,execution_status,exit_code,output_bytes,output_truncated,historical_revision,active_generation) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`);
+      const candidateUpgrade = this.db.prepare(`UPDATE analytics_fork_free_command_candidates_v1 SET source_completed_event_id=?,completed_sequence=?,execution_status=?,exit_code=?,output_bytes=?,output_truncated=?,active_generation=? WHERE source_started_event_id=? AND skill_id=? AND registered_path=? AND source_completed_event_id IS NULL`);
+      const candidateReplace = this.db.prepare(`UPDATE analytics_fork_free_command_candidates_v1 SET source_completed_event_id=?,thread_id=?,start_sequence=?,completed_sequence=?,item_id=?,command_shell_wrapped=?,command_joined=?,execution_status=?,exit_code=?,output_bytes=?,output_truncated=?,active_generation=? WHERE source_started_event_id=? AND skill_id=? AND registered_path=?`);
+      for (const candidate of input.candidates) {
+        if (!eventIds.has(candidate.sourceStartedEventId) || (candidate.sourceCompletedEventId !== null && !eventIds.has(candidate.sourceCompletedEventId)) || candidate.historicalRevision !== null) throw new Error("Fork-free command candidate has an invalid source or historical revision.");
+        const existing = candidateRead.get(candidate.sourceStartedEventId, candidate.skillId, candidate.registeredPath) as Record<string, unknown> | undefined;
+        if (existing == null) candidateInsert.run(candidate.sourceStartedEventId, candidate.skillId, candidate.registeredPath, candidate.sourceCompletedEventId, candidate.threadId, candidate.startSeq, candidate.completedSeq, candidate.itemId, candidate.commandShellWrapped ? 1 : 0, candidate.commandJoined ? 1 : 0, candidate.executionStatus, candidate.exitCode, candidate.outputBytes, candidate.outputTruncated === null ? null : candidate.outputTruncated ? 1 : 0, null, generation);
+        else if (candidate.sourceCompletedEventId !== null && existing.source_completed_event_id === null) {
+          const result = candidateUpgrade.run(candidate.sourceCompletedEventId, candidate.completedSeq, candidate.executionStatus, candidate.exitCode, candidate.outputBytes, candidate.outputTruncated === null ? null : candidate.outputTruncated ? 1 : 0, generation, candidate.sourceStartedEventId, candidate.skillId, candidate.registeredPath);
+          if (result.changes !== 1) throw new Error("Fork-free command candidate completion compare-and-swap failed.");
+        } else {
+          // Source-event conflicts have already failed closed above. A completed
+          // row may legitimately become pending if a later full retained-source
+          // traversal proves the completion event was deleted.
+          candidateReplace.run(candidate.sourceCompletedEventId, candidate.threadId, candidate.startSeq, candidate.completedSeq, candidate.itemId, candidate.commandShellWrapped ? 1 : 0, candidate.commandJoined ? 1 : 0, candidate.executionStatus, candidate.exitCode, candidate.outputBytes, candidate.outputTruncated === null ? null : candidate.outputTruncated ? 1 : 0, generation, candidate.sourceStartedEventId, candidate.skillId, candidate.registeredPath);
+        }
+      }
+      const tokensInsert = this.db.prepare(`INSERT OR IGNORE INTO analytics_fork_free_aggregate_tokens_v1 (source_event_id,thread_id,source_sequence,aggregate_tokens,active_generation) VALUES (?,?,?,?,?)`);
+      const tokensRead = this.db.prepare(`SELECT thread_id,source_sequence,aggregate_tokens FROM analytics_fork_free_aggregate_tokens_v1 WHERE source_event_id=?`);
+      const tokensActivate = this.db.prepare(`UPDATE analytics_fork_free_aggregate_tokens_v1 SET active_generation=? WHERE source_event_id=?`);
+      for (const tokens of input.aggregateTokens) {
+        if (!eventIds.has(tokens.sourceEventId)) throw new Error("Fork-free aggregate token row has an unknown source.");
+        const prior = tokensRead.get(tokens.sourceEventId) as Record<string, unknown> | undefined;
+        if (prior != null && JSON.stringify([prior.thread_id, prior.source_sequence, prior.aggregate_tokens]) !== JSON.stringify([tokens.threadId, tokens.seq, tokens.aggregateTokens])) throw new Error(`Conflicting fork-free aggregate token event ${tokens.sourceEventId}.`);
+        tokensInsert.run(tokens.sourceEventId, tokens.threadId, tokens.seq, tokens.aggregateTokens, generation);
+        tokensActivate.run(generation, tokens.sourceEventId);
+      }
+      this.db.prepare(`UPDATE analytics_fork_free_skill_projection_state_v1 SET generation_id=?,published_at_ms=?,source_digest=? WHERE singleton=1`).run(generation, input.completedAtMs, input.sourceDigest);
+    });
+    commit();
+  }
+
+  listActiveSkillLifecycleFacts(): LifecycleObservationFact[] {
+    const rows = this.db.prepare(`SELECT * FROM analytics_skill_lifecycle_facts_v1 WHERE active_generation > 0 ORDER BY source_event_id`).all() as Array<Record<string, unknown>>;
+    return rows.map((row) => ({ factId: row.fact_id as string, observationId: row.observation_id as string, sourceEventId: row.source_event_id as string, coverageEpochId: row.coverage_epoch_id as string, observedAtMs: row.observed_at_ms as number, sessionId: row.session_id as string, threadId: row.thread_id as string, providerTurnId: row.provider_turn_id as string | null, principalId: row.principal_id as string, projectId: row.project_id as string, environmentId: row.environment_id as string | null, providerId: row.provider_id as string, providerModel: row.provider_model as string | null, revision: JSON.parse(row.revision_json as string), evidenceKind: row.evidence_kind as LifecycleObservationFact["evidenceKind"], status: row.status as LifecycleObservationFact["status"], activationObservability: row.activation_observability as LifecycleObservationFact["activationObservability"], captureTrigger: row.capture_trigger as string, providerEventId: row.provider_event_id as string | null, failure: row.failure as string | null }));
+  }
+
+  listActiveSkillMeasurementFacts(): SkillMeasurementFact[] {
+    const rows = this.db.prepare(`SELECT * FROM analytics_skill_measurement_facts_v1 WHERE active_generation > 0 ORDER BY source_event_id`).all() as Array<Record<string, unknown>>;
+    return rows.map((row) => ({ factId: row.fact_id as string, observationId: row.observation_id as string, sourceEventId: row.source_event_id as string, coverageEpochId: row.coverage_epoch_id as string, observedAtMs: row.observed_at_ms as number, sessionId: row.session_id as string, threadId: row.thread_id as string, providerTurnId: row.provider_turn_id as string | null, principalId: row.principal_id as string, projectId: row.project_id as string, environmentId: row.environment_id as string | null, providerId: row.provider_id as string, providerModel: row.provider_model as string | null, revision: JSON.parse(row.revision_json as string), family: row.family as SkillMeasurementFact["family"], method: row.method as SkillMeasurementFact["method"], serializer: row.serializer as string, tokenizer: row.tokenizer as string, contentComponent: row.content_component as SkillMeasurementFact["contentComponent"], bytes: row.bytes as number | null, tokens: row.tokens as number | null, status: row.status as SkillMeasurementFact["status"], estimated: row.estimated === 1, rawObservationId: row.raw_observation_id as string | null }));
   }
 
   private rawRetainedStageAccountingRow(): Record<string, unknown> {
@@ -3774,4 +4346,200 @@ export class AnalyticsStore {
     }));
     return read();
   }
+
+  /** Reads an analytics-owned immutable artifact; no operational DB is exposed. */
+  readLatestAnalyticsSnapshot(input: { dataset: string; sourceScope: string }): StoredAnalyticsSnapshot | null {
+    const row = this.db.prepare(`
+      SELECT g.*,s.last_failure AS state_last_failure FROM analytics_snapshot_provider_state_v1 s
+      JOIN analytics_snapshot_generations_v1 g ON g.snapshot_id=s.latest_snapshot_id
+      WHERE s.dataset=? AND s.source_scope=?
+    `).get(input.dataset, input.sourceScope) as Record<string, unknown> | undefined;
+    return row == null ? null : readStoredAnalyticsSnapshot(row);
+  }
+
+  readAnalyticsSnapshotCursor(input: { dataset: string; sourceScope: string }): string | null {
+    const row = this.db.prepare(`SELECT cursor FROM analytics_snapshot_provider_state_v1 WHERE dataset=? AND source_scope=?`).get(input.dataset, input.sourceScope) as { cursor: string | null } | undefined;
+    return row?.cursor ?? null;
+  }
+
+  readAnalyticsSnapshotReset(input: { dataset: string; sourceScope: string }): AnalyticsSnapshotReset | null {
+    const row = this.db.prepare(`
+      SELECT reset_source_generation,reset_cursor,reset_requested_at_ms,reset_error
+      FROM analytics_snapshot_provider_state_v1 WHERE dataset=? AND source_scope=?
+    `).get(input.dataset, input.sourceScope) as Record<string, unknown> | undefined;
+    if (row == null || row.reset_source_generation == null) return null;
+    if (
+      typeof row.reset_source_generation !== "string" || typeof row.reset_cursor !== "string"
+      || !Number.isSafeInteger(row.reset_requested_at_ms) || typeof row.reset_error !== "string"
+    ) throw new Error("Analytics snapshot reset state is corrupt.");
+    return {
+      sourceGeneration: row.reset_source_generation,
+      cursor: row.reset_cursor,
+      requestedAtMs: Number(row.reset_requested_at_ms),
+      error: row.reset_error,
+    };
+  }
+
+  /** Records a trusted feed-expiry notice without advancing the last-good cursor. */
+  requestAnalyticsSnapshotReset(input: { dataset: string; sourceScope: string } & AnalyticsSnapshotReset): void {
+    this.db.prepare(`
+      INSERT INTO analytics_snapshot_provider_state_v1 (
+        dataset,source_scope,reset_source_generation,reset_cursor,reset_requested_at_ms,reset_error
+      ) VALUES (?,?,?,?,?,?)
+      ON CONFLICT(dataset,source_scope) DO UPDATE SET
+        reset_source_generation=excluded.reset_source_generation,
+        reset_cursor=excluded.reset_cursor,
+        reset_requested_at_ms=excluded.reset_requested_at_ms,
+        reset_error=excluded.reset_error
+    `).run(
+      input.dataset, input.sourceScope, input.sourceGeneration, input.cursor,
+      input.requestedAtMs, input.error.slice(0, 2_000),
+    );
+  }
+
+  /**
+   * Counts each pinned generation once. It intentionally has no lease TTL:
+   * only a trusted worker-exit path may release a lease.
+   */
+  canPublishAnalyticsSnapshot(input: { dataset: string; sourceScope: string; candidateBytes: number } & AnalyticsSnapshotRetention): boolean {
+    if (input.candidateBytes < 0 || !Number.isSafeInteger(input.candidateBytes)) return false;
+    const pinned = this.pinnedAnalyticsSnapshotUsage(input);
+    return pinned.count + 1 <= input.maxRetainedGenerations
+      && pinned.bytes + input.candidateBytes <= input.maxRetainedBytes;
+  }
+
+  /** Advances only after an exhausted no-delta source pass; it cannot publish rows. */
+  advanceAnalyticsSnapshotCursor(input: { dataset: string; sourceScope: string; cursor: string; sourceGeneration: string; checkedAtMs: number }): void {
+    this.db.prepare(`
+      INSERT INTO analytics_snapshot_provider_state_v1 (dataset,source_scope,cursor,source_generation,last_checked_at_ms)
+      VALUES (?,?,?,?,?)
+      ON CONFLICT(dataset,source_scope) DO UPDATE SET cursor=excluded.cursor,source_generation=excluded.source_generation,last_checked_at_ms=excluded.last_checked_at_ms
+    `).run(input.dataset, input.sourceScope, input.cursor, input.sourceGeneration, input.checkedAtMs);
+  }
+
+  /** Copy-on-write publication joins the durable cursor and immutable rows atomically. */
+  publishAnalyticsSnapshot(input: PublishAnalyticsSnapshotInput & { reset?: Pick<AnalyticsSnapshotReset, "sourceGeneration" | "cursor"> }): StoredAnalyticsSnapshot {
+    const publish = this.db.transaction(() => {
+      const current = this.db.prepare(`
+        SELECT latest_snapshot_id,reset_source_generation,reset_cursor
+        FROM analytics_snapshot_provider_state_v1 WHERE dataset=? AND source_scope=?
+      `).get(input.dataset, input.sourceScope) as { latest_snapshot_id: string | null; reset_source_generation: string | null; reset_cursor: string | null } | undefined;
+      if (input.reset == null && current?.reset_source_generation != null) {
+        throw new AnalyticsSnapshotResetPendingError("Analytics cursor reset is pending.");
+      }
+      if (input.reset != null && (
+        current?.reset_source_generation !== input.reset.sourceGeneration
+        || current?.reset_cursor !== input.reset.cursor
+      )) throw new AnalyticsSnapshotResetSupersededError("Analytics cursor reset was superseded before publication.");
+      if (current?.latest_snapshot_id === input.snapshotId) {
+        const existing = this.db.prepare(`SELECT * FROM analytics_snapshot_generations_v1 WHERE snapshot_id=?`).get(input.snapshotId) as Record<string, unknown> | undefined;
+        if (existing == null) throw new Error("Analytics snapshot state points to a missing generation.");
+        if (input.reset != null) {
+          this.db.prepare(`
+            UPDATE analytics_snapshot_provider_state_v1 SET
+              reset_source_generation=NULL,reset_cursor=NULL,reset_requested_at_ms=NULL,reset_error=NULL
+            WHERE dataset=? AND source_scope=?
+          `).run(input.dataset, input.sourceScope);
+        }
+        return readStoredAnalyticsSnapshot(existing);
+      }
+      if (!this.canPublishAnalyticsSnapshot({ ...input, candidateBytes: input.byteCount })) {
+        throw new AnalyticsSnapshotRetentionBlockedError("Pinned analytics snapshot leases exceed the retention allowance.");
+      }
+      const generationRow = this.db.prepare(`SELECT COALESCE(MAX(generation_id),0) AS generation FROM analytics_snapshot_generations_v1 WHERE dataset=? AND source_scope=?`).get(input.dataset, input.sourceScope) as { generation: number };
+      const generationId = generationRow.generation + 1;
+      const factsJson = JSON.stringify(input.facts);
+      const coverageJson = JSON.stringify(input.coverage);
+      this.db.prepare(`
+        INSERT INTO analytics_snapshot_generations_v1 (
+          snapshot_id,dataset,source_scope,generation_id,source_generation,fact_projection_version,cursor,published_at_ms,row_count,byte_count,integrity_digest,coverage_json,facts_json
+        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+      `).run(input.snapshotId, input.dataset, input.sourceScope, generationId, input.sourceGeneration, input.factProjectionVersion, input.cursor, input.publishedAtMs, input.rowCount, input.byteCount, input.integrityDigest, coverageJson, factsJson);
+      this.db.prepare(`
+        INSERT INTO analytics_snapshot_provider_state_v1 (dataset,source_scope,cursor,source_generation,latest_snapshot_id,last_checked_at_ms,last_failure_at_ms,last_failure,reset_source_generation,reset_cursor,reset_requested_at_ms,reset_error)
+        VALUES (?,?,?,?,?,?,NULL,NULL,NULL,NULL,NULL,NULL)
+        ON CONFLICT(dataset,source_scope) DO UPDATE SET
+          cursor=excluded.cursor,source_generation=excluded.source_generation,latest_snapshot_id=excluded.latest_snapshot_id,last_checked_at_ms=excluded.last_checked_at_ms,last_failure_at_ms=NULL,last_failure=NULL,
+          reset_source_generation=NULL,reset_cursor=NULL,reset_requested_at_ms=NULL,reset_error=NULL
+      `).run(input.dataset, input.sourceScope, input.cursor, input.sourceGeneration, input.snapshotId, input.publishedAtMs);
+      this.pruneAnalyticsSnapshots(input, input.publishedAtMs);
+      return {
+        snapshotId: input.snapshotId, dataset: input.dataset, sourceScope: input.sourceScope, generationId, sourceGeneration: input.sourceGeneration,
+        factProjectionVersion: input.factProjectionVersion, cursor: input.cursor, publishedAtMs: input.publishedAtMs, rowCount: input.rowCount,
+        byteCount: input.byteCount, integrityDigest: input.integrityDigest, coverage: structuredClone(input.coverage), facts: structuredClone(input.facts),
+      } satisfies StoredAnalyticsSnapshot;
+    });
+    return publish();
+  }
+
+  recordAnalyticsSnapshotFailure(input: { dataset: string; sourceScope: string; failedAtMs: number; error: string }): void {
+    this.db.prepare(`
+      INSERT INTO analytics_snapshot_provider_state_v1 (dataset,source_scope,last_failure_at_ms,last_failure)
+      VALUES (?,?,?,?)
+      ON CONFLICT(dataset,source_scope) DO UPDATE SET last_failure_at_ms=excluded.last_failure_at_ms,last_failure=excluded.last_failure
+    `).run(input.dataset, input.sourceScope, input.failedAtMs, input.error.slice(0, 2_000));
+  }
+
+  leaseAnalyticsSnapshot(input: { leaseId: string; snapshotId: string; leasedAtMs: number }): void {
+    const exists = this.db.prepare(`SELECT 1 FROM analytics_snapshot_generations_v1 WHERE snapshot_id=?`).get(input.snapshotId);
+    if (exists == null) throw new Error("Cannot lease an unknown analytics snapshot.");
+    this.db.prepare(`INSERT INTO analytics_snapshot_leases_v1 (lease_id,snapshot_id,leased_at_ms) VALUES (?,?,?)`).run(input.leaseId, input.snapshotId, input.leasedAtMs);
+  }
+
+  releaseAnalyticsSnapshot(leaseId: string, retention: AnalyticsSnapshotRetention): void {
+    const release = this.db.transaction(() => {
+      this.db.prepare(`DELETE FROM analytics_snapshot_leases_v1 WHERE lease_id=?`).run(leaseId);
+      this.pruneAnalyticsSnapshots(retention, Date.now());
+    });
+    release();
+  }
+
+  private pruneAnalyticsSnapshots(retention: AnalyticsSnapshotRetention, now: number): void {
+    const rows = this.db.prepare(`
+      SELECT g.snapshot_id,g.dataset,g.source_scope,g.published_at_ms,g.byte_count,
+        EXISTS(SELECT 1 FROM analytics_snapshot_leases_v1 l WHERE l.snapshot_id=g.snapshot_id) AS leased,
+        EXISTS(SELECT 1 FROM analytics_snapshot_provider_state_v1 s WHERE s.latest_snapshot_id=g.snapshot_id) AS current
+      FROM analytics_snapshot_generations_v1 g
+      ORDER BY g.dataset,g.source_scope,g.published_at_ms DESC,g.generation_id DESC
+    `).all() as Array<{ snapshot_id: string; dataset: string; source_scope: string; published_at_ms: number; byte_count: number; leased: number; current: number }>;
+    const totals = new Map<string, { count: number; bytes: number }>();
+    for (const row of rows) {
+      const key = `${row.dataset}\u0000${row.source_scope}`;
+      const total = totals.get(key) ?? { count: 0, bytes: 0 };
+      total.count += 1;
+      total.bytes += row.byte_count;
+      totals.set(key, total);
+      const expired = row.published_at_ms < now - retention.maxRetainedAgeMs;
+      const excessive = total.count > retention.maxRetainedGenerations || total.bytes > retention.maxRetainedBytes;
+      if ((expired || excessive) && row.leased === 0 && row.current === 0) {
+        this.db.prepare(`DELETE FROM analytics_snapshot_generations_v1 WHERE snapshot_id=?`).run(row.snapshot_id);
+      }
+    }
+  }
+
+  private pinnedAnalyticsSnapshotUsage(input: { dataset: string; sourceScope: string }): { count: number; bytes: number } {
+    const row = this.db.prepare(`
+      SELECT COUNT(*) AS count,COALESCE(SUM(g.byte_count),0) AS bytes
+      FROM analytics_snapshot_generations_v1 g
+      WHERE g.dataset=? AND g.source_scope=?
+        AND EXISTS(SELECT 1 FROM analytics_snapshot_leases_v1 l WHERE l.snapshot_id=g.snapshot_id)
+    `).get(input.dataset, input.sourceScope) as { count: number; bytes: number };
+    return { count: Number(row.count), bytes: Number(row.bytes) };
+  }
+}
+
+function readStoredAnalyticsSnapshot(row: Record<string, unknown>): StoredAnalyticsSnapshot {
+  const facts = JSON.parse(String(row.facts_json)) as readonly Readonly<Record<string, JsonValue>>[];
+  const storedCoverage = JSON.parse(String(row.coverage_json)) as AnalyticsSnapshotCoverage;
+  // Failure metadata is intentionally allowed to evolve while the generation,
+  // facts, and integrity digest remain stable (stale-while-refresh semantics).
+  const coverage = typeof row.state_last_failure === "string"
+    ? { ...storedCoverage, state: "failed" as const, lastFailure: row.state_last_failure }
+    : storedCoverage;
+  return {
+    snapshotId: String(row.snapshot_id), dataset: String(row.dataset), sourceScope: String(row.source_scope), generationId: Number(row.generation_id),
+    sourceGeneration: String(row.source_generation), factProjectionVersion: Number(row.fact_projection_version), cursor: String(row.cursor),
+    publishedAtMs: Number(row.published_at_ms), rowCount: Number(row.row_count), byteCount: Number(row.byte_count), integrityDigest: String(row.integrity_digest),
+    coverage: structuredClone(coverage), facts: structuredClone(facts),
+  };
 }

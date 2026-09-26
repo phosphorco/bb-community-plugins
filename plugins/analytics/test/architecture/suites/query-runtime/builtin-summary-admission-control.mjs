@@ -21,8 +21,8 @@ const suite = "builtin-summary-admission-control";
 const expectedBuiltinSourceSha256 = "041f5ce4fbd0dd2edba12baaefd080367ea1fc83b88fc17b35f69d87a88fae5f";
 const expectedSummarySqlSha256 = "63d15ed9386c445df2636db609693133939e8709e016a83ee3f13b89fc1b2a27";
 const builtinSourceUrl = new URL("../../../../builtin-bundles.ts", import.meta.url);
-const runtimeEntryUrl = new URL("../../../../query-runtime/index.mjs", import.meta.url);
-const workerSourceUrl = new URL("../../../../query-runtime/worker.cjs", import.meta.url);
+const runtimeEntryUrl = new URL("../../../probes/legacy-query-runtime.mjs", import.meta.url);
+const workerSourceUrl = new URL("../../../probes/legacy-query-runtime-worker.cjs", import.meta.url);
 
 // Each literal is taken from the current worker's static admitTree returns.
 // Values are read only long enough to select a closed diagnostic enum.
@@ -80,10 +80,10 @@ export async function runSuite(options = {}) {
       let constructionFailure = false;
       try {
         const production = await import(`${runtimeEntryUrl.href}?builtin-summary-admit=${randomUUID()}`);
-        if (typeof production?.createQueryRuntime !== "function") {
+        if (typeof production?.createProbeQueryRuntime !== "function") {
           constructionFailure = true;
         } else {
-          runtime = await production.createQueryRuntime({
+          runtime = await production.createProbeQueryRuntime({
             trustedSource: fixture.handoff,
             observer(event) {
               if (!isAllowedObserverEvent(event)) {

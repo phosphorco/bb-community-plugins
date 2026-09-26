@@ -42,7 +42,9 @@ import {
   RETAINED_ACCOUNTING_V1_MIGRATION_START,
   RETAINED_ACCOUNTING_V2_MIGRATION_START,
   RetainedProjectionTerminalError,
+  SKILL_FACT_PROJECTION_MIGRATION_START,
 } from "../store.ts";
+import { projectSkillObservation } from "../skill-fact-projection.ts";
 import {
   calculateRetainedAccountingRowLogicalBytes,
   calculateRetainedStageRowLogicalBytes,
@@ -287,14 +289,36 @@ const EXPECTED_RETAINED_ACCOUNTING_V2_SUFFIX_SHA256 = [
   "52244c3a52b8c8f7f4a2c38424e0a5503a9603729985f6f90ee93796e11bce93",
   "c61f4609ba1e3f2017041298af5218fdfdec3467bd3727ac8daf0037a4bec73b",
 ] as const;
+const EXPECTED_RELEASED_SKILL_SUFFIX_SHA256 = [
+  "92d330aa85eb7269f161ea5ea3076a9fa665f903bb3884734b8daf3bc4639fe2",
+  "e5eb66ffa6422de1fc0b5f38c1c83f7986e26bbeed8775b6cf533acf8dae34d3",
+  "00794bd1d1674319852f7c5af9d835e29b1b5bd6a519dfd46227b240adfeb888",
+  "accc64f3b4f70dea6a3a6544be8a15264ee68897a5219e11105844b76271a049",
+  "b35dfca8a85759305b3738471beebfa9113d67d64f9228c2b78c0c166d1edefe",
+  "5656d152d2aac17d0f9df0647c2813fb67cbcadad71904a1093e52fc7cb2a1b2",
+  "5891a210809dcead729bc928778fd77dfabdfe13deba75ab86dcc351d126ca6c",
+  "c29746927e6e405bab98a97c222cba12c25948ce603637d93da6a807c8e05300",
+  "b56806a916e95d6fd63eab09ca71c1b2b5164aafa9dceab0acbdea67872d0b5b",
+  "7ad4cd6857308ffaf90b9f002511ff5c019c0bc93bb05f947b70656220c36485",
+  "65c3e251dfeef3099a8a6c079944454a6b5c08bbe08694db1e3728b632fa8719",
+  "c50c9638fdff4095c774bf546d65cb0ed5dedabeba60a74bfd15e5fe6802a7c5",
+  "013120426df8bcbf65ee4959bed8e97a33e599d504b06581bd20c4c45b9fc64e",
+  "ad4753fe9bb20b3a54187f20409a79019d8ffc35159831f9d10244fa774aa2a8",
+  "f979341f7e7e6ff1e368629d310eb739322d2c22c8ac6f4c51cfb076a11c3e1b",
+  "483f0bc914541fe528421ba9f85ec18f284607d0fbda3692d9441a1e1425124a",
+  "dd6439841f77b7325c891e1b34eeb4e34776a167cf14f7e253496682568d1381",
+  "113c26abf46cef9aeebe5bd265648d6a6a381e38196a8dc3b619abdcd257cb6c",
+] as const;
 
 test("pins the historical migration prefix and immutable v1 accounting SQL suffix", () => {
   const digest = (sql: string): string => createHash("sha256").update(sql).digest("hex");
   assert.equal(digest(analyticsMigrations.slice(0, RETAINED_ACCOUNTING_V1_MIGRATION_START).join("\n")), EXPECTED_HISTORIC_RETAINED_MIGRATION_PREFIX_SHA256);
   assert.deepEqual(analyticsMigrations.slice(RETAINED_ACCOUNTING_V1_MIGRATION_START, RETAINED_ACCOUNTING_V2_MIGRATION_START).map(digest), EXPECTED_RETAINED_ACCOUNTING_V1_SUFFIX_SHA256);
-  assert.deepEqual(analyticsMigrations.slice(RETAINED_ACCOUNTING_V2_MIGRATION_START).map(digest), EXPECTED_RETAINED_ACCOUNTING_V2_SUFFIX_SHA256);
+  assert.deepEqual(analyticsMigrations.slice(RETAINED_ACCOUNTING_V2_MIGRATION_START, SKILL_FACT_PROJECTION_MIGRATION_START).map(digest), EXPECTED_RETAINED_ACCOUNTING_V2_SUFFIX_SHA256);
   assert.equal(RETAINED_ACCOUNTING_V2_MIGRATION_START, 70, "all historical migration strings remain before the v2 suffix");
-  assert.equal(analyticsMigrations.length, 78, "v2 appends exactly eight migration strings");
+  assert.equal(SKILL_FACT_PROJECTION_MIGRATION_START, 78, "skill storage begins only after the immutable v2 suffix");
+  assert.deepEqual(analyticsMigrations.slice(87, 105).map(digest), EXPECTED_RELEASED_SKILL_SUFFIX_SHA256);
+  assert.ok(analyticsMigrations.length > SKILL_FACT_PROJECTION_MIGRATION_START, "skill storage is append-only after v2");
 });
 
 function retainedStageInput(runId = "retained-run"): Parameters<AnalyticsStore["openRetainedStage"]>[0] {
@@ -1232,7 +1256,7 @@ test("accounts direct supported material INSERT/UPDATE/DELETE with opaque and si
 test("requires explicit bounded bootstrap, fences advances, and preserves the historical migration prefix", (context) => {
   const db = new Database(":memory:");
   context.after(() => db.close());
-  assert.equal(RETAINED_ACCOUNTING_V2_MIGRATION_START, analyticsMigrations.length - 8);
+  assert.equal(RETAINED_ACCOUNTING_V2_MIGRATION_START, SKILL_FACT_PROJECTION_MIGRATION_START - 8);
   for (const migration of analyticsMigrations.slice(0, RETAINED_ACCOUNTING_V1_MIGRATION_START)) db.exec(migration);
   const input = retainedStageInput("accounting-bootstrap");
   const fact = retainedFact("accounting-bootstrap-fact", 7);
@@ -2926,4 +2950,30 @@ test("strict freshness waits on the same shared refresh flight", async () => {
   release?.();
   assert.equal((await first).snapshotUpdatedAt, 10_000);
   assert.equal((await second).snapshotUpdatedAt, 10_000);
+});
+
+test("migrates and atomically reconciles retained skill facts without touching tool facts or saved artifacts", (context) => {
+  const db = new Database(":memory:");
+  context.after(() => db.close());
+  for (const migration of analyticsMigrations.slice(0, SKILL_FACT_PROJECTION_MIGRATION_START)) db.exec(migration);
+  db.prepare(`INSERT INTO tool_execution_facts_v1 (source_event_id,thread_id,turn_id,sequence,project_id,provider_id,created_at_ms,capability_kind,capability_key,status,duration_ms,failed,error_class,error_signature) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run("tool-before-skills", "thread", null, 1, "project", "provider", 1, "tool", "bb:read", "completed", 1, 0, null, null);
+  db.prepare(`INSERT INTO analytics_bundles (id,version,title,source_json,created_at,updated_at) VALUES (?,?,?,?,?,?)`).run("saved", 1, "Saved", '{"query":"SELECT * FROM tool_execution_fact_v1"}', 1, 1);
+  for (const migration of analyticsMigrations.slice(SKILL_FACT_PROJECTION_MIGRATION_START)) db.exec(migration);
+  const store = new AnalyticsStore(db);
+  const epochs = store.initializeSkillProjectionCoverage(1_000);
+  const observedEpochs = store.openSkillCoverageEpoch({ id: "coverage-observed", startedAtMs: 1_100, lifecycle: "observed", activation: "observed" });
+  const revision = { skillId: "skill-a", name: "Skill A", skillMarkdownPath: "/skills/a/SKILL.md", sourceKind: "project", sourceId: "project", pluginId: null, catalogRevision: "a".repeat(64), skillMarkdownRevision: "b".repeat(64), treeRevision: "c".repeat(64) } as const;
+  const source = { id: "skill-event-1", threadId: "thread", seq: 2, createdAt: 1_200, type: "skill/observed" as const, observation: { schemaVersion: 1 as const, observationId: `skillobs_v1_${"d".repeat(64)}`, dedupeKey: `skillobs_dedupe_v1_${"e".repeat(64)}`, evidenceKind: "active-staged" as const, status: "supported" as const, captureTrigger: "active-staging", actor: { principalId: "principal" }, threadId: "thread", providerSessionId: "session", providerId: "claude-code", providerModel: null, providerTurnId: null, providerEventId: null, skill: revision, measurement: null, failure: null } };
+  const fact = projectSkillObservation(source, observedEpochs, { projectId: "project", environmentId: null, providerId: "claude-code" });
+  const digest = createHash("sha256").update(fact.sourceDigest).digest("hex");
+  store.commitSkillProjection({ observations: [fact], coverageEpochs: observedEpochs, completedAtMs: 1_300, sourceDigest: digest, projectionVersion: 1 });
+  assert.equal(store.readSkillProjectionState().generationId, 1);
+  assert.equal(store.listActiveSkillLifecycleFacts()[0]?.providerTurnId, null);
+  assert.equal(store.listActiveSkillLifecycleFacts()[0]?.revision.skillMarkdownRevision, "b".repeat(64));
+  assert.equal((db.prepare(`SELECT COUNT(*) AS count FROM tool_execution_facts_v1`).get() as { count: number }).count, 1);
+  assert.equal((db.prepare(`SELECT source_json FROM analytics_bundles WHERE id='saved'`).get() as { source_json: string }).source_json, '{"query":"SELECT * FROM tool_execution_fact_v1"}');
+  store.commitSkillProjection({ observations: [], coverageEpochs: observedEpochs, completedAtMs: 1_400, sourceDigest: digest, projectionVersion: 1 });
+  assert.equal(store.listActiveSkillLifecycleFacts().length, 0, "a full reconciled snapshot retracts deleted source observations atomically");
+  assert.equal(store.readSkillProjectionState().generationId, 2);
+  assert.deepEqual(epochs.map((item) => item.lifecycle), ["pre-instrumentation", "unknown"]);
 });

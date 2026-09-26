@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 
-const bridgePath = fileURLToPath(new URL("../../../../query-runtime/parameter-bridge.cjs", import.meta.url));
+const bridgePath = fileURLToPath(new URL("../../../probes/legacy-parameter-bridge.cjs", import.meta.url));
 const require = createRequire(import.meta.url);
 const bridge = require(bridgePath);
 const limits = Object.freeze({ maxAstNodes: 64, maxGeneratedBytes: 32 * 1024 });

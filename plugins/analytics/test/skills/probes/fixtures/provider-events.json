@@ -1,0 +1,122 @@
+{
+  "fixtureVersion": 1,
+  "claude": {
+    "provider": "claude-code",
+    "model": "claude-sonnet-4-5-20250929",
+    "readEvents": [
+      {
+        "toolName": "Read",
+        "toolUseId": "tool-read-skill-md",
+        "input": {
+          "file_path": "/tmp/bb-skills-observability/skills/release-notes/SKILL.md"
+        }
+      },
+      {
+        "toolName": "Read",
+        "toolUseId": "tool-read-subtree",
+        "input": {
+          "path": "/tmp/bb-skills-observability/skills/release-notes/references/current.md"
+        }
+      }
+    ],
+    "contextSnapshot": {
+      "messageType": "assistant",
+      "usage": {
+        "input_tokens": 120,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "output_tokens": 0
+      },
+      "modelUsage": {
+        "claude-sonnet-4-5-20250929": {
+          "contextWindow": 200000
+        }
+      }
+    },
+    "contextUsageReport": {
+      "totalTokens": 1000,
+      "rawMaxTokens": 200000,
+      "model": "claude-sonnet-4-5-20250929",
+      "isAutoCompactEnabled": true,
+      "autoCompactThreshold": 180000,
+      "categories": [
+        {
+          "name": "Skills",
+          "tokens": 22
+        },
+        {
+          "name": "Messages",
+          "tokens": 978
+        }
+      ],
+      "skills": {
+        "skillFrontmatter": [
+          {
+            "name": "release-notes",
+            "source": "project",
+            "tokens": 22
+          }
+        ]
+      }
+    },
+    "contextUsageCapture": {
+      "providerSessionId": "claude-session-observability",
+      "providerTurnId": null,
+      "triggers": [
+        "result",
+        "system:compact_boundary"
+      ],
+      "normalizedSemantics": {
+        "estimated": true,
+        "method": "provider-reported-context-usage-snapshot"
+      },
+      "collectorLimits": {
+        "timeoutMs": 5000,
+        "staleReadSuppressedByRevision": true,
+        "crossRestartOrPersistentDeduplication": "unsupported",
+        "captureCanLagTurn": true
+      }
+    },
+    "resultUsage": {
+      "usage": {
+        "input_tokens": 120,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "output_tokens": 31
+      },
+      "modelUsage": {
+        "claude-sonnet-4-5-20250929": {
+          "contextWindow": 200000
+        }
+      }
+    }
+  },
+  "codex": {
+    "provider": "codex",
+    "model": null,
+    "tokenUsageEvent": {
+      "method": "thread/tokenUsage/updated",
+      "params": {
+        "threadId": "thread-observability",
+        "turnId": "turn-observability",
+        "tokenUsage": {
+          "total": {
+            "totalTokens": 151,
+            "inputTokens": 120,
+            "cachedInputTokens": 0,
+            "outputTokens": 31,
+            "reasoningOutputTokens": 0
+          },
+          "last": {
+            "totalTokens": 151,
+            "inputTokens": 120,
+            "cachedInputTokens": 0,
+            "outputTokens": 31,
+            "reasoningOutputTokens": 0
+          },
+          "modelContextWindow": 272000
+        }
+      }
+    }
+  }
+}

@@ -21,7 +21,7 @@ import {
 } from "../../../../analytics-model.ts";
 import type {
   ExecutionBackedDashboardProps,
-} from "../../../../app.tsx";
+} from "../../../../frontend/analytics-panel.tsx";
 import { echarts } from "../../../../echarts-registry.ts";
 import type { StaleEventRevision } from "./stale-event.browser-data.ts";
 
@@ -711,7 +711,7 @@ export async function mountStaleEventFixture(
   const client = createClient(initial, referenceResponse);
   try {
     installTestPluginRuntime();
-    const module = await import("../../../../app.tsx");
+    const module = await import("../../../../frontend/analytics-panel.tsx");
     const Component = module.ExecutionBackedDashboard;
     const TestExecutionSlot = (props: ExecutionBackedDashboardProps) => createElement(Component, props);
     const propsFor = (revision: StaleEventRevision): ExecutionBackedDashboardProps => ({

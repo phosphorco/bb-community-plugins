@@ -7,7 +7,6 @@ import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 
 import {
-  DEFAULT_LOADER_MAX_AGE_MS,
   analyticsBundleSchema,
   parseBundleSource,
   validateBundleQueries,
@@ -15,96 +14,92 @@ import {
 } from "./bundle-contract.ts";
 import { BUILTIN_BUNDLES, getBuiltinBundle } from "./builtin-bundles.ts";
 import { verifyAnalyticsBundle } from "./analytics-verifier.ts";
-import { collectTurnTimings, FACT_PROJECTION_VERSION, projectToolExecutionFact, type ToolExecutionFact } from "./fact-projection.ts";
 import { renderAnalyticsReference, type CreateAnalyticsReference } from "./analytics-reference.ts";
 import { rpcContract } from "./rpc-contract.ts";
+import { MAX_SKILL_QUERY_CATALOG_ROWS, MAX_SKILL_QUERY_RAW_ROWS, skillQueryFilterSchema, skillQueryResultSchema, skillRawContributorResultSchema, type SkillQueryFilter } from "./skill-query-schema.ts";
+import { SkillQueryService, type ForkFreeSkillQueryInput } from "./skill-query-service.ts";
+import { RetainedQueryCache } from "./retained-query-cache.ts";
 import {
-  AnalyticsRefreshCoordinator,
   AnalyticsStore,
   analyticsMigrations,
-  type AnalyticsThreadReconciliation,
 } from "./store.ts";
 
-const INDEX_THREAD_CANDIDATE_LIMIT = 200;
-const INDEX_THREAD_LIMIT = 80;
-/** BB's public thread-events endpoint permits at most this many per request. */
-export const EVENT_PAGE_SIZE = 100;
-/** Analytics intentionally retains a newest-first window of this size per thread. */
-export const EVENTS_PER_THREAD_LIMIT = 500;
-const INDEX_CONCURRENCY = 4;
-const FULL_RECONCILIATION_INTERVAL_MS = 24 * 60 * 60_000;
-const DEFAULT_MAX_AGE_MS = DEFAULT_LOADER_MAX_AGE_MS;
 const require = createRequire(import.meta.url);
 const DUCKDB_WASM_PATH = require.resolve("@duckdb/duckdb-wasm/dist/duckdb-mvp.wasm");
 const DUCKDB_WORKER_PATH = require.resolve("@duckdb/duckdb-wasm/dist/duckdb-browser-mvp.worker.js");
 const DUCKDB_EH_WASM_PATH = require.resolve("@duckdb/duckdb-wasm/dist/duckdb-eh.wasm");
 const DUCKDB_EH_WORKER_PATH = require.resolve("@duckdb/duckdb-wasm/dist/duckdb-browser-eh.worker.js");
 
-type ListedThread = Awaited<ReturnType<BbPluginApi["sdk"]["threads"]["list"]>>[number];
-type ThreadEvent = Awaited<ReturnType<BbPluginApi["sdk"]["threads"]["events"]["list"]>>[number];
-
-const ANALYTICS_EVENT_TYPES = ["item/completed", "turn/started", "turn/completed"] as const;
-
-/**
- * Read Analytics' bounded newest-first window without exceeding BB's per-call
- * API ceiling. `beforeSeq` is exclusive, so carrying the lowest observed
- * sequence into the next descending page neither skips nor duplicates events.
- */
-export async function listRecentThreadEvents(
-  events: Pick<BbPluginApi["sdk"]["threads"]["events"], "list">,
-  input: { threadId: string; signal: AbortSignal },
-): Promise<ThreadEvent[]> {
-  const collected: ThreadEvent[] = [];
-  let beforeSeq: string | undefined;
-
-  while (collected.length < EVENTS_PER_THREAD_LIMIT) {
-    const page = await events.list({
-      threadId: input.threadId,
-      types: ANALYTICS_EVENT_TYPES,
-      order: "desc",
-      limit: String(EVENT_PAGE_SIZE),
-      ...(beforeSeq === undefined ? {} : { beforeSeq }),
-      signal: input.signal,
-    });
-    collected.push(...page);
-    if (page.length < EVENT_PAGE_SIZE) break;
-    const lowestSeq = page.reduce<number | null>(
-      (lowest, event) => lowest == null ? event.seq : Math.min(lowest, event.seq),
-      null,
-    );
-    if (lowestSeq == null) break;
-    beforeSeq = String(lowestSeq);
-  }
-
-  return collected;
-}
-
 function errorText(cause: unknown): string {
   return cause instanceof Error ? cause.message : String(cause);
+}
+
+function forkFreeQueryInput(db: ReturnType<BbPluginApi["storage"]["database"]>, untrustedFilters: SkillQueryFilter): ForkFreeSkillQueryInput {
+  const filters = skillQueryFilterSchema.parse(untrustedFilters);
+  const capturePredicates = ["c.completeness='complete'"];
+  const captureParameters: unknown[] = [];
+  if (filters.projectId !== undefined) { capturePredicates.push("c.project_id=?"); captureParameters.push(filters.projectId); }
+  if (filters.environmentId !== undefined) { capturePredicates.push("c.environment_id IS ?"); captureParameters.push(filters.environmentId); }
+  const entryPredicates: string[] = [];
+  const entryParameters: unknown[] = [];
+  if (filters.providerId !== undefined) { entryPredicates.push("e.provider_id IS ?"); entryParameters.push(filters.providerId); }
+  if (filters.skillId !== undefined) { entryPredicates.push("e.skill_id=?"); entryParameters.push(filters.skillId); }
+  if (filters.contentRevision !== undefined) { entryPredicates.push("e.content_revision=?"); entryParameters.push(filters.contentRevision); }
+  const catalogCte = `WITH latest AS (
+      SELECT c.project_id,c.environment_id,MAX(c.captured_at_ms) captured_at_ms
+      FROM analytics_fork_free_catalog_captures_v1 c WHERE ${capturePredicates.join(" AND ")}
+      GROUP BY c.project_id,c.environment_id
+    ), ranked AS (
+      SELECT c.capture_id,c.captured_at_ms,c.project_id,c.environment_id,e.provider_id,e.skill_id,e.name,e.scope,e.plugin_id,e.file_path,e.content_revision,e.content_bytes,json_array_length(e.registered_paths_json) registered_path_count,
+        ROW_NUMBER() OVER (PARTITION BY e.skill_id,COALESCE(e.content_revision,'') ORDER BY c.captured_at_ms DESC,c.capture_id DESC) rank
+      FROM analytics_fork_free_catalog_captures_v1 c
+      JOIN latest l ON l.project_id=c.project_id AND l.environment_id IS c.environment_id AND l.captured_at_ms=c.captured_at_ms
+      JOIN analytics_fork_free_catalog_entries_v1 e ON e.capture_id=c.capture_id
+      WHERE c.completeness='complete'${entryPredicates.length === 0 ? "" : ` AND ${entryPredicates.join(" AND ")}`}
+    )`;
+  const catalogParameters = [...captureParameters, ...entryParameters];
+  const currentCatalogTotal = Number((db.prepare(`${catalogCte} SELECT COUNT(*) count FROM ranked WHERE rank=1`).get(...catalogParameters) as { count: number }).count);
+  const rows = db.prepare(`${catalogCte} SELECT * FROM ranked WHERE rank=1 ORDER BY name,skill_id,content_revision LIMIT ?`).all(...catalogParameters, MAX_SKILL_QUERY_CATALOG_ROWS) as Array<Record<string, unknown>>;
+  const currentCatalog = rows.map((row) => ({ snapshotId: String(row.capture_id), capturedAtMs: Number(row.captured_at_ms), providerId: row.provider_id === null ? null : String(row.provider_id), projectId: String(row.project_id), environmentId: row.environment_id === null ? null : String(row.environment_id), skillId: String(row.skill_id), name: String(row.name), scope: String(row.scope), pluginId: row.plugin_id === null ? null : String(row.plugin_id), filePath: String(row.file_path), contentRevision: row.content_revision === null ? null : String(row.content_revision), contentBytes: row.content_bytes === null ? null : Number(row.content_bytes), registeredPathCount: Number(row.registered_path_count) }));
+
+  const sourcePredicates = ["s.created_at_ms>=?", "s.created_at_ms<=?"];
+  const sourceParameters: unknown[] = [filters.startMs, filters.endMs];
+  if (filters.providerId !== undefined) { sourcePredicates.push("s.provider_id IS ?"); sourceParameters.push(filters.providerId); }
+  if (filters.projectId !== undefined) { sourcePredicates.push("s.project_id=?"); sourceParameters.push(filters.projectId); }
+  if (filters.environmentId !== undefined) { sourcePredicates.push("s.environment_id IS ?"); sourceParameters.push(filters.environmentId); }
+  // Public prompt/command evidence has no historical revision attribution.
+  if (filters.contentRevision !== undefined) sourcePredicates.push("0");
+  const evidencePreviewLimit = Math.floor(MAX_SKILL_QUERY_RAW_ROWS / 2);
+  const mentionWhere = ["m.active_generation>0", ...sourcePredicates, ...(filters.skillId === undefined ? [] : ["m.skill_id=?"])];
+  const mentionParameters = [...sourceParameters, ...(filters.skillId === undefined ? [] : [filters.skillId])];
+  const promptMentionTotal = Number((db.prepare(`SELECT COUNT(*) count FROM analytics_fork_free_prompt_mentions_v1 m JOIN analytics_fork_free_source_events_v1 s ON s.source_event_id=m.source_event_id WHERE ${mentionWhere.join(" AND ")}`).get(...mentionParameters) as { count: number }).count);
+  const mentions = (db.prepare(`SELECT m.source_event_id,m.skill_id,m.mention,s.thread_id,s.source_sequence,s.created_at_ms,s.provider_id,s.project_id,s.environment_id FROM analytics_fork_free_prompt_mentions_v1 m JOIN analytics_fork_free_source_events_v1 s ON s.source_event_id=m.source_event_id WHERE ${mentionWhere.join(" AND ")} ORDER BY s.created_at_ms DESC,m.source_event_id DESC LIMIT ?`).all(...mentionParameters, evidencePreviewLimit) as Array<Record<string, unknown>>).map((row) => ({ id: `mention:${row.source_event_id}:${row.skill_id}:${row.mention}`, observedAtMs: Number(row.created_at_ms), sessionId: null, threadId: String(row.thread_id), eventId: String(row.source_event_id), eventSeq: Number(row.source_sequence), providerId: String(row.provider_id), projectId: String(row.project_id), environmentId: row.environment_id === null ? null : String(row.environment_id), skillId: String(row.skill_id), contentRevision: null, kind: "prompt-mention" as const, mention: String(row.mention), historicalRevision: null }));
+  const candidateWhere = ["c.active_generation>0", ...sourcePredicates, ...(filters.skillId === undefined ? [] : ["c.skill_id=?"])];
+  const candidateParameters = [...sourceParameters, ...(filters.skillId === undefined ? [] : [filters.skillId])];
+  const commandCandidateTotal = Number((db.prepare(`SELECT COUNT(*) count FROM analytics_fork_free_command_candidates_v1 c JOIN analytics_fork_free_source_events_v1 s ON s.source_event_id=c.source_started_event_id WHERE ${candidateWhere.join(" AND ")}`).get(...candidateParameters) as { count: number }).count);
+  const remainingEvidencePreview = MAX_SKILL_QUERY_RAW_ROWS - mentions.length;
+  const candidates = (db.prepare(`SELECT c.*,s.created_at_ms,s.provider_id,s.project_id,s.environment_id FROM analytics_fork_free_command_candidates_v1 c JOIN analytics_fork_free_source_events_v1 s ON s.source_event_id=c.source_started_event_id WHERE ${candidateWhere.join(" AND ")} ORDER BY s.created_at_ms DESC,c.source_started_event_id DESC,c.registered_path LIMIT ?`).all(...candidateParameters, remainingEvidencePreview) as Array<Record<string, unknown>>).map((row) => ({ id: `command:${row.source_started_event_id}:${row.skill_id}:${row.registered_path}`, observedAtMs: Number(row.created_at_ms), sessionId: null, threadId: String(row.thread_id), eventId: String(row.source_started_event_id), eventSeq: Number(row.start_sequence), providerId: String(row.provider_id), projectId: String(row.project_id), environmentId: row.environment_id === null ? null : String(row.environment_id), skillId: String(row.skill_id), contentRevision: null, kind: "registered-path-command-candidate" as const, registeredPath: String(row.registered_path), itemId: String(row.item_id), startEventId: String(row.source_started_event_id), completedEventId: row.source_completed_event_id === null ? null : String(row.source_completed_event_id), executionStatus: String(row.execution_status) as "pending" | "completed" | "failed" | "declined" | "incomplete", exitCode: row.exit_code === null ? null : Number(row.exit_code), outputBytes: row.output_bytes === null ? null : Number(row.output_bytes), outputTruncated: row.output_truncated === null ? null : Number(row.output_truncated) === 1, shellWrapped: Number(row.command_shell_wrapped) === 1, joinedCommand: Number(row.command_joined) === 1, historicalRevision: null }));
+  const catalogDetails = currentCatalog.map((row) => ({ id: `catalog:${row.snapshotId}:${row.skillId}`, observedAtMs: row.capturedAtMs, sessionId: null, threadId: `catalog:${row.snapshotId}`, eventId: `catalog:${row.snapshotId}`, eventSeq: 1, providerId: row.providerId, projectId: row.projectId, environmentId: row.environmentId, skillId: row.skillId, contentRevision: row.contentRevision, kind: "catalog-snapshot" as const, snapshotId: row.snapshotId, completeness: "complete" as const }));
+  const rawRows = [...mentions, ...candidates];
+  const latestComplete = currentCatalogTotal > 0;
+  return { currentCatalog, currentCatalogTotal, rawRows, rawEvidenceTotal: promptMentionTotal + commandCandidateTotal, promptMentionTotal, commandCandidateTotal, detailRows: [...catalogDetails, ...rawRows], snapshotComplete: latestComplete, snapshotExplanation: latestComplete ? "Latest complete BB-visible current catalog snapshot retained." : "No complete BB-visible current catalog snapshot has been retained." };
 }
 
 function bundleSummary(bundle: AnalyticsBundle, builtin: boolean) {
   return { id: bundle.id, title: bundle.title, description: bundle.description, builtin };
 }
 
-function maxAgeFor(bundle: AnalyticsBundle | null): number {
-  const candidate = (bundle?.loader as AnalyticsBundle["loader"] & { maxAgeMs?: unknown }).maxAgeMs;
-  return typeof candidate === "number" && Number.isFinite(candidate) && candidate >= 0
-    ? Math.trunc(candidate)
-    : DEFAULT_MAX_AGE_MS;
-}
-
-function servesStaleWhileRefresh(bundle: AnalyticsBundle | null): boolean {
-  return bundle?.loader.staleWhileRefresh ?? true;
-}
-
 export default function analyticsPlugin(bb: BbPluginApi) {
   const db = bb.storage.database();
   bb.storage.migrate(db, [...analyticsMigrations]);
   const store = new AnalyticsStore(db);
-  let activeRefreshController: AbortController | null = null;
-  let disposed = false;
-
+  const skillReadCache = new RetainedQueryCache<ForkFreeSkillQueryInput>();
+  const skillQueries = new SkillQueryService((filters) => {
+    const state = db.prepare("SELECT generation_id FROM analytics_fork_free_skill_projection_state_v1 WHERE singleton=1").get() as { generation_id: number };
+    const retained = skillReadCache.read(String(state.generation_id), skillQueryFilterSchema.parse(filters), () => forkFreeQueryInput(db, filters));
+    const limits = " Skills capture is paused during migration to isolated analytics. These are retained observations, not live data. Refresh is unavailable until the platform collector is qualified.";
+    return { ...retained, snapshotExplanation: `${retained.snapshotExplanation}${limits}` };
+  });
   const allBundles = () => [
     ...BUILTIN_BUNDLES.map((bundle) => bundleSummary(bundle, true)),
     ...store.listBundles().map((bundle) => bundleSummary(bundle, false)),
@@ -194,180 +189,6 @@ export default function analyticsPlugin(bb: BbPluginApi) {
     return capsule;
   };
 
-  const listCandidates = async (signal: AbortSignal): Promise<ListedThread[]> => {
-    const threads = await bb.sdk.threads.list({
-      archived: false,
-      includeHidden: true,
-      limit: INDEX_THREAD_CANDIDATE_LIMIT,
-      signal,
-    });
-    return [...threads];
-  };
-
-  const runRefresh = async (force: boolean): Promise<void> => {
-    const controller = new AbortController();
-    activeRefreshController = controller;
-    const signal = controller.signal;
-    const startedAt = Date.now();
-    const profileStartedAt = performance.now();
-    let candidateListMs = 0;
-    let eventFetchMs = 0;
-    let projectionMs = 0;
-    let eventsRead = 0;
-    store.markIndexing(startedAt);
-    bb.realtime.publish("analytics-index-changed", store.getIndexState());
-    try {
-      const prior = new Map(store.listThreadStates().map((thread) => [thread.threadId, thread]));
-      const indexState = store.getIndexState();
-      const shouldReconcileFully = force || indexState.factProjectionVersion < FACT_PROJECTION_VERSION
-        || indexState.lastFullReconciliationAt == null
-        || startedAt - (indexState.lastFullReconciliationAt ?? 0) >= FULL_RECONCILIATION_INTERVAL_MS;
-      const candidateStartedAt = performance.now();
-      const listed = await listCandidates(signal);
-      candidateListMs = performance.now() - candidateStartedAt;
-      const selected = listed
-        .sort((left, right) => right.updatedAt - left.updatedAt)
-        .slice(0, INDEX_THREAD_LIMIT);
-      const reconciliations: AnalyticsThreadReconciliation[] = [];
-      const pending = selected.filter((thread) =>
-        force || shouldReconcileFully || prior.get(thread.id)?.updatedAt !== thread.updatedAt,
-      );
-
-      for (let offset = 0; offset < pending.length && !signal.aborted; offset += INDEX_CONCURRENCY) {
-        const batch = pending.slice(offset, offset + INDEX_CONCURRENCY);
-        const fetchStartedAt = performance.now();
-        const results = await Promise.allSettled(batch.map((thread) => listRecentThreadEvents(
-          bb.sdk.threads.events,
-          { threadId: thread.id, signal },
-        )));
-        eventFetchMs += performance.now() - fetchStartedAt;
-        const projectionStartedAt = performance.now();
-        for (let index = 0; index < results.length; index += 1) {
-          const result = results[index];
-          const thread = batch[index] as ListedThread | undefined;
-          if (thread == null) continue;
-          if (result?.status !== "fulfilled") {
-            const message = result?.status === "rejected" ? errorText(result.reason) : "Analytics could not read this thread.";
-            bb.log.warn(`Analytics could not inspect ${thread.id}: ${message}`);
-            reconciliations.push({
-              threadId: thread.id,
-              projectId: thread.projectId,
-              providerId: thread.providerId,
-              updatedAt: thread.updatedAt,
-              outcome: "failed",
-              error: message,
-            });
-            continue;
-          }
-          const events = result.value;
-          eventsRead += events.length;
-          const facts: ToolExecutionFact[] = [];
-          const turnTimings = collectTurnTimings(events);
-          for (const event of events) {
-            const fact = projectToolExecutionFact(event, {
-              projectId: thread.projectId,
-              providerId: thread.providerId,
-            }, turnTimings);
-            if (fact != null) facts.push(fact);
-          }
-          reconciliations.push({
-            threadId: thread.id,
-            projectId: thread.projectId,
-            providerId: thread.providerId,
-            updatedAt: thread.updatedAt,
-            outcome: "loaded",
-            facts,
-            maxObservedSeq: events.reduce<number | null>((max, event) => max == null ? event.seq : Math.max(max, event.seq), null),
-            truncated: events.length >= EVENTS_PER_THREAD_LIMIT,
-          });
-        }
-        projectionMs += performance.now() - projectionStartedAt;
-      }
-      for (const thread of selected) {
-        if (reconciliations.some((item) => item.threadId === thread.id)) continue;
-        reconciliations.push({
-          threadId: thread.id,
-          projectId: thread.projectId,
-          providerId: thread.providerId,
-          updatedAt: thread.updatedAt,
-          outcome: "unchanged",
-        });
-      }
-      if (signal.aborted) return;
-
-      const errors = reconciliations.filter((item) => item.outcome === "failed");
-      const priorErrors = selected
-        .map((thread) => prior.get(thread.id)?.lastError)
-        .find((error): error is string => error != null);
-      const factCount = reconciliations.reduce((total, item) => {
-        if (item.outcome === "loaded") return total + (item.facts?.length ?? 0);
-        return total + (prior.get(item.threadId)?.factCount ?? 0);
-      }, 0);
-      const truncatedThreads = reconciliations.reduce((total, item) => {
-        const truncated = item.outcome === "loaded"
-          ? item.truncated
-          : prior.get(item.threadId)?.truncated;
-        return total + (truncated ? 1 : 0);
-      }, 0);
-      const selectedIds = new Set(selected.map((thread) => thread.id));
-      const removedFacts = [...prior.values()].some((thread) =>
-        !selectedIds.has(thread.threadId) && thread.factCount > 0,
-      );
-      const factsChanged = removedFacts || reconciliations.some((item) => item.outcome === "loaded");
-
-      const completedAt = Date.now();
-      const publishStartedAt = performance.now();
-      store.commitSnapshot({
-        completedAt,
-        durationMs: completedAt - startedAt,
-        selectedThreadIds: selected.map((thread) => thread.id),
-        threads: reconciliations,
-        loadedThreads: selected.length - errors.filter((item) => prior.get(item.threadId) == null).length,
-        factCount,
-        truncatedThreads,
-        degraded: errors.length > 0 || priorErrors != null,
-        lastError: errors[0]?.error ?? priorErrors ?? null,
-        factsChanged,
-        lastFullReconciliationAt: shouldReconcileFully ? completedAt : undefined,
-        factProjectionVersion: shouldReconcileFully && errors.length === 0 ? FACT_PROJECTION_VERSION : undefined,
-      });
-      const publishMs = performance.now() - publishStartedAt;
-      const publishedState = store.getIndexState();
-      bb.realtime.publish("analytics-index-changed", publishedState);
-      bb.log.info([
-        "Analytics refresh complete",
-        `generation=${publishedState.generationId}`,
-        `totalMs=${Math.round(performance.now() - profileStartedAt)}`,
-        `candidateListMs=${Math.round(candidateListMs)}`,
-        `eventFetchMs=${Math.round(eventFetchMs)}`,
-        `projectionMs=${Math.round(projectionMs)}`,
-        `publishMs=${Math.round(publishMs)}`,
-        `candidates=${listed.length}`,
-        `selected=${selected.length}`,
-        `eventReads=${pending.length}`,
-        `events=${eventsRead}`,
-        `facts=${factCount}`,
-        `full=${shouldReconcileFully}`,
-        `force=${force}`,
-      ].join(" "));
-    } catch (cause) {
-      if (!signal.aborted && !disposed) {
-        store.markError(errorText(cause));
-        bb.realtime.publish("analytics-index-changed", store.getIndexState());
-        bb.log.error(`Analytics indexing failed: ${errorText(cause)}`);
-      }
-    } finally {
-      if (activeRefreshController === controller) activeRefreshController = null;
-    }
-  };
-
-  const coordinator = new AnalyticsRefreshCoordinator(
-    () => store.getIndexState(),
-    runRefresh,
-  );
-
-  const requestRefresh = () => coordinator.getOrRefresh(DEFAULT_MAX_AGE_MS, true);
-
   bb.http.route("GET", "/duckdb-mvp.wasm", async () => new Response(await readFile(DUCKDB_WASM_PATH), {
     headers: {
       "content-type": "application/wasm",
@@ -395,13 +216,7 @@ export default function analyticsPlugin(bb: BbPluginApi) {
   bb.http.route("GET", "/facts.ndjson", async (context) => {
     const requestedRange = Number(new URL(context.req.url).searchParams.get("rangeDays") ?? "14");
     const rangeDays = Number.isInteger(requestedRange) ? Math.min(90, Math.max(1, requestedRange)) : 14;
-    const bundleId = new URL(context.req.url).searchParams.get("bundleId");
-    const selectedBundle = bundleId == null ? null : bundleById(bundleId)?.bundle ?? null;
-    if (servesStaleWhileRefresh(selectedBundle)) {
-      coordinator.getOrRefresh(maxAgeFor(selectedBundle), false);
-    } else {
-      await coordinator.waitForRefresh(maxAgeFor(selectedBundle), false);
-    }
+    // Reads never admit source work, including cold and stale exports.
     const snapshot = store.snapshotFactsAsNdjson(rangeDays);
     const headers = new Headers({
       "content-type": "application/x-ndjson; charset=utf-8",
@@ -419,24 +234,18 @@ export default function analyticsPlugin(bb: BbPluginApi) {
 
   bb.rpc.register(rpcContract, {
     catalog() {
-      coordinator.getOrRefresh(DEFAULT_MAX_AGE_MS, false);
       return { bundles: allBundles(), index: store.getIndexState() };
     },
     async getBundle({ bundleId }) {
       const selected = bundleById(bundleId);
       if (selected == null) throw new Error(`Unknown analytics bundle: ${bundleId}`);
-      if (servesStaleWhileRefresh(selected.bundle)) {
-        coordinator.getOrRefresh(maxAgeFor(selected.bundle), false);
-      } else {
-        await coordinator.waitForRefresh(maxAgeFor(selected.bundle), false);
-      }
       return {
         bundle: selected.bundle,
         builtin: selected.builtin,
       };
     },
     requestRefresh() {
-      return requestRefresh();
+      throw Object.assign(new Error("Analytics source refresh is unavailable until the isolated platform collector is qualified."), { code: "isolation-unavailable" });
     },
     async saveBundle({ source }) {
       return saveBundle(parseBundleSource(source));
@@ -449,6 +258,13 @@ export default function analyticsPlugin(bb: BbPluginApi) {
     },
     createReference(input) {
       return createReference(input);
+    },
+    skillsQuery(input) { return skillQueryResultSchema.parse(skillQueries.query(input)); },
+    refreshSkills() {
+      return { status: "failed" as const, message: "Analytics source refresh is unavailable until the isolated platform collector is qualified." };
+    },
+    skillsRawContributors({ filters, ids }) {
+      return skillRawContributorResultSchema.parse([...skillQueries.rawContributors(filters, ids)]);
     },
   });
 
@@ -468,7 +284,8 @@ export default function analyticsPlugin(bb: BbPluginApi) {
       { name: "bundles", summary: "List dashboard bundles.", usage: "bb analytics bundles" },
       { name: "install", summary: "Validate and install a bundle JSON file.", usage: "bb analytics install <file.json>" },
       { name: "remove", summary: "Remove a user-authored bundle.", usage: "bb analytics remove <bundle-id>" },
-      { name: "refresh", summary: "Request a background capability reindex.", usage: "bb analytics refresh" },
+      { name: "refresh", summary: "Unavailable until isolated source collection is qualified.", usage: "bb analytics refresh" },
+      { name: "refresh-skills", summary: "Unavailable until isolated source collection is qualified.", usage: "bb analytics refresh-skills <project-id> <environment-id|none>" },
       { name: "verify", summary: "Compile dashboard queries against the typed DuckDB fact contract.", usage: "bb analytics verify [bundle-id]" },
     ],
     async run(argv, context) {
@@ -476,9 +293,8 @@ export default function analyticsPlugin(bb: BbPluginApi) {
       if (command === "bundles") {
         return { exitCode: 0, stdout: `${allBundles().map((bundle) => `${bundle.id}\t${bundle.builtin ? "built-in" : "user"}\t${bundle.title}`).join("\n")}\n` };
       }
-      if (command === "refresh") {
-        requestRefresh();
-        return { exitCode: 0, stdout: "Analytics refresh requested.\n" };
+      if (command === "refresh" || command === "refresh-skills") {
+        return { exitCode: 1, stderr: "isolation-unavailable: Analytics source refresh is unavailable until the isolated platform collector is qualified.\n" };
       }
       if (command === "verify") {
         try {
@@ -506,7 +322,7 @@ export default function analyticsPlugin(bb: BbPluginApi) {
         if (deleted) bb.realtime.publish("analytics-bundles-changed", { id: argument, action: "deleted" });
         return { exitCode: deleted ? 0 : 1, stdout: deleted ? `Removed ${argument}.\n` : undefined, stderr: deleted ? undefined : `Unknown bundle: ${argument}\n` };
       }
-      return { exitCode: 1, stderr: "Usage: bb analytics <bundles|install <file.json>|remove <bundle-id>|refresh|verify [bundle-id]>\n" };
+      return { exitCode: 1, stderr: "Usage: bb analytics <bundles|install <file.json>|remove <bundle-id>|refresh|refresh-skills <project-id> <environment-id|none>|verify [bundle-id]>\n" };
     },
   });
 
@@ -568,13 +384,8 @@ export default function analyticsPlugin(bb: BbPluginApi) {
     : {
         tools: ["save_analytics_bundle", "delete_analytics_bundle", "read_analytics_reference", "verify_analytics_bundle"],
         skills: [],
-        instructions: "Analytics dashboard bundles are declarative JSON: one recent-capability loader, one or more bounded read-only DuckDB SELECT queries over tool_execution_fact_v1, and metric/bar/line/table visualizations. Prefer saving a bundle only when the user asks for a reusable dashboard. Resolve pasted analytics-ref:v1 tokens with read_analytics_reference before answering about a referenced chart datum.",
+        instructions: "Analytics additions must use declarative dashboard bundles: one shared recent-capability loader, bounded read-only queries over curated facts, and shared metric/bar/line/table renderers. Never add feature-owned lifecycle handlers, host SDK scans, database connections, refresh timers, worker pools, or eager frontend dependencies. A new operational data source is a platform capability change, not a dashboard extension. Prefer saving a bundle only when the user asks for a reusable dashboard. Resolve pasted analytics-ref:v1 tokens with read_analytics_reference before answering about a referenced chart datum.",
       });
 
-  bb.onDispose(() => {
-    disposed = true;
-    activeRefreshController?.abort();
-    activeRefreshController = null;
-  });
 
 }

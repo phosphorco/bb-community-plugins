@@ -1,3 +1,4 @@
+// Offline-only legacy parameter bridge witness.
 const { createHash } = require("node:crypto");
 const { readFileSync } = require("node:fs");
 

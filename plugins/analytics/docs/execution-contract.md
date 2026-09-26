@@ -1,5 +1,23 @@
 # Analytics execution contract
 
+## Status: historical probe contract, not production isolation
+
+The [performance isolation ADR](../../../../docs/adrs/2026-09-analytics-performance-isolation.md)
+supersedes the runtime, source-handoff, and refresh recommendations below.
+`createQueryRuntime` and the plugin-owned Node child described here are
+probe-only; their SQL policy and cooperative limits are not an approved live
+execution path. In particular, do not wire demand-driven source extraction or
+database handles into ordinary analytics requests.
+
+The replacement seams are `snapshot-provider.ts` and `execution-service.ts`;
+their presence alone does not prove production enforcement. Integration requires
+a qualified platform-owned bounded delta feed and verified pre-execution OS
+confinement, aggregate resource limits, and confirmed child-exit cleanup.
+Missing controls must fail closed. See `docs/isolation/collector/` and
+`docs/isolation/execution/` for current contracts and qualification gaps.
+Analytics remains disabled until those requirements are met. The remainder of
+this document preserves historical contract/probe details, not rollout approval.
+
 execution-contract.ts defines the additive v2 boundary for the Analytics
 server, isolated worker, reference service, and their tests. It is not a
 client RPC contract and does not change current consumers.

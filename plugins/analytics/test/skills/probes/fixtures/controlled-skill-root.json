@@ -1,0 +1,42 @@
+{
+  "fixtureVersion": 1,
+  "root": {
+    "id": "global-skills:observability",
+    "path": "/tmp/bb-skills-observability/skills",
+    "skills": [
+      {
+        "name": "release-notes",
+        "description": "Summarize a release from its checked-in notes."
+      }
+    ]
+  },
+  "files": {
+    "release-notes/SKILL.md": "---\nname: release-notes\ndescription: Summarize a release from its checked-in notes.\n---\n\n# Release notes\n\nUse references/current.md before answering.\n",
+    "release-notes/references/current.md": "Current release: observability-probe fixture.\n"
+  },
+  "resolvedCatalog": [
+    {
+      "rootId": "global-skills:observability",
+      "skillName": "release-notes",
+      "skillRelativePath": "release-notes/SKILL.md",
+      "treeRelativePath": "release-notes"
+    }
+  ],
+  "expectedBridgeRequest": {
+    "method": "skills/configure",
+    "params": {
+      "roots": [
+        {
+          "id": "global-skills:observability",
+          "path": "/tmp/bb-skills-observability/skills",
+          "skills": [
+            {
+              "name": "release-notes",
+              "description": "Summarize a release from its checked-in notes."
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

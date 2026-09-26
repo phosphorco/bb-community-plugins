@@ -13,9 +13,71 @@ import type {
   AnalyticsCreateExecutionReferenceResponse,
   AnalyticsExecuteQueryResponse,
 } from "./rpc-contract.ts";
+import type { SkillsQueryResponse, SkillsRawContributorsResponse } from "./rpc-contract.ts";
+import type { SkillQueryFilter } from "./skill-query-schema.ts";
+import type { SkillsContributor, SkillsDashboardData } from "./skills-dashboard/skills-dashboard.tsx";
 
 export type AnalyticsScalar = string | number | boolean | null;
 export type AnalyticsRow = Readonly<Record<string, AnalyticsScalar>>;
+
+export function skillContributor(row: SkillsRawContributorsResponse[number]): SkillsContributor {
+  return {
+    id: row.id,
+    sessionId: row.sessionId,
+    threadId: row.threadId,
+    eventId: row.eventId,
+    eventSeq: row.eventSeq,
+    kind: row.kind,
+    path: row.kind === "registered-path-command-candidate" ? row.registeredPath : null,
+    outcome: row.kind === "registered-path-command-candidate" ? row.executionStatus : null,
+    ...(row.kind === "registered-path-command-candidate" ? { shellWrapped: row.shellWrapped, joinedCommand: row.joinedCommand } : {}),
+  };
+}
+
+/** Converts the Zod-validated retained query response into the isolated UI contract. */
+export function skillsDashboardData(
+  result: SkillsQueryResponse,
+  loading = false,
+  error: string | null = null,
+): SkillsDashboardData {
+  return {
+    filters: { startMs: result.filters.startMs, endMs: result.filters.endMs, provider: result.filters.providerId, project: result.filters.projectId, environment: result.filters.environmentId, skillId: result.filters.skillId, revision: result.filters.contentRevision },
+    filterOptions: {
+      provider: [...new Set(result.rawRows.map((row) => row.providerId).filter((value): value is string => value !== null))],
+      project: [...new Set(result.rawRows.map((row) => row.projectId))], environment: [...new Set(result.rawRows.map((row) => row.environmentId).filter((value): value is string => value !== null))], skillId: [...new Set(result.currentCatalog.map((row) => row.skillId))],
+    },
+    loading,
+    error,
+    exactCatalogSnapshot: result.coverage.exactCatalogSnapshot, snapshotExplanation: result.coverage.snapshotExplanation,
+    resultBounds: result.bounds,
+    currentCatalog: result.currentCatalog.map((row) => ({ key: `${row.snapshotId}:${row.skillId}`, skillId: row.skillId, name: row.name, scope: row.scope, path: row.filePath, revision: row.contentRevision, bytes: row.contentBytes, registeredPathCount: row.registeredPathCount, snapshotAtMs: row.capturedAtMs, contributorIds: [`catalog:${row.snapshotId}:${row.skillId}`] })),
+    promptMentioned: { count: result.promptMentions.count, contributorIds: result.promptMentions.contributingIds, contributorsTruncated: result.promptMentions.contributorsTruncated },
+    commandCandidates: { count: result.commandCandidates.count, contributorIds: result.commandCandidates.contributingIds, contributorsTruncated: result.commandCandidates.contributorsTruncated },
+    currentFootprint: result.currentFootprint === null ? null : {
+      ...result.currentFootprint,
+      contributorIds: result.currentFootprint.contributingIds,
+    },
+    unsupported: { nativeProviderUseAccess: result.unsupported.nativeActivation, providerDelivery: result.unsupported.providerDelivery, actualSkillUse: result.unsupported.actualSkillUse, perSkillConsumedTokens: result.unsupported.perSkillConsumedTokens },
+    footprints: result.footprints.map((row) => ({ key: row.key, name: row.revision.name, revision: row.revision.contentRevision, bytes: row.bytes, estimatedTokens: row.estimatedTokens, tokenizer: row.tokenizer, sampleN: row.sampleN, contributorIds: row.contributingIds })),
+    commandOutcomes: result.commandOutcomes.map(skillContributor), contributors: result.rawRows.map(skillContributor),
+  };
+}
+
+/** Maps plugin-owned UI filters back into the strict bounded RPC request. */
+export function skillsQueryFilterFromDashboard(
+  filters: SkillsDashboardData["filters"],
+  fallback: SkillQueryFilter,
+): SkillQueryFilter {
+  return {
+    startMs: filters.startMs ?? fallback.startMs,
+    endMs: filters.endMs ?? fallback.endMs,
+    ...(filters.provider === undefined ? {} : { providerId: filters.provider }),
+    ...(filters.project === undefined ? {} : { projectId: filters.project }),
+    ...(filters.environment === undefined ? {} : { environmentId: filters.environment }),
+    ...(filters.skillId === undefined ? {} : { skillId: filters.skillId }),
+    ...(filters.revision === undefined ? {} : { contentRevision: filters.revision }),
+  };
+}
 
 /**
  * The component seam is transport-neutral. RPC and local-auth HTTP adapters

@@ -21,7 +21,7 @@ import {
 import type {
   ExecutionBackedDashboardProps,
   ExecutionLocatorSource,
-} from "../../../../app.tsx";
+} from "../../../../frontend/analytics-panel.tsx";
 import type { AnalyticsExecutionClient, AnalyticsChartTheme } from "../../../../analytics-model.ts";
 import { echarts } from "../../../../echarts-registry.ts";
 
@@ -385,7 +385,7 @@ export async function mountCapturedSvgFixture(
   const themes = installFixtureThemes(CAPTURED_SVG_BROWSER_THEMES.old.name);
   try {
     installTestPluginRuntime();
-    const module = await import("../../../../app.tsx");
+    const module = await import("../../../../frontend/analytics-panel.tsx");
     const Component = module.ExecutionBackedDashboard;
     const client = createCapturedSvgBrowserClient(input.initial, input.referenceResponse);
     const TestExecutionSlot = (props: ExecutionBackedDashboardProps) => createElement(Component, props);

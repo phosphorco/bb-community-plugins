@@ -1,5 +1,20 @@
 # Analytics
 
+## Current isolation migration status
+
+Analytics remains disabled on the running host. Catalog, bundle, Skills, and
+fact-download requests read retained data only; they never start source
+collection. Refresh RPCs and both refresh CLI commands fail closed until the
+platform-owned isolated collector is qualified. Earlier refresh instructions
+below describe historical behavior and are not currently available.
+
+The snapshot and execution adapters are implementation seams, not proof of
+host isolation. A qualified bounded host delta feed, real pre-execution OS
+confinement, and composed runtime acceptance are still required. Unused legacy
+capture code is not a supported fallback. Retained results may be stale or
+incomplete, and a cold view must not imply complete source coverage. Legacy
+capture helpers are retained only in test probes, not imported by the server.
+
 Analytics is a performance-first BB community plugin for understanding which
 agent capabilities are slow, unreliable, or repeatedly attempted. It ships three
 useful dashboards and a small code-authored bundle format that agents and people
@@ -39,6 +54,30 @@ topology, plotted/export rows, and interaction metadata. Bundles cannot inject
 arbitrary ECharts callbacks or HTML.
 
 ## Performance and privacy contract
+
+The workspace's accepted [Analytics performance isolation ADR](../../../docs/adrs/2026-09-analytics-performance-isolation.md)
+sets the destination; the current plugin is not yet fully isolated. On the
+current BB host Analytics remains disabled until that implementation and its
+integrated performance evidence are ready. Building does not enable it.
+
+Transitional containment removes Skills capture from thread lifecycle events,
+tool reindexing, and cold Skills queries. Skills reads use a bounded,
+generation-keyed cache of retained evidence, with capture/freshness notices
+updated independently. An explicit `bb analytics refresh-skills <project-id>
+<environment-id|none>` is the sole remaining Skills capture path. It shares one
+admission slot with tool extraction, admits no waiting queue, and observes a
+60-second global cooldown after either success or failure. It permits at most
+128 SDK requests and 8 MiB of decoded response data over a 15-second cooperative
+deadline; it retains the slot until any uncooperative request actually settles.
+Expired/aborted captures cannot publish a new snapshot. Budget failures leave
+prior evidence available. These bounds are containment, not hard RSS, transport
+byte, OS scheduling or database-isolation guarantees. A larger project may not
+finish a capture until the resumable shared collector replaces this path.
+
+New features must use the declarative bundle surface. Do not add lifecycle
+handlers, SDK scans, query-triggered capture, per-feature timers/caches/worker
+pools, or eager renderer dependencies. New operational sources require the
+shared platform boundary and its acceptance tests.
 
 Analytics extraction is pull-based and shared. No extraction work runs while
 Analytics is unused. When a dashboard request needs data, one supervised
@@ -184,8 +223,33 @@ visualizations.
 
 This slice proves the bundle runtime, client-side DuckDB query plane, bounded
 pull-based projection, ECharts lifecycle/compiler boundary, exact-value access,
-export, and chart-to-query references. It does not yet provide a
-full-history transactional fact outbox, immutable Parquet manifests, canonical
-tool-version instrumentation, skill-read instrumentation, per-principal bundle
-ownership, cross-filtering, or authorized thread drill-through. Those are the next durability
-and product layers rather than assumptions hidden inside this prototype.
+export, and chart-to-query references. It also includes a separate, bounded
+Skills page built only from the public SDK. Its source is a current BB-visible
+catalog capture (`sdk.skills.list`, `getContent`, and `listFiles`) plus retained
+public thread events (`sdk.threads.list`, `get`, and `events.list`). It can show
+only current catalog revisions, exact prompt mentions, and lexical
+registered-path command candidates with an enclosing public execution outcome.
+
+The Skills page lazy-loads so existing tool dashboards do not poll or query it.
+For a selected partition with a retained complete catalog, its RPC is
+SQLite-only: it returns retained rows and starts no post-return projector or
+SQLite work. First-time missing selections may await one bounded bootstrap;
+awaited `thread.created`/`thread.active` lifecycle handlers and an awaited
+manual Analytics refresh own later recapture. A failed refresh leaves the
+last-good Skills generation queryable with a bounded error note.
+
+This is not provider-native evidence. A shell-wrapped or newline-joined command
+can establish lexical path candidates and the enclosing item outcome, never an
+individual file read, private staged membership, provider delivery/access/use,
+activation, instruction effect, or per-skill token consumption. Current content
+bytes and optional local byte-based estimates are footprint estimates, separate
+from aggregate thread token reports. See
+[`docs/skills-analytics.md`](docs/skills-analytics.md) for the complete
+evidence, reproduction, and measurement boundary.
+
+It does not yet provide a full-history transactional fact outbox, immutable
+Parquet manifests, canonical tool-version instrumentation, provider-native
+per-skill activation evidence, Codex per-skill read/use attribution,
+per-principal bundle ownership, or cross-filtering. Those remain future
+durability and product layers rather than assumptions hidden inside this
+prototype.

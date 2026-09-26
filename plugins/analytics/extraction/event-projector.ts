@@ -287,6 +287,7 @@ function sourcePageDigest(source: RetainedSourceEventPage): string {
     page: source.metadata.page,
     threadId: source.metadata.threadId,
     requestedAfterSeq: source.metadata.requestedAfterSeq,
+    eventTypes: source.metadata.eventTypes,
     sourceAfterSeq: source.metadata.sourceAfterSeq,
     pageExhausted: source.metadata.pageExhausted,
   }));
@@ -348,7 +349,7 @@ function validateSourcePage(source: RetainedSourceEventPage, threadId: string): 
   }
   exactSourceKeys(metadata, [
     "operation", "page", "requestedLimit", "returnedRows", "responseBytes", "pageExhausted",
-    "budget", "threadId", "requestedAfterSeq", "returnedMaxSeq", "sourceAfterSeq",
+    "budget", "threadId", "requestedAfterSeq", "eventTypes", "returnedMaxSeq", "sourceAfterSeq",
   ], "event metadata");
   if (metadata.operation !== "events" || metadata.threadId !== threadId) throw new Error("Invalid retained source event operation/thread.");
   if (
@@ -371,6 +372,18 @@ function validateSourcePage(source: RetainedSourceEventPage, threadId: string): 
   }
   if (typeof metadata.pageExhausted !== "boolean" || metadata.pageExhausted !== source.rows.length < (metadata.requestedLimit as number)) {
     throw new Error("Retained source exhaustion metadata is inconsistent.");
+  }
+  if (metadata.eventTypes !== null) {
+    if (!Array.isArray(metadata.eventTypes) || metadata.eventTypes.length === 0 || metadata.eventTypes.length > 16) {
+      throw new Error("Invalid retained source event type filter metadata.");
+    }
+    const types = new Set<string>();
+    for (const type of metadata.eventTypes) {
+      if (typeof type !== "string" || type.length === 0 || Buffer.byteLength(type, "utf8") > RETAINED_SOURCE_MAX_IDENTIFIER_BYTES || types.has(type)) {
+        throw new Error("Invalid retained source event type filter metadata.");
+      }
+      types.add(type);
+    }
   }
   const requestedAfterSeq = sourceCursor(metadata.requestedAfterSeq, "requestedAfterSeq");
   const returnedMaxSeq = sourceCursor(metadata.returnedMaxSeq, "returnedMaxSeq");

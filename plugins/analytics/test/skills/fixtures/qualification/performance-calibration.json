@@ -1,0 +1,54 @@
+{
+  "schemaVersion": 1,
+  "capturedAt": "2026-09-18T15:20:31.186Z",
+  "p95Method": "nearest-rank: sort n samples ascending and select ceil(0.95*n)-1",
+  "sampleCount": 3,
+  "hardware": {
+    "node": "v22.21.1",
+    "platform": "linux",
+    "arch": "x64",
+    "cpu": "AMD Ryzen 7 PRO 8700GE w/ Radeon 780M Graphics"
+  },
+  "sourceIdentities": {
+    "workspace": "ae60a27e9f02bae467e08aa083abd27409c38a3d",
+    "communityPlugins": "128a0e632d7fac9d18f4aea6be77a29e0ef37c1c",
+    "fork": "c2ed889426e83189e302c6f06bdfd5202bb44fdd",
+    "upstream": "267938526dfcbc0edb228ce827b5bec202c1af97"
+  },
+  "samplesMs": {
+    "extraction": [0.5594660000000147, 0.584146000000004, 0.5743760000000009],
+    "unchangedCatalogReplay": [0.439391999999998, 0.4404320000000155, 0.4565029999999979],
+    "query": [5.4812530000000095, 6.314526999999998, 5.5623250000000155],
+    "drilldown": [1.215754000000004, 1.3954290000000071, 1.251135000000005],
+    "browserFirstUsefulRender": [1668.714591, 1571.368815, 1491.46811]
+  },
+  "p95Ms": {
+    "extraction": 0.584146000000004,
+    "unchangedCatalogReplay": 0.4565029999999979,
+    "query": 6.314526999999998,
+    "drilldown": 1.3954290000000071,
+    "browserFirstUsefulRender": 1668.714591
+  },
+  "holdoutBudgetsMs": {
+    "coldExtraction": 10,
+    "coldQuery": 20,
+    "coldDrilldown": 10,
+    "coldFirstUsefulRender": 2500
+  },
+  "futureComposedHostWarmBudgetsMs": {
+    "warmExtraction": 10,
+    "warmQuery": 20,
+    "warmDrilldown": 10,
+    "warmFirstUsefulRender": 1500
+  },
+  "measuredWorkingTreeFileSha256": {
+    "store.ts": "a45bc818ff7148b8b67cd4383c3e4148ee83079b0d4e04a933e6b345af0752c4",
+    "skill-query-service.ts": "1aac4dff413891985b8629cf34acea0bd14af293a021846e2fbf7932f3356013",
+    "app.tsx": "57756d62243376d7cda25ae5b0393acd447469eefc2783879879f0d984e8fc81",
+    "skills-dashboard/skills-dashboard.tsx": "e57c1938454eb99dec12fab3dd91c0e851542506eff1aec9c6660af8e4c893ff",
+    "test/skills/queries/dashboard-queries/run.ts": "0a57a3b0f67056a41dc0d50af04847ec1301e789a23ff0941bb351076d722d4c",
+    "test/skills/fixtures/qualification/performance-workload.ts": "066f5ea0bdce3d85964cb96a8b420a444f355b33bad29944eb98a71b996f844e",
+    "test/skills/fixtures/qualification/roundtrip/run.ts": "f3f9381c3e4ffb2562c69e49bb57a6f04b4392612579ee3d1454611e028f30a6",
+    "test/skills/browser/qualification/skills-dashboard-performance.test.tsx": "79d0eaf973659826302435b4d884e217295fc1a9680010fa294b0525d8abcc8f"
+  }
+}

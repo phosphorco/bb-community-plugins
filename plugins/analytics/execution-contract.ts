@@ -26,6 +26,9 @@ export const EXECUTION_LIMITS = Object.freeze({
   maxTransferChunks: 256,
   maxTransferRowsPerChunk: 1_000,
   idleWorkerTtlMs: 5 * 60_000,
+  /** Immutable collector artifacts; this is not a general data-transfer allowance. */
+  maxSnapshotArtifactRows: 250_000,
+  maxSnapshotArtifactBytes: 64 * MiB,
   cacheMaxEntries: 24,
   cacheMaxBytes: 4 * MiB,
   cacheTtlMs: 5 * 60_000,
@@ -107,6 +110,11 @@ const snapshotId = z
   .min(20)
   .max(200)
   .regex(/^analytics-snapshot_[A-Za-z0-9_-]+$/);
+const artifactSnapshotId = z
+  .string()
+  .min(12)
+  .max(200)
+  .regex(/^analytics-[A-Za-z0-9_-]+$/);
 export const executionReferenceIdSchema = z
   .string()
   .min(20)
@@ -795,6 +803,7 @@ export const executionErrorSchema = z
       "admission-denied",
       "identity-unavailable",
       "identity-mismatch",
+      "isolation-unavailable",
       "queue-full",
       "queue-timeout",
       "cancelled",
@@ -1432,6 +1441,110 @@ export type TrustedSourceHandoff = Readonly<{
   readonlyDatabasePath?: string;
   maxChunkBytes: number;
   maxRowsPerChunk: number;
+}>;
+
+/**
+ * Collector-to-execution handoff. It is data only: the execution process must
+ * receive this through its one fixed read-only snapshot mount, never through a
+ * BB database path, SDK client, host RPC capability, URL, or callback.
+ */
+export const analyticsSnapshotArtifactCoverageSchema = z
+  .object({
+    state: z.enum(["complete", "stale", "incomplete", "failed"]),
+    asOfMs: safeInteger.nullable(),
+    retainedAfterMs: safeInteger.nullable(),
+    earliestRetainedInclusiveMs: safeInteger.nullable(),
+    resetWatermark: utf8String(512).nullable(),
+    sourceComplete: z.boolean(),
+    incompleteReasons: z.array(utf8String(160)).max(16),
+    requestedFastPathDays: z.literal(7),
+    fastPathCoverage: z.enum(["complete", "partial", "none"]),
+    lastFailure: utf8String(2_000).nullable(),
+  })
+  .strict();
+const boundedSnapshotJsonSchema: z.ZodType<unknown> = z.lazy(() =>
+  z.union([
+    canonicalScalarSchema,
+    z.array(boundedSnapshotJsonSchema).max(128),
+    z.record(field, boundedSnapshotJsonSchema),
+  ]),
+);
+export const analyticsSnapshotV1Schema = z
+  .object({
+    format: z.literal("analytics-snapshot-v1"),
+    snapshotId: artifactSnapshotId,
+    dataset: identifier,
+    sourceScope: utf8String(256).min(1),
+    generationId: safeInteger,
+    sourceGeneration: utf8String(256).min(1),
+    factProjectionVersion: z.number().int().min(1),
+    cursor: utf8String(4_096).min(1),
+    publishedAtMs: safeInteger,
+    rowCount: z.number().int().min(0).max(EXECUTION_LIMITS.maxSnapshotArtifactRows),
+    byteCount: z.number().int().min(0).max(EXECUTION_LIMITS.maxSnapshotArtifactBytes),
+    integrityDigest: revision,
+    coverage: analyticsSnapshotArtifactCoverageSchema,
+    facts: z
+      .array(z.record(field, boundedSnapshotJsonSchema))
+      .max(EXECUTION_LIMITS.maxSnapshotArtifactRows),
+  })
+  .strict()
+  .superRefine((artifact, context) => {
+    if (artifact.rowCount !== artifact.facts.length) context.addIssue({
+      code: "custom", message: "Snapshot rowCount must equal supplied fact count.",
+    });
+    if (artifact.coverage.asOfMs != null && artifact.coverage.asOfMs > artifact.publishedAtMs) context.addIssue({
+      code: "custom", message: "Snapshot coverage cannot be newer than publication.",
+    });
+    if (artifact.coverage.earliestRetainedInclusiveMs != null &&
+      artifact.coverage.asOfMs != null && artifact.coverage.earliestRetainedInclusiveMs > artifact.coverage.asOfMs) context.addIssue({
+      code: "custom", message: "Snapshot retained boundary cannot follow coverage as-of.",
+    });
+    if (artifact.coverage.state === "complete" && artifact.coverage.incompleteReasons.length !== 0) context.addIssue({
+      code: "custom", message: "Complete snapshot coverage cannot have incomplete reasons.",
+    });
+  });
+
+/**
+ * Internal evidence emitted only by a deployment-owned launcher after it has
+ * verified the live child/cgroup. It is not RPC data and caller booleans or a
+ * hand-written descriptor are not accepted as evidence.
+ */
+export const verifiedIsolationAttestationSchema = z
+  .object({
+    version: z.literal(1),
+    kind: z.literal("linux-bubblewrap-cgroup-v2"),
+    issuedAtMs: safeInteger,
+    childPid: z.number().int().min(1),
+    snapshotAccess: z.literal("fixed-readonly-mount"),
+    hostDatabaseAccess: z.literal("denied"),
+    hostRpcAccess: z.literal("denied"),
+    networkAccess: z.literal("denied"),
+    parentExit: z.literal("kill-on-parent-exit"),
+    controllers: z.object({
+      cpu: z.literal("enforced"), memory: z.literal("enforced"),
+      pids: z.literal("enforced"), io: z.literal("enforced"),
+    }).strict(),
+  })
+  .strict();
+export type VerifiedIsolationAttestation = z.infer<typeof verifiedIsolationAttestationSchema>;
+export interface TrustedIsolationLauncher {
+  /** Must spawn, attach, and verify before it resolves; cannot be a test boolean. */
+  launch(input: Readonly<{ workerEntry: string; snapshotId: string }>): Promise<VerifiedIsolationAttestation>;
+  /** A permit remains held until confirmed process exit, including cancellation. */
+  waitForExit(childPid: number): Promise<void>;
+}
+export interface AnalyticsSnapshotArtifactProvider {
+  readSnapshot(input: Readonly<{ dataset: string; sourceScope: string }> ):
+    | Readonly<{ leaseId: string; snapshot: z.infer<typeof analyticsSnapshotV1Schema> }>
+    | null
+    | Promise<Readonly<{ leaseId: string; snapshot: z.infer<typeof analyticsSnapshotV1Schema> }> | null>;
+  releaseSnapshot(leaseId: string): Promise<void> | void;
+}
+export type EnforcedWorkerInput = Readonly<{
+  resolved: z.infer<typeof resolvedExecutionSchema>;
+  snapshot: z.infer<typeof analyticsSnapshotV1Schema>;
+  isolation: VerifiedIsolationAttestation;
 }>;
 export type ResolvedWorkerInput = Readonly<{
   resolved: z.infer<typeof resolvedExecutionSchema>;

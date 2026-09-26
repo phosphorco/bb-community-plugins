@@ -3,9 +3,10 @@ import test from "node:test";
 
 import { TOOL_RELIABILITY_BUNDLE, TURN_EFFICIENCY_BUNDLE } from "../builtin-bundles.ts";
 import { verifyAnalyticsBundle } from "../analytics-verifier.ts";
+import { verifyAnalyticsBundleOfflineProbe } from "./probes/analytics-verifier-probe.ts";
 
 test("verifies the built-in reliability dashboard against the typed DuckDB fact contract", async () => {
-  const result = await verifyAnalyticsBundle(TOOL_RELIABILITY_BUNDLE);
+  const result = await verifyAnalyticsBundleOfflineProbe(TOOL_RELIABILITY_BUNDLE);
   assert.deepEqual(result, {
     bundleId: "tool-reliability",
     queryCount: TOOL_RELIABILITY_BUNDLE.queries.length,
@@ -14,7 +15,7 @@ test("verifies the built-in reliability dashboard against the typed DuckDB fact 
 });
 
 test("verifies the turn-efficiency dashboard against the typed DuckDB fact contract", async () => {
-  const result = await verifyAnalyticsBundle(TURN_EFFICIENCY_BUNDLE);
+  const result = await verifyAnalyticsBundleOfflineProbe(TURN_EFFICIENCY_BUNDLE);
   assert.deepEqual(result, {
     bundleId: "turn-efficiency",
     queryCount: TURN_EFFICIENCY_BUNDLE.queries.length,
@@ -45,9 +46,16 @@ test("reports DuckDB binder failures before a dashboard is opened", async () => 
   // the same query shape binds with a boolean argument before rejecting BIGINT.
   const valid = structuredClone(bundle);
   valid.queries[0]!.sql = "SELECT count_if(command_uses_help)::DOUBLE AS calls FROM tool_execution_fact_v1";
-  await verifyAnalyticsBundle(valid);
+  await verifyAnalyticsBundleOfflineProbe(valid);
   await assert.rejects(
-    verifyAnalyticsBundle(bundle),
+    verifyAnalyticsBundleOfflineProbe(bundle),
     /Query broken failed DuckDB verification: The request is outside the supported query contract\./,
+  );
+});
+
+test("live verification fails closed instead of opening a legacy DB-path probe", async () => {
+  await assert.rejects(
+    verifyAnalyticsBundle(TOOL_RELIABILITY_BUNDLE),
+    /verification is unavailable until qualified isolated execution is installed/,
   );
 });

@@ -2,10 +2,21 @@
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
     "exactOptionalPropertyTypes": false,
+    "verbatimModuleSyntax": false,
     "jsx": "react-jsx",
     "lib": ["ES2023", "DOM", "DOM.Iterable"],
     "types": ["node"]
   },
   "include": ["*.ts", "*.tsx", "types", "test"],
-  "exclude": ["test/architecture/probes/baseline/fixtures/historical"]
+  "exclude": [
+    "test/architecture/probes/baseline/fixtures/historical",
+    "test/skills/browser/qualification",
+    "test/skills/browser/ui",
+    "test/skills/contracts/analytics",
+    "test/skills/contracts/runtime-events",
+    "test/skills/fixtures/providers",
+    "test/skills/fixtures/qualification",
+    "test/skills/queries/dashboard-queries",
+    "test/skills/retention-surface"
+  ]
 }

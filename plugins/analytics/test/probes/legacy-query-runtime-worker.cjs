@@ -1,3 +1,4 @@
+// Offline-only legacy DB-path worker witness. Never ship/import from production.
 const { createHash } = require("node:crypto");
 const { readFileSync } = require("node:fs");
 const { createRequire } = require("node:module");
@@ -11,7 +12,7 @@ const {
   isValidatedOrderByEnvelope,
   policyAstFromSerialized,
   verifyPositionalBridge,
-} = require("./parameter-bridge.cjs");
+} = require("./legacy-parameter-bridge.cjs");
 const requireHere = createRequire(__filename);
 const duckdb = requireHere("@duckdb/duckdb-wasm/dist/duckdb-node-blocking.cjs");
 const duckdbEntry = requireHere.resolve(

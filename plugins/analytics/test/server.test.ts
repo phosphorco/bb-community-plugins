@@ -5,7 +5,7 @@ import {
   EVENT_PAGE_SIZE,
   EVENTS_PER_THREAD_LIMIT,
   listRecentThreadEvents,
-} from "../server.ts";
+} from "./legacy-capture.ts";
 
 test("retains Analytics' newest-500 window through compliant descending event pages", async () => {
   const requests: Array<{ beforeSeq?: string; limit: string; order: string }> = [];
