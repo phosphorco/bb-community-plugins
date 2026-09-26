@@ -3,20 +3,10 @@ import test from "node:test";
 
 import { deliverGatherPerspectives } from "../Perspectives.ts";
 
-function perspectiveTable(): string {
-  return [
-    "| Lens | Why this lens | Expert prompt |",
-    "| --- | --- | --- |",
-    "| runtime | Runtime matters. | You are a runtime specialist using primary evidence. |",
-    "| complexity | Complexity matters. | You are a complexity specialist using primary evidence. |",
-    "| duplication | Duplication matters. | You are a duplication specialist using primary evidence. |",
-  ].join("\n");
-}
-
-test("configured planner and worker tuples are applied to their complete phases", async () => {
+test("configured planner and worker tuples reach the coordinator and its worker launch request", async () => {
   const spawnCalls: Array<Record<string, any>> = [];
-  const outputs = new Map<string, string>();
-  const never = new Promise<never>(() => undefined);
+  const events: string[] = [];
+  const queuedRows: Array<Record<string, any>> = [];
 
   const bb = {
     sdk: {
@@ -70,28 +60,33 @@ test("configured planner and worker tuples are applied to their complete phases"
           reasoningLevel: "medium",
           permissionMode: "auto",
         }),
-        spawn: async (input: Record<string, any>) => {
-          spawnCalls.push(input);
-          const id = `thread-${spawnCalls.length}`;
-          outputs.set(
-            id,
-            input.title.startsWith("Perspective planner")
-              ? perspectiveTable()
-              : input.title === "Perspective synthesis"
-                ? "Unified answer."
-                : `${input.title} answer.`,
-          );
-          return { id };
+        send: async (input: Record<string, any>) => {
+          events.push("queue-caller-backstop");
+          const row = {
+            id: "backstop-1",
+            threadId: input.threadId,
+            sendAt: input.sendAt,
+            content: input.input,
+            failureReason: null,
+            editable: true,
+          };
+          queuedRows.push(row);
+          return { delivery: "queued", queuedMessage: row };
         },
-        wait: async ({ status }: { status: string }) => status === "idle" ? {} : never,
-        output: async ({ threadId }: { threadId: string }) => ({ output: outputs.get(threadId) }),
-        send: async () => undefined,
-        stop: async () => undefined,
+        queuedMessages: {
+          list: async ({ threadId }: { threadId: string }) =>
+            queuedRows.filter((row) => row.threadId === threadId),
+        },
+        spawn: async (input: Record<string, any>) => {
+          events.push("spawn-coordinator");
+          spawnCalls.push(input);
+          return { id: "coordinator-1" };
+        },
       },
     },
   };
 
-  await deliverGatherPerspectives(
+  const receipt = await deliverGatherPerspectives(
     bb as any,
     {
       question: "Which implementation is best?",
@@ -118,21 +113,59 @@ test("configured planner and worker tuples are applied to their complete phases"
     } as any,
   );
 
-  assert.equal(spawnCalls.length, 5);
-  for (const [index, call] of spawnCalls.entries()) {
-    const plannerPhase = index === 0 || index === 4;
-    assert.equal(call.providerId, plannerPhase ? "codex" : "terra");
-    assert.equal(call.model, plannerPhase ? "gpt-5.6" : "gpt-5.6-terra");
-    assert.equal(call.reasoningLevel, plannerPhase ? "high" : "medium");
-    assert.equal(call.permissionMode, "accept-edits");
-    assert.deepEqual(call.executionInputSources, {
-      providerId: "explicit",
-      model: "explicit",
-      serviceTier: "explicit",
-      reasoningLevel: "explicit",
-      permissionMode: "explicit",
-    });
-  }
+  assert.deepEqual(events, ["queue-caller-backstop", "spawn-coordinator"]);
+  assert.equal(queuedRows.length, 1);
+  assert.equal(queuedRows[0]!.threadId, "caller");
+  assert.ok(queuedRows[0]!.sendAt > Date.now() + 25 * 60_000);
+  assert.ok(queuedRows[0]!.sendAt < Date.now() + 27 * 60_000);
+  assert.equal(spawnCalls.length, 1);
+
+  const coordinator = spawnCalls[0]!;
+  assert.equal(coordinator.title.startsWith("Perspectives coordinator perspectives-invocation:"), true);
+  assert.equal(coordinator.parentThreadId, "caller");
+  assert.equal(coordinator.visibility, "hidden");
+  assert.equal(coordinator.providerId, "codex");
+  assert.equal(coordinator.model, "gpt-5.6");
+  assert.equal(coordinator.serviceTier, "default");
+  assert.equal(coordinator.reasoningLevel, "high");
+  assert.equal(coordinator.permissionMode, "accept-edits");
+  assert.deepEqual(coordinator.executionInputSources, {
+    providerId: "explicit",
+    model: "explicit",
+    serviceTier: "explicit",
+    reasoningLevel: "explicit",
+    permissionMode: "explicit",
+  });
+  const backstopText = queuedRows[0]!.content[0]!.text as string;
+  const invocationMarker = backstopText.match(/perspectives-invocation:[0-9a-f-]+/i)?.[0];
+  assert.ok(invocationMarker);
+  assert.ok(coordinator.title.includes(invocationMarker));
+  assert.ok(coordinator.prompt.includes(invocationMarker));
+  assert.match(backstopText, /Request identity:/);
+  assert.match(receipt, /Perspectives panel launched/);
+  assert.match(receipt, /Caller backstop: queued/);
+  assert.match(receipt, /Artifact: perspectives\/results\/coordinator-1\.md/);
+  assert.doesNotMatch(receipt, /worker-[\w-]+/i);
+
+  const requestJson = coordinator.prompt.match(/## Complete run request\n\n```json\n([\s\S]*?)\n```/)?.[1];
+  assert.ok(requestJson, "coordinator prompt should include its complete resolved run request");
+  const request = JSON.parse(requestJson);
+  assert.deepEqual(request.coordinatorExecution, {
+    providerId: "codex",
+    model: "gpt-5.6",
+    serviceTier: "default",
+    reasoningLevel: "high",
+    permissionMode: "accept-edits",
+  });
+  assert.deepEqual(request.workerExecution, {
+    providerId: "terra",
+    model: "gpt-5.6-terra",
+    serviceTier: "default",
+    reasoningLevel: "medium",
+    permissionMode: "accept-edits",
+  });
+  assert.match(coordinator.prompt, /Coordinate one ordinary hidden worker for each requested lens/);
+  assert.match(coordinator.prompt, /perspectives_coordinator_step/);
 });
 
 test("an unavailable configured provider fails before any hidden thread is created", async () => {

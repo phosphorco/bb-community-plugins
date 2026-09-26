@@ -1,14 +1,20 @@
 import { describe, test } from "node:test";
+import assert from "node:assert/strict";
 import { z } from "zod";
 
 import { expect } from "./expect.ts";
 import plugin from "../server.ts";
 
-describe("plugin registration", () => {
-  test("exposes tools to ordinary agents and excludes them from its own workers", () => {
-    const tools: Array<{ name: string; parameters: { safeParse(input: unknown): { success: boolean } } }> = [];
+describe("Perspectives agent tool registration", () => {
+  test("exposes scoped recovery and retrieval tools to caller and coordinator contexts", () => {
+    const tools: Array<{
+      name: string;
+      description?: string;
+      instructions?: string;
+      parameters: { safeParse(input: unknown): { success: boolean } };
+    }> = [];
     let settingDescriptors: Record<string, any> = {};
-    let configure!: (context: any) => { tools: string[]; skills: string[] };
+    let configure!: (context: any) => { tools: string[]; skills: string[]; instructions?: string };
     const bb = {
       pluginId: "perspectives",
       settings: {
@@ -23,76 +29,84 @@ describe("plugin registration", () => {
       },
       agents: {
         registerTool: (registration: typeof tools[number]) => tools.push(registration),
-        configure: (provider: typeof configure) => {
-          configure = provider;
-        },
+        configure: (provider: typeof configure) => { configure = provider; },
       },
       log: { info: () => undefined },
     };
 
     plugin(bb as any);
 
-    expect(tools.map((tool) => tool.name)).toEqual(["help", "gather_perspectives"]);
-    expect(configure({ origin: { pluginId: null } }).tools).toEqual(["help", "gather_perspectives"]);
-    expect(configure({ origin: { pluginId: "perspectives" } }).tools).toEqual([]);
-    expect(Object.keys(settingDescriptors)).toEqual([
-      "plannerProvider",
-      "plannerModel",
-      "plannerReasoning",
-      "plannerPermission",
-      "workerProvider",
-      "workerModel",
-      "workerReasoning",
-      "workerPermission",
+    expect(tools.map((tool) => tool.name)).toEqual([
+      "help",
+      "gather_perspectives",
+      "perspectives_coordinator_step",
+      "perspectives_publish_result",
+      "perspectives_read_result",
     ]);
-    expect(settingDescriptors.plannerProvider.default).toBe("");
-    expect(settingDescriptors.workerModel.default).toBe("");
-    expect(settingDescriptors.plannerReasoning.default).toBe("inherit");
-    expect(settingDescriptors.workerPermission.options).toEqual([
-      "inherit",
-      "accept-edits",
-      "auto",
-      "full",
+    // host-policy.ts enforces this on registered tool.instructions.length
+    // (JavaScript UTF-16 code units); descriptions are bounded here too.
+    const bbToolTextLimit = 4096;
+    for (const tool of tools) {
+      assert.ok(
+        tool.instructions === undefined || tool.instructions.length <= bbToolTextLimit,
+        `${tool.name} instructions exceed BB's ${bbToolTextLimit}-character limit`,
+      );
+      assert.ok(
+        tool.description === undefined || tool.description.length <= bbToolTextLimit,
+        `${tool.name} description exceeds the registration text budget`,
+      );
+    }
+    const callerContext = {
+      origin: { pluginId: null },
+      thread: { id: "caller", title: "Caller", parentThreadId: null, sourceThreadId: null },
+    };
+    const ordinary = configure(callerContext);
+    expect(ordinary.tools).toEqual([
+      "help",
+      "gather_perspectives",
+      "perspectives_read_result",
     ]);
+    assert.ok(
+      ordinary.instructions === undefined || ordinary.instructions.length <= bbToolTextLimit,
+      `caller dynamic instructions exceed BB's ${bbToolTextLimit}-character limit`,
+    );
+    expect(ordinary.instructions).toContain("launch-intent queue row");
+    expect(ordinary.instructions).toContain("explicit queue recovery or operator action");
+    expect(ordinary.instructions).toContain("intermediate event text and native notice excerpts are not research findings");
+    expect(ordinary.instructions).toContain("latest successful completed turn's final persisted agent message");
+    expect(ordinary.instructions).toContain("retains the backstop");
 
-    const help = tools.find((tool) => tool.name === "help")!;
-    expect((help as any).presentation).toEqual({
-      label: {
-        pending: "Consulting an expert helper",
-        completed: "Consulted an expert helper",
-      },
+    const recognizableWorker = configure({
+      ...callerContext,
+      thread: { ...callerContext.thread, id: "worker", title: "Perspectives worker run lens-1", parentThreadId: "coordinator" },
+      origin: { kind: null, pluginId: "perspectives" },
     });
-    expect((help as any).instructions).toContain("only the returned expert-consultation thread");
-    expect((help as any).instructions).toContain("do not enumerate planner or pipeline threads");
-    expect((help as any).instructions).toContain("cites primary evidence");
-    expect(help.parameters.safeParse({ question: "What matters?" }).success).toBe(true);
-    expect(help.parameters.safeParse({ prompt: "You are an expert." }).success).toBe(false);
+    expect(recognizableWorker.tools).toEqual(["help"]);
+
+    const renamedPluginOriginCoordinator = configure({
+      ...callerContext,
+      origin: { kind: null, pluginId: "perspectives" },
+      thread: { ...callerContext.thread, id: "coordinator", title: "renamed coordinator", parentThreadId: "caller" },
+    });
+    expect(renamedPluginOriginCoordinator.tools).toEqual([
+      "perspectives_coordinator_step",
+      "perspectives_publish_result",
+    ]);
+    expect(configure({
+      ...callerContext,
+      origin: { kind: null, pluginId: "perspectives" },
+      thread: { ...callerContext.thread, id: "plugin-helper", title: "expert helper", parentThreadId: null },
+    }).tools).toEqual(["help"]);
+    expect(configure({
+      ...callerContext,
+      origin: { kind: null, pluginId: "rosetta-slack" },
+      thread: { ...callerContext.thread, id: "slack-caller", title: "Slack caller", parentThreadId: "slack-plugin" },
+    }).tools).toEqual(["help", "gather_perspectives", "perspectives_read_result"]);
 
     const gather = tools.find((tool) => tool.name === "gather_perspectives")! as any;
-    expect(gather.presentation).toEqual({
-      label: {
-        pending: "Launching an expert perspective panel",
-        completed: "Launched an expert perspective panel",
-      },
-    });
-    const gatherJsonSchema = z.toJSONSchema(gather.parameters) as any;
-    expect(gather.description).toContain("v8 performance characteristics");
-    expect(gather.description).toContain("leverages platform native UX");
-    expect(gather.description.match(/, \.\.\.\]/g)).toHaveLength(2);
-    expect(gather.instructions).toContain("big-O complexity");
-    expect(gather.instructions).toContain("over-labeling/structure, IA, and visual cues");
-    expect(gather.instructions.match(/, \.\.\.\]/g)).toHaveLength(2);
-    expect(gather.instructions).toContain("only the final-synthesis thread named in the result");
-    expect(gather.instructions).toContain("do not enumerate planner, worker, or pipeline threads");
-    expect(gather.instructions).toContain("synthesis preserves those citations");
-    expect(gather.instructions).toContain("returns a launch receipt immediately");
-    expect(gather.instructions).toContain("Do not wait, poll, or re-invoke");
-    expect(gather.instructions).toContain('later message beginning "Perspectives panel result"');
-    expect(gather.description).toContain("hard-caps the run at 25 minutes");
-    expect(gatherJsonSchema.properties.lenses.description).toContain("duplicate work");
-    expect(gatherJsonSchema.properties.lenses.description).toContain("for every action, there is a reversal implemented");
-    expect(gatherJsonSchema.properties.lenses.description.match(/, \.\.\.\]/g)).toHaveLength(2);
-    expect(gatherJsonSchema.properties.lenses.examples).toEqual([
+    const gatherSchema = z.toJSONSchema(gather.parameters) as any;
+    expect(gather.description).toContain("2–7 distinct caller-supplied lenses");
+    expect(gatherSchema.properties.lenses.examples).toEqual([
       ["v8 performance characteristics", "big-O complexity", "duplicate work"],
       [
         "leverages platform native UX",
@@ -100,22 +114,20 @@ describe("plugin registration", () => {
         "over-labeling/structure, IA, and visual cues",
       ],
     ]);
-    expect(gather.parameters.safeParse({
-      question: "Where is the work?",
-      lenses: ["v8 performance characteristics", "big-O complexity", "duplicate work"],
-    }).success).toBe(true);
-    expect(gather.parameters.safeParse({
-      question: "Where is the work?",
-      lenses: ["correctness", "operability"],
-    }).success).toBe(true);
-    expect(gather.parameters.safeParse({
-      question: "Where is the work?",
-      lenses: ["correctness"],
-    }).success).toBe(false);
-    expect(gather.parameters.safeParse({ question: "Where is the work?", perspectives: 3 }).success).toBe(false);
-    expect(gather.parameters.safeParse({
-      question: "Where is the work?",
-      lenses: ["performance", "Performance", "correctness"],
-    }).success).toBe(false);
+    expect(gather.parameters.safeParse({ question: "How?", lenses: ["performance", "correctness"] }).success).toBe(true);
+    expect(gather.parameters.safeParse({ question: "How?", lenses: ["performance"] }).success).toBe(false);
+
+    const step = tools.find((tool) => tool.name === "perspectives_coordinator_step")!;
+    const publish = tools.find((tool) => tool.name === "perspectives_publish_result")!;
+    const read = tools.find((tool) => tool.name === "perspectives_read_result")!;
+    expect(step.parameters.safeParse({}).success).toBe(true);
+    expect(step.parameters.safeParse({ coordinatorId: "other" }).success).toBe(false);
+    expect(publish.parameters.safeParse({ synthesis: "Evidence bounded synthesis." }).success).toBe(true);
+    expect(publish.parameters.safeParse({ synthesis: "Evidence bounded synthesis.", coverage: "uncertain" }).success).toBe(true);
+    expect(read.parameters.safeParse({ coordinatorId: "coordinator" }).success).toBe(true);
+    expect(read.parameters.safeParse({ coordinatorId: "coordinator", includeArtifact: true }).success).toBe(true);
+    expect(read.parameters.safeParse({ invocationMarker: "perspectives-invocation:00000000-0000-0000-0000-000000000000" }).success).toBe(true);
+    expect(read.parameters.safeParse({ coordinatorId: "coordinator", invocationMarker: "perspectives-invocation:00000000-0000-0000-0000-000000000000" }).success).toBe(false);
+    expect(settingDescriptors.plannerPermission.options).toEqual(["inherit", "accept-edits", "auto", "full"]);
   });
 });

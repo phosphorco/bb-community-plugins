@@ -1,178 +1,162 @@
 # bb-plugin-perspectives
 
-Adds two native tools to bb agents:
+Perspectives registers five native BB agent tools:
 
-- `help` accepts a question and context, generates the expert prompt in a separate hidden planner, and asks one hidden helper for a concise read-only answer. It is synchronous: the answer is the tool result.
-- `gather_perspectives` accepts 2-7 caller-supplied lenses—specific aspects or analytical angles such as `"v8 performance characteristics"`, `"big-O complexity"`, and `"duplicate work"`—generates a bespoke expert prompt for each lens, launches the panel concurrently, and synthesizes every usable complete or partial outcome. It is asynchronous: the tool call returns a launch receipt immediately, the panel keeps working in the background, and the synthesized result is delivered to the calling thread as a later message beginning `Perspectives panel result` (or `Perspectives panel failed`).
+- `help` asks one focused expert for a concise, read-only, source-cited answer. It is synchronous; the expert's answer is the tool result.
+- `gather_perspectives` accepts 2–7 distinct caller-supplied lenses and starts a background panel.
+- `perspectives_coordinator_step` reconciles one authenticated coordinator run through BB's thread and queue SDK.
+- `perspectives_publish_result` creates and verifies that coordinator's immutable result artifact.
+- `perspectives_read_result` lets a caller find or read a verified direct-child coordinator artifact.
 
-One `help` call creates a hidden planner and one hidden expert. One
-`gather_perspectives` call creates one hidden planner, 2-7 concurrent hidden
-workers, and one hidden synthesis thread; a malformed planner response can
-consume one bounded retry. Each thread is a model invocation and carries the
-cost and provider limits of its resolved execution tuple.
+## Restart-resilient panel lifecycle
 
-## Execution settings
+Before it spawns a hidden ordinary coordinator child, `gather_perspectives`
+queues one caller backstop for about 26 minutes later and verifies the exact
+pending row. The coordinator ID is the run ID. An ambiguous coordinator spawn
+is rediscovered from the first persisted `client/turn/requested` input and
+direct parent relation; no unique match means launch uncertain. Replaying a
+request may create another coordinator. Identical request identities can be
+intentional, so possible duplicates and their artifacts stay separate.
 
-Settings expose separate phase tuples:
+The coordinator calls its registered BB tools from auto mode; orchestration
+and artifact writes do not depend on shell commands or shell approval. Before
+launching workers, it confirms both the wrap-up and deadline queue rows.
+Only when both are confirmed or already due may it create ordinary hidden
+worker children. Each lens also gets a scheduled launch-intent row before its
+spawn attempt. The 2–7 extra rows are scheduled for the caller backstop time:
+they freeze a lens after an ambiguous spawn so a late child commit cannot be
+blindly retried. Keep them until the final artifact has passed readback
+verification; then remove the still-pending wrap-up, deadline, and launch
+intent rows. If publication never completes, the intent rows can dispatch at
+the backstop and prompt reconciliation.
 
-| Setting group | Applied to |
-|---|---|
-| Planner provider/model/reasoning/permission | Prompt planner and final synthesis |
-| Worker provider/model/reasoning/permission | `help` expert and every panel worker |
+If at least one required wake row has a persisted `failureReason`, the other
+wake state is known, and no worker launch intent or child exists, the
+coordinator can publish a failed artifact immediately. The publisher rechecks
+the queue states and absence of worker attempts. It states that no research
+was performed. An ambiguous or unavailable queue state does not authorize
+workers or early publication; the coordinator ends the turn with setup
+uncertainty and relies on any confirmed wake, the caller backstop, or explicit
+queue recovery.
 
-Blank provider/model values and `inherit` selectors are explicit defaults. If
-the provider is unchanged, they copy the caller's resolved tuple. If a different
-provider is configured and model remains blank, Perspectives uses that
-provider's declared default model; the model's default reasoning is used unless
-reasoning is configured. Permission inheritance keeps the caller's permission
-mode. The plugin resolves and validates both phase tuples against the caller's
-environment host before it creates any hidden thread. An unavailable provider,
-model, reasoning level, permission mode, or host ceiling returns a configuration
-error with no partially launched panel.
+Native worker reports and scheduled wakes prompt reconciliation. For each
+verified worker, BB's latest persisted final agent message is the research
+output. If no final message exists, that lens is unavailable. Intermediate
+event text and excerpts in native notices are not treated as usable partial
+findings. When the deadline wake is handled, remaining verified active workers
+are stopped and the available final outputs are reconciled. The coordinator
+supplies a conservative complete/partial coverage assessment. Product code
+separately reports mechanical worker-output availability and caps complete
+status unless every requested lens has exactly one idle verified worker with a
+persisted final output. Missing, duplicate, inactive, or unavailable worker
+outputs prevent complete status. The coordinator's coverage assessment is not
+mechanically verified: even `Status: complete` does not prove sources were
+adequately inspected or that the synthesis is factually complete. The prompt
+instructs the coordinator to choose partial whenever a lens could not inspect
+sources, cannot answer, or coverage is uncertain. Legacy publish calls without
+a coverage choice default to partial.
 
-Every spawn records the resolved fields as explicit inputs so bb does not
-re-derive a different model mid-panel. Settings affect later calls immediately;
-they do not mutate existing hidden threads.
+## Authorization and trust limits
 
-Workers, planners, and synthesis are instructed to perform read-only advisory
-work and not mutate files or external systems. bb 0.39 has no `read-only`
-permission mode, so that instruction is a policy, not a technical sandbox: the
-configured/inherited permission setting remains the thread's real authority
-envelope and should be chosen accordingly. The plugin itself stores no result
-data and contacts no external service, but the selected model/provider and its
-available tools may perform network or read-only source inspection.
+Coordinator authentication uses the persisted protocol-versioned request in
+the first `client/turn/requested` event, the current `context.threadId`, its
+direct `parentThreadId`, and matching project/environment. A mutable title is
+only a discovery hint; renaming a coordinator or worker does not invalidate a
+run. Coordinator effects stay on that context thread's children, queue, and
+storage. Caller retrieval accepts only a verified hidden direct child of the
+current caller. The synchronous tool-configuration callback cannot inspect
+persisted events, so a Perspectives-origin parented thread receives only
+scoped coordinator operations unless its title marks a worker; that title is
+used only to withhold tools. Other plugin-origin callers retain gather/read
+access. Tool execution still verifies persisted identity and
+parent/project/environment. Recognizable workers receive no orchestration
+operations, and the gather handler rejects a verified worker after a rename.
 
-The panel does not stop when a majority finishes. Each worker gets the full
-panel phase. Unfinished workers receive a late wrap-up request, then their
-final or partial output is recovered at the phase boundary. One failed worker
-or launch does not cancel productive peers. Synthesis is still attempted when
-only partial evidence is available; if synthesis itself cannot finish, the
-later delivery contains its partial synthesis (if any) plus the bounded raw
-perspective outputs instead of discarding them.
+Persisted prompt text is durable identity evidence, not a cryptographic
+capability. A user able to create a hidden thread with a lookalike request can
+spoof the marker. Such a thread can affect only its own thread and direct
+children, and retrieval still requires its actual parent to be the caller.
+The plugin adds no journal or checkpoint store. Protocol version 1 has a
+stable request decoder; future request-format changes must add a new version
+without changing the v1 decoder.
 
-Only the final-result thread is referenced in a successful tool response:
-the synthesis thread for `gather_perspectives`, or the expert thread for
-`help`. Planner and worker threads remain hidden and directly addressable for
-internal diagnosis, but are not enumerated to the calling agent. If no final
-result thread could be created, the fallback answer contains no internal
-thread references.
+## Artifact bytes and verification
 
-Every worker is instructed to cite material factual claims inline from primary
-evidence it actually inspected, using clickable file-and-line links for local
-repository evidence and direct Markdown links for web or documentation
-sources. Workers distinguish supplied context and inference from independently
-verified facts. The synthesizer preserves and deduplicates those citations,
-does not invent missing citations, and reports unsupported claims as evidence
-gaps.
+The result file is `perspectives/results/<coordinator-id>.md` in coordinator
+thread storage. Product code defines the body as the exact UTF-8 byte slice
+between `<!-- perspectives-body:start -->` and
+`<!-- perspectives-body:end -->`. It computes a SHA-256 over that slice and
+places it in the file's terminal marker. The full-file SHA-256 is returned by
+the publish/read tools because embedding it in the same file would change the
+bytes being hashed.
 
-## Run lifetime and budgets
+Publication uses the BB SDK's atomic create-only file write
+(`expectedSha256: null`, mode `0600`) and then reads the file back. It checks
+the exact UTF-8 body boundaries, run ID, status, body digest, terminal marker,
+host SHA-256, and byte length. An identical existing file is idempotent; a
+divergent or corrupt file is never overwritten. The caller tool repeats full
+file verification against the coordinator ID before returning the artifact.
 
-`gather_perspectives` does not hold its tool call open while the panel runs.
-The bb dynamic-tool path keeps one HTTP round-trip open per tool call with no
-abort or timeout of its own, so a long synchronous call couples the panel's
-lifetime to a fragile transport and holds the caller's turn — and its provider
-session — hostage for the duration. Instead the tool returns a launch receipt
-within seconds and the pipeline continues detached inside the plugin host,
-governed by its own run budgets rather than the request's lifetime:
+## Timing and delivery limits
 
-- planner: 15 seconds total, including one retry;
-- panel: unfinished workers are asked to wrap up after 20 minutes of
-  continuous work;
-- hard cap: 25 minutes for the whole run, enforced by a run-wide abort that
-  stops every remaining agent;
-- synthesis: 90 seconds, reserved inside the hard cap so partial evidence is
-  still synthesized;
-- every `threads.spawn` is raced against a 60-second timeout so one hung RPC
-  cannot stall the run.
+The 20-minute wrap-up, 25-minute deadline, and 26-minute caller backstop are
+scheduling targets, not delivery guarantees. Queue acceptance does not prove
+provider acknowledgement. If a scheduled row gets `failureReason` and the
+native report is also lost, BB does not guarantee another wake; explicit
+queue recovery or operator action is required. A caller backstop may therefore
+find a missing artifact. The plugin does not claim eventual delivery,
+exactly-once worker creation, or a strict wall-clock deadline.
 
-These are phase boundaries, not a quorum policy. A timed-out worker's partial
-output remains evidence, its status is disclosed to the synthesizer, and the
-synthesis phase is reserved rather than skipped. Whatever happens — including
-the hard cap firing or an unexpected pipeline failure — the run ends with one
-delivery message to the calling thread, sent with `mode: "auto"` so it steers
-an active turn or starts a new one. If that single delivery attempt itself
-fails, the plugin logs the transport failure; it does not send a second,
-misleading panel-failure message after the result may already have arrived.
+## Execution settings and evidence
 
-Example:
+Planner settings apply to the synchronous `help` planner and the gather
+coordinator. Worker settings apply to the helper and panel workers. Blank
+provider/model settings and `inherit` selectors use the caller's resolved
+tuple; configured tuples are validated before gather queues work. The plugin
+does not silently escalate a permission mode. A `full` mode is used only when
+the caller already has it or the operator explicitly selects it in settings.
+Worker instructions are policy guidance; the selected provider permission
+mode remains the actual authority envelope.
 
-```json
-{
-  "question": "Where is the performance work in this implementation?",
-  "context": "Focus on behavior that matters under production load.",
-  "lenses": [
-    "v8 performance characteristics",
-    "big-O complexity",
-    "duplicate work"
-  ]
-}
-```
+Experts cite material factual claims from primary evidence they actually
+inspected, distinguish supplied context from inference, preserve disagreement,
+and identify unknowns. Queue acceptance, spawn responses, worker count, and
+native notices do not prove delivery or completion. The coordinator must not
+claim eventual delivery, exactly-once execution, guaranteed recovery, complete
+coverage, or reliability without direct primary evidence. It does not treat
+agreement or worker count as proof. Use the presentation-receipt behavior
+below to avoid repeating a result when durable evidence exists; keep internal
+worker references out of the caller-facing answer.
 
-All plugin-owned threads reuse one snapshot of the caller's project and
-environment plus the prevalidated phase tuple described above. They are hidden root threads,
-not children or forks, so they neither inherit the caller's provider
-conversation nor report every completion and blocker into it. BB's current
-`parentThreadId` contract is agent delegation: setting it at spawn reports
-child outcomes, while setting it later queues a visible ownership-change
-message. The plugin therefore does not use parent metadata as a silent grouping
-mechanism.
+The caller tool retains the scheduled backstop. After verifying the artifact,
+it finds the latest successful `turn/completed` event, then pages backward
+through that turn's `item/completed` events. Suppression requires the turn's
+last completed item itself to be an agent message whose text contains an exact
+standalone receipt comment with both the run ID and full-file SHA-256; a
+receipt in an earlier assistant message followed by another completed item is
+not enough. The BB
+event API returns stored agent-message text, so the comment remains available
+to the check while normal Markdown rendering hides it. The caller should
+include the exact receipt line returned by the tool in its final answer after
+presenting the result. A missing, mismatched, interrupted, or unreadable final
+answer returns the full artifact again. The scan is bounded to five 100-event
+pages; if the receipt is outside that window, the tool returns the artifact.
+An explicit user request can retrieve it again with `includeArtifact: true`.
+Legacy presentations without a receipt may repeat. The caller backstop is
+never deleted on read, avoiding a crash window before a durable final answer.
+Native duplicate reports and retries can still produce repeated visibility,
+so the plugin does not claim exactly-once presentation.
 
-Instead, the final-result thread contains the internal native `@thread`
-references as inspectability metadata in its prompt, while its answer is
-instructed not to repeat them. The calling agent receives only the final-result
-thread reference. As a defense against prompt noncompliance, known planner and
-worker thread tokens are also removed from the public result before that final
-reference is appended. This gives one progressive-disclosure path to the planner
-and evidence threads without injecting the whole pipeline into the caller.
-The threads remain hidden from the sidebar and are explicitly instructed not
-to modify state. The plugin tools are excluded from these threads to prevent
-recursive panels.
-
-## Manifest
-
-`package.json` is the plugin manifest. Notable fields:
-
-- `bb.server` — backend entry (required); optional `bb.app` for a frontend.
-- `bb.name` and `bb.description` — required human-facing identity.
-- `bb.branding` — required; declare `icon` as a BB icon name or a
-  plugin-relative compact SVG, or declare `logo.light` (with optional
-  `logo.dark`). Logo assets must be relative `.svg`, `.png`, or
-  `.webp` files.
-- `engines.bb` — supported bb app version range.
-- `engines.bbPluginSdk` — supported plugin SDK floor (`^0.4.47` here).
-
-The rich in-plugin logo and marketplace icon are Cole-approved PE02-A. The
-package preserves the generated 1254px RGB source and the verified RGB24
-nearest-neighbor 16/24/32px derivatives byte-for-byte under `assets/`.
-
-Run `bb plugin build` before publishing git/npm installs. It writes
-`dist/server.js` + `server.meta.json` (and, with `bb.app`, `app.js` /
-`app.css` / `app.meta.json`). Each `*.meta.json` stamps SDK major/version,
-`artifactFormatVersion`, `pluginId`, `pluginVersion`, and
-`builtWith` so managed installs can verify the artifacts.
-
-## Install
+## Install and development
 
 From this directory:
 
-```
+```sh
 bb plugin install .
 ```
 
-After editing sources, reload:
-
-```
-bb plugin reload perspectives
-```
-
-## Types & API reference
-
-This plugin imports the published `@get-bb/plugin-sdk` package (and its
-`/app` entry when it has a frontend). Its exact SDK development dependency
-provides the editor and `tsc` declarations; do not add a plugin-local SDK
-declaration copy or a TypeScript path alias. The package pin records the
-SDK contract used for development checks. Ask BB to write plugins for you: the
-`bb-plugin-authoring` skill documents the whole surface with examples.
-
-Confused by the API, or need something the types don't explain? Clone the BB
-repo and read the source: <https://github.com/get-bb/bb>.
+After editing sources, reload with `bb plugin reload perspectives`.
+Development checks for this package are `npm run test --workspace
+@phosphorco/bb-plugin-perspectives`, `npm run typecheck --workspace
+@phosphorco/bb-plugin-perspectives`, and `npm run build --workspace
+@phosphorco/bb-plugin-perspectives` from `community-plugins/`.
