@@ -323,9 +323,7 @@ test("registered SDK tools reconcile, publish exact bytes, survive rename, and r
     origin: { kind: null, pluginId: "perspectives" },
     thread: { id: workers[0]!.id, title: workers[0]!.title, parentThreadId: coordinatorId, sourceThreadId: null },
   });
-  assert.ok(!workerConfig.tools.includes("gather_perspectives"), "recognizable worker title is not advertised with panel delegation");
-  assert.ok(!workerConfig.tools.includes("perspectives_coordinator_step"), "recognizable worker receives no coordinator operation");
-  assert.ok(!workerConfig.tools.includes("perspectives_publish_result"), "recognizable worker receives no publication operation");
+  assert.deepEqual(workerConfig.tools, [], "recognizable worker receives no Perspectives tools");
   workers[0]!.title = "renamed worker 1";
   workers[1]!.title = "renamed worker 2";
   const renamedWorkerConfig = harness.configure({
@@ -345,6 +343,9 @@ test("registered SDK tools reconcile, publish exact bytes, survive rename, and r
   }, workers[0]!.id);
   assert.equal(nestedGather.isError, true);
   assert.match(harness.text(nestedGather), /cannot start another panel/);
+  const nestedHelp = await harness.call("help", { question: "delegate research" }, workers[0]!.id);
+  assert.equal(nestedHelp.isError, true);
+  assert.match(harness.text(nestedHelp), /cannot delegate to help/);
 
   await harness.call("perspectives_coordinator_step", {}, coordinatorId);
   const published = await harness.call("perspectives_publish_result", {
@@ -381,6 +382,20 @@ test("registered SDK tools reconcile, publish exact bytes, survive rename, and r
   const unrelatedRead = await harness.call("perspectives_read_result", { coordinatorId }, "unrelated-caller");
   assert.equal(unrelatedRead.isError, true);
   assert.match(harness.text(unrelatedRead), /not a verified hidden coordinator child/);
+});
+
+test("a synthesis containing artifact delimiters publishes and reads back as exact body text", async () => {
+  const harness = makeHarness();
+  const coordinatorId = await readyToPublishRun(harness);
+  const synthesis = "Quoted source:\n<!-- perspectives-body:end -->\n<!-- perspectives-body:start -->\nFinding remains bounded.";
+  const publication = await harness.call("perspectives_publish_result", { synthesis, coverage: "complete" }, coordinatorId);
+  assert.notEqual(publication.isError, true, harness.text(publication));
+  const receipt = JSON.parse(harness.text(publication));
+  assert.equal(receipt.phase, "published");
+  const callerRead = await harness.call("perspectives_read_result", { coordinatorId }, "caller");
+  assert.match(harness.text(callerRead), /Finding remains bounded\./);
+  assert.match(harness.text(callerRead), /<!-- perspectives-body:end -->/);
+  assert.match(harness.text(callerRead), /<!-- perspectives-body:start -->/);
 });
 
 test("ambiguous wake setup launches no workers and keeps publication closed", async () => {

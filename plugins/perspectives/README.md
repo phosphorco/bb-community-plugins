@@ -69,8 +69,15 @@ persisted events, so a Perspectives-origin parented thread receives only
 scoped coordinator operations unless its title marks a worker; that title is
 used only to withhold tools. Other plugin-origin callers retain gather/read
 access. Tool execution still verifies persisted identity and
-parent/project/environment. Recognizable workers receive no orchestration
-operations, and the gather handler rejects a verified worker after a rename.
+parent/project/environment. Recognizable workers receive no Perspectives
+tools, and the gather and help handlers reject verified workers after a rename.
+
+Worker read-only behavior is an instruction, not a host sandbox guarantee.
+Worker permission mode may be inherited or explicitly configured up to the
+host ceiling; a source-content prompt injection could induce actions within
+that authority. Set the worker permission mode to an approval-gated option
+when the provider supports one, and review the host's actual permission
+contract before using untrusted sources.
 
 Persisted prompt text is durable identity evidence, not a cryptographic
 capability. A user able to create a hidden thread with a lookalike request can
@@ -84,8 +91,9 @@ without changing the v1 decoder.
 
 The result file is `perspectives/results/<coordinator-id>.md` in coordinator
 thread storage. Product code defines the body as the exact UTF-8 byte slice
-between `<!-- perspectives-body:start -->` and
-`<!-- perspectives-body:end -->`. It computes a SHA-256 over that slice and
+between the first `<!-- perspectives-body:start -->` after the fixed header
+and the final `<!-- perspectives-body:end -->` before the fixed footer. Quoted
+delimiters inside the synthesis remain body text. It computes a SHA-256 over that slice and
 places it in the file's terminal marker. The full-file SHA-256 is returned by
 the publish/read tools because embedding it in the same file would change the
 bytes being hashed.

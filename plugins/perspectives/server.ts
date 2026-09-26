@@ -258,7 +258,7 @@ When the result arrives, use perspectives_read_result to verify and retrieve the
   bb.agents.configure((context) => {
     const recognizablePanelWorker = context.thread.title?.startsWith("Perspectives worker ") ?? false;
     if (recognizablePanelWorker) {
-      return { tools: ["help"], skills: [] };
+      return { tools: [], skills: [] };
     }
 
     if (context.origin.pluginId === bb.pluginId && context.thread.parentThreadId !== null) {

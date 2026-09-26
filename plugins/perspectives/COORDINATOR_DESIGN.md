@@ -30,7 +30,10 @@ request, and matching caller, project, and environment identity. Titles are
 discovery hints only; renaming a coordinator does not invalidate the run.
 Caller retrieval accepts only a verified hidden direct coordinator child of
 the current caller. A worker cannot operate on its parent's queue, children,
-or storage. The synchronous dynamic-configuration callback cannot inspect
+or storage through Perspectives tools, and help and gather reject verified
+workers. Worker read-only instructions do not constrain host permissions;
+inherited or configured worker permission can allow actions outside the
+plugin's tools. The synchronous dynamic-configuration callback cannot inspect
 persisted events. A Perspectives-origin parented thread therefore receives
 only the scoped coordinator operations unless its title marks it as a worker;
 that title is used only to withhold orchestration tools. Other plugin-origin

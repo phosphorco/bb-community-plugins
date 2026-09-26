@@ -208,7 +208,13 @@ test("an ambiguous spawn response recovers exactly one committed child by marker
 test("an unresolved spawn returns launch uncertain without false success or blind retry", async () => {
   const harness = makeHarness({ spawnMode: "throw-without-commit" });
 
-  await assert.rejects(gather(harness), /Launch uncertain/);
+  await assert.rejects(gather(harness), (error: Error) => {
+    assert.match(error.message, /Launch uncertain/);
+    assert.match(error.message, new RegExp(markerFrom(harness.rows[0]!.content[0]!.text)));
+    assert.match(error.message, /Caller backstop: queued \(queue-1\)/);
+    assert.match(error.message, new RegExp(new Date(harness.rows[0]!.sendAt).toISOString()));
+    return true;
+  });
   assert.equal(harness.spawnCalls.length, 1);
   assert.equal(harness.children.length, 0);
   assert.equal(harness.rows.length, 1, "the backstop stays available for restart-time marker discovery");

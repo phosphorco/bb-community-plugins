@@ -991,6 +991,13 @@ export async function runHelp(
   toolContext: PluginAgentToolContext,
   executionSettings: PerspectivesExecutionSettings = INHERIT_EXECUTION_SETTINGS,
 ): Promise<string> {
+  const currentThread = await bb.sdk.threads.get({ threadId: toolContext.threadId, signal: toolContext.signal });
+  if (currentThread.title?.startsWith(WORKER_TITLE_PREFIX) || await isVerifiedPanelWorker(bb, toolContext)) {
+    throw new Error("A verified Perspectives panel worker cannot delegate to help.");
+  }
+  if (await isVerifiedPanelCoordinator(bb, toolContext)) {
+    throw new Error("A Perspectives coordinator cannot delegate to help.");
+  }
   const question = clean(input.question);
   const sharedContext = clean(input.context);
   if (!question) throw new Error("help requires a non-empty question.");
@@ -1874,8 +1881,8 @@ function validateArtifactBytes(
   const open = Buffer.from(ARTIFACT_BODY_START, "utf8");
   const close = Buffer.from(ARTIFACT_BODY_END, "utf8");
   const openAt = bytes.indexOf(open);
-  const closeAt = openAt < 0 ? -1 : bytes.indexOf(close, openAt + open.byteLength);
-  if (openAt < 0 || closeAt < 0 || bytes.indexOf(open, openAt + open.byteLength) >= 0 || bytes.indexOf(close, closeAt + close.byteLength) >= 0) return undefined;
+  const closeAt = openAt < 0 ? -1 : bytes.lastIndexOf(close);
+  if (openAt < 0 || closeAt < openAt + open.byteLength) return undefined;
   const header = bytes.subarray(0, openAt).toString("utf8");
   if (header !== `# Perspectives panel result\nRun ID: ${runId}\n\n`) return undefined;
   const bodyBytes = bytes.subarray(openAt + open.byteLength, closeAt);
@@ -2532,11 +2539,7 @@ export async function runGatherPerspectives(
     );
     return launchReceipt(coordinatorId, backstopRowId, backstopAt, lenses.length);
   } catch (error) {
-    throw new Error(
-      error instanceof Error
-        ? error.message
-        : `Coordinator launch could not be confirmed; caller backstop ${backstopRowId} remains scheduled for marker-based rediscovery and no success receipt was issued.`,
-    );
+    throw new Error(`${errorMessage(error)} Invocation marker: ${marker}. Caller backstop: queued (${backstopRowId}) for ${new Date(backstopAt).toISOString()}. No successful launch was confirmed; use the marker for later rediscovery and do not retry the spawn blindly.`);
   }
 }
 

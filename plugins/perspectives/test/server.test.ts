@@ -81,7 +81,7 @@ describe("Perspectives agent tool registration", () => {
       thread: { ...callerContext.thread, id: "worker", title: "Perspectives worker run lens-1", parentThreadId: "coordinator" },
       origin: { kind: null, pluginId: "perspectives" },
     });
-    expect(recognizableWorker.tools).toEqual(["help"]);
+    expect(recognizableWorker.tools).toEqual([]);
 
     const renamedPluginOriginCoordinator = configure({
       ...callerContext,
