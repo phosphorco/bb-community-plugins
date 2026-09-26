@@ -76,6 +76,7 @@ function threadResult(id: string): RetainedSourceThreadResult {
   return {
     ...thread(id),
     activeBackgroundAgentCount: 0,
+    canRestoreEnvironment: false,
     canSpawnChild: true,
     queuedMessageCount: 0,
   } satisfies RetainedSourceThreadResult;

@@ -91,7 +91,7 @@
     "zod": "4.3.6"
   },
   "devDependencies": {
-    "@get-bb/plugin-sdk": "file:../../../sdk-artifacts/get-bb-plugin-sdk-0.5.24+phosphor.747ead9adb7b.sdk.68c85e61a3da.tgz",
+    "@get-bb/plugin-sdk": "file:../../../sdk-artifacts/get-bb-plugin-sdk-0.5.29+phosphor.f35653218f9b.sdk.a0aca52c9e73.tgz",
     "@types/better-sqlite3": "^7.6.12",
     "@types/node": "^22",
     "@types/react": "19.2.2",
