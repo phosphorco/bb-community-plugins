@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useId, useMemo, useRef, useState, type ChangeEvent, type CSSProperties } from "react";
+import { Component, lazy, memo, Suspense, useCallback, useEffect, useId, useMemo, useRef, useState, type ChangeEvent, type CSSProperties, type ReactNode } from "react";
 import {
   definePluginApp,
   useBbNavigate,
@@ -26,9 +26,46 @@ import {
   type MachineTimelineResult,
 } from "./fleet-contract.ts";
 import type { MachineMonitorHealth, rpcContract } from "./rpc-contract.ts";
-import { FLEET_UTILIZATION_ATTENTION_PERCENT, FleetUtilizationChart, MachineDashboardChart, MachineTimelineChart, type FleetUtilizationDatum } from "./timeline-chart.tsx";
+import { FLEET_UTILIZATION_ATTENTION_PERCENT } from "./fleet-contract.ts";
+import type { FleetUtilizationDatum } from "./timeline-chart.tsx";
 import type { TimelineEventActivation } from "./timeline-compiler.ts";
 import "./app.css";
+
+// The native fleet controls and exact retained-event disclosures stay in the
+// entry artifact. ECharts is requested only by the chart surface a person has
+// opened; artifact-format-v2 emits each of these imports as an integrity-bound
+// chunk rather than folding the renderer back into app.js.
+const FleetUtilizationChart = lazy(async () => {
+  const module = await import("./timeline-chart.tsx");
+  return { default: module.FleetUtilizationChart };
+});
+const MachineDashboardChart = lazy(async () => {
+  const module = await import("./timeline-chart.tsx");
+  return { default: module.MachineDashboardChart };
+});
+const MachineTimelineChart = lazy(async () => {
+  const module = await import("./timeline-chart.tsx");
+  return { default: module.MachineTimelineChart };
+});
+
+class ChartChunkBoundary extends Component<Readonly<{ children: ReactNode; label: string }>, Readonly<{ failed: boolean }>> {
+  state = { failed: false };
+
+  static getDerivedStateFromError(): Readonly<{ failed: boolean }> {
+    return { failed: true };
+  }
+
+  render(): ReactNode {
+    if (this.state.failed) {
+      return <p className="machine-monitor__chart-loading" role="status">
+        {this.props.label} could not load. <button type="button" onClick={() => window.location.reload()}>Reload page</button>
+      </p>;
+    }
+    return <Suspense fallback={<p className="machine-monitor__chart-loading" role="status">Preparing {this.props.label}…</p>}>
+      {this.props.children}
+    </Suspense>;
+  }
+}
 
 const RANGES = [1, 6, 24, 24 * 7, 24 * 30] as const;
 type RangeHours = typeof RANGES[number];
@@ -755,7 +792,7 @@ function FleetPicker({ overview, selectedMachineKey, onSelect, onIntent }: {
       </div>
       <span className="machine-monitor__fleet-generation">{utilizationAttentionCount > 0 ? `${utilizationAttentionCount} at ≥${FLEET_UTILIZATION_ATTENTION_PERCENT}%` : "Utilization below 70%"}{healthAttentionCount > 0 ? ` · ${healthAttentionCount} health signal${healthAttentionCount === 1 ? "" : "s"}` : ""}</span>
     </header>
-    {overview.machines.length > 0 && <FleetUtilizationChart className="machine-monitor__fleet-utilization" machines={utilizationMachines} onSelectMachine={selectUtilizationMachine} />}
+    {overview.machines.length > 0 && <ChartChunkBoundary label="fleet utilization chart"><FleetUtilizationChart className="machine-monitor__fleet-utilization" machines={utilizationMachines} onSelectMachine={selectUtilizationMachine} /></ChartChunkBoundary>}
     {overview.machines.length === 0 ? <p className="machine-monitor__empty">No machines are registered yet.</p> : <ol>
       {overview.machines.map((machine) => <FleetPickerRow
         key={machineIdentityKey(machine.machine)}
@@ -1019,21 +1056,21 @@ const SelectedMachineOverview = memo(function SelectedMachineOverview({ machine,
     <section className="machine-monitor__timeline" aria-labelledby="machine-monitor-history-title">
       <header><div><h2 id="machine-monitor-history-title">Operational history</h2><p>{`CPU, memory, and root disk share a ${FLEET_UTILIZATION_ATTENTION_PERCENT}% attention line.`}</p></div><span>{rangeLabel(rangeHours)}</span></header>
       {visibleTimeline == null ? <><p className="machine-monitor__empty">No retained timeline is available yet.</p><MachineNoticeRail machine={machine} connection={connection} chartProvenance={chartProvenance} timelineLoading={timelineLoading} timelineError={timelineError} /><MachineContext inventory={inventory} loading={inventoryLoading} error={inventoryError} /></> : <>
-        <MachineDashboardChart className="machine-monitor__dashboard-chart" timeline={visibleTimeline} stale={historyStale || retainedForOtherMachine} />
+        <ChartChunkBoundary label="machine history chart"><MachineDashboardChart className="machine-monitor__dashboard-chart" timeline={visibleTimeline} stale={historyStale || retainedForOtherMachine} /></ChartChunkBoundary>
         <MachineNoticeRail machine={machine} connection={connection} chartProvenance={chartProvenance} timelineLoading={timelineLoading} timelineError={timelineError} />
         <MachineContext inventory={inventory} loading={inventoryLoading} error={inventoryError} />
         {!retainedForOtherMachine && visibleSelectedTimeline != null && <RootDiskBreakdown timeline={visibleSelectedTimeline} />}
         {!retainedForOtherMachine && visibleSelectedTimeline != null && <HistoryDataDisclosure timeline={visibleSelectedTimeline} />}
         {!retainedForOtherMachine && visibleSelectedTimeline != null && <details className="machine-monitor__full-timeline" open={detailOpen} onToggle={(event) => setDetailOpen((event.currentTarget as HTMLDetailsElement).open)}>
           <summary>Full metric timeline and events <span>{eventSummary}</span></summary>
-          {detailOpen && <MachineTimelineChart
-            className="machine-monitor__timeline-chart"
-            timeline={visibleSelectedTimeline}
-            stale={historyStale}
-            refreshing={timelineLoading}
-            activationDisabled={!eventActivationAllowed}
-            onActivateEvent={onActivateEvent}
-          />}
+          {detailOpen && <ChartChunkBoundary label="full metric timeline"><MachineTimelineChart
+              className="machine-monitor__timeline-chart"
+              timeline={visibleSelectedTimeline}
+              stale={historyStale}
+              refreshing={timelineLoading}
+              activationDisabled={!eventActivationAllowed}
+              onActivateEvent={onActivateEvent}
+            /></ChartChunkBoundary>}
         </details>}
       </>}
     </section>

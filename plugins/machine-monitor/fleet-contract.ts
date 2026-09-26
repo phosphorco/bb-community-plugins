@@ -17,6 +17,8 @@ export const LOCAL_BB_SERVER_MACHINE_ID = "local-bb-server";
 export const MAX_FLEET_MACHINES = 256;
 export const MAX_TIMELINE_BUCKETS = 720;
 export const MAX_TIMELINE_EVENTS = 200;
+/** Shared native-and-chart presentation threshold; not an ECharts dependency. */
+export const FLEET_UTILIZATION_ATTENTION_PERCENT = 70;
 /** Eight built-in locations, thirty-two configured locations, plus derived Other. */
 export const MAX_MACHINE_DIRECTORY_SUMMARIES = 41;
 export const MAX_TIMELINE_RANGE_MS = 30 * 24 * 60 * 60_000;

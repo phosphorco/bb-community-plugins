@@ -5,7 +5,7 @@ import * as echarts from "echarts/core";
 import type { EChartsCoreOption } from "echarts/core";
 import { SVGRenderer } from "echarts/renderers";
 
-import type { MachineTimelineResult } from "./fleet-contract.ts";
+import { FLEET_UTILIZATION_ATTENTION_PERCENT, type MachineTimelineResult } from "./fleet-contract.ts";
 import {
   activateMachineTimelineEvent,
   compileMachineTimeline,
@@ -243,7 +243,6 @@ export function MachineTimelineEChartsHost({ compile, label, minimumHeight, acti
   />;
 }
 
-export const FLEET_UTILIZATION_ATTENTION_PERCENT = 70;
 const FLEET_UTILIZATION_FIGURE_ID = "machine-monitor:fleet-utilization";
 const FLEET_UTILIZATION_SERIES_ID = `${FLEET_UTILIZATION_FIGURE_ID}:series:utilization`;
 
