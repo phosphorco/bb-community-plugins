@@ -62,8 +62,9 @@ BB currently has no native message-footer slot. An invisible mount in the native
 thread-header slot provides exact thread identity and per-pane lifecycle; its
 empty host action wrapper is hidden. The DOM adapter appends
 only plugin-owned labels to `data-timeline-row-id` wrappers within the owning
-`data-split-pane-id` pane (or its non-hosted `data-conversation-collapsed`
-fallback). Hosted headers may be siblings of the conversation. It respects `data-timeline-windowed-realized`.
+`data-split-pane-id` pane or the ordinary `thread-detail-timeline-panel`
+(with `data-conversation-collapsed` as an older-layout fallback). Hosted
+headers may be siblings of the conversation. It respects `data-timeline-windowed-realized`.
 These host DOM attributes are a compatibility boundary tested against the local
 BB fork. Standalone embedded chats without the native thread header are not
 decorated. No text, titles, classes, URL guesses, or sidebar-label matching is
@@ -91,7 +92,8 @@ used to identify a thread. A future footer slot can replace this narrow adapter.
   and listeners. Selected timing text is held until selection ends, retaining
   its spans and text nodes. Transient RPC errors retain the last successful
   footers; fatal decoration errors clean up locally and retry at most twice.
-  Reconnect requests fresh data; async results are tied to the
+  Reconnect and timing-change
+  signals request fresh data; async results are tied to the
   component generation that requested them.
 
 Tests cover source-order timing, steering, folded work, child isolation,
@@ -112,7 +114,6 @@ covers request limits, in-turn page boundaries, and equal-snapshot DOM writes.
 
 The host DOM adapter is verified against Phosphor's materialized BB 0.39 runtime
 and SDK 0.4.15. Stock/future BB DOM layouts are not claimed to be verified.
-Unsupported layouts cannot be decorated until the host exposes a footer slot.
 
 A second four-lens performance review led to stable refresh-error handling,
 selection preservation, computation reuse, bounded head probes, a two-load

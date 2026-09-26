@@ -113,6 +113,16 @@ test("hosted sibling headers discover their own split pane; moved rows are relea
   controller.dispose(); dom.window.close();
 });
 
+test("ordinary thread header discovers the timeline panel without crossing into another panel", () => {
+  const dom = new JSDOM('<div id="thread-detail-timeline-panel"><div><header><button></button></header><main><div data-timeline-row-id="a"></div></main></div></div><aside><div data-timeline-row-id="b"></div></aside>');
+  const doc = dom.window.document;
+  const root = findTimingPane(doc.querySelector("button")!)!;
+  assert.equal(root.id, "thread-detail-timeline-panel");
+  assert.equal(root.querySelectorAll("[data-timeline-row-id]").length, 1);
+  assert.equal(findTimingPane(doc.querySelector("aside")!), null);
+  dom.window.close();
+});
+
 test("equal snapshots cause no DOM writes", async () => {
   const dom = new JSDOM('<main><div data-timeline-row-id="a"></div></main>', { pretendToBeVisual: true });
   const root = dom.window.document.querySelector("main")!;
