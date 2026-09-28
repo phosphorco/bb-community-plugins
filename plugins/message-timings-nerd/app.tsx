@@ -3,6 +3,7 @@ import { definePluginApp, useRealtime, useRealtimeConnectionState, useRpc } from
 import type { PluginThreadHeaderActionProps } from "@get-bb/plugin-sdk/app";
 import type { rpcContract } from "./rpc-contract.ts";
 import { createDecorations } from "./decorations.ts";
+import { createActivityStrip } from "./activity.ts";
 import { findTimingPane } from "./pane.ts";
 import "./app.css";
 
@@ -34,6 +35,7 @@ function TimingMount({ threadId }: PluginThreadHeaderActionProps) {
         timer = setTimeout(() => setAttempt(value => value + 1), 10_000);
       }
     });
+    const activity = createActivityStrip(root);
     function request() {
       if (failed) return;
       pending = true;
@@ -49,6 +51,7 @@ function TimingMount({ threadId }: PluginThreadHeaderActionProps) {
         if (disposed || failed) return;
         consecutiveFailures = 0;
         decorations.update(result.stamps, result.coveredIds, result.historyStartId);
+        activity.update(result.turns, result.truncated);
         if (!failed) retryCount.current = 0;
       } catch {
         if (!disposed) {
@@ -70,6 +73,7 @@ function TimingMount({ threadId }: PluginThreadHeaderActionProps) {
       disposed = true;
       clearTimeout(timer);
       decorations.dispose();
+      activity.dispose();
       document.removeEventListener("visibilitychange", visible);
       refreshRef.current = () => {};
     };

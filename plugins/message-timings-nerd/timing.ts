@@ -171,3 +171,40 @@ export function labelParts(stamp: Stamp, now: number): LabelPart[] {
 export function label(stamp: Stamp, now: number): string {
   return labelParts(stamp, now).map(part => part.text).join("");
 }
+
+export interface TurnSpan {
+  from: number;
+  // null only for the newest uncompleted turn while the thread is running.
+  to: number | null;
+}
+
+// Activity comes from turns themselves, not rendered footers: failed, empty,
+// steered, and automation-started turns all count. A turn starts at its
+// earliest row and ends at its completion (or its last row if the completion
+// is outside the loaded event page).
+export function turnSpans(threadId: string, rows: TimingRow[], completions: Completion[], threadRunning: boolean): TurnSpan[] {
+  const turns = new Map<string, { from: number; last: number; seq: number }>();
+  function visit(row: TimingRow) {
+    if (row.threadId !== threadId) return;
+    if (row.turnId && !(row.turnRequest && row.turnRequest.status !== "accepted")) {
+      const at = row.sentAt ?? row.createdAt;
+      const turn = turns.get(row.turnId);
+      if (!turn) turns.set(row.turnId, { from: at, last: row.createdAt, seq: row.sourceSeqEnd });
+      else {
+        turn.from = Math.min(turn.from, at);
+        turn.last = Math.max(turn.last, row.createdAt);
+        turn.seq = Math.max(turn.seq, row.sourceSeqEnd);
+      }
+    }
+    if (row.kind === "turn") row.children?.forEach(visit);
+  }
+  rows.forEach(visit);
+  const finished = new Map<string, number>();
+  for (const completion of completions) finished.set(completion.turnId, Math.max(finished.get(completion.turnId) ?? -Infinity, completion.at));
+  let newest: string | null = null;
+  for (const [id, turn] of turns) if (!newest || turn.seq > turns.get(newest)!.seq) newest = id;
+  return [...turns].map(([id, turn]) => {
+    const end = finished.get(id);
+    return { from: turn.from, to: end != null ? Math.max(end, turn.from) : id === newest && threadRunning ? null : turn.last };
+  }).sort((a, b) => a.from - b.from);
+}

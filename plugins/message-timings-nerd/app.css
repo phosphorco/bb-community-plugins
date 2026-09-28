@@ -24,3 +24,50 @@
 span[role="group"]:has(> [data-message-timings-nerd-mount]) {
   display: none;
 }
+.message-timings-nerd__activity {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  /* The host shell already spaces its children; keep the strip snug. */
+  margin-block-end: -0.25rem;
+  padding-inline: 0.25rem;
+}
+.message-timings-nerd__activity-track {
+  position: relative;
+  flex: 1;
+  height: 4px;
+  border-radius: 2px;
+  background: color-mix(in oklab, var(--muted-foreground) 30%, transparent);
+  overflow: hidden;
+}
+.message-timings-nerd__activity-span {
+  position: absolute;
+  inset-block: 0;
+  min-width: 2px;
+  background: color-mix(in oklab, var(--timeline-accent, var(--foreground)) 70%, var(--foreground));
+}
+.message-timings-nerd__activity-break {
+  position: absolute;
+  inset-block: 0;
+  width: 2px;
+  margin-inline-start: -1px;
+  background: var(--background);
+}
+.message-timings-nerd__activity-span[data-running] {
+  animation: message-timings-nerd-pulse 1.6s ease-in-out infinite;
+}
+@keyframes message-timings-nerd-pulse { 50% { opacity: 0.45; } }
+@media (prefers-reduced-motion: reduce) {
+  /* A static cue replaces the pulse; the caption also says "running". */
+  .message-timings-nerd__activity-span[data-running] {
+    animation: none;
+    background: repeating-linear-gradient(90deg, currentColor 0 3px, transparent 3px 5px);
+    color: color-mix(in oklab, var(--timeline-accent, var(--foreground)) 70%, var(--foreground));
+  }
+}
+.message-timings-nerd__activity-caption {
+  color: var(--muted-foreground);
+  font-size: 0.6875rem;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}

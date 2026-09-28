@@ -66,3 +66,19 @@ test("unchanged history needs only a head probe after invalidation", async () =>
   assert.deepEqual(after, before);
   assert.equal(pages, 13); assert.equal(eventReads, 2);
 });
+
+test("RPC reports the newest open turn as running only while the thread is active", async () => {
+  let status: "active" | "idle" = "active";
+  const { bb, harness } = createFakePluginHost({ sdk: { threads: {
+    get: () => makeThreadResponse({ id: "t", status }),
+    timeline: () => ({ rows: [{ id: "u", threadId: "t", turnId: "turn", kind: "conversation", role: "user", initiator: "user", sourceSeqStart: 1, sourceSeqEnd: 1, createdAt: 100 }],
+      maxSeq: 1, timelinePage: { hasOlderRows: false, olderCursor: null } }),
+    events: { list: () => [] },
+  } } });
+  plugin(bb);
+  const read = async () => (await harness.callRpc("timings", { threadId: "t" }) as { turns: { from: number; to: number | null }[] }).turns;
+  assert.deepEqual(await read(), [{ from: 100, to: null }]);
+  status = "idle";
+  await new Promise(resolve => setTimeout(resolve, 2_100));
+  assert.deepEqual(await read(), [{ from: 100, to: 100 }]);
+});

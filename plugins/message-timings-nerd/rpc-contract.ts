@@ -8,6 +8,7 @@ export const rpcContract = defineRpcContract({
       truncated: z.boolean(),
       coveredIds: z.array(z.string()),
       historyStartId: z.string().nullable(),
+      turns: z.array(z.object({ from: z.number(), to: z.number().nullable() })),
       stamps: z.array(z.object({
         rowId: z.string(), kind: z.enum(["user", "finish"]), at: z.number().nullable(),
         previousUserAt: z.number().nullable(), previousFinishAt: z.number().nullable(),

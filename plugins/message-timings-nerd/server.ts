@@ -1,6 +1,6 @@
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { rpcContract } from "./rpc-contract.ts";
-import { projectTiming, type TimingRow } from "./timing.ts";
+import { projectTiming, turnSpans, type TimingRow, type TurnSpan } from "./timing.ts";
 import { createCache } from "./cache.ts";
 import { attachRequestTimes } from "./request-times.ts";
 import type { Stamp } from "./timing.ts";
@@ -12,7 +12,7 @@ export default function plugin(bb: BbPluginApi) {
   const cache = createCache(load);
   // Retain timing metadata, never expanded message/tool content. A cheap head
   // probe avoids rereading the same historical pages after TTL or invalidation.
-  const history = new Map<string, { maxSeq: number; result: { stamps: Stamp[]; coveredIds: string[]; truncated: boolean; historyStartId: string | null } }>();
+  const history = new Map<string, { maxSeq: number; running: boolean; result: { stamps: Stamp[]; turns: TurnSpan[]; coveredIds: string[]; truncated: boolean; historyStartId: string | null } }>();
   for (const event of ["thread.active", "thread.idle", "thread.failed", "thread.deleted"] as const) {
     bb.events.on(event, ({ thread }) => {
       cache.invalidate(thread.id);
@@ -28,11 +28,15 @@ export default function plugin(bb: BbPluginApi) {
     let truncated = false;
     let maxSeq = 0;
     // Bound full-history work; missing predecessors stay unknown.
+    // Timings never depend on status; an unreadable status only ends "running".
+    const thread = await Promise.resolve().then(() => bb.sdk.threads.get({ threadId })).catch(() => null);
+    const running = !!thread && (thread.status === "active" || thread.status === "starting" || thread.status === "stopping");
     for (let page = 0; page < 12; page++) {
       const result = await bb.sdk.threads.timeline({ threadId, includeNestedRows: "true",
         ...(cursor ? { beforeAnchorSeq: String(cursor.anchorSeq), beforeAnchorId: cursor.anchorId } : {}),
       });
-      if (page === 0 && history.get(threadId)?.maxSeq === result.maxSeq) return history.get(threadId)!.result;
+      const prior = history.get(threadId);
+      if (page === 0 && prior?.maxSeq === result.maxSeq && prior.running === running) return history.get(threadId)!.result;
       rows.push(...result.rows);
       if (page === 0) maxSeq = result.maxSeq;
       truncated = result.timelinePage.hasOlderRows;
@@ -51,11 +55,11 @@ export default function plugin(bb: BbPluginApi) {
     const collect = (row: TimingRow) => { coveredIds.push(row.id); if (row.kind === "turn") row.children?.forEach(collect); };
     rows.forEach(collect);
     const oldest = rows.reduce<TimingRow | null>((prior, row) => !prior || row.sourceSeqStart < prior.sourceSeqStart ? row : prior, null);
-    const result = { stamps: projectTiming(threadId, rows, completions), coveredIds,
+    const result = { stamps: projectTiming(threadId, rows, completions), turns: turnSpans(threadId, rows, completions, running), coveredIds,
       historyStartId: truncated ? oldest?.id ?? null : null,
       truncated: truncated || events.length >= Number(EVENT_PAGE_LIMIT) || requests.length >= Number(EVENT_PAGE_LIMIT) };
     history.delete(threadId);
-    history.set(threadId, { maxSeq, result });
+    history.set(threadId, { maxSeq, running, result });
     if (history.size > 32) history.delete(history.keys().next().value!);
     return result;
   }
