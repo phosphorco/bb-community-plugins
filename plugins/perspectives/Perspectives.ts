@@ -165,7 +165,7 @@ const COORDINATOR_AUTHORITY_INSTRUCTIONS = `You are coordinating a read-only res
 - Workers remain read-only advisory experts. Include the Perspectives READ_ONLY_INSTRUCTIONS policy in every worker prompt. Worker threads do not receive coordinator tools.
 - Base every factual statement on persisted worker final outputs or cited sources those workers actually inspected. Separate observations from inference and supplied context. A queue row, spawn response, worker count, native report, or tool response alone does not prove delivery, research completion, or a guarantee.
 - Do not claim eventual delivery, exactly-once execution, guaranteed recovery, complete coverage, or reliability unless the available primary evidence directly establishes that claim. Describe operational limits and unknowns plainly.
-- If coordinator_step reports wake-setup-failed with readyToPublish true, call perspectives_publish_result with a short failure note and coverage partial. The product rechecks that at least one required wake row has a persisted failureReason, the other required wake state is known, and no worker launch was attempted before publishing the fixed no-research failed artifact. If it reports wake-setup-uncertain, no new workers were launched; end the turn and rely only on a confirmed wake or the caller backstop. Ambiguous queue state does not authorize early publication.`;
+- If coordinator_step reports wake-setup-failed with readyToPublish true, call perspectives_publish_result with a short failure note and coverage partial. The product rechecks that at least one required wake row has a persisted failureReason, the other required wake state is known, and no worker launch was attempted before publishing the fixed no-research failed artifact. If it reports wake-setup-uncertain, no new workers were launched; end the turn and rely only on a confirmed wake or explicit queue recovery. Ambiguous queue state does not authorize early publication.`;
 
 const DIRECT_HELP_INSTRUCTIONS = `Answer directly from the supplied question and context.
 - Do not inspect the repository or invoke tools unless the answer would otherwise depend on a guess.
@@ -1044,7 +1044,7 @@ export const GATHER_FAILURE_HEADER = "Perspectives panel failed";
 
 const COORDINATOR_WRAP_UP_MS = 20 * 60_000;
 const COORDINATOR_DEADLINE_MS = 25 * 60_000;
-const CALLER_BACKSTOP_GRACE_MS = 60_000;
+const LAUNCH_INTENT_GRACE_MS = 60_000;
 const COORDINATOR_ARTIFACT_PATH = "perspectives/results/$BB_THREAD_ID.md";
 const COORDINATOR_MARKER_PREFIX = "perspectives-invocation:";
 const THREAD_LIST_PAGE_SIZE = 100;
@@ -1082,6 +1082,7 @@ interface CoordinatorRunRequest {
   readonly startedAtEpochMs: number;
   readonly wrapUpAtEpochMs: number;
   readonly deadlineAtEpochMs: number;
+  // Legacy protocol field: this is the coordinator launch-intent wake time only.
   readonly callerBackstopAtEpochMs: number;
   readonly artifactRelativePath: string;
 }
@@ -1115,7 +1116,7 @@ const coordinatorRequestProtocolV1Schema = z.object({
 }).strict().superRefine((request, context) => {
   if (request.wrapUpAtEpochMs !== request.startedAtEpochMs + COORDINATOR_WRAP_UP_MS ||
       request.deadlineAtEpochMs !== request.startedAtEpochMs + COORDINATOR_DEADLINE_MS ||
-      request.callerBackstopAtEpochMs !== request.deadlineAtEpochMs + CALLER_BACKSTOP_GRACE_MS) {
+      request.callerBackstopAtEpochMs !== request.deadlineAtEpochMs + LAUNCH_INTENT_GRACE_MS) {
     context.addIssue({ code: "custom", message: "Run deadlines do not match the Perspectives schedule." });
   }
 });
@@ -1147,80 +1148,7 @@ If the step reports workers still running, end the turn. Do not wait or poll. If
 
 After synthesis, call \`perspectives_publish_result\` exactly once with the complete synthesis text and a coverage choice. Choose partial if any requested lens could not inspect relevant sources, cannot answer, has unsupported citations, or has materially unknown coverage. Choose complete only if every requested lens returned exactly one persisted final output and you judge the requested lenses substantively addressed. This is a conservative coordinator judgment, not a mechanical proof of factual coverage; when unsure, choose partial. Older coordinator prompts may omit the optional choice; the product then uses partial. The tool separately computes worker-output availability from persisted children and caps complete status if any requested lens lacks exactly one idle verified worker with a final output. A complete status still does not prove the synthesis factually complete. The tool builds an exact UTF-8 artifact, computes the body SHA-256, writes with create-only atomic semantics, reads back, and verifies the exact bytes. Do not write files directly or retry a conflicting publication. Include the returned status, run ID, relative path, body SHA-256, and full-file SHA-256 in your short final response. The caller can read the full verified artifact with \`perspectives_read_result\`.
 
-The 20-, 25-, and 26-minute targets depend on BB's scheduled-message sweep and host availability. Queue acceptance is not delivery. A failed queue row does not wake this coordinator automatically; if the native report is also lost, BB currently needs explicit queue recovery or operator action. Never promise an eventual wake, exactly-once creation, or a strict wall-clock deadline.`;
-}
-
-function backstopMessage(args: {
-  readonly marker: string;
-  readonly requestIdentity: {
-    readonly question: string;
-    readonly context: string;
-    readonly orderedLenses: readonly string[];
-    readonly callerThreadId: string;
-    readonly projectId: string;
-    readonly environmentId: string | null;
-    readonly coordinatorExecution: ResolvedExecution;
-    readonly workerExecution: ResolvedExecution;
-  };
-  readonly backstopAt: number;
-}): string {
-  return `${GATHER_RESULT_HEADER} caller backstop\nInvocation marker: ${args.marker}\nRequest identity:\n${JSON.stringify(args.requestIdentity, null, 2)}\nScheduled target: ${new Date(args.backstopAt).toISOString()}\n\nUse Perspectives' perspectives_read_result tool with this invocation marker. It searches this caller's hidden children and verifies each candidate's first persisted client/turn/requested input and parent relationship. Zero verified matches means launch failed or remains uncertain; listing errors mean discovery is unavailable. One verified coordinator lets you read its artifact. Multiple verified coordinators are possible duplicates: disclose their IDs and statuses and keep their artifacts separate. Present a result only after the tool verifies the full file bytes, embedded run identity, body SHA-256, and terminal marker. Report missing, corrupt, or host-offline outcomes without claiming success. Do not use the shell or guess a thread-storage path.`;
-}
-
-function queuedRowMatches(
-  row: {
-    readonly threadId?: string;
-    readonly sendAt?: number | null;
-    readonly content?: unknown;
-    readonly failureReason?: string | null;
-    readonly editable?: boolean;
-  },
-  threadId: string,
-  sendAt: number,
-  expectedMessage: string,
-): boolean {
-  const content = row.content;
-  const message = Array.isArray(content) && content.length === 1 &&
-      content[0] && typeof content[0] === "object" &&
-      (content[0] as { readonly type?: unknown }).type === "text" &&
-      typeof (content[0] as { readonly text?: unknown }).text === "string"
-    ? (content[0] as { readonly text: string }).text
-    : undefined;
-  return row.threadId === threadId &&
-    row.sendAt === sendAt &&
-    sendAt > Date.now() &&
-    row.failureReason === null &&
-    row.editable === true &&
-    message === expectedMessage;
-}
-
-async function confirmCallerBackstop(
-  bb: BbPluginApi,
-  callerThreadId: string,
-  marker: string,
-  sendAt: number,
-  message: string,
-): Promise<string> {
-  try {
-    const response = await bb.sdk.threads.send({
-      threadId: callerThreadId,
-      mode: "auto",
-      sendAt,
-      input: [{ type: "text", text: message, mentions: [], visibility: "agent-only" }],
-    });
-    if (response.delivery === "queued" && queuedRowMatches(response.queuedMessage, callerThreadId, sendAt, message)) {
-      return response.queuedMessage.id;
-    }
-  } catch {
-    // Inspect durable queue state below before deciding whether acceptance is unknown.
-  }
-
-  const rows = await bb.sdk.threads.queuedMessages.list({ threadId: callerThreadId });
-  const matches = rows.filter((row) => queuedRowMatches(row, callerThreadId, sendAt, message));
-  if (matches.length === 1) return matches[0]!.id;
-  throw new Error(
-    `Caller backstop for invocation ${marker} could not be confirmed${matches.length > 1 ? " uniquely" : ""}; no coordinator was spawned and no success receipt was issued.`,
-  );
+The coordinator wake targets depend on BB's scheduled-message sweep and host availability. Queue acceptance is not delivery. A failed queue row does not wake this coordinator automatically; if the native report is also lost, BB currently needs explicit queue recovery or operator action. Never promise an eventual wake, exactly-once creation, or a strict wall-clock deadline.`;
 }
 
 async function listChildrenByParent(threads: Threads, parentThreadId: string, signal?: AbortSignal) {
@@ -1327,8 +1255,8 @@ async function spawnCoordinator(
   throw new Error(`Launch uncertain: coordinator spawn is ambiguous (${spawnReason}); ${discoveryReason}. No successful launch was confirmed, and this invocation did not retry it.`);
 }
 
-function launchReceipt(runId: string, backstopRowId: string, backstopAt: number, lensCount: number): string {
-  return `Perspectives panel launched for ${lensCount} lenses.\n\nRun ID: ${runId}\nCoordinator: @thread:${runId}\nCaller backstop: queued (${backstopRowId}) for ${new Date(backstopAt).toISOString()}.\nArtifact: perspectives/results/${runId}.md\n\nThe coordinator reconciles native child reports and scheduled wakes, then publishes one complete, partial, or failed artifact. Its final response arrives through BB's native parent report; the queued backstop recovers a lost completion. When either arrives, verify the artifact by coordinator ID and relative path, then present it once. After restart, compare older coordinator prompts by caller ID, question, context, ordered lenses, project/environment, and execution settings; disclose matching runs as possible duplicates with separate IDs because identical requests may be intentional. Keep their artifacts separate. Do not wait or poll for the result. The 20-, 25-, and 26-minute times are scheduling targets, not delivery guarantees.`;
+function launchReceipt(runId: string, marker: string, lensCount: number): string {
+  return `Perspectives panel launched for ${lensCount} lenses.\n\nRun ID: ${runId}\nCoordinator: @thread:${runId}\nInvocation marker: ${marker}. No requesting-thread follow-up is scheduled.\nArtifact: perspectives/results/${runId}.md\n\nThe coordinator reconciles native child reports and scheduled wakes, then publishes one complete, partial, or failed artifact. Its final response arrives through BB's native parent report; no requesting-thread reminder is scheduled. When the report arrives, verify the artifact by coordinator ID and relative path, then present it once. After restart, compare older coordinator prompts by caller ID, question, context, ordered lenses, project/environment, and execution settings; disclose matching runs as possible duplicates with separate IDs because identical requests may be intentional. Keep their artifacts separate. Do not wait or poll for the result. The 20- and 25-minute coordinator wakes are scheduling targets, not delivery guarantees.`;
 }
 
 const WORKER_TITLE_PREFIX = "Perspectives worker ";
@@ -1673,7 +1601,7 @@ async function reconcileWorkers(
   request: CoordinatorRunRequest,
   signal: AbortSignal,
   options: { readonly spawnMissing: boolean; readonly stopAtDeadline: boolean },
-): Promise<{ readonly outcomes: readonly LensReconciliation[]; readonly allTerminal: boolean; readonly listError?: string }> {
+): Promise<{ readonly outcomes: readonly LensReconciliation[]; readonly allTerminal: boolean; readonly listError?: string; readonly workerCleanup?: readonly WorkerCleanupReport[] }> {
   let children: Awaited<ReturnType<Threads["list"]>>;
   try {
     children = await listChildrenByParent(bb.sdk.threads, runId, signal);
@@ -1772,6 +1700,7 @@ async function reconcileWorkers(
   }
 
   const remainingBudget = { chars: MAX_RECONCILED_OUTPUT_CHARS };
+  const workerCleanup: WorkerCleanupReport[] = [];
   const outcomes: LensReconciliation[] = [];
   let allTerminal = true;
   for (let index = 0; index < request.orderedLenses.length; index++) {
@@ -1797,6 +1726,9 @@ async function reconcileWorkers(
         }
       }
       if (isActiveStatus(status)) allTerminal = false;
+      if (status === "idle" || status === "error") {
+        workerCleanup.push(await cleanupWorkerWrapUp(bb, child.id, runId, signal));
+      }
       let output: string | null = null;
       let outputSha256: string | null = null;
       let outputChars = 0;
@@ -1853,7 +1785,7 @@ async function reconcileWorkers(
       verifiedChildIds: slotChildren.map((child) => child.id),
     });
   }
-  return { outcomes, allTerminal };
+  return { outcomes, allTerminal, workerCleanup };
 }
 
 function statusText(content: string): string {
@@ -1970,21 +1902,17 @@ async function verifyCallerCoordinator(
   coordinatorId: string,
   signal: AbortSignal,
 ): Promise<AuthenticatedCoordinator | undefined> {
-  try {
-    const { threads } = bb.sdk;
-    const thread = await threads.get({ threadId: coordinatorId, signal });
-    if (thread.parentThreadId !== callerThreadId || thread.projectId !== callerProjectId || thread.visibility !== "hidden") return undefined;
-    const prompt = await firstRequestedPrompt(threads, coordinatorId, signal);
-    if (!prompt) return undefined;
-    const request = requestFromCoordinatorPrompt(prompt);
-    if (!request || request.callerThreadId !== callerThreadId || request.projectId !== callerProjectId ||
-        (request.environmentId !== null && thread.environmentId !== request.environmentId)) return undefined;
-    const caller = await threads.get({ threadId: callerThreadId, signal });
-    if (caller.projectId !== callerProjectId || (caller.environmentId ?? null) !== request.environmentId) return undefined;
-    return { thread, request, prompt };
-  } catch {
-    return undefined;
-  }
+  const { threads } = bb.sdk;
+  const thread = await threads.get({ threadId: coordinatorId, signal });
+  if (thread.parentThreadId !== callerThreadId || thread.projectId !== callerProjectId || thread.visibility !== "hidden") return undefined;
+  const prompt = await firstRequestedPrompt(threads, coordinatorId, signal);
+  if (!prompt) throw new Error(`Coordinator verification unavailable: no initial request for ${coordinatorId}.`);
+  const request = requestFromCoordinatorPrompt(prompt);
+  if (!request || request.callerThreadId !== callerThreadId || request.projectId !== callerProjectId ||
+      (request.environmentId !== null && thread.environmentId !== request.environmentId)) return undefined;
+  const caller = await threads.get({ threadId: callerThreadId, signal });
+  if (caller.projectId !== callerProjectId || (caller.environmentId ?? null) !== request.environmentId) return undefined;
+  return { thread, request, prompt };
 }
 
 async function isVerifiedPanelWorker(
@@ -2028,8 +1956,9 @@ export async function runPerspectivesCoordinatorStep(
   const runId = context.threadId;
   const existing = await readThreadArtifact(bb, runId);
   if (existing.kind === "present") {
+    const workerCleanup = await cleanupPublishedWorkers(bb, runId, request, context.signal);
     const pendingRunRowsRemoved = await cleanupPublishedRunRows(bb, runId, request, context.signal);
-    return JSON.stringify({ phase: "already-published", runId, status: existing.artifact.status, bodySha256: existing.artifact.bodySha256, fileSha256: existing.artifact.fileSha256, artifactRelativePath: artifactRelativePath(runId), pendingRunRowsRemoved });
+    return JSON.stringify({ workerCleanup, phase: "already-published", runId, status: existing.artifact.status, bodySha256: existing.artifact.bodySha256, fileSha256: existing.artifact.fileSha256, artifactRelativePath: artifactRelativePath(runId), pendingRunRowsRemoved });
   }
   if (existing.kind !== "missing") throw artifactReadFailure(runId, existing);
 
@@ -2074,7 +2003,7 @@ export async function runPerspectivesCoordinatorStep(
   }
   if (!deadlineReached && now >= request.wrapUpAtEpochMs) {
     for (const workerId of activeWorkers) {
-      const message = `Perspectives wrap-up request for run ${runId}; return the strongest supported findings and important unknowns now.`;
+      const message = workerWrapUpMessage(runId);
       let alreadyQueuedOrRequested = false;
       try {
         const [rows, events] = await Promise.all([
@@ -2087,6 +2016,8 @@ export async function runPerspectivesCoordinatorStep(
       }
       if (alreadyQueuedOrRequested) continue;
       try {
+        const current = await bb.sdk.threads.get({ threadId: workerId, signal: context.signal });
+        if (!isActiveStatus(current.status)) continue;
         await bb.sdk.threads.send({
           threadId: workerId,
           mode: "steer",
@@ -2111,9 +2042,10 @@ export async function runPerspectivesCoordinatorStep(
     wakeReports: queueSummary,
     readyToPublish,
     limitation: !bothRequiredWakesReady
-      ? "Both required coordinator wake rows are not confirmed or due. No new workers were launched. If at least one required wake row has a persisted failureReason, the other required wake state is known, and no worker launch was attempted, publish the failed no-research artifact; otherwise end this turn and rely on any confirmed wake or the caller backstop. Ambiguous queue state requires explicit recovery or operator action and is not a delivery guarantee. Do not claim a future wake."
+      ? "Both required coordinator wake rows are not confirmed or due. No new workers were launched. If at least one required wake row has a persisted failureReason, the other required wake state is known, and no worker launch was attempted, publish the failed no-research artifact; otherwise end this turn and rely on any confirmed wake or explicit queue recovery. Ambiguous queue state requires explicit recovery or operator action and is not a delivery guarantee. Do not claim a future wake."
       : undefined,
     outcomes: reconciliation.outcomes,
+    workerCleanup: reconciliation.workerCleanup,
   });
 }
 
@@ -2138,6 +2070,60 @@ function outcomeStatus(availability: PerspectivesStatus, coverage: CoverageAsses
   return availability === "complete" && coverage === "complete" ? "complete" : "partial";
 }
 
+function workerWrapUpMessage(runId: string): string {
+  return `Perspectives wrap-up request for run ${runId}; return the strongest supported findings and important unknowns now.`;
+}
+
+interface WorkerCleanupReport {
+  readonly workerId: string;
+  readonly removed: number;
+  readonly failed: number;
+  readonly unavailable: boolean;
+}
+
+async function cleanupWorkerWrapUp(bb: BbPluginApi, workerId: string, runId: string, signal: AbortSignal): Promise<WorkerCleanupReport> {
+  let rows: Awaited<ReturnType<Threads["queuedMessages"]["list"]>>;
+  try {
+    rows = await bb.sdk.threads.queuedMessages.list({ threadId: workerId, signal });
+  } catch {
+    return { workerId, removed: 0, failed: 0, unavailable: true };
+  }
+  let removed = 0;
+  let failed = 0;
+  for (const row of rows) {
+    if (!row.editable || textContent(row.content) !== workerWrapUpMessage(runId)) continue;
+    try {
+      await bb.sdk.threads.queuedMessages.delete({ threadId: workerId, queuedMessageId: row.id });
+      removed++;
+    } catch {
+      failed++;
+    }
+  }
+  return { workerId, removed, failed, unavailable: false };
+}
+
+async function cleanupPublishedWorkers(bb: BbPluginApi, runId: string, request: CoordinatorRunRequest, signal: AbortSignal): Promise<{ readonly workers: readonly WorkerCleanupReport[]; readonly unavailable: boolean }> {
+  const workers: WorkerCleanupReport[] = [];
+  let unavailable = false;
+  try {
+    const children = await listChildrenByParent(bb.sdk.threads, runId, signal);
+    for (const child of children) {
+      try {
+        let verified = false;
+        for (let index = 0; index < request.orderedLenses.length; index++) {
+          if (await verifyWorkerPrompt(bb.sdk.threads, child, runId, request, index, signal)) { verified = true; break; }
+        }
+        if (!verified) continue;
+        const current = await bb.sdk.threads.get({ threadId: child.id, signal });
+        if (current.status === "idle" || current.status === "error") {
+          workers.push(await cleanupWorkerWrapUp(bb, child.id, runId, signal));
+        }
+      } catch { unavailable = true; }
+    }
+  } catch { unavailable = true; }
+  return { workers, unavailable };
+}
+
 async function cleanupPublishedRunRows(
   bb: BbPluginApi,
   runId: string,
@@ -2151,12 +2137,14 @@ async function cleanupPublishedRunRows(
       coordinatorWakeMessage(runId, "deadline"),
       ...request.orderedLenses.map((_, index) => workerLaunchIntentMessage(runId, index)),
     ]);
+    let complete = true;
     for (const row of rows) {
       if (row.failureReason === null && row.editable && cleanupMessages.has(textContent(row.content) ?? "")) {
-        await bb.sdk.threads.queuedMessages.delete({ threadId: runId, queuedMessageId: row.id });
+        try { await bb.sdk.threads.queuedMessages.delete({ threadId: runId, queuedMessageId: row.id }); }
+        catch { complete = false; }
       }
     }
-    return true;
+    return complete;
   } catch {
     return false;
   }
@@ -2250,8 +2238,9 @@ export async function runPerspectivesPublishResult(
   const runId = context.threadId;
   const existing = await readThreadArtifact(bb, runId);
   if (existing.kind === "present") {
+    const workerCleanup = await cleanupPublishedWorkers(bb, runId, request, context.signal);
     const pendingRunRowsRemoved = await cleanupPublishedRunRows(bb, runId, request, context.signal);
-    return JSON.stringify({ phase: "already-published", runId, status: existing.artifact.status, artifactRelativePath: artifactRelativePath(runId), bodySha256: existing.artifact.bodySha256, fileSha256: existing.artifact.fileSha256, pendingRunRowsRemoved });
+    return JSON.stringify({ workerCleanup, phase: "already-published", runId, status: existing.artifact.status, artifactRelativePath: artifactRelativePath(runId), bodySha256: existing.artifact.bodySha256, fileSha256: existing.artifact.fileSha256, pendingRunRowsRemoved });
   }
   if (existing.kind !== "missing") throw artifactReadFailure(runId, existing);
 
@@ -2282,9 +2271,11 @@ export async function runPerspectivesPublishResult(
   const artifact = buildArtifact(runId, status, body);
   const verified = await publishBytesCreateOnly(bb, runId, artifact);
 
+  const workerCleanup = await cleanupPublishedWorkers(bb, runId, request, context.signal);
   const pendingRunRowsRemoved = await cleanupPublishedRunRows(bb, runId, request, context.signal);
 
   return JSON.stringify({
+    workerCleanup,
     phase: "published",
     runId,
     status: verified.status,
@@ -2428,15 +2419,15 @@ export async function runPerspectivesReadResult(
     ? "not-found"
     : await callerPresentationEvidence(bb, context.threadId, coordinatorId, result.artifact.fileSha256, context.signal);
   if (priorPresentation === "matched") {
-    return `Perspectives artifact ${coordinatorId} was already presented according to the exact receipt in the latest successfully completed caller turn's final agent message. The artifact remains retrievable on a user request by calling perspectives_read_result with includeArtifact: true. The caller backstop is retained.\nStatus: ${result.artifact.status}\nArtifact: ${artifactRelativePath(coordinatorId)}\nBody SHA-256: ${result.artifact.bodySha256}\nFull-file SHA-256: ${result.artifact.fileSha256}\nPresentation receipt:\n${marker}`;
+    return `Perspectives artifact ${coordinatorId} was already presented according to the exact receipt in the latest successfully completed caller turn's final agent message. The artifact remains retrievable on a user request by calling perspectives_read_result with includeArtifact: true. This tool creates no requesting-thread follow-up; older runs may retain a previously queued reminder.\nStatus: ${result.artifact.status}\nArtifact: ${artifactRelativePath(coordinatorId)}\nBody SHA-256: ${result.artifact.bodySha256}\nFull-file SHA-256: ${result.artifact.fileSha256}\nPresentation receipt:\n${marker}`;
   }
   const evidenceNote = priorPresentation === "unavailable"
     ? "The latest persisted final output could not be read, so this tool returns the artifact to avoid risking silent loss."
     : "No exact presentation marker was found in the latest persisted final output, so this tool returns the artifact. A legacy markerless presentation may be repeated.";
-  return `Verified Perspectives artifact for run ${coordinatorId}.\nStatus: ${result.artifact.status}\nArtifact: ${artifactRelativePath(coordinatorId)}\nBody SHA-256: ${result.artifact.bodySha256}\nFull-file SHA-256: ${result.artifact.fileSha256}\nCaller backstop: retained. ${evidenceNote}\n\n${result.artifact.content}\n\nAfter presenting this artifact in your final response, include this exact standalone receipt line so a later read can verify durable presentation:\n${marker}`;
+  return `Verified Perspectives artifact for run ${coordinatorId}.\nStatus: ${result.artifact.status}\nArtifact: ${artifactRelativePath(coordinatorId)}\nBody SHA-256: ${result.artifact.bodySha256}\nFull-file SHA-256: ${result.artifact.fileSha256}\nThis tool creates no requesting-thread follow-up; older runs may retain a previously queued reminder. ${evidenceNote}\n\n${result.artifact.content}\n\nAfter presenting this artifact in your final response, include this exact standalone receipt line so a later read can verify durable presentation:\n${marker}`;
 }
 
-/** Launch one durable hidden coordinator and acknowledge its caller backstop. */
+/** Launch one durable hidden coordinator without scheduling a caller reminder. */
 export async function runGatherPerspectives(
   bb: BbPluginApi,
   input: { question: string; context?: string; lenses: readonly string[] },
@@ -2481,7 +2472,7 @@ export async function runGatherPerspectives(
     startedAtEpochMs: startedAt,
     wrapUpAtEpochMs: startedAt + COORDINATOR_WRAP_UP_MS,
     deadlineAtEpochMs: startedAt + COORDINATOR_DEADLINE_MS,
-    callerBackstopAtEpochMs: startedAt + COORDINATOR_DEADLINE_MS + CALLER_BACKSTOP_GRACE_MS,
+    callerBackstopAtEpochMs: startedAt + COORDINATOR_DEADLINE_MS + LAUNCH_INTENT_GRACE_MS,
     artifactRelativePath: COORDINATOR_ARTIFACT_PATH,
   });
   const prompt = coordinatorPrompt(request);
@@ -2508,27 +2499,6 @@ export async function runGatherPerspectives(
     executionInputSources,
   };
 
-  const backstopAt = startedAt + COORDINATOR_DEADLINE_MS + CALLER_BACKSTOP_GRACE_MS;
-  const requestIdentity = {
-    question,
-    context: sharedContext,
-    orderedLenses: lenses,
-    callerThreadId: toolContext.threadId,
-    projectId: contexts.planner.projectId,
-    environmentId: contexts.planner.environment.type === "reuse"
-      ? contexts.planner.environment.environmentId
-      : null,
-    coordinatorExecution: contexts.planner.execution,
-    workerExecution: contexts.worker.execution,
-  };
-  const backstopRowId = await confirmCallerBackstop(
-    bb,
-    toolContext.threadId,
-    marker,
-    backstopAt,
-    backstopMessage({ marker, requestIdentity, backstopAt }),
-  );
-
   try {
     const coordinatorId = await spawnCoordinator(
       bb,
@@ -2537,9 +2507,9 @@ export async function runGatherPerspectives(
       marker,
       resolved.spawnTimeoutMs,
     );
-    return launchReceipt(coordinatorId, backstopRowId, backstopAt, lenses.length);
+    return launchReceipt(coordinatorId, marker, lenses.length);
   } catch (error) {
-    throw new Error(`${errorMessage(error)} Invocation marker: ${marker}. Caller backstop: queued (${backstopRowId}) for ${new Date(backstopAt).toISOString()}. No successful launch was confirmed; use the marker for later rediscovery and do not retry the spawn blindly.`);
+    throw new Error(`${errorMessage(error)} Invocation marker: ${marker}. No requesting-thread follow-up is scheduled. No successful launch was confirmed; use the marker for later rediscovery and do not retry the spawn blindly.`);
   }
 }
 

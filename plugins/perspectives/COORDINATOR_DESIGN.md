@@ -3,8 +3,7 @@
 ## Durable ownership
 
 `gather_perspectives` validates a request, stores a versioned request in the
-first persisted coordinator prompt, queues the caller's 26-minute backstop, and
-then creates one ordinary hidden coordinator child. The coordinator thread ID
+first persisted coordinator prompt and creates one ordinary hidden coordinator child. The coordinator thread ID
 is the run ID. The coordinator uses the registered Perspectives tools for BB
 orchestration and result publication, so those operations do not depend on
 shell approval in provider auto mode.
@@ -64,17 +63,17 @@ no-research state can publish an immediate failed artifact. If the failure
 cannot be independently verified, the other state is ambiguous/unavailable,
 or any worker launch may have been attempted, the step reports setup
 uncertainty and keeps publication closed. The coordinator ends the turn;
-recovery depends on an already confirmed wake, the caller backstop, or explicit
+recovery depends on an already confirmed wake, explicit
 queue recovery/operator action.
 
 Once both required wakes are ready, the coordinator writes one scheduled
 launch-intent row per lens before attempting its ordinary hidden worker spawn.
-Those 2–7 additional rows are scheduled for the caller backstop time. They
+Those 2–7 additional rows are scheduled for the coordinator launch-intent time (26 minutes). They
 freeze a slot after an ambiguous spawn so a later wake cannot blindly create a
 duplicate if the original spawn committed late. Keep them until the final
 artifact passes readback verification, then remove the still-pending run
 wakes and launch-intent rows. If publication never finishes, intent rows can
-cause extra backstop-time wakes for reconciliation.
+cause extra launch-intent wakes for reconciliation.
 
 On each native child report or scheduled wake, the coordinator matches
 workers using direct parentage, project/environment, and the exact persisted
@@ -114,7 +113,7 @@ file, or corrupt file is never overwritten. The caller's read tool verifies
 direct parentage first, then repeats byte-level validation against the
 coordinator ID.
 
-Caller result retrieval never deletes the scheduled backstop. After the
+No requesting-thread reminder is created. After the
 artifact is verified, it reads the latest `turn/completed` row and requires a
 successful completion. It then pages backward through that turn's
 `item/completed` rows. Suppression requires the turn's last completed item to
@@ -125,7 +124,7 @@ item text; the comment therefore remains available to this check while normal
 Markdown rendering hides it. The caller should include the receipt line
 returned with the artifact in its final answer after presenting the result. If
 no final answer was saved before a crash, the marker is absent and the full
-artifact is returned; the backstop remains available. Mismatched markers,
+artifact is returned. Mismatched markers,
 interrupted turns, and event-read failures also return the artifact. The scan
 is bounded to five 100-event pages; if the marker falls outside that window,
 the artifact is returned. An explicit user request can retrieve it with
@@ -140,12 +139,12 @@ not replaced.
 
 ## Timing and failure limits
 
-The wrap-up, deadline, and caller backstop targets are 20, 25, and 26 minutes
+The internal wrap-up, deadline, and launch-intent targets are 20, 25, and 26 minutes
 from the gather request. They are queue targets, not delivery guarantees.
 Host availability, queue dispatch, and provider scheduling can delay a wake.
 If the sole scheduled row has `failureReason` and the native report is lost,
 BB does not guarantee another wake; explicit queue recovery or operator action
-is required. The caller backstop may therefore arrive without an artifact.
+is required. A lost native completion report requires explicit caller retrieval.
 The plugin does not claim eventual delivery, exactly-once worker creation, or
 a strict wall-clock completion bound.
 
@@ -167,3 +166,12 @@ not prove that a provider in auto mode calls the tools or that scheduled rows
 dispatch after an actual server restart. Those claims require an isolated
 live-runtime turn with the server restarted during worker activity and a
 post-restart scheduled wake dispatch observed in BB's persisted events.
+
+Cleanup attempts to remove editable run-specific wrap-up requests from verified
+idle or errored workers, including on subsequent already-published tool calls.
+Failures are reported and retried on later calls; no cleanup timer is added.
+Claimed requests and completion between the final status check and send can
+still cause an extra turn; closing that race requires an atomic BB send guard.
+Previously queued caller reminders are not automatically migrated on upgrade.
+The legacy protocol field `callerBackstopAtEpochMs` now names only the internal
+launch-intent schedule; it does not schedule a caller message.

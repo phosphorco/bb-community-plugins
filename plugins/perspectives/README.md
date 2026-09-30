@@ -10,9 +10,8 @@ Perspectives registers five native BB agent tools:
 
 ## Restart-resilient panel lifecycle
 
-Before it spawns a hidden ordinary coordinator child, `gather_perspectives`
-queues one caller backstop for about 26 minutes later and verifies the exact
-pending row. The coordinator ID is the run ID. An ambiguous coordinator spawn
+`gather_perspectives` spawns a hidden ordinary coordinator child without
+scheduling a follow-up in the requesting thread. The coordinator ID is the run ID. An ambiguous coordinator spawn
 is rediscovered from the first persisted `client/turn/requested` input and
 direct parent relation; no unique match means launch uncertain. Replaying a
 request may create another coordinator. Identical request identities can be
@@ -23,12 +22,12 @@ and artifact writes do not depend on shell commands or shell approval. Before
 launching workers, it confirms both the wrap-up and deadline queue rows.
 Only when both are confirmed or already due may it create ordinary hidden
 worker children. Each lens also gets a scheduled launch-intent row before its
-spawn attempt. The 2–7 extra rows are scheduled for the caller backstop time:
+spawn attempt. The 2–7 extra rows are scheduled for the coordinator launch-intent time (26 minutes):
 they freeze a lens after an ambiguous spawn so a late child commit cannot be
 blindly retried. Keep them until the final artifact has passed readback
 verification; then remove the still-pending wrap-up, deadline, and launch
 intent rows. If publication never completes, the intent rows can dispatch at
-the backstop and prompt reconciliation.
+26 minutes and prompt reconciliation.
 
 If at least one required wake row has a persisted `failureReason`, the other
 wake state is known, and no worker launch intent or child exists, the
@@ -36,7 +35,7 @@ coordinator can publish a failed artifact immediately. The publisher rechecks
 the queue states and absence of worker attempts. It states that no research
 was performed. An ambiguous or unavailable queue state does not authorize
 workers or early publication; the coordinator ends the turn with setup
-uncertainty and relies on any confirmed wake, the caller backstop, or explicit
+uncertainty and relies on any confirmed wake, explicit
 queue recovery.
 
 Native worker reports and scheduled wakes prompt reconciliation. For each
@@ -107,12 +106,11 @@ file verification against the coordinator ID before returning the artifact.
 
 ## Timing and delivery limits
 
-The 20-minute wrap-up, 25-minute deadline, and 26-minute caller backstop are
+The 20-minute wrap-up, 25-minute deadline, and 26-minute internal launch-intent wakes are
 scheduling targets, not delivery guarantees. Queue acceptance does not prove
 provider acknowledgement. If a scheduled row gets `failureReason` and the
 native report is also lost, BB does not guarantee another wake; explicit
-queue recovery or operator action is required. A caller backstop may therefore
-find a missing artifact. The plugin does not claim eventual delivery,
+queue recovery or operator action is required. A lost native completion report requires explicit caller retrieval. The plugin does not claim eventual delivery,
 exactly-once worker creation, or a strict wall-clock deadline.
 
 ## Execution settings and evidence
@@ -136,7 +134,7 @@ agreement or worker count as proof. Use the presentation-receipt behavior
 below to avoid repeating a result when durable evidence exists; keep internal
 worker references out of the caller-facing answer.
 
-The caller tool retains the scheduled backstop. After verifying the artifact,
+No follow-up is scheduled in the requesting thread. After verifying the artifact,
 it finds the latest successful `turn/completed` event, then pages backward
 through that turn's `item/completed` events. Suppression requires the turn's
 last completed item itself to be an agent message whose text contains an exact
@@ -150,8 +148,8 @@ presenting the result. A missing, mismatched, interrupted, or unreadable final
 answer returns the full artifact again. The scan is bounded to five 100-event
 pages; if the receipt is outside that window, the tool returns the artifact.
 An explicit user request can retrieve it again with `includeArtifact: true`.
-Legacy presentations without a receipt may repeat. The caller backstop is
-never deleted on read, avoiding a crash window before a durable final answer.
+Legacy presentations without a receipt may repeat. The caller relies on native
+completion reports; a lost report requires explicit retrieval of the artifact.
 Native duplicate reports and retries can still produce repeated visibility,
 so the plugin does not claim exactly-once presentation.
 
@@ -168,3 +166,12 @@ Development checks for this package are `npm run test --workspace
 @phosphorco/bb-plugin-perspectives`, `npm run typecheck --workspace
 @phosphorco/bb-plugin-perspectives`, and `npm run build --workspace
 @phosphorco/bb-plugin-perspectives` from `community-plugins/`.
+
+Cleanup attempts to remove editable run-specific wrap-up requests from verified
+idle or errored workers, including on subsequent already-published tool calls.
+Failures are reported and retried on later calls; no cleanup timer is added.
+Claimed requests and completion between the final status check and send can
+still cause an extra turn; closing that race requires an atomic BB send guard.
+Previously queued caller reminders are not automatically migrated on upgrade.
+The legacy protocol field `callerBackstopAtEpochMs` now names only the internal
+launch-intent schedule; it does not schedule a caller message.

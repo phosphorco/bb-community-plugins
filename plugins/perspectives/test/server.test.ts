@@ -74,7 +74,7 @@ describe("Perspectives agent tool registration", () => {
     expect(ordinary.instructions).toContain("explicit queue recovery or operator action");
     expect(ordinary.instructions).toContain("intermediate event text and native notice excerpts are not research findings");
     expect(ordinary.instructions).toContain("latest successful completed turn's final persisted agent message");
-    expect(ordinary.instructions).toContain("retains the backstop");
+    expect(ordinary.instructions).toContain("No requesting-thread follow-up is scheduled");
 
     const recognizableWorker = configure({
       ...callerContext,

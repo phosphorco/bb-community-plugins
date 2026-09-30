@@ -30,6 +30,11 @@ function makeHarness(options: {
   const fileWriteCommits: string[] = [];
   let fileWriteFault = options.fileWriteFault;
   const outputs = new Map<string, string>();
+  const failedDeletes = new Set<string>();
+  const failedQueueLists = new Set<string>();
+  const failedGets = new Set<string>();
+  const failedEventLists = new Set<string>();
+  const completeOnQueueRead = new Set<string>();
   const outputReadFailures = new Set(options.failOutputReadFor ?? []);
   const completedTurns = new Map<string, { turnId: string; status: string; sequence: number; messages: Array<Record<string, any>> }>();
   let nextId = 0;
@@ -60,6 +65,7 @@ function makeHarness(options: {
     sdk: {
       threads: {
         get: async ({ threadId }: { threadId: string }) => {
+          if (failedGets.has(threadId)) throw new Error("get unavailable");
           const thread = threads.get(threadId);
           if (!thread) throw Object.assign(new Error(`missing thread ${threadId}`), { status: 404 });
           return { ...thread };
@@ -87,6 +93,7 @@ function makeHarness(options: {
           [...threads.values()].filter((thread) => thread.parentThreadId === parentThreadId).slice(offset, offset + limit),
         events: {
           list: async ({ threadId, order, types, beforeSeq, limit }: { threadId: string; order: string; types?: readonly string[]; beforeSeq?: string; limit?: string }) => {
+            if (failedEventLists.has(threadId)) throw new Error("events unavailable");
             if (types?.includes("turn/completed")) {
               if (outputReadFailures.has(threadId)) throw new Error("event listing unavailable");
               const turn = completedTurns.get(threadId);
@@ -138,9 +145,14 @@ function makeHarness(options: {
           return { delivery: "sent" };
         },
         queuedMessages: {
-          list: async ({ threadId }: { threadId: string }) => rows.filter((row) => row.threadId === threadId),
+          list: async ({ threadId }: { threadId: string }) => {
+            if (failedQueueLists.has(threadId)) throw new Error("queue listing unavailable");
+            if (completeOnQueueRead.has(threadId)) threads.get(threadId)!.status = "idle";
+            return rows.filter((row) => row.threadId === threadId);
+          },
           delete: async ({ queuedMessageId }: { queuedMessageId: string }) => {
             events.push(`delete:${queuedMessageId}`);
+            if (failedDeletes.has(queuedMessageId)) throw new Error("delete unavailable");
             const index = rows.findIndex((row) => row.id === queuedMessageId);
             if (index >= 0) rows.splice(index, 1);
             return { ok: true };
@@ -253,6 +265,7 @@ function makeHarness(options: {
     bytesByPath,
     events,
     outputs,
+    failedDeletes, failedQueueLists, failedGets, failedEventLists, completeOnQueueRead,
     outputReadFailures,
     completedTurns,
     storageLocationOfflineFor,
@@ -363,22 +376,22 @@ test("registered SDK tools reconcile, publish exact bytes, survive rename, and r
   const callerRead = await harness.call("perspectives_read_result", { coordinatorId }, "caller");
   assert.equal(typeof callerRead, "string");
   assert.match(callerRead, /Full-file SHA-256:/);
-  assert.match(callerRead, /Caller backstop: retained/);
+  assert.match(callerRead, /This tool creates no requesting-thread follow-up/);
   assert.match(callerRead, /<!-- perspectives-presented run-id=coordinator-1 file-sha256=[0-9a-f]{64} -->/);
   assert.match(callerRead, /terminal run-id=coordinator-1 status=complete/);
-  assert.equal(harness.rows.filter((row) => row.threadId === "caller").length, 1, "verified retrieval retains the caller backstop until durable final output exists");
+  assert.equal(harness.rows.filter((row) => row.threadId === "caller").length, 0, "verified retrieval creates no caller reminder");
 
   const fileDigest = harness.text(callerRead).match(/Full-file SHA-256: ([0-9a-f]{64})/)![1]!;
   harness.setFinalOutput("caller", `Presented the verified panel.\n<!-- perspectives-presented run-id=${coordinatorId} file-sha256=${fileDigest} -->`);
   const alreadyPresented = await harness.call("perspectives_read_result", { coordinatorId }, "caller");
   assert.match(harness.text(alreadyPresented), /already presented according to the exact receipt in the latest successfully completed caller turn's final agent message/);
   assert.match(harness.text(alreadyPresented), /remains retrievable on a user request/);
-  assert.match(harness.text(alreadyPresented), /backstop is retained/);
+  assert.match(harness.text(alreadyPresented), /This tool creates no requesting-thread follow-up/);
   assert.match(harness.text(alreadyPresented), new RegExp(`\\n<!-- perspectives-presented run-id=${coordinatorId} file-sha256=${fileDigest} -->$`));
   assert.doesNotMatch(harness.text(alreadyPresented), /## Synthesis/);
   const explicitlyRetrieved = await harness.call("perspectives_read_result", { coordinatorId, includeArtifact: true }, "caller");
   assert.match(harness.text(explicitlyRetrieved), /## Synthesis/);
-  assert.match(harness.text(explicitlyRetrieved), /Caller backstop: retained/);
+  assert.match(harness.text(explicitlyRetrieved), /This tool creates no requesting-thread follow-up/);
   const unrelatedRead = await harness.call("perspectives_read_result", { coordinatorId }, "unrelated-caller");
   assert.equal(unrelatedRead.isError, true);
   assert.match(harness.text(unrelatedRead), /not a verified hidden coordinator child/);
@@ -547,7 +560,7 @@ test("pre-commit write failure reports missing readback and leaves publication r
   assert.equal(harness.fileWriteAttempts.length, 1);
   assert.equal(harness.fileWriteCommits.length, 0);
   assert.equal(harness.outputs.size, 2, "both persisted worker outputs remain available");
-  assert.equal(harness.rows.filter((row) => row.threadId === "caller").length, 1, "the caller backstop remains queued");
+  assert.equal(harness.rows.filter((row) => row.threadId === "caller").length, 0, "no caller reminder is queued");
 
   const recovered = await harness.call("perspectives_publish_result", input, coordinatorId);
   assert.notEqual(recovered.isError, true, harness.text(recovered));
@@ -604,16 +617,16 @@ test("unknown publication coverage defaults to partial", async () => {
   assert.match(harness.text(read), /Coordinator coverage assessment \(not mechanically verified\): partial/);
 });
 
-test("artifact read before a caller final answer returns the artifact and retains the backstop", async () => {
+test("artifact read before a caller final answer returns the artifact without scheduling reminders", async () => {
   const harness = makeHarness();
   const coordinatorId = await publishRun(harness, "complete");
   const read = await harness.call("perspectives_read_result", { coordinatorId }, "caller");
   assert.match(harness.text(read), /Verified Perspectives artifact/);
-  assert.match(harness.text(read), /Caller backstop: retained/);
+  assert.match(harness.text(read), /This tool creates no requesting-thread follow-up/);
   assert.match(harness.text(read), /No exact presentation marker was found/);
   assert.match(harness.text(read), /## Synthesis/);
   assert.equal(harness.outputs.has("caller"), false, "a read result is not treated as durable presentation evidence");
-  assert.equal(harness.rows.filter((row) => row.threadId === "caller").length, 1);
+  assert.equal(harness.rows.filter((row) => row.threadId === "caller").length, 0);
 });
 
 test("matching exact receipt in the latest persisted final agent output suppresses only repeat body", async () => {
@@ -625,10 +638,10 @@ test("matching exact receipt in the latest persisted final agent output suppress
 
   const repeated = await harness.call("perspectives_read_result", { coordinatorId }, "caller");
   assert.match(harness.text(repeated), /already presented according to the exact receipt in the latest successfully completed caller turn's final agent message/);
-  assert.match(harness.text(repeated), /The caller backstop is retained/);
+  assert.match(harness.text(repeated), /This tool creates no requesting-thread follow-up/);
   assert.match(harness.text(repeated), /remains retrievable on a user request/);
   assert.doesNotMatch(harness.text(repeated), /## Synthesis/);
-  assert.equal(harness.rows.filter((row) => row.threadId === "caller").length, 1);
+  assert.equal(harness.rows.filter((row) => row.threadId === "caller").length, 0);
 });
 
 test("an intermediate assistant message receipt cannot stand in for the completed turn's final message", async () => {
@@ -642,7 +655,7 @@ test("an intermediate assistant message receipt cannot stand in for the complete
   const read = await harness.call("perspectives_read_result", { coordinatorId }, "caller");
   assert.match(harness.text(read), /Verified Perspectives artifact/);
   assert.match(harness.text(read), /## Synthesis/);
-  assert.match(harness.text(read), /Caller backstop: retained/);
+  assert.match(harness.text(read), /This tool creates no requesting-thread follow-up/);
 });
 
 test("a matching receipt from an interrupted turn is not durable presentation evidence", async () => {
@@ -680,7 +693,7 @@ test("a presentation receipt with a mismatched digest does not suppress the arti
   const repeated = await harness.call("perspectives_read_result", { coordinatorId }, "caller");
   assert.match(harness.text(repeated), /Verified Perspectives artifact/);
   assert.match(harness.text(repeated), /## Synthesis/);
-  assert.match(harness.text(repeated), /Caller backstop: retained/);
+  assert.match(harness.text(repeated), /This tool creates no requesting-thread follow-up/);
 });
 
 test("caller final-output discovery failure returns full artifact without suppressing", async () => {
@@ -689,10 +702,10 @@ test("caller final-output discovery failure returns full artifact without suppre
   const read = await harness.call("perspectives_read_result", { coordinatorId }, "caller");
   assert.match(harness.text(read), /latest persisted final output could not be read/);
   assert.match(harness.text(read), /## Synthesis/);
-  assert.match(harness.text(read), /Caller backstop: retained/);
+  assert.match(harness.text(read), /This tool creates no requesting-thread follow-up/);
 });
 
-test("possible duplicate coordinator runs keep their artifacts separate and retain the backstop", async () => {
+test("possible duplicate coordinator runs keep their artifacts separate without scheduling reminders", async () => {
   const harness = makeHarness();
   const coordinatorId = await publishRun(harness, "complete");
   const prompt = harness.initialPrompts.get(coordinatorId)!;
@@ -704,7 +717,7 @@ test("possible duplicate coordinator runs keep their artifacts separate and reta
 
   const result = await harness.call("perspectives_read_result", { invocationMarker: marker }, "caller");
   assert.equal(JSON.parse(harness.text(result)).phase, "possible-duplicate-runs");
-  assert.equal(harness.rows.filter((row) => row.threadId === "caller").length, 1);
+  assert.equal(harness.rows.filter((row) => row.threadId === "caller").length, 0);
 });
 
 test("publisher replaces unsupported synthesis when no persisted final worker output exists", async () => {
@@ -726,4 +739,112 @@ test("publisher replaces unsupported synthesis when no persisted final worker ou
   assert.match(harness.text(callerRead), /No usable persisted final worker output is available/);
   assert.doesNotMatch(harness.text(callerRead), /Delivery is guaranteed/);
   assert.match(harness.text(callerRead), /Status: failed/);
+});
+
+
+test("reconciliation removes only this run's stale wrap-up from a finished worker", async () => {
+  const harness = makeHarness();
+  const coordinatorId = await launch(harness);
+  await harness.call("perspectives_coordinator_step", {}, coordinatorId);
+  const worker = [...harness.threads.values()].find((thread) => thread.parentThreadId === coordinatorId)!;
+  worker.status = "idle";
+  harness.outputs.set(worker.id, "Persisted final findings.");
+  const stale = { id: "stale-wrap-up", threadId: worker.id, editable: true, failureReason: null, content: [{ type: "text", text: `Perspectives wrap-up request for run ${coordinatorId}; return the strongest supported findings and important unknowns now.` }] };
+  const unrelated = { ...stale, id: "unrelated-request", content: [{ type: "text", text: "Another task's request" }] };
+  harness.rows.push(stale, unrelated);
+  await harness.call("perspectives_coordinator_step", {}, coordinatorId);
+  assert.ok(!harness.rows.some((row) => row.id === stale.id));
+  assert.ok(harness.rows.some((row) => row.id === unrelated.id));
+  assert.ok(harness.rows.some((row) => row.threadId === coordinatorId), "internal recovery wakes remain pending");
+});
+
+
+function staleWrapUp(workerId: string, runId: string, id: string, editable = true) {
+  return { id, threadId: workerId, editable, failureReason: null, content: [{ type: "text", text: `Perspectives wrap-up request for run ${runId}; return the strongest supported findings and important unknowns now.` }] };
+}
+
+test("published tools retry failed cleanup, isolate row failures, and preserve unrelated or claimed requests", async () => {
+  const harness = makeHarness();
+  const runId = await publishRun(harness, "complete");
+  const worker = [...harness.threads.values()].find((t) => t.parentThreadId === runId)!;
+  worker.status = "error";
+  harness.rows.push(staleWrapUp(worker.id, runId, "fails"), staleWrapUp(worker.id, runId, "succeeds"), staleWrapUp(worker.id, runId, "claimed", false), staleWrapUp(worker.id, "other-run", "other"));
+  harness.failedDeletes.add("fails");
+  const step = JSON.parse(harness.text(await harness.call("perspectives_coordinator_step", {}, runId)));
+  assert.equal(step.phase, "already-published");
+  assert.equal(step.workerCleanup.workers[0].failed, 1);
+  assert.equal(step.workerCleanup.workers[0].removed, 1);
+  assert.ok(!harness.rows.some(r => r.id === "succeeds"));
+  harness.failedDeletes.clear();
+  harness.failedQueueLists.add(worker.id);
+  const unavailable = JSON.parse(harness.text(await harness.call("perspectives_publish_result", { synthesis: "unchanged" }, runId)));
+  assert.equal(unavailable.workerCleanup.workers[0].unavailable, true);
+  harness.failedQueueLists.clear();
+  await harness.call("perspectives_publish_result", { synthesis: "unchanged" }, runId);
+  assert.deepEqual(harness.rows.map(r => r.id).sort(), ["claimed", "other"]);
+});
+
+test("post-publication cleanup preserves active workers and retries when they later stop", async () => {
+  const harness = makeHarness();
+  const runId = await publishRun(harness, "complete");
+  const worker = [...harness.threads.values()].find((t) => t.parentThreadId === runId)!;
+  worker.status = "active";
+  harness.rows.push(staleWrapUp(worker.id, runId, "later"));
+  await harness.call("perspectives_coordinator_step", {}, runId);
+  assert.ok(harness.rows.some(r => r.id === "later"));
+  worker.status = "idle";
+  await harness.call("perspectives_coordinator_step", {}, runId);
+  assert.ok(!harness.rows.some(r => r.id === "later"));
+});
+
+test("marker discovery reports unavailable verification instead of hiding a candidate", async () => {
+  const harness = makeHarness();
+  const runId = await publishRun(harness, "complete");
+  const prompt = harness.initialPrompts.get(runId)!;
+  const marker = prompt.match(/"invocationMarker":\s*"([^"]+)"/)![1]!;
+  harness.failedGets.add(runId);
+  let result = await harness.call("perspectives_read_result", { invocationMarker: marker }, "caller");
+  assert.equal(result.isError, true);
+  assert.match(harness.text(result), /discovery is unavailable/);
+  harness.failedGets.clear();
+  const duplicate = "unavailable-duplicate";
+  harness.threads.set(duplicate, { ...harness.threads.get(runId), id: duplicate });
+  harness.initialPrompts.set(duplicate, prompt);
+  harness.failedEventLists.add(duplicate);
+  result = await harness.call("perspectives_read_result", { invocationMarker: marker }, "caller");
+  assert.equal(result.isError, true);
+  assert.match(harness.text(result), /discovery is unavailable/);
+});
+
+test("wrap-up rechecks worker status after queue reads and retains exact internal schedules", async () => {
+  const harness = makeHarness();
+  const started = Date.now();
+  const runId = await launch(harness);
+  await harness.call("perspectives_coordinator_step", {}, runId);
+  const runRows = harness.rows.filter(r => r.threadId === runId);
+  assert.equal(runRows.length, 4);
+  const wrap = runRows.find(r => r.content[0].text.includes("tag=wrap-up"))!;
+  const deadline = runRows.find(r => r.content[0].text.includes("tag=deadline"))!;
+  assert.ok(wrap.sendAt >= started + 20 * 60_000 && wrap.sendAt <= Date.now() + 20 * 60_000);
+  assert.equal(deadline.sendAt - wrap.sendAt, 5 * 60_000);
+  assert.ok(runRows.filter(r => r.content[0].text.startsWith("Perspectives worker launch intent:")).every(r => r.sendAt === deadline.sendAt + 60_000));
+  assert.equal(harness.rows.filter(r => r.threadId === "caller").length, 0);
+  const workers = [...harness.threads.values()].filter(t => t.parentThreadId === runId);
+  harness.completeOnQueueRead.add(workers[0]!.id);
+  const realNow = Date.now;
+  try {
+    Date.now = () => wrap.sendAt + 1;
+    await harness.call("perspectives_coordinator_step", {}, runId);
+  } finally { Date.now = realNow; }
+  const sends = harness.events.filter(e => e.startsWith("send:Perspectives wrap-up request"));
+  assert.equal(sends.length, 1, "only the worker still active at the final status check is steered");
+});
+
+test("legacy queued caller reminders are not misrepresented by read receipts", async () => {
+  const harness = makeHarness();
+  const runId = await publishRun(harness, "complete");
+  harness.rows.push({ id: "legacy-backstop", threadId: "caller", editable: true, content: [{ type: "text", text: "Perspectives panel result caller backstop" }] });
+  const read = await harness.call("perspectives_read_result", { coordinatorId: runId }, "caller");
+  assert.match(harness.text(read), /older runs may retain a previously queued reminder/);
+  assert.ok(harness.rows.some(r => r.id === "legacy-backstop"));
 });

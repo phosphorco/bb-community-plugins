@@ -113,11 +113,8 @@ test("configured planner and worker tuples reach the coordinator and its worker 
     } as any,
   );
 
-  assert.deepEqual(events, ["queue-caller-backstop", "spawn-coordinator"]);
-  assert.equal(queuedRows.length, 1);
-  assert.equal(queuedRows[0]!.threadId, "caller");
-  assert.ok(queuedRows[0]!.sendAt > Date.now() + 25 * 60_000);
-  assert.ok(queuedRows[0]!.sendAt < Date.now() + 27 * 60_000);
+  assert.deepEqual(events, ["spawn-coordinator"]);
+  assert.equal(queuedRows.length, 0);
   assert.equal(spawnCalls.length, 1);
 
   const coordinator = spawnCalls[0]!;
@@ -136,14 +133,11 @@ test("configured planner and worker tuples reach the coordinator and its worker 
     reasoningLevel: "explicit",
     permissionMode: "explicit",
   });
-  const backstopText = queuedRows[0]!.content[0]!.text as string;
-  const invocationMarker = backstopText.match(/perspectives-invocation:[0-9a-f-]+/i)?.[0];
+  const invocationMarker = coordinator.prompt.match(/perspectives-invocation:[0-9a-f-]+/i)?.[0];
   assert.ok(invocationMarker);
   assert.ok(coordinator.title.includes(invocationMarker));
-  assert.ok(coordinator.prompt.includes(invocationMarker));
-  assert.match(backstopText, /Request identity:/);
   assert.match(receipt, /Perspectives panel launched/);
-  assert.match(receipt, /Caller backstop: queued/);
+  assert.match(receipt, /No requesting-thread follow-up is scheduled/);
   assert.match(receipt, /Artifact: perspectives\/results\/coordinator-1\.md/);
   assert.doesNotMatch(receipt, /worker-[\w-]+/i);
 
