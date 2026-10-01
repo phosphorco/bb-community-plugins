@@ -106,6 +106,9 @@ describe("Perspectives agent tool registration", () => {
     const gather = tools.find((tool) => tool.name === "gather_perspectives")! as any;
     const gatherSchema = z.toJSONSchema(gather.parameters) as any;
     expect(gather.description).toContain("2–7 distinct caller-supplied lenses");
+    expect(gather.instructions).toContain("State any premise in the question as a claim to test, not a settled constraint");
+    expect(gather.instructions).toContain("Every lens must recover the governing doctrine and primary research");
+    expect(gather.instructions).toContain("properties gained and lost by satisfying it");
     expect(gatherSchema.properties.lenses.examples).toEqual([
       ["v8 performance characteristics", "big-O complexity", "duplicate work"],
       [
