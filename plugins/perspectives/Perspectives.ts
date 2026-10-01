@@ -181,7 +181,14 @@ const SOURCE_INSTRUCTIONS = `Evidence and citation requirements:
 - When a claim relies only on the supplied context, say so explicitly instead of presenting the context as independently verified.
 - End with a short \`## Sources\` section listing only the sources actually used. If no source inspection was necessary, say that the answer is analysis based on the supplied question and context.`;
 
-const WRAP_UP_MESSAGE = `Wrap up now. Return the highest-signal conclusions, recommendation, risks, and important unknowns. Do not begin new investigation.`;
+const DOCTRINE_INSTRUCTIONS = `Governing doctrine and premise requirements:
+- Before answering how, recover the governing doctrine and primary research for the question: the repository's ADRs, architecture docs, agent instructions, skills and their references, and the papers or specifications they cite. Name what governs the question, or state where you searched and that nothing did.
+- Treat every premise in the question or context ("X is bad", "remove Y", "we must Z") as a claim to test, not a constraint to satisfy. State exactly why it would hold and what the doctrine and research say about it, with citations. An unexamined premise is a guess; the asker's preference is not evidence.
+- If satisfying the premise trades properties away, list the properties gained and the properties lost, cite the source that establishes each, and say whether the trade is favorable. An answer that only explains how to do X safely is incomplete.`;
+
+const SYNTHESIS_DOCTRINE_INSTRUCTIONS = `Under \`## Premise and Governing Doctrine\`, state each premise the question or context asserts, the doctrine and research the perspectives recovered for it with their citations, and whether that evidence supports, qualifies, or contradicts the premise. Then give a table of properties gained and properties lost by satisfying the premise, citing the source for each row, and say whether the trade is favorable. Agreement among perspectives on how to satisfy a premise does not establish the premise. If no perspective recovered governing doctrine or tested the premise, say so plainly; that is a gap in coverage, not a neutral omission.`;
+
+const WRAP_UP_MESSAGE =`Wrap up now. Return the highest-signal conclusions, recommendation, risks, and important unknowns. Do not begin new investigation.`;
 
 function abortError(): Error {
   return new DOMException("The perspectives tool was interrupted.", "AbortError");
@@ -338,7 +345,7 @@ For each lens:
 - Why this lens: one short sentence explaining its distinct value.
 - Expert prompt: one or two concise sentences starting with the exact words "You are" and naming only the relevant expertise, evidence standard, and investigative focus.
 
-Do not pre-answer the question, prescribe an answer format, or repeat shared instructions in the expert prompt.
+Do not pre-answer the question, prescribe an answer format, or repeat shared instructions in the expert prompt. Do not frame a perspective as only how to satisfy a premise stated in the question; every expert tests that premise against the governing doctrine and research.
 
 Return only this Markdown table, with one perspective per line:
 | Lens | Why this lens | Expert prompt |
@@ -364,6 +371,7 @@ Why this perspective is employed: ${perspective.rationale}
 
 ${READ_ONLY_INSTRUCTIONS}
 ${SOURCE_INSTRUCTIONS}
+${DOCTRINE_INSTRUCTIONS}
 ${assignmentInstructions ? `\n${assignmentInstructions}\n` : ""}
 
 Question:
@@ -408,11 +416,14 @@ ${READ_ONLY_INSTRUCTIONS}
 
 Return concise Markdown with these sections:
 ## Unified Answer
+## Premise and Governing Doctrine
 ## Perspective Takeaways
 ## Disagreements and Tradeoffs
 ## Risks and Unknowns
 ## Confidence
 ## Sources
+
+${SYNTHESIS_DOCTRINE_INSTRUCTIONS}
 
 Preserve meaningful dissent. Do not treat the number of similar answers as proof. Do not invent facts absent from the perspective outputs. Explicitly account for unavailable perspectives as limits on confidence; failure details and partial outputs are context, not completed expert conclusions.
 
@@ -1146,7 +1157,9 @@ On the first turn and every native child report or scheduled wake, call \`perspe
 
 If the step reports workers still running, end the turn. Do not wait or poll. If it reports ready to synthesize, use only the returned full outputs; a missing output is unavailable evidence, and notification excerpts are never evidence. Cite factual claims from sources actually inspected by workers. Preserve disagreements, partial findings, supplied context versus inference, and unknowns. Do not treat agreement or worker count as proof. Never claim more certainty or coverage than the returned evidence supports. If a child identity is ambiguous or duplicated, disclose that lens as uncertain and keep distinct child IDs separate.
 
-After synthesis, call \`perspectives_publish_result\` exactly once with the complete synthesis text and a coverage choice. Choose partial if any requested lens could not inspect relevant sources, cannot answer, has unsupported citations, or has materially unknown coverage. Choose complete only if every requested lens returned exactly one persisted final output and you judge the requested lenses substantively addressed. This is a conservative coordinator judgment, not a mechanical proof of factual coverage; when unsure, choose partial. Older coordinator prompts may omit the optional choice; the product then uses partial. The tool separately computes worker-output availability from persisted children and caps complete status if any requested lens lacks exactly one idle verified worker with a final output. A complete status still does not prove the synthesis factually complete. The tool builds an exact UTF-8 artifact, computes the body SHA-256, writes with create-only atomic semantics, reads back, and verifies the exact bytes. Do not write files directly or retry a conflicting publication. Include the returned status, run ID, relative path, body SHA-256, and full-file SHA-256 in your short final response. The caller can read the full verified artifact with \`perspectives_read_result\`.
+Begin the synthesis with \`## Premise and Governing Doctrine\`. ${SYNTHESIS_DOCTRINE_INSTRUCTIONS}
+
+After synthesis, call \`perspectives_publish_result\` exactly once with the complete synthesis text and a coverage choice. Choose partial if any requested lens could not inspect relevant sources, cannot answer, has unsupported citations, or has materially unknown coverage, or if no lens recovered the governing doctrine or tested the question's premise. Choose complete only if every requested lens returned exactly one persisted final output and you judge the requested lenses substantively addressed. This is a conservative coordinator judgment, not a mechanical proof of factual coverage; when unsure, choose partial. Older coordinator prompts may omit the optional choice; the product then uses partial. The tool separately computes worker-output availability from persisted children and caps complete status if any requested lens lacks exactly one idle verified worker with a final output. A complete status still does not prove the synthesis factually complete. The tool builds an exact UTF-8 artifact, computes the body SHA-256, writes with create-only atomic semantics, reads back, and verifies the exact bytes. Do not write files directly or retry a conflicting publication. Include the returned status, run ID, relative path, body SHA-256, and full-file SHA-256 in your short final response. The caller can read the full verified artifact with \`perspectives_read_result\`.
 
 The coordinator wake targets depend on BB's scheduled-message sweep and host availability. Queue acceptance is not delivery. A failed queue row does not wake this coordinator automatically; if the native report is also lost, BB currently needs explicit queue recovery or operator action. Never promise an eventual wake, exactly-once creation, or a strict wall-clock deadline.`;
 }
@@ -1339,9 +1352,28 @@ function workerTitle(runId: string, lensIndex: number): string {
   return `${WORKER_TITLE_PREFIX}${runId} lens-${lensIndex + 1}`;
 }
 
-function coordinatorWorkerPrompt(request: CoordinatorRunRequest, runId: string, lensIndex: number): string {
+const WORKER_EVIDENCE_POLICY = `${SOURCE_INSTRUCTIONS}\n\n${DOCTRINE_INSTRUCTIONS}`;
+
+/** Workers spawned before the doctrine requirement keep their persisted identity across a plugin upgrade. */
+const ACCEPTED_WORKER_EVIDENCE_POLICIES = [WORKER_EVIDENCE_POLICY, SOURCE_INSTRUCTIONS] as const;
+
+function coordinatorWorkerPrompt(
+  request: CoordinatorRunRequest,
+  runId: string,
+  lensIndex: number,
+  evidencePolicy: string = WORKER_EVIDENCE_POLICY,
+): string {
   const lens = request.orderedLenses[lensIndex]!;
-  return `${READ_ONLY_INSTRUCTIONS}\n\n${SOURCE_INSTRUCTIONS}\n\nYou are one ordinary hidden Perspectives worker.\nRun ID: ${runId}\nLens slot: ${lensIndex + 1} of ${request.orderedLenses.length}\nAssigned lens: ${lens}\n\nQuestion:\n${request.question}\n\nSupplied context (not independently verified):\n${request.context || "(none)"}\n\nInvestigate only the assigned lens. Give a concise answer with the strongest primary sources you actually inspected, meaningful uncertainty, and best available partial work if interrupted. Do not create children, schedule messages, publish files, or operate on the coordinator or caller thread.`;
+  return `${READ_ONLY_INSTRUCTIONS}\n\n${evidencePolicy}\n\nYou are one ordinary hidden Perspectives worker.\nRun ID: ${runId}\nLens slot: ${lensIndex + 1} of ${request.orderedLenses.length}\nAssigned lens: ${lens}\n\nQuestion:\n${request.question}\n\nSupplied context (not independently verified):\n${request.context || "(none)"}\n\nInvestigate only the assigned lens. Give a concise answer with the strongest primary sources you actually inspected, meaningful uncertainty, and best available partial work if interrupted. Do not create children, schedule messages, publish files, or operate on the coordinator or caller thread.`;
+}
+
+function isCoordinatorWorkerPrompt(
+  prompt: string | undefined,
+  request: CoordinatorRunRequest,
+  runId: string,
+  lensIndex: number,
+): boolean {
+  return ACCEPTED_WORKER_EVIDENCE_POLICIES.some((policy) => prompt === coordinatorWorkerPrompt(request, runId, lensIndex, policy));
 }
 
 interface VerifiedWorker {
@@ -1373,7 +1405,7 @@ async function verifyWorkerPrompt(
   if (child.parentThreadId !== runId || child.visibility !== "hidden" || child.projectId !== request.projectId ||
       (request.environmentId !== null && child.environmentId !== request.environmentId)) return false;
   const prompt = await firstRequestedPrompt(threads, child.id, signal);
-  return prompt === coordinatorWorkerPrompt(request, runId, lensIndex);
+  return isCoordinatorWorkerPrompt(prompt, request, runId, lensIndex);
 }
 
 function textContent(content: unknown): string | undefined {
@@ -1623,7 +1655,7 @@ async function reconcileWorkers(
     for (let index = 0; index < request.orderedLenses.length; index++) {
       if (child.projectId === request.projectId &&
           (request.environmentId === null || child.environmentId === request.environmentId) &&
-          prompt === coordinatorWorkerPrompt(request, runId, index)) {
+          isCoordinatorWorkerPrompt(prompt, request, runId, index)) {
         matchingBySlot[index]!.push(child);
         matched = true;
       }
@@ -1929,7 +1961,7 @@ async function isVerifiedPanelWorker(
     });
     if (thread.environmentId !== parent.request.environmentId && parent.request.environmentId !== null) return false;
     const prompt = await firstRequestedPrompt(bb.sdk.threads, thread.id, context.signal);
-    return parent.request.orderedLenses.some((_, index) => prompt === coordinatorWorkerPrompt(parent.request, parent.thread.id, index));
+    return parent.request.orderedLenses.some((_, index) => isCoordinatorWorkerPrompt(prompt, parent.request, parent.thread.id, index));
   } catch {
     return false;
   }

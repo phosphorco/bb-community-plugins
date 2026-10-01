@@ -126,7 +126,14 @@ mode remains the actual authority envelope.
 
 Experts cite material factual claims from primary evidence they actually
 inspected, distinguish supplied context from inference, preserve disagreement,
-and identify unknowns. Queue acceptance, spawn responses, worker count, and
+and identify unknowns. Every expert, in every lens, first recovers the
+governing doctrine and primary research for the question (ADRs, agent
+instructions, skills and their references, cited papers) and treats any
+premise in the question ("X is bad", "remove Y") as a claim to test rather
+than a constraint to satisfy. The synthesis opens with `## Premise and
+Governing Doctrine`: the premise, what the cited doctrine says about it, and
+the properties gained and lost by satisfying it. Workers spawned under the
+earlier prompt still reconcile to their lens slot after an upgrade. Queue acceptance, spawn responses, worker count, and
 native notices do not prove delivery or completion. The coordinator must not
 claim eventual delivery, exactly-once execution, guaranteed recovery, complete
 coverage, or reliability without direct primary evidence. It does not treat

@@ -67,6 +67,8 @@ Expert consultation: @thread:thread-2`);
   assert.match(String(spawnCalls[1]!.prompt), /Answer directly from the supplied question and context/);
   assert.match(String(spawnCalls[1]!.prompt), /Support every material factual claim/);
   assert.match(String(spawnCalls[1]!.prompt), /## Sources/);
+  assert.match(String(spawnCalls[1]!.prompt), /as a claim to test, not a constraint to satisfy/);
+  assert.match(String(spawnCalls[0]!.prompt), /every expert tests that premise against the governing doctrine and research/);
 });
 
 test("perspective plans preserve caller order and parse escaped pipes", () => {

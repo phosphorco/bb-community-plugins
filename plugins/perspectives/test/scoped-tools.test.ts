@@ -397,6 +397,45 @@ test("registered SDK tools reconcile, publish exact bytes, survive rename, and r
   assert.match(harness.text(unrelatedRead), /not a verified hidden coordinator child/);
 });
 
+test("every lens recovers governing doctrine and tests the premise, and the synthesis reports the trade", async () => {
+  const harness = makeHarness();
+  const coordinatorId = await launch(harness);
+  await harness.call("perspectives_coordinator_step", {}, coordinatorId);
+  const workers = [...harness.threads.values()].filter((thread) => thread.parentThreadId === coordinatorId);
+  assert.equal(workers.length, 2);
+  for (const worker of workers) {
+    const prompt = harness.initialPrompts.get(worker.id)!;
+    assert.match(prompt, /recover the governing doctrine and primary research for the question/);
+    assert.match(prompt, /as a claim to test, not a constraint to satisfy/);
+    assert.match(prompt, /list the properties gained and the properties lost, cite the source that establishes each/);
+    assert.match(prompt, /An answer that only explains how to do X safely is incomplete\./);
+  }
+
+  const coordinatorPrompt = harness.initialPrompts.get(coordinatorId)!;
+  assert.match(coordinatorPrompt, /Begin the synthesis with `## Premise and Governing Doctrine`/);
+  assert.match(coordinatorPrompt, /table of properties gained and properties lost by satisfying the premise, citing the source for each row/);
+  assert.match(coordinatorPrompt, /Agreement among perspectives on how to satisfy a premise does not establish the premise\./);
+  assert.match(coordinatorPrompt, /or if no lens recovered the governing doctrine or tested the question's premise/);
+});
+
+test("a worker spawned before the doctrine requirement still reconciles to its lens slot", async () => {
+  const harness = makeHarness();
+  const coordinatorId = await launch(harness);
+  await harness.call("perspectives_coordinator_step", {}, coordinatorId);
+  const workers = [...harness.threads.values()].filter((thread) => thread.parentThreadId === coordinatorId);
+  const legacyPrompt = harness.initialPrompts.get(workers[0]!.id)!.replace(/\n\nGoverning doctrine and premise requirements:[\s\S]*?is incomplete\./, "");
+  assert.doesNotMatch(legacyPrompt, /Governing doctrine/);
+  harness.initialPrompts.set(workers[0]!.id, legacyPrompt);
+  for (const [index, worker] of workers.entries()) {
+    worker.status = "idle";
+    harness.outputs.set(worker.id, `Lens ${index + 1} inspected a primary source and reports bounded findings.`);
+  }
+
+  const ready = await harness.call("perspectives_coordinator_step", {}, coordinatorId);
+  assert.equal((JSON.parse(harness.text(ready)) as any).readyToPublish, true, harness.text(ready));
+  assert.equal([...harness.threads.values()].filter((thread) => thread.parentThreadId === coordinatorId).length, 2);
+});
+
 test("a synthesis containing artifact delimiters publishes and reads back as exact body text", async () => {
   const harness = makeHarness();
   const coordinatorId = await readyToPublishRun(harness);
