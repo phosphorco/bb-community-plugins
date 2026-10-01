@@ -30,6 +30,9 @@ function makeHarness(options: {
   const fileWriteCommits: string[] = [];
   let fileWriteFault = options.fileWriteFault;
   const outputs = new Map<string, string>();
+  const metadata = new Map<string, Record<string, any>>();
+  const requestedMessages = new Map<string, string[]>();
+  const completionSendFault = { mode: "" };
   const failedDeletes = new Set<string>();
   const failedQueueLists = new Set<string>();
   const failedGets = new Set<string>();
@@ -45,7 +48,7 @@ function makeHarness(options: {
     projectId: "project-1",
     environmentId: "environment-1",
     providerId: "provider-1",
-    parentThreadId: null,
+    parentThreadId: null, lifecycleOwnerThreadId: null,
     visibility: "visible",
     title: "caller",
     status: "idle",
@@ -64,6 +67,10 @@ function makeHarness(options: {
     },
     sdk: {
       threads: {
+        getPluginMetadata: async ({ threadId }: { threadId: string }) => metadata.get(threadId) ?? {},
+        updatePluginMetadata: async ({ threadId, set }: { threadId: string; set: Record<string, any> }) => {
+          const value = { ...metadata.get(threadId), ...set }; metadata.set(threadId, value); return value;
+        },
         get: async ({ threadId }: { threadId: string }) => {
           if (failedGets.has(threadId)) throw new Error("get unavailable");
           const thread = threads.get(threadId);
@@ -72,14 +79,15 @@ function makeHarness(options: {
         },
         defaultExecutionOptions: async () => ({ model: "model-1", reasoningLevel: "high", permissionMode: "auto" }),
         spawn: async (args: Record<string, any>) => {
-          const id = args.parentThreadId === "caller" ? "coordinator-1" : `worker-${++nextId}`;
+          const id = args.lifecycleOwnerThreadId === "caller" ? "coordinator-1" : `worker-${++nextId}`;
           const environmentId = args.environment.type === "reuse" ? args.environment.environmentId : "environment-1";
           const child = {
             id,
             projectId: args.projectId,
             environmentId,
             providerId: args.providerId,
-            parentThreadId: args.parentThreadId,
+            parentThreadId: args.parentThreadId ?? null,
+            lifecycleOwnerThreadId: args.lifecycleOwnerThreadId ?? null,
             visibility: args.visibility,
             title: args.title,
             status: "active",
@@ -89,8 +97,8 @@ function makeHarness(options: {
           events.push(`spawn:${id}`);
           return { ...child };
         },
-        list: async ({ parentThreadId, limit = 100, offset = 0 }: { parentThreadId: string; limit?: number; offset?: number }) =>
-          [...threads.values()].filter((thread) => thread.parentThreadId === parentThreadId).slice(offset, offset + limit),
+        list: async ({ parentThreadId, limit = 100, offset = 0 }: { parentThreadId?: string; limit?: number; offset?: number }) =>
+          [...threads.values()].filter((thread) => parentThreadId === undefined || thread.parentThreadId === parentThreadId).slice(offset, offset + limit),
         events: {
           list: async ({ threadId, order, types, beforeSeq, limit }: { threadId: string; order: string; types?: readonly string[]; beforeSeq?: string; limit?: string }) => {
             if (failedEventLists.has(threadId)) throw new Error("events unavailable");
@@ -114,6 +122,7 @@ function makeHarness(options: {
                 .sort((left, right) => order === "desc" ? right.seq - left.seq : left.seq - right.seq)
                 .slice(0, limitCount);
             }
+            if (requestedMessages.has(threadId)) return requestedMessages.get(threadId)!.map(text => ({ type: "client/turn/requested", data: { input: [{ type: "text", text }] } }));
             const prompt = initialPrompts.get(threadId);
             if (!prompt) return [];
             return [{ type: "client/turn/requested", data: { input: [{ type: "text", text: prompt }] } }];
@@ -141,6 +150,11 @@ function makeHarness(options: {
             };
             rows.push(row);
             return { delivery: "queued", queuedMessage: row };
+          }
+          if (text.startsWith("Perspectives panel result ready")) {
+            if (completionSendFault.mode === "before") throw new Error("ambiguous response without commit");
+            requestedMessages.set(args.threadId, [...requestedMessages.get(args.threadId) ?? [], text]);
+            if (completionSendFault.mode === "after") throw new Error("response lost after acceptance");
           }
           return { delivery: "sent" };
         },
@@ -257,6 +271,7 @@ function makeHarness(options: {
   };
 
   return {
+    metadata, requestedMessages, completionSendFault,
     tools,
     configure,
     threads,
@@ -319,7 +334,7 @@ test("registered SDK tools reconcile, publish exact bytes, survive rename, and r
     origin: { kind: null, pluginId: "perspectives" },
     thread: { id: coordinatorId, title: coordinator.title, parentThreadId: "caller", sourceThreadId: null },
   });
-  assert.deepEqual(coordinatorConfig.tools, ["perspectives_coordinator_step", "perspectives_publish_result"]);
+  assert.deepEqual(coordinatorConfig.tools, ["help", "perspectives_coordinator_step", "perspectives_publish_result"]);
 
   const firstStep = await harness.call("perspectives_coordinator_step", {}, coordinatorId);
   assert.equal((JSON.parse(harness.text(firstStep)) as any).readyToPublish, false);
@@ -343,7 +358,7 @@ test("registered SDK tools reconcile, publish exact bytes, survive rename, and r
     origin: { kind: null, pluginId: "perspectives" },
     thread: { id: workers[0]!.id, title: workers[0]!.title, parentThreadId: coordinatorId, sourceThreadId: null },
   });
-  assert.deepEqual(renamedWorkerConfig.tools, ["perspectives_coordinator_step", "perspectives_publish_result"]);
+  assert.deepEqual(renamedWorkerConfig.tools, ["help", "perspectives_coordinator_step", "perspectives_publish_result"]);
 
   const invalidWorker = await harness.call("perspectives_coordinator_step", {}, workers[0]!.id);
   assert.equal(invalidWorker.isError, true);
@@ -394,7 +409,7 @@ test("registered SDK tools reconcile, publish exact bytes, survive rename, and r
   assert.match(harness.text(explicitlyRetrieved), /This tool creates no requesting-thread follow-up/);
   const unrelatedRead = await harness.call("perspectives_read_result", { coordinatorId }, "unrelated-caller");
   assert.equal(unrelatedRead.isError, true);
-  assert.match(harness.text(unrelatedRead), /not a verified hidden coordinator child/);
+  assert.match(harness.text(unrelatedRead), /not a verified hidden coordinator owned/);
 });
 
 test("a synthesis containing artifact delimiters publishes and reads back as exact body text", async () => {
@@ -847,4 +862,85 @@ test("legacy queued caller reminders are not misrepresented by read receipts", a
   const read = await harness.call("perspectives_read_result", { coordinatorId: runId }, "caller");
   assert.match(harness.text(read), /older runs may retain a previously queued reminder/);
   assert.ok(harness.rows.some(r => r.id === "legacy-backstop"));
+});
+
+
+test("lifecycle coordinator sends a completion only after verified publication and replays do not resend", async () => {
+  const harness = makeHarness();
+  const runId = await readyToPublishRun(harness);
+  const coordinator = harness.threads.get(runId)!;
+  assert.equal(coordinator.parentThreadId, null);
+  assert.equal(coordinator.lifecycleOwnerThreadId, "caller");
+  assert.equal(harness.requestedMessages.get("caller"), undefined, "research/progress turns do not send caller messages");
+  for (const worker of [...harness.threads.values()].filter(t => t.parentThreadId === runId)) assert.equal(worker.lifecycleOwnerThreadId, runId);
+  const result = JSON.parse(harness.text(await harness.call("perspectives_publish_result", { synthesis: "Final evidence", coverage: "complete" }, runId)));
+  assert.equal(result.completionDelivery, "accepted");
+  assert.equal(harness.requestedMessages.get("caller")!.length, 1);
+  const send = harness.events.findIndex(e => e.startsWith("send:Perspectives panel result ready"));
+  assert.ok(harness.events.lastIndexOf("file-read", send) >= 0);
+  await harness.call("perspectives_coordinator_step", {}, runId);
+  await harness.call("perspectives_publish_result", { synthesis: "again" }, runId);
+  assert.equal(harness.requestedMessages.get("caller")!.length, 1);
+  const read = await harness.call("perspectives_read_result", { coordinatorId: runId }, "caller");
+  assert.equal(read.isError, undefined);
+});
+
+test("completion response loss reconciles acceptance and uncertain attempts never blindly resend", async () => {
+  for (const mode of ["before", "after"]) {
+    const harness = makeHarness();
+    const runId = await readyToPublishRun(harness);
+    harness.completionSendFault.mode = mode;
+    const first = JSON.parse(harness.text(await harness.call("perspectives_publish_result", { synthesis: "Final evidence" }, runId)));
+    assert.equal(first.completionDelivery, mode === "after" ? "accepted" : "uncertain-no-blind-retry");
+    harness.completionSendFault.mode = "";
+    await harness.call("perspectives_coordinator_step", {}, runId);
+    assert.equal(harness.events.filter(e => e.startsWith("send:Perspectives panel result ready")).length, 1);
+    assert.match(harness.text(await harness.call("perspectives_read_result", { coordinatorId: runId }, "caller")), /Verified Perspectives artifact/);
+  }
+});
+
+test("legacy parented protocol remains readable and uses native final reporting", async () => {
+  const harness = makeHarness();
+  const runId = await launch(harness);
+  const coordinator = harness.threads.get(runId)!;
+  coordinator.parentThreadId = "caller";
+  coordinator.lifecycleOwnerThreadId = null;
+  const prompt = harness.initialPrompts.get(runId)!.replace("Perspectives coordinator protocol: 2", "Perspectives coordinator protocol: 1").replace('"protocolVersion": 2', '"protocolVersion": 1');
+  harness.initialPrompts.set(runId, prompt);
+  await harness.call("perspectives_coordinator_step", {}, runId);
+  for (const t of harness.threads.values()) if (t.parentThreadId === runId) { t.status = "idle"; harness.outputs.set(t.id, "Legacy evidence"); }
+  const result = JSON.parse(harness.text(await harness.call("perspectives_publish_result", { synthesis: "Legacy synthesis" }, runId)));
+  assert.equal(result.completionDelivery, "legacy-native-parent-report");
+  assert.equal(harness.requestedMessages.get("caller"), undefined);
+  assert.match(harness.text(await harness.call("perspectives_read_result", { coordinatorId: runId }, "caller")), /Verified Perspectives artifact/);
+});
+
+
+test("v2 coordinator authentication rejects wrong lifecycle ownership or an added parent", async () => {
+  const harness = makeHarness();
+  const runId = await launch(harness);
+  const thread = harness.threads.get(runId)!;
+  thread.lifecycleOwnerThreadId = "someone-else";
+  let result = await harness.call("perspectives_coordinator_step", {}, runId);
+  assert.equal(result.isError, true);
+  thread.lifecycleOwnerThreadId = "caller";
+  thread.parentThreadId = "caller";
+  result = await harness.call("perspectives_coordinator_step", {}, runId);
+  assert.equal(result.isError, true);
+  result = await harness.call("perspectives_read_result", { coordinatorId: runId }, "caller");
+  assert.equal(result.isError, true);
+});
+
+
+test("persisted completion intent without a send freezes retries while leaving the artifact readable", async () => {
+  const harness = makeHarness();
+  const runId = await publishRun(harness, "complete");
+  const digest = harness.metadata.get(runId)!.completionAttempt;
+  harness.metadata.set(runId, { completionAttempt: digest });
+  harness.requestedMessages.delete("caller");
+  const before = harness.events.filter(e => e.startsWith("send:Perspectives panel result ready")).length;
+  const replay = JSON.parse(harness.text(await harness.call("perspectives_coordinator_step", {}, runId)));
+  assert.equal(replay.completionDelivery, "uncertain-no-blind-retry");
+  assert.equal(harness.events.filter(e => e.startsWith("send:Perspectives panel result ready")).length, before);
+  assert.match(harness.text(await harness.call("perspectives_read_result", { coordinatorId: runId }, "caller")), /Verified Perspectives artifact/);
 });

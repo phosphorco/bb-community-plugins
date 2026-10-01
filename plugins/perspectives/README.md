@@ -10,7 +10,7 @@ Perspectives registers five native BB agent tools:
 
 ## Restart-resilient panel lifecycle
 
-`gather_perspectives` spawns a hidden ordinary coordinator child without
+`gather_perspectives` spawns a hidden lifecycle-owned coordinator without
 scheduling a follow-up in the requesting thread. The coordinator ID is the run ID. An ambiguous coordinator spawn
 is rediscovered from the first persisted `client/turn/requested` input and
 direct parent relation; no unique match means launch uncertain. Replaying a
@@ -62,13 +62,13 @@ the first `client/turn/requested` event, the current `context.threadId`, its
 direct `parentThreadId`, and matching project/environment. A mutable title is
 only a discovery hint; renaming a coordinator or worker does not invalidate a
 run. Coordinator effects stay on that context thread's children, queue, and
-storage. Caller retrieval accepts only a verified hidden direct child of the
-current caller. The synchronous tool-configuration callback cannot inspect
-persisted events, so a Perspectives-origin parented thread receives only
+storage. Caller retrieval accepts only a verified hidden coordinator lifecycle-owned by the
+current caller (or a legacy parented coordinator). The synchronous tool-configuration callback cannot inspect
+persisted events, so a Perspectives-origin thread receives help and
 scoped coordinator operations unless its title marks a worker; that title is
 used only to withhold tools. Other plugin-origin callers retain gather/read
 access. Tool execution still verifies persisted identity and
-parent/project/environment. Recognizable workers receive no Perspectives
+ownership/project/environment. Recognizable workers receive no Perspectives
 tools, and the gather and help handlers reject verified workers after a rename.
 
 Worker read-only behavior is an instruction, not a host sandbox guarantee.
@@ -81,7 +81,7 @@ contract before using untrusted sources.
 Persisted prompt text is durable identity evidence, not a cryptographic
 capability. A user able to create a hidden thread with a lookalike request can
 spoof the marker. Such a thread can affect only its own thread and direct
-children, and retrieval still requires its actual parent to be the caller.
+children, and retrieval still requires its actual lifecycle owner (or legacy parent) to be the caller.
 The plugin adds no journal or checkpoint store. Protocol version 1 has a
 stable request decoder; future request-format changes must add a new version
 without changing the v1 decoder.
@@ -110,7 +110,7 @@ The 20-minute wrap-up, 25-minute deadline, and 26-minute internal launch-intent 
 scheduling targets, not delivery guarantees. Queue acceptance does not prove
 provider acknowledgement. If a scheduled row gets `failureReason` and the
 native report is also lost, BB does not guarantee another wake; explicit
-queue recovery or operator action is required. A lost native completion report requires explicit caller retrieval. The plugin does not claim eventual delivery,
+queue recovery or operator action is required. A lost completion message requires explicit caller retrieval. The plugin does not claim eventual delivery,
 exactly-once worker creation, or a strict wall-clock deadline.
 
 ## Execution settings and evidence
@@ -148,8 +148,8 @@ presenting the result. A missing, mismatched, interrupted, or unreadable final
 answer returns the full artifact again. The scan is bounded to five 100-event
 pages; if the receipt is outside that window, the tool returns the artifact.
 An explicit user request can retrieve it again with `includeArtifact: true`.
-Legacy presentations without a receipt may repeat. The caller relies on native
-completion reports; a lost report requires explicit retrieval of the artifact.
+Legacy presentations without a receipt may repeat. The caller relies on explicit
+completion messages; a lost report requires explicit retrieval of the artifact.
 Native duplicate reports and retries can still produce repeated visibility,
 so the plugin does not claim exactly-once presentation.
 
@@ -175,3 +175,27 @@ still cause an extra turn; closing that race requires an atomic BB send guard.
 Previously queued caller reminders are not automatically migrated on upgrade.
 The legacy protocol field `callerBackstopAtEpochMs` now names only the internal
 launch-intent schedule; it does not schedule a caller message.
+
+
+## Lifecycle ownership and final notification
+
+New runs use protocol v2: the hidden coordinator has no parent and is
+lifecycle-owned by the requesting thread. Its ordinary experts retain the
+coordinator as parent and also use it as lifecycle owner. Worker reports still
+wake synthesis, while intermediate coordinator turns do not wake the caller.
+Protocol v1 retains legacy parent authentication and native reporting.
+
+After artifact readback, the plugin sends an explicit final completion message
+through the thread SDK. A coordinator metadata digest records send intent
+before dispatch; caller queue rows and request events establish acceptance.
+Replays reconcile acceptance and never blindly repeat a persisted attempt.
+A crash between intent and send, unavailable evidence, or a lost response can
+leave delivery uncertain; explicit artifact retrieval is then needed. This
+is bounded delivery, not an exactly-once or eventual-delivery guarantee. The
+metadata write is not a compare-and-set; simultaneous publication calls can
+still duplicate a notification. No requesting-thread timer is added.
+
+This mode requires a BB host exposing lifecycleOwnerThreadId. The plugin
+checks the created thread's ownership before acknowledging launch. Registry
+SDK declarations omit that host extension; it is passed through the public
+SDK spawn request and checked on the returned thread, without a fork edit.

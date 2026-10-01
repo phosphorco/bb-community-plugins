@@ -52,7 +52,7 @@ test("configured planner and worker tuples reach the coordinator and its worker 
         }),
       },
       threads: {
-        get: async () => ({ environmentId: "environment", providerId: "caller-provider" }),
+        get: async ({ threadId }: { threadId: string }) => ({ environmentId: "environment", providerId: "caller-provider", parentThreadId: null, visibility: "hidden", lifecycleOwnerThreadId: threadId === "coordinator-1" ? "caller" : null }),
         defaultExecutionOptions: async () => ({
           providerId: "caller-provider",
           model: "caller-model",
@@ -119,7 +119,8 @@ test("configured planner and worker tuples reach the coordinator and its worker 
 
   const coordinator = spawnCalls[0]!;
   assert.equal(coordinator.title.startsWith("Perspectives coordinator perspectives-invocation:"), true);
-  assert.equal(coordinator.parentThreadId, "caller");
+  assert.equal(coordinator.parentThreadId, undefined);
+  assert.equal(coordinator.lifecycleOwnerThreadId, "caller");
   assert.equal(coordinator.visibility, "hidden");
   assert.equal(coordinator.providerId, "codex");
   assert.equal(coordinator.model, "gpt-5.6");
@@ -175,7 +176,7 @@ test("an unavailable configured provider fails before any hidden thread is creat
         models: async () => ({ providers: [], permissionCeiling: "full", models: [], selectedOnlyModels: [] }),
       },
       threads: {
-        get: async () => ({ environmentId: "environment", providerId: "caller-provider" }),
+        get: async ({ threadId }: { threadId: string }) => ({ environmentId: "environment", providerId: "caller-provider", parentThreadId: null, visibility: "hidden", lifecycleOwnerThreadId: threadId === "coordinator-1" ? "caller" : null }),
         defaultExecutionOptions: async () => ({
           providerId: "caller-provider",
           model: "caller-model",

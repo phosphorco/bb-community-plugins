@@ -3,7 +3,7 @@
 ## Durable ownership
 
 `gather_perspectives` validates a request, stores a versioned request in the
-first persisted coordinator prompt and creates one ordinary hidden coordinator child. The coordinator thread ID
+first persisted coordinator prompt and creates one hidden lifecycle-owned coordinator. The coordinator thread ID
 is the run ID. The coordinator uses the registered Perspectives tools for BB
 orchestration and result publication, so those operations do not depend on
 shell approval in provider auto mode.
@@ -23,29 +23,29 @@ are durable evidence of intent and state, not provider-delivery receipts.
 ## Authentication and protocol stability
 
 Coordinator operations require all of the following: the tool's
-`context.threadId`, a hidden thread whose direct parent is the request's caller,
+`context.threadId`, a hidden coordinator owned by the request's caller (legacy runs use parentage),
 the first persisted `client/turn/requested` event containing a valid protocol
 request, and matching caller, project, and environment identity. Titles are
 discovery hints only; renaming a coordinator does not invalidate the run.
-Caller retrieval accepts only a verified hidden direct coordinator child of
-the current caller. A worker cannot operate on its parent's queue, children,
+Caller retrieval accepts only a verified hidden coordinator lifecycle-owned by
+the current caller (or a legacy parented coordinator). A worker cannot operate on its parent's queue, children,
 or storage through Perspectives tools, and help and gather reject verified
 workers. Worker read-only instructions do not constrain host permissions;
 inherited or configured worker permission can allow actions outside the
 plugin's tools. The synchronous dynamic-configuration callback cannot inspect
-persisted events. A Perspectives-origin parented thread therefore receives
-only the scoped coordinator operations unless its title marks it as a worker;
+persisted events. A Perspectives-origin thread therefore receives
+help and the scoped coordinator operations unless its title marks it as a worker;
 that title is used only to withhold orchestration tools. Other plugin-origin
-callers retain gather/read access. Persisted identity and parent, project, and
+callers retain gather/read access. Persisted identity and caller ownership, project, and
 environment checks at execution remain the authority. A renamed worker may see
 the narrow operations advertised, but execution rejects it.
 
 The request has an explicit protocol version. Keep the version 1 decoder
 stable across plugin prompt edits and upgrades; add a separate decoder before
 changing the stored request format. The persisted prompt is not a
-cryptographic capability: an actor able to create a hidden lookalike child
+cryptographic capability: an actor able to create a hidden lookalike owned coordinator
 may spoof it. Actual effects remain confined to that thread and its direct
-children, and retrieval still requires the real parent-child relationship.
+children, and retrieval still requires the persisted caller ownership.
 
 ## Wake and worker ordering
 
@@ -110,7 +110,7 @@ file back and verifies exact bytes, UTF-8 round-trip, run ID, status, body
 boundary and digest, terminal marker, host-reported full-file digest, and byte
 length. An identical existing artifact is idempotent. A conflict, divergent
 file, or corrupt file is never overwritten. The caller's read tool verifies
-direct parentage first, then repeats byte-level validation against the
+caller ownership first, then repeats byte-level validation against the
 coordinator ID.
 
 No requesting-thread reminder is created. After the
@@ -144,7 +144,7 @@ from the gather request. They are queue targets, not delivery guarantees.
 Host availability, queue dispatch, and provider scheduling can delay a wake.
 If the sole scheduled row has `failureReason` and the native report is lost,
 BB does not guarantee another wake; explicit queue recovery or operator action
-is required. A lost native completion report requires explicit caller retrieval.
+is required. A lost completion message requires explicit caller retrieval.
 The plugin does not claim eventual delivery, exactly-once worker creation, or
 a strict wall-clock completion bound.
 
@@ -175,3 +175,27 @@ still cause an extra turn; closing that race requires an atomic BB send guard.
 Previously queued caller reminders are not automatically migrated on upgrade.
 The legacy protocol field `callerBackstopAtEpochMs` now names only the internal
 launch-intent schedule; it does not schedule a caller message.
+
+
+## Lifecycle ownership and final notification
+
+New runs use protocol v2: the hidden coordinator has no parent and is
+lifecycle-owned by the requesting thread. Its ordinary experts retain the
+coordinator as parent and also use it as lifecycle owner. Worker reports still
+wake synthesis, while intermediate coordinator turns do not wake the caller.
+Protocol v1 retains legacy parent authentication and native reporting.
+
+After artifact readback, the plugin sends an explicit final completion message
+through the thread SDK. A coordinator metadata digest records send intent
+before dispatch; caller queue rows and request events establish acceptance.
+Replays reconcile acceptance and never blindly repeat a persisted attempt.
+A crash between intent and send, unavailable evidence, or a lost response can
+leave delivery uncertain; explicit artifact retrieval is then needed. This
+is bounded delivery, not an exactly-once or eventual-delivery guarantee. The
+metadata write is not a compare-and-set; simultaneous publication calls can
+still duplicate a notification. No requesting-thread timer is added.
+
+This mode requires a BB host exposing lifecycleOwnerThreadId. The plugin
+checks the created thread's ownership before acknowledging launch. Registry
+SDK declarations omit that host extension; it is passed through the public
+SDK spawn request and checked on the returned thread, without a fork edit.

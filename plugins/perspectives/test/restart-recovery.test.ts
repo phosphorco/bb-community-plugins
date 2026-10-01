@@ -33,7 +33,8 @@ function makeHarness(options: HarnessOptions = {}) {
   const createChild = (args: Record<string, any>, id: string) => {
     const child = {
       id,
-      parentThreadId: args.parentThreadId,
+      parentThreadId: args.parentThreadId ?? null,
+      lifecycleOwnerThreadId: args.lifecycleOwnerThreadId,
       visibility: args.visibility,
       title: args.title,
       prompt: args.prompt,
@@ -45,15 +46,16 @@ function makeHarness(options: HarnessOptions = {}) {
   const bb = {
     sdk: {
       threads: {
-        get: async ({ threadId }: { threadId: string }) => ({
+        get: async ({ threadId }: { threadId: string }) => (children.find(child => child.id === threadId) ?? ({
           id: threadId,
           projectId: "project-1",
           environmentId: "environment-1",
           providerId: "provider-1",
           parentThreadId: null,
+          lifecycleOwnerThreadId: null,
           visibility: "visible",
           title: "caller",
-        }),
+        })),
         defaultExecutionOptions: async () => options.noExecution ? undefined : ({
           model: "model-1",
           reasoningLevel: "high",
@@ -106,7 +108,7 @@ function makeHarness(options: HarnessOptions = {}) {
         list: async (args: Record<string, any>) => {
           events.push("list-children");
           return children
-            .filter((child) => child.parentThreadId === args.parentThreadId)
+            .filter((child) => args.parentThreadId === undefined || child.parentThreadId === args.parentThreadId)
             .slice(args.offset ?? 0, (args.offset ?? 0) + (args.limit ?? 100));
         },
         promptHistory: async () => {
@@ -170,7 +172,8 @@ test("gather spawns a marker-bearing coordinator without scheduling a caller mes
   const spawn = harness.spawnCalls[0]!;
   const marker = markerFrom(spawn.prompt);
   assert.ok(spawn.title.includes(marker));
-  assert.equal(spawn.parentThreadId, TOOL_CONTEXT.threadId);
+  assert.equal(spawn.parentThreadId, undefined);
+  assert.equal(spawn.lifecycleOwnerThreadId, TOOL_CONTEXT.threadId);
   assert.equal(spawn.visibility, "hidden");
   assert.equal(spawn.originKind, undefined);
   assert.match(receipt, /Coordinator: @thread:coordinator-1/);
@@ -275,8 +278,8 @@ test("the product prompt defines reconciliation, bounded synthesis, and one veri
   await gather(harness);
   const prompt = harness.spawnCalls[0]!.prompt as string;
 
-  assert.match(prompt, /^Perspectives coordinator protocol: 1/m);
-  assert.match(prompt, /"protocolVersion": 1/);
+  assert.match(prompt, /^Perspectives coordinator protocol: 2/m);
+  assert.match(prompt, /"protocolVersion": 2/);
   assert.match(prompt, /perspectives_coordinator_step/);
   assert.match(prompt, /perspectives_publish_result/);
   assert.match(prompt, /perspectives_read_result/);
@@ -298,7 +301,7 @@ test("coordinator prompt grants scoped BB operations without inheriting worker-w
   const workerPolicyEnd = prompt.indexOf("## Coordinator protocol", workerPolicyStart);
   const workerPolicy = prompt.slice(workerPolicyStart, workerPolicyEnd);
 
-  assert.match(coordinatorAuthority, /^Perspectives coordinator protocol: 1\n\nYou are coordinating a read-only research panel\./);
+  assert.match(coordinatorAuthority, /^Perspectives coordinator protocol: 2\n\nYou are coordinating a read-only research panel\./);
   assert.match(coordinatorAuthority, /perspectives_coordinator_step reconciles its ordinary hidden children/);
   assert.match(coordinatorAuthority, /perspectives_publish_result verifies and publishes one result into this coordinator thread's storage/);
   assert.match(coordinatorAuthority, /A queue row, spawn response, worker count, native report, or tool response alone does not prove delivery/);
@@ -318,3 +321,16 @@ test("coordinator prompt grants scoped BB operations without inheriting worker-w
 // restart while workers are active. SDK-boundary tests do not prove tool
 // exposure to the provider or post-restart scheduled wake dispatch.
 test.todo("live BB runtime: auto-mode tool call, restart during worker activity, dispatch a scheduled wake, and publish/read the artifact");
+
+
+test("unsupported hosts fail before creating an unowned coordinator", async () => {
+  const harness = makeHarness();
+  const original = harness.bb.sdk.threads.get;
+  harness.bb.sdk.threads.get = async args => {
+    const value = { ...await original(args) } as Record<string, any>;
+    delete value.lifecycleOwnerThreadId;
+    return value as any;
+  };
+  await assert.rejects(gather(harness), /does not expose lifecycle ownership/);
+  assert.equal(harness.spawnCalls.length, 0);
+});

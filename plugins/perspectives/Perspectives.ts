@@ -1069,7 +1069,7 @@ function normalizedLenses(input: { readonly lenses: readonly string[] }): string
 }
 
 interface CoordinatorRunRequest {
-  readonly protocolVersion: 1;
+  readonly protocolVersion: 1 | 2;
   readonly invocationMarker: string;
   readonly question: string;
   readonly context: string;
@@ -1095,10 +1095,10 @@ const executionSchema = z.object({
   permissionMode: z.enum(["accept-edits", "auto", "full"]),
 }).strict();
 
-// Protocol v1 is persisted run identity. Keep this decoder stable across
-// prompt edits and plugin upgrades; add a versioned decoder before changing it.
-const coordinatorRequestProtocolV1Schema = z.object({
-  protocolVersion: z.literal(1),
+// Version 1 retains parentage; version 2 authenticates lifecycle ownership.
+// Both versions retain their persisted request shape across prompt edits.
+const coordinatorRequestSchema = z.object({
+  protocolVersion: z.union([z.literal(1), z.literal(2)]),
   invocationMarker: z.string().regex(/^perspectives-invocation:[0-9a-f-]{36}$/i),
   question: z.string().min(1),
   context: z.string(),
@@ -1142,7 +1142,7 @@ ${READ_ONLY_INSTRUCTIONS}
 
 ## Coordinator protocol
 
-On the first turn and every native child report or scheduled wake, call \`perspectives_coordinator_step\`. It authenticates this run from the thread ID, parent-child relationship, and first persisted client/turn/requested event; it schedules the wrap-up and deadline rows, discovers or creates ordinary hidden workers, reconciles child status and complete stored outputs, and stops remaining workers at or after the deadline. Do not use shell commands for BB operations.
+On the first turn and every native child report or scheduled wake, call \`perspectives_coordinator_step\`. It authenticates this run from the thread ID, persisted lifecycle-owner relationship (or legacy parent), and first persisted client/turn/requested event; it schedules the wrap-up and deadline rows, discovers or creates ordinary hidden workers, reconciles child status and complete stored outputs, and stops remaining workers at or after the deadline. Do not use shell commands for BB operations.
 
 If the step reports workers still running, end the turn. Do not wait or poll. If it reports ready to synthesize, use only the returned full outputs; a missing output is unavailable evidence, and notification excerpts are never evidence. Cite factual claims from sources actually inspected by workers. Preserve disagreements, partial findings, supplied context versus inference, and unknowns. Do not treat agreement or worker count as proof. Never claim more certainty or coverage than the returned evidence supports. If a child identity is ambiguous or duplicated, disclose that lens as uncertain and keep distinct child IDs separate.
 
@@ -1168,6 +1168,25 @@ async function listChildrenByParent(threads: Threads, parentThreadId: string, si
   }
 }
 
+type LifecycleThread = { readonly parentThreadId: string | null; readonly lifecycleOwnerThreadId?: string | null };
+
+function coordinatorBelongsTo(thread: LifecycleThread, request: CoordinatorRunRequest): boolean {
+  return request.protocolVersion === 2
+    ? thread.parentThreadId === null && thread.lifecycleOwnerThreadId === request.callerThreadId
+    : thread.parentThreadId === request.callerThreadId;
+}
+
+async function listCallerCoordinators(threads: Threads, callerThreadId: string, signal?: AbortSignal) {
+  const caller = await threads.get({ threadId: callerThreadId, ...(signal ? { signal } : {}) });
+  const candidates: Awaited<ReturnType<Threads["list"]>> = [];
+  for (let offset = 0;; offset += 100) {
+    const page = await threads.list({ projectId: caller.projectId, includeHidden: true, limit: 100, offset, ...(signal ? { signal } : {}) });
+    candidates.push(...page.filter(thread => thread.visibility === "hidden" &&
+      (thread.parentThreadId === callerThreadId || (thread as LifecycleThread).lifecycleOwnerThreadId === callerThreadId)));
+    if (page.length < 100) return candidates;
+  }
+}
+
 async function rediscoverCoordinator(
   threads: Threads,
   callerThreadId: string,
@@ -1180,9 +1199,9 @@ async function rediscoverCoordinator(
   | { readonly kind: "unavailable" }
 > {
   try {
-    const children = await listChildrenByParent(threads, callerThreadId);
+    const children = await listCallerCoordinators(threads, callerThreadId);
     const candidates = children.filter((child) =>
-      child.parentThreadId === callerThreadId &&
+      (child.parentThreadId === callerThreadId || (child as LifecycleThread).lifecycleOwnerThreadId === callerThreadId) &&
       child.visibility === "hidden"
     );
     const verified: string[] = [];
@@ -1256,7 +1275,7 @@ async function spawnCoordinator(
 }
 
 function launchReceipt(runId: string, marker: string, lensCount: number): string {
-  return `Perspectives panel launched for ${lensCount} lenses.\n\nRun ID: ${runId}\nCoordinator: @thread:${runId}\nInvocation marker: ${marker}. No requesting-thread follow-up is scheduled.\nArtifact: perspectives/results/${runId}.md\n\nThe coordinator reconciles native child reports and scheduled wakes, then publishes one complete, partial, or failed artifact. Its final response arrives through BB's native parent report; no requesting-thread reminder is scheduled. When the report arrives, verify the artifact by coordinator ID and relative path, then present it once. After restart, compare older coordinator prompts by caller ID, question, context, ordered lenses, project/environment, and execution settings; disclose matching runs as possible duplicates with separate IDs because identical requests may be intentional. Keep their artifacts separate. Do not wait or poll for the result. The 20- and 25-minute coordinator wakes are scheduling targets, not delivery guarantees.`;
+  return `Perspectives panel launched for ${lensCount} lenses.\n\nRun ID: ${runId}\nCoordinator: @thread:${runId}\nInvocation marker: ${marker}. No requesting-thread follow-up is scheduled.\nArtifact: perspectives/results/${runId}.md\n\nThe coordinator reconciles native child reports and scheduled wakes, then publishes one complete, partial, or failed artifact. After verified publication, the plugin sends one explicit completion message; no requesting-thread reminder is scheduled. When the report arrives, verify the artifact by coordinator ID and relative path, then present it once. After restart, compare older coordinator prompts by caller ID, question, context, ordered lenses, project/environment, and execution settings; disclose matching runs as possible duplicates with separate IDs because identical requests may be intentional. Keep their artifacts separate. Do not wait or poll for the result. The 20- and 25-minute coordinator wakes are scheduling targets, not delivery guarantees.`;
 }
 
 const WORKER_TITLE_PREFIX = "Perspectives worker ";
@@ -1300,15 +1319,15 @@ async function firstRequestedPrompt(threads: Threads, threadId: string, signal?:
 function requestFromCoordinatorPrompt(prompt: string): CoordinatorRunRequest | undefined {
   const protocolMarkers = prompt.match(/^Perspectives coordinator protocol: (\d+)$/gm) ?? [];
   const requestBlocks = [...prompt.matchAll(/^## Complete run request\n\n```json\n([\s\S]*?)\n```$/gm)];
-  if (protocolMarkers.length !== 1 || protocolMarkers[0] !== "Perspectives coordinator protocol: 1" || requestBlocks.length !== 1) return undefined;
+  if (protocolMarkers.length !== 1 || !/^Perspectives coordinator protocol: [12]$/.test(protocolMarkers[0]!) || requestBlocks.length !== 1) return undefined;
   let parsedJson: unknown;
   try {
     parsedJson = JSON.parse(requestBlocks[0]![1]!);
   } catch {
     return undefined;
   }
-  const parsed = coordinatorRequestProtocolV1Schema.safeParse(parsedJson);
-  if (!parsed.success || parsed.data.protocolVersion !== 1) return undefined;
+  const parsed = coordinatorRequestSchema.safeParse(parsedJson);
+  if (!parsed.success || protocolMarkers[0] !== `Perspectives coordinator protocol: ${parsed.data.protocolVersion}`) return undefined;
   return parsed.data;
 }
 
@@ -1318,15 +1337,15 @@ async function authenticateCoordinator(
 ): Promise<AuthenticatedCoordinator> {
   const { threads } = bb.sdk;
   const thread = await threads.get({ threadId: context.threadId, signal: context.signal });
-  if (thread.visibility !== "hidden" || !thread.parentThreadId) {
-    throw new Error("Unauthorized Perspectives coordinator operation: this thread is not a hidden coordinator child.");
+  if (thread.visibility !== "hidden") {
+    throw new Error("Unauthorized Perspectives coordinator operation: this thread is not a hidden coordinator.");
   }
   const prompt = await firstRequestedPrompt(threads, context.threadId, context.signal);
   const request = prompt ? requestFromCoordinatorPrompt(prompt) : undefined;
-  if (!request || thread.parentThreadId !== request.callerThreadId || thread.projectId !== request.projectId ||
+  if (!request || !coordinatorBelongsTo(thread, request) || thread.projectId !== request.projectId ||
       context.projectId !== request.projectId ||
       (request.environmentId !== null && thread.environmentId !== request.environmentId)) {
-    throw new Error("Unauthorized Perspectives coordinator operation: persisted run request or parent relationship does not match.");
+    throw new Error("Unauthorized Perspectives coordinator operation: persisted run request or caller ownership does not match.");
   }
   const caller = await threads.get({ threadId: request.callerThreadId, signal: context.signal });
   if (caller.projectId !== request.projectId || (caller.environmentId ?? null) !== request.environmentId) {
@@ -1565,7 +1584,7 @@ function workerSpawnArgs(
   request: CoordinatorRunRequest,
   runId: string,
   lensIndex: number,
-): Parameters<Threads["spawn"]>[0] {
+): Parameters<Threads["spawn"]>[0] & { lifecycleOwnerThreadId: string } {
   const execution = request.workerExecution;
   return {
     projectId: request.projectId,
@@ -1573,6 +1592,7 @@ function workerSpawnArgs(
       ? { type: "reuse", environmentId: request.environmentId }
       : { type: "project-default" },
     parentThreadId: runId,
+    lifecycleOwnerThreadId: runId,
     title: workerTitle(runId, lensIndex),
     prompt: coordinatorWorkerPrompt(request, runId, lensIndex),
     visibility: "hidden",
@@ -1904,11 +1924,11 @@ async function verifyCallerCoordinator(
 ): Promise<AuthenticatedCoordinator | undefined> {
   const { threads } = bb.sdk;
   const thread = await threads.get({ threadId: coordinatorId, signal });
-  if (thread.parentThreadId !== callerThreadId || thread.projectId !== callerProjectId || thread.visibility !== "hidden") return undefined;
+  if (thread.projectId !== callerProjectId || thread.visibility !== "hidden") return undefined;
   const prompt = await firstRequestedPrompt(threads, coordinatorId, signal);
   if (!prompt) throw new Error(`Coordinator verification unavailable: no initial request for ${coordinatorId}.`);
   const request = requestFromCoordinatorPrompt(prompt);
-  if (!request || request.callerThreadId !== callerThreadId || request.projectId !== callerProjectId ||
+  if (!request || !coordinatorBelongsTo(thread, request) || request.callerThreadId !== callerThreadId || request.projectId !== callerProjectId ||
       (request.environmentId !== null && thread.environmentId !== request.environmentId)) return undefined;
   const caller = await threads.get({ threadId: callerThreadId, signal });
   if (caller.projectId !== callerProjectId || (caller.environmentId ?? null) !== request.environmentId) return undefined;
@@ -1947,6 +1967,35 @@ async function isVerifiedPanelCoordinator(
   }
 }
 
+async function notifyPublishedResult(bb: BbPluginApi, runId: string, request: CoordinatorRunRequest, artifact: ValidatedArtifact, signal: AbortSignal): Promise<string> {
+  if (request.protocolVersion === 1) return "legacy-native-parent-report";
+  const message = `Perspectives panel result ready\nRun ID: ${runId}\nStatus: ${artifact.status}\nFull-file SHA-256: ${artifact.fileSha256}\nUse perspectives_read_result with coordinatorId ${runId} to verify and retrieve the artifact before presenting it.`;
+  const reconcile = async () => {
+    const [rows, events] = await Promise.all([
+      bb.sdk.threads.queuedMessages.list({ threadId: request.callerThreadId, signal }),
+      bb.sdk.threads.events.list({ threadId: request.callerThreadId, types: ["client/turn/requested"], order: "desc", limit: "100", signal }),
+    ]);
+    return rows.some(row => textContent(row.content) === message) || events.some(event => eventText(event) === message);
+  };
+  try {
+    if (await reconcile()) return "accepted";
+    const metadata = await bb.sdk.threads.getPluginMetadata({ threadId: runId, pluginId: bb.pluginId, signal });
+    if (metadata.completionAccepted === artifact.fileSha256) return "accepted";
+    if (metadata.completionAttempt === artifact.fileSha256) return "uncertain-no-blind-retry";
+    await bb.sdk.threads.updatePluginMetadata({ threadId: runId, pluginId: bb.pluginId, set: { completionAttempt: artifact.fileSha256 }, signal });
+    const confirmed = await bb.sdk.threads.getPluginMetadata({ threadId: runId, pluginId: bb.pluginId, signal });
+    if (confirmed.completionAttempt !== artifact.fileSha256) return "unavailable";
+    try {
+      const sent = await bb.sdk.threads.send({ threadId: request.callerThreadId, mode: "auto", input: [{ type: "text", text: message, mentions: [], visibility: "agent-only" }] });
+      if (sent.delivery === "sent" || sent.delivery === "queued") {
+        try { await bb.sdk.threads.updatePluginMetadata({ threadId: runId, pluginId: bb.pluginId, set: { completionAccepted: artifact.fileSha256 }, signal }); } catch { /* Acceptance is already observed; a replay can reconcile the request. */ }
+        return "accepted";
+      }
+    } catch { /* Reconcile a lost response against durable acceptance below. */ }
+    return await reconcile() ? "accepted" : "uncertain-no-blind-retry";
+  } catch { return "unavailable"; }
+}
+
 /** SDK-backed coordinator operation, authorized only for the persisted run's own thread. */
 export async function runPerspectivesCoordinatorStep(
   bb: BbPluginApi,
@@ -1956,9 +2005,10 @@ export async function runPerspectivesCoordinatorStep(
   const runId = context.threadId;
   const existing = await readThreadArtifact(bb, runId);
   if (existing.kind === "present") {
+    const completionDelivery = await notifyPublishedResult(bb, runId, request, existing.artifact, context.signal);
     const workerCleanup = await cleanupPublishedWorkers(bb, runId, request, context.signal);
     const pendingRunRowsRemoved = await cleanupPublishedRunRows(bb, runId, request, context.signal);
-    return JSON.stringify({ workerCleanup, phase: "already-published", runId, status: existing.artifact.status, bodySha256: existing.artifact.bodySha256, fileSha256: existing.artifact.fileSha256, artifactRelativePath: artifactRelativePath(runId), pendingRunRowsRemoved });
+    return JSON.stringify({ completionDelivery, workerCleanup, phase: "already-published", runId, status: existing.artifact.status, bodySha256: existing.artifact.bodySha256, fileSha256: existing.artifact.fileSha256, artifactRelativePath: artifactRelativePath(runId), pendingRunRowsRemoved });
   }
   if (existing.kind !== "missing") throw artifactReadFailure(runId, existing);
 
@@ -2238,9 +2288,10 @@ export async function runPerspectivesPublishResult(
   const runId = context.threadId;
   const existing = await readThreadArtifact(bb, runId);
   if (existing.kind === "present") {
+    const completionDelivery = await notifyPublishedResult(bb, runId, request, existing.artifact, context.signal);
     const workerCleanup = await cleanupPublishedWorkers(bb, runId, request, context.signal);
     const pendingRunRowsRemoved = await cleanupPublishedRunRows(bb, runId, request, context.signal);
-    return JSON.stringify({ workerCleanup, phase: "already-published", runId, status: existing.artifact.status, artifactRelativePath: artifactRelativePath(runId), bodySha256: existing.artifact.bodySha256, fileSha256: existing.artifact.fileSha256, pendingRunRowsRemoved });
+    return JSON.stringify({ completionDelivery, workerCleanup, phase: "already-published", runId, status: existing.artifact.status, artifactRelativePath: artifactRelativePath(runId), bodySha256: existing.artifact.bodySha256, fileSha256: existing.artifact.fileSha256, pendingRunRowsRemoved });
   }
   if (existing.kind !== "missing") throw artifactReadFailure(runId, existing);
 
@@ -2271,10 +2322,12 @@ export async function runPerspectivesPublishResult(
   const artifact = buildArtifact(runId, status, body);
   const verified = await publishBytesCreateOnly(bb, runId, artifact);
 
+  const completionDelivery = await notifyPublishedResult(bb, runId, request, verified, context.signal);
   const workerCleanup = await cleanupPublishedWorkers(bb, runId, request, context.signal);
   const pendingRunRowsRemoved = await cleanupPublishedRunRows(bb, runId, request, context.signal);
 
   return JSON.stringify({
+    completionDelivery,
     workerCleanup,
     phase: "published",
     runId,
@@ -2295,7 +2348,7 @@ async function readVerifiedCoordinatorArtifact(
   signal: AbortSignal,
 ): Promise<{ readonly identity: AuthenticatedCoordinator; readonly artifact: ValidatedArtifact } | { readonly identity: AuthenticatedCoordinator; readonly error: Error }> {
   const identity = await verifyCallerCoordinator(bb, callerThreadId, callerProjectId, coordinatorId, signal);
-  if (!identity) throw new Error("Unauthorized Perspectives artifact read: the target is not a verified hidden coordinator child of this caller.");
+  if (!identity) throw new Error("Unauthorized Perspectives artifact read: the target is not a verified hidden coordinator owned by this caller.");
   const read = await readThreadArtifact(bb, coordinatorId);
   if (read.kind === "present") return { identity, artifact: read.artifact };
   return { identity, error: artifactReadFailure(coordinatorId, read) };
@@ -2388,10 +2441,10 @@ export async function runPerspectivesReadResult(
     coordinatorIds = [input.coordinatorId];
   } else {
     try {
-      const children = await listChildrenByParent(bb.sdk.threads, context.threadId, context.signal);
+      const children = await listCallerCoordinators(bb.sdk.threads, context.threadId, context.signal);
       const verifiedIds: string[] = [];
       for (const child of children) {
-        if (child.parentThreadId !== context.threadId || child.visibility !== "hidden") continue;
+        if (child.visibility !== "hidden") continue;
         const verified = await verifyCallerCoordinator(bb, context.threadId, context.projectId, child.id, context.signal);
         if (verified?.request.invocationMarker === input.invocationMarker) verifiedIds.push(child.id);
       }
@@ -2445,6 +2498,9 @@ export async function runGatherPerspectives(
   const question = clean(input.question);
   if (!question) throw new Error("gather_perspectives requires a non-empty question.");
   const lenses = normalizedLenses(input);
+  if (!("lifecycleOwnerThreadId" in currentThread)) {
+    throw new Error("This BB host does not expose lifecycle ownership; no Perspectives coordinator was created.");
+  }
   const sharedContext = clean(input.context);
   const resolved = resolveGatherTiming(timing);
   const contexts = await createSpawnContexts(
@@ -2456,8 +2512,8 @@ export async function runGatherPerspectives(
   );
   const startedAt = Date.now();
   const marker = `${COORDINATOR_MARKER_PREFIX}${randomUUID()}`;
-  const request = coordinatorRequestProtocolV1Schema.parse({
-    protocolVersion: 1,
+  const request = coordinatorRequestSchema.parse({
+    protocolVersion: 2,
     invocationMarker: marker,
     question,
     context: sharedContext,
@@ -2484,10 +2540,10 @@ export async function runGatherPerspectives(
     reasoningLevel: "explicit" as const,
     permissionMode: "explicit" as const,
   };
-  const spawnArgs: Parameters<Threads["spawn"]>[0] = {
+  const spawnArgs: Parameters<Threads["spawn"]>[0] & { lifecycleOwnerThreadId: string } = {
     projectId: contexts.planner.projectId,
     environment: contexts.planner.environment,
-    parentThreadId: toolContext.threadId,
+    lifecycleOwnerThreadId: toolContext.threadId,
     title: `Perspectives coordinator ${marker}`,
     prompt,
     visibility: "hidden",
@@ -2507,6 +2563,10 @@ export async function runGatherPerspectives(
       marker,
       resolved.spawnTimeoutMs,
     );
+    const created = await bb.sdk.threads.get({ threadId: coordinatorId, signal: toolContext.signal });
+    if (created.parentThreadId !== null || (created as LifecycleThread).lifecycleOwnerThreadId !== toolContext.threadId || created.visibility !== "hidden") {
+      throw new Error("Launch uncertain: the host did not confirm lifecycle ownership; this run was not retried.");
+    }
     return launchReceipt(coordinatorId, marker, lenses.length);
   } catch (error) {
     throw new Error(`${errorMessage(error)} Invocation marker: ${marker}. No requesting-thread follow-up is scheduled. No successful launch was confirmed; use the marker for later rediscovery and do not retry the spawn blindly.`);

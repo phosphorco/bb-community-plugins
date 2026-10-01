@@ -89,6 +89,7 @@ describe("Perspectives agent tool registration", () => {
       thread: { ...callerContext.thread, id: "coordinator", title: "renamed coordinator", parentThreadId: "caller" },
     });
     expect(renamedPluginOriginCoordinator.tools).toEqual([
+      "help",
       "perspectives_coordinator_step",
       "perspectives_publish_result",
     ]);
@@ -96,7 +97,7 @@ describe("Perspectives agent tool registration", () => {
       ...callerContext,
       origin: { kind: null, pluginId: "perspectives" },
       thread: { ...callerContext.thread, id: "plugin-helper", title: "expert helper", parentThreadId: null },
-    }).tools).toEqual(["help"]);
+    }).tools).toEqual(["help", "perspectives_coordinator_step", "perspectives_publish_result"]);
     expect(configure({
       ...callerContext,
       origin: { kind: null, pluginId: "rosetta-slack" },
