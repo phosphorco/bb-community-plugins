@@ -26,6 +26,7 @@
 .cross-references__source-link:hover { background: var(--accent); color: var(--accent-foreground); }
 .cross-references__source-link:focus-visible { outline: 2px solid var(--ring); outline-offset: -2px; }
 .cross-references__source-link strong { overflow: hidden; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.cross-references__label-derived { font-family: var(--font-mono, ui-monospace, monospace); font-weight: 500; }
 .cross-references__link-meta { display: flex; min-width: 0; align-items: center; gap: 4px; }
 .cross-references__link-meta small { min-width: 0; overflow: hidden; color: var(--muted-foreground); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
 .cross-references__link-status { display: inline-flex; flex: none; align-items: center; height: 14px; padding: 0 4px; border: 1px solid transparent; border-radius: 999px; font-size: 9px; font-weight: 600; line-height: 1; }

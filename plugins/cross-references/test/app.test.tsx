@@ -234,3 +234,40 @@ test("keeps header state isolated per visible thread pane", async () => {
   left.lifecycle.unmount();
   right.lifecycle.unmount();
 });
+
+
+test("shows the URL path for generic link text and keeps the original URL for navigation", async () => {
+  const app = await loadPluginApp(() => import("../app.tsx"));
+  const url = "https://linky.example.test/notes/plan.md?sig=secret";
+  const slot = renderSlot(
+    app.threadHeaderActions[0]!,
+    { threadId: "thr_generic01", projectId: "proj_generic01", isCompactViewport: false },
+    {
+      rpc: {
+        listForwardReferences: () => ({
+          rows: [{
+            target: { provider: "url", keys: { href: url }, presentation: { label: "link", detail: "linky.example.test", url } },
+            producerPluginId: "thread-links",
+            revision: 1,
+            position: 0,
+          }],
+          total: 1,
+          nextCursor: null,
+        }),
+        listBacklinks: () => ({ rows: [], total: 0, nextCursor: null }),
+        checkForwardReferences: () => ([{ url, status: 200, label: "Available" }]),
+      },
+      openUrl: () => true,
+    } as any,
+  );
+
+  fireEvent.click(await slot.findByRole("button", { name: "Cross-references: 1 forward reference" }));
+  const link = await slot.findByRole("link", { name: /^\/notes\/plan\.md linky\.example\.test/ });
+  expect(link.getAttribute("href")).toBe(url);
+  expect(link.getAttribute("title")).toBe(`Link text "link" — ${url}`);
+  expect(link.querySelector("[data-cross-reference-derived]")?.textContent).toBe("/notes/plan.md");
+  expect(await slot.findByLabelText("Available (HTTP 200)")).toBeTruthy();
+  fireEvent.click(link);
+  expect(slot.inspection.navigateCalls).toContainEqual({ method: "openUrl", url });
+  slot.lifecycle.unmount();
+});

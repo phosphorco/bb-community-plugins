@@ -17,6 +17,7 @@ import type {
 } from "./model.ts";
 import type { rpcContract } from "./rpc-contract.ts";
 import "./app.css";
+import { displayLabel } from "./presentation.ts";
 
 const EMPTY_BACKLINKS: ListBacklinksResponse = { rows: [], total: 0, nextCursor: null };
 const EMPTY_FORWARDS: ListForwardReferencesResponse = { rows: [], total: 0, nextCursor: null };
@@ -299,15 +300,16 @@ function ResourceLink({
   const navigate = useBbNavigate();
   const showStatus = checking !== undefined && checkError !== undefined && resource.presentation.url !== undefined;
   const status = showStatus ? linkStatusPresentation(check, checking, checkError) : null;
+  const label = displayLabel(resource.presentation.label, resource.presentation.url);
   const content = <>
-    <strong>{resource.presentation.label}</strong>
+    <strong className={label.derived ? "cross-references__label-derived" : undefined} data-cross-reference-derived={label.derived || undefined}>{label.text}</strong>
     {(resource.presentation.detail != null || status !== null) && <span className="cross-references__link-meta">
       {resource.presentation.detail != null && <small>{resource.presentation.detail}</small>}
       {status !== null && <span className={`cross-references__link-status cross-references__link-status-${status.tone}`} title={status.title} aria-label={status.title}>{status.label}</span>}
     </span>}
   </>;
   return resource.presentation.url != null
-    ? <a href={resource.presentation.url} className="cross-references__source-link" data-cross-reference-first={first || undefined} onClick={(event) => {
+    ? <a href={resource.presentation.url} className="cross-references__source-link" title={label.derived ? `Link text "${resource.presentation.label.trim()}" — ${resource.presentation.url}` : resource.presentation.url} data-cross-reference-first={first || undefined} onClick={(event) => {
         if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
         if (navigate.openUrl(resource.presentation.url!)) event.preventDefault();
       }}>{content}</a>
