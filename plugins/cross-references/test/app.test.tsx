@@ -126,6 +126,8 @@ test("renders an observed external URL as a navigable forward reference", async 
   fireEvent.click(trigger);
   const link = await slot.findByRole("link", { name: /Design notes example\.test/ });
   expect(link.getAttribute("href")).toBe(externalUrl);
+  expect(link.getAttribute("title")).toBeNull();
+  expect(link.querySelector("[data-cross-reference-derived]")).toBeNull();
   expect(await slot.findByLabelText("Available (HTTP 200)")).toBeTruthy();
   fireEvent.click(link);
   expect(slot.inspection.navigateCalls).toContainEqual({ method: "openUrl", url: externalUrl });
@@ -262,7 +264,7 @@ test("shows the URL path for generic link text and keeps the original URL for na
   );
 
   fireEvent.click(await slot.findByRole("button", { name: "Cross-references: 1 forward reference" }));
-  const link = await slot.findByRole("link", { name: /^\/notes\/plan\.md linky\.example\.test/ });
+  const link = await slot.findByRole("link", { name: /^\/notes\/plan\.md \(from URL; link text "link"\) linky\.example\.test/ });
   expect(link.getAttribute("href")).toBe(url);
   expect(link.getAttribute("title")).toBe(`Link text "link" — ${url}`);
   expect(link.querySelector("[data-cross-reference-derived]")?.textContent).toBe("/notes/plan.md");
