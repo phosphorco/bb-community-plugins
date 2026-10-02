@@ -301,8 +301,10 @@ function ResourceLink({
   const showStatus = checking !== undefined && checkError !== undefined && resource.presentation.url !== undefined;
   const status = showStatus ? linkStatusPresentation(check, checking, checkError) : null;
   const label = displayLabel(resource.presentation.label, resource.presentation.url);
+  // Generic text with no path is dropped when the host line can carry the row alone.
+  const primary = label.text ?? (resource.presentation.detail == null ? resource.presentation.label : null);
   const content = <>
-    <strong className={label.derived ? "cross-references__label-derived" : undefined} data-cross-reference-derived={label.derived || undefined}>{label.text}</strong>
+    {primary !== null && <strong className={label.derived ? "cross-references__label-derived" : undefined} data-cross-reference-derived={label.derived || undefined}>{primary}</strong>}
     {label.derived && <span className="cross-references__visually-hidden">{` ${label.note}`}</span>}
     {(resource.presentation.detail != null || status !== null) && <span className="cross-references__link-meta">
       {resource.presentation.detail != null && <small>{resource.presentation.detail}</small>}

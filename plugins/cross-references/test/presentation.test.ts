@@ -3,6 +3,7 @@ import test from "node:test";
 import { displayLabel } from "../presentation.ts";
 
 const text = (label: string, url?: string) => displayLabel(label, url).text;
+const shown = (label: string, url?: string) => text(label, url) ?? "";
 const unchanged = (label: string, url?: string) =>
   assert.deepEqual(displayLabel(label, url), { text: label, derived: false, title: undefined, note: undefined }, `${label} ${url}`);
 
@@ -40,12 +41,16 @@ test("protocol-relative links show their host", () => {
   assert.equal(text("link", "//other.test/p"), "other.test/p");
 });
 
+test("generic text with no path to show is dropped", () => {
+  assert.deepEqual(displayLabel("link", "https://h.test/"), { text: null, derived: false, title: 'Link text "link" — https://h.test/', note: undefined });
+  assert.equal(text("here", "https://h.test/?utm=x"), null);
+  assert.equal(text("", "https://h.test/"), null);
+});
+
 test("authored labels and unusable URLs keep the original text", () => {
   unchanged("Design notes", "https://h.test/x");
   unchanged("Linkage", "https://h.test/x");
   unchanged("link", undefined);
-  unchanged("link", "https://h.test/");
-  unchanged("link", "https://h.test/?utm=x");
   unchanged("link", "mailto:a@b.test");
   unchanged("link", "data:text/plain,hello");
 });
@@ -61,7 +66,7 @@ test("unsafe characters are re-encoded, not deleted, and emoji joiners survive",
   assert.equal(text("link", "https://h.test/evil%E2%80%AEtxt/line%0Abreak"), "/evil%E2%80%AEtxt/line%0Abreak");
   assert.notEqual(text("link", "https://h.test/a%E2%80%8Bb"), text("link", "https://h.test/ab"));
   assert.equal(text("link", "https://h.test/%F0%9F%91%A8%E2%80%8D%F0%9F%92%BB"), "/👨\u200d💻");
-  assert.match(displayLabel("li\u202enk", "https://h.test/x").text, /li\u202enk/);
+  assert.match(shown("li\u202enk", "https://h.test/x"), /li\u202enk/);
 });
 
 test("long labels keep their distinguishing tail within the length limit", () => {
@@ -69,6 +74,6 @@ test("long labels keep their distinguishing tail within the length limit", () =>
   assert.equal(text("link", long), "…/parent/0123456789abcdef.md");
   const atLimit = `/${"a".repeat(59)}`;
   assert.equal(text("link", `https://h.test${atLimit}`), atLimit);
-  assert.equal([...text("link", `https://h.test/${"b".repeat(90)}#${"c".repeat(20)}`)].length, 60);
-  assert.ok(text("link", `https://h.test/${"b".repeat(90)}#tail`).endsWith("#tail"));
+  assert.equal([...shown("link", `https://h.test/${"b".repeat(90)}#${"c".repeat(20)}`)].length, 60);
+  assert.ok(shown("link", `https://h.test/${"b".repeat(90)}#tail`).endsWith("#tail"));
 });

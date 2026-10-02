@@ -273,3 +273,36 @@ test("shows the URL path for generic link text and keeps the original URL for na
   expect(slot.inspection.navigateCalls).toContainEqual({ method: "openUrl", url });
   slot.lifecycle.unmount();
 });
+
+test("drops generic link text with no path and lets the host line name the row", async () => {
+  const app = await loadPluginApp(() => import("../app.tsx"));
+  const url = "https://linky.example.test/";
+  const slot = renderSlot(
+    app.threadHeaderActions[0]!,
+    { threadId: "thr_generic02", projectId: "proj_generic02", isCompactViewport: false },
+    {
+      rpc: {
+        listForwardReferences: () => ({
+          rows: [{
+            target: { provider: "url", keys: { href: url }, presentation: { label: "link", detail: "linky.example.test", url } },
+            producerPluginId: "thread-links",
+            revision: 1,
+            position: 0,
+          }],
+          total: 1,
+          nextCursor: null,
+        }),
+        listBacklinks: () => ({ rows: [], total: 0, nextCursor: null }),
+        checkForwardReferences: () => ([{ url, status: 200, label: "Available" }]),
+      },
+      openUrl: () => true,
+    } as any,
+  );
+
+  fireEvent.click(await slot.findByRole("button", { name: "Cross-references: 1 forward reference" }));
+  const link = await slot.findByRole("link", { name: /^linky\.example\.test/ });
+  expect(link.querySelector("strong")).toBeNull();
+  expect(link.textContent).not.toMatch(/\blink\b/);
+  expect(link.getAttribute("title")).toBe(`Link text "link" — ${url}`);
+  slot.lifecycle.unmount();
+});

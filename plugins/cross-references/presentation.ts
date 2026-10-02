@@ -7,8 +7,10 @@ const MAX_LABEL_CHARS = 60;
 const UNSAFE_CHARS = /[\p{Cc}\u2028\u2029]|(?!\u200d)\p{Cf}/gu;
 const LOCAL_BASE = "http://bb.invalid";
 
-// `note` is screen-reader text marking a derived label; `title` is the hover tooltip.
-export type DisplayLabel = { text: string; derived: boolean; title: string | undefined; note: string | undefined };
+// `text` is null when generic link text has nothing better to show: the row
+// then omits it rather than repeating "link". `note` is screen-reader text
+// marking a derived label; `title` is the hover tooltip.
+export type DisplayLabel = { text: string | null; derived: boolean; title: string | undefined; note: string | undefined };
 
 // Re-encode rather than delete unsafe characters, so distinct URLs never collapse into one label.
 function sanitize(value: string): string {
@@ -75,9 +77,9 @@ export function displayLabel(label: string, url: string | undefined): DisplayLab
   // Protocol-relative links point off-BB even though they look local.
   const withHost = restated || url.startsWith("//");
   const text = readablePath(parsed, withHost);
-  if (text === null) return authored;
   const original = sanitize(label.trim());
   const title = original === "" ? url : `Link text "${original}" — ${url}`;
+  if (text === null) return { text: null, derived: false, title, note: undefined };
   const note = original === "" ? "(from URL)" : `(from URL; link text "${original}")`;
   return { text, derived: true, title, note };
 }
