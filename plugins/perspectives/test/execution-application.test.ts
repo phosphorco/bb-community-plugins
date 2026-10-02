@@ -113,8 +113,9 @@ test("configured planner and worker tuples reach the coordinator and its worker 
     } as any,
   );
 
-  assert.deepEqual(events, ["spawn-coordinator"]);
-  assert.equal(queuedRows.length, 0);
+  assert.deepEqual(events, ["queue-caller-backstop", "spawn-coordinator"]);
+  assert.equal(queuedRows.length, 1);
+  assert.equal(queuedRows[0]!.threadId, "caller");
   assert.equal(spawnCalls.length, 1);
 
   const coordinator = spawnCalls[0]!;
@@ -138,7 +139,7 @@ test("configured planner and worker tuples reach the coordinator and its worker 
   assert.ok(invocationMarker);
   assert.ok(coordinator.title.includes(invocationMarker));
   assert.match(receipt, /Perspectives panel launched/);
-  assert.match(receipt, /No requesting-thread follow-up is scheduled/);
+  assert.match(receipt, /caller backstop queued for/);
   assert.match(receipt, /Artifact: perspectives\/results\/coordinator-1\.md/);
   assert.doesNotMatch(receipt, /worker-[\w-]+/i);
 

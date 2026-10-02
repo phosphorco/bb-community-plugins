@@ -2,9 +2,10 @@
 
 ## Durable ownership
 
-`gather_perspectives` validates a request, stores a versioned request in the
-first persisted coordinator prompt and creates one hidden lifecycle-owned coordinator. The coordinator thread ID
-is the run ID. The coordinator uses the registered Perspectives tools for BB
+`gather_perspectives` validates a request, confirms one caller backstop row,
+stores a versioned request in the first persisted coordinator prompt, and
+creates one hidden root coordinator lifecycle-owned by the caller. The
+coordinator thread ID is the run ID. The coordinator uses the registered Perspectives tools for BB
 orchestration and result publication, so those operations do not depend on
 shell approval in provider auto mode.
 
@@ -13,6 +14,8 @@ BB owns the durable run records:
 - the coordinator's first requested event and subsequent transcript;
 - direct hidden worker children and their persisted final outputs;
 - wrap-up, deadline, and per-lens launch-intent queue rows;
+- the caller backstop row and, after publication, the caller completion message;
+- completion send intent in the coordinator's plugin metadata;
 - the final artifact in coordinator thread storage.
 
 The plugin adds no journal, checkpoint database, or in-memory runner. Native
@@ -23,7 +26,8 @@ are durable evidence of intent and state, not provider-delivery receipts.
 ## Authentication and protocol stability
 
 Coordinator operations require all of the following: the tool's
-`context.threadId`, a hidden coordinator owned by the request's caller (legacy runs use parentage),
+`context.threadId`, a hidden coordinator with no parent that the request's
+caller lifecycle-owns (a legacy v1 coordinator is instead the caller's direct child),
 the first persisted `client/turn/requested` event containing a valid protocol
 request, and matching caller, project, and environment identity. Titles are
 discovery hints only; renaming a coordinator does not invalidate the run.
@@ -33,16 +37,20 @@ or storage through Perspectives tools, and help and gather reject verified
 workers. Worker read-only instructions do not constrain host permissions;
 inherited or configured worker permission can allow actions outside the
 plugin's tools. The synchronous dynamic-configuration callback cannot inspect
-persisted events. A Perspectives-origin thread therefore receives
-help and the scoped coordinator operations unless its title marks it as a worker;
-that title is used only to withhold orchestration tools. Other plugin-origin
-callers retain gather/read access. Persisted identity and caller ownership, project, and
-environment checks at execution remain the authority. A renamed worker may see
-the narrow operations advertised, but execution rejects it.
+persisted events, so it only chooses what to advertise. A worker title
+withholds every Perspectives tool. Perspectives-origin coordinators, identified
+by role metadata seeded at spawn (older v2 runs by the coordinator title
+prefix, legacy v1 runs by having a parent), are offered only the step and
+publish tools; other Perspectives-origin threads, the `help` planner and
+expert, are offered nothing. Other plugin-origin callers retain help, gather,
+and read access. Persisted identity, caller ownership, project, and environment
+checks at execution remain the authority. A renamed worker may see the narrow
+operations advertised, but execution rejects it.
 
-The request has an explicit protocol version. Keep the version 1 decoder
-stable across plugin prompt edits and upgrades; add a separate decoder before
-changing the stored request format. The persisted prompt is not a
+The request has an explicit protocol version. Versions 1 and 2 share one
+stored request shape and differ only in the ownership they authenticate. Keep
+that decoder stable across plugin prompt edits and upgrades; add a new version
+before changing the stored request format. The persisted prompt is not a
 cryptographic capability: an actor able to create a hidden lookalike owned coordinator
 may spoof it. Actual effects remain confined to that thread and its direct
 children, and retrieval still requires the persisted caller ownership.
@@ -63,8 +71,10 @@ no-research state can publish an immediate failed artifact. If the failure
 cannot be independently verified, the other state is ambiguous/unavailable,
 or any worker launch may have been attempted, the step reports setup
 uncertainty and keeps publication closed. The coordinator ends the turn;
-recovery depends on an already confirmed wake, explicit
-queue recovery/operator action.
+recovery depends on an already confirmed wake, the caller backstop, or explicit
+queue recovery/operator action. A lens with no worker and no recorded launch
+intent is reported `not-launched`; one with a recorded or ambiguous attempt is
+`launch-uncertain`.
 
 Once both required wakes are ready, the coordinator writes one scheduled
 launch-intent row per lens before attempting its ordinary hidden worker spawn.
@@ -113,8 +123,7 @@ file, or corrupt file is never overwritten. The caller's read tool verifies
 caller ownership first, then repeats byte-level validation against the
 coordinator ID.
 
-No requesting-thread reminder is created. After the
-artifact is verified, it reads the latest `turn/completed` row and requires a
+After the caller's read tool verifies the artifact, it reads the latest `turn/completed` row and requires a
 successful completion. It then pages backward through that turn's
 `item/completed` rows. Suppression requires the turn's last completed item to
 be an agent message containing an exact standalone HTML comment with the
@@ -124,7 +133,8 @@ item text; the comment therefore remains available to this check while normal
 Markdown rendering hides it. The caller should include the receipt line
 returned with the artifact in its final answer after presenting the result. If
 no final answer was saved before a crash, the marker is absent and the full
-artifact is returned. Mismatched markers,
+artifact is returned; this is also how a backstop that survived a failed
+removal is answered without repeating an already presented body. Mismatched markers,
 interrupted turns, and event-read failures also return the artifact. The scan
 is bounded to five 100-event pages; if the marker falls outside that window,
 the artifact is returned. An explicit user request can retrieve it with
@@ -139,12 +149,13 @@ not replaced.
 
 ## Timing and failure limits
 
-The internal wrap-up, deadline, and launch-intent targets are 20, 25, and 26 minutes
-from the gather request. They are queue targets, not delivery guarantees.
+The internal wrap-up, deadline, and launch-intent targets and the caller
+backstop are 20, 25, 26, and 35 minutes from the gather request. They are queue targets, not delivery guarantees.
 Host availability, queue dispatch, and provider scheduling can delay a wake.
 If the sole scheduled row has `failureReason` and the native report is lost,
 BB does not guarantee another wake; explicit queue recovery or operator action
-is required. A lost completion message requires explicit caller retrieval.
+is required. A lost or unconfirmed completion message leaves the caller
+backstop in place.
 The plugin does not claim eventual delivery, exactly-once worker creation, or
 a strict wall-clock completion bound.
 
@@ -161,41 +172,59 @@ Product tests invoke the registered tool handlers against an injected BB SDK
 boundary. They cover registration/configuration, coordinator and caller
 authorization, title changes, normal worker reconciliation, failed and
 ambiguous wake setup, definite no-research publication, create-only byte
-verification, corrupt artifact rejection, and caller readback. These tests do
+verification, corrupt artifact rejection, caller readback, completion-message
+reconciliation, and caller backstop confirmation, retention, and removal. These tests do
 not prove that a provider in auto mode calls the tools or that scheduled rows
 dispatch after an actual server restart. Those claims require an isolated
 live-runtime turn with the server restarted during worker activity and a
 post-restart scheduled wake dispatch observed in BB's persisted events.
 
+## Worker wrap-up cleanup
+
 Cleanup attempts to remove editable run-specific wrap-up requests from verified
 idle or errored workers, including on subsequent already-published tool calls.
 Failures are reported and retried on later calls; no cleanup timer is added.
 Claimed requests and completion between the final status check and send can
-still cause an extra turn; closing that race requires an atomic BB send guard.
-Previously queued caller reminders are not automatically migrated on upgrade.
-The legacy protocol field `callerBackstopAtEpochMs` now names only the internal
-launch-intent schedule; it does not schedule a caller message.
+still cause an extra worker turn; closing that race requires an atomic BB send
+guard.
 
+## Lifecycle ownership, completion, and backstop
 
-## Lifecycle ownership and final notification
+BB reports every finished child turn to the parent thread and starts a parent
+turn for it. Protocol v2 therefore gives the coordinator no parent: the caller
+lifecycle-owns it, which keeps archive and delete cascading without parent
+reports. Workers keep the coordinator as parent, so their reports still wake
+reconciliation and synthesis, and the coordinator also lifecycle-owns them.
+Discovery of v2 coordinators lists this plugin's hidden root threads in the
+caller's project and filters on lifecycle owner, because BB lists cannot
+filter by owner; legacy v1 coordinators are found among the caller's
+children. Protocol v1 keeps parent authentication and BB's native parent
+reports.
 
-New runs use protocol v2: the hidden coordinator has no parent and is
-lifecycle-owned by the requesting thread. Its ordinary experts retain the
-coordinator as parent and also use it as lifecycle owner. Worker reports still
-wake synthesis, while intermediate coordinator turns do not wake the caller.
-Protocol v1 retains legacy parent authentication and native reporting.
+After artifact readback, the plugin sends one agent-only completion message to
+the caller through the thread SDK. Coordinator metadata records the send
+intent for the artifact digest before dispatch; caller queue rows and request
+events establish acceptance. Replays reconcile acceptance and never blindly
+repeat a persisted attempt. A crash between intent and send, unavailable
+evidence, or a lost response leaves delivery uncertain. The metadata write is
+not a compare-and-set; simultaneous publication calls can still duplicate a
+notification.
 
-After artifact readback, the plugin sends an explicit final completion message
-through the thread SDK. A coordinator metadata digest records send intent
-before dispatch; caller queue rows and request events establish acceptance.
-Replays reconcile acceptance and never blindly repeat a persisted attempt.
-A crash between intent and send, unavailable evidence, or a lost response can
-leave delivery uncertain; explicit artifact retrieval is then needed. This
-is bounded delivery, not an exactly-once or eventual-delivery guarantee. The
-metadata write is not a compare-and-set; simultaneous publication calls can
-still duplicate a notification. No requesting-thread timer is added.
+The caller backstop covers those cases and any coordinator that never
+publishes. It is queued in the caller, confirmed from durable queue state,
+before the coordinator spawn; an unconfirmed backstop prevents the spawn. It
+targets the run deadline plus 10 minutes, so a slow but successful publication
+after the deadline normally removes it first. Only a completion message that BB delivered to the caller (a `sent` response
+or a matching caller request event) removes it; acceptance into the queue
+stops resends but keeps the backstop, and failed queued rows count as neither.
+Removal happens on the publishing call or any later already-published
+reconciliation. A failed removal leaves it to be delivered and answered from
+the presentation receipt. Backstop rows from earlier plugin versions are not
+migrated or removed.
 
-This mode requires a BB host exposing lifecycleOwnerThreadId. The plugin
-checks the created thread's ownership before acknowledging launch. Registry
-SDK declarations omit that host extension; it is passed through the public
-SDK spawn request and checked on the returned thread, without a fork edit.
+This mode requires a BB host exposing `lifecycleOwnerThreadId`. The plugin
+checks it before any durable effect and confirms the created thread's ownership
+before acknowledging launch. The pinned server SDK declarations omit the
+field; it is passed through the public SDK spawn request and checked on the
+returned thread. The legacy request field `callerBackstopAtEpochMs` names the
+coordinator launch-intent time, not the caller backstop.

@@ -88,7 +88,8 @@ function makeHarness(options: HarnessOptions = {}) {
         spawn: async (args: Record<string, any>) => {
           events.push("spawn-coordinator");
           spawnCalls.push(args);
-          assert.equal(rows.length, 0, "gather must not queue a requesting-thread reminder");
+          assert.equal(rows.filter((row) => row.threadId === TOOL_CONTEXT.threadId).length, spawnCalls.length,
+            "each gather confirms its caller backstop before spawning");
           if (options.spawnMode === "commit-then-throw") {
             createChild(args, "coordinator-committed");
             throw Object.assign(new Error("HTTP 400 response after commit"), { status: 400 });
@@ -158,28 +159,59 @@ function gather(harness: ReturnType<typeof makeHarness>, request = REQUEST) {
   );
 }
 
+function requestFrom(prompt: string): Record<string, any> {
+  const json = prompt.match(/## Complete run request\n\n```json\n([\s\S]*?)\n```/)?.[1];
+  assert.ok(json, "persisted run request should be present");
+  return JSON.parse(json);
+}
+
 function markerFrom(value: string): string {
   const marker = value.match(/perspectives-invocation:[0-9a-f-]+/i)?.[0];
   assert.ok(marker, "invocation marker should be present");
   return marker;
 }
 
-test("gather spawns a marker-bearing coordinator without scheduling a caller message", async () => {
+test("gather queues one caller backstop before spawning a lifecycle-owned coordinator", async () => {
   const harness = makeHarness();
   const receipt = await gather(harness);
-  assert.equal(harness.sendCalls.length, 0);
-  assert.equal(harness.rows.length, 0);
+  assert.deepEqual(harness.events.slice(0, 2), ["send-backstop", "spawn-coordinator"]);
   const spawn = harness.spawnCalls[0]!;
   const marker = markerFrom(spawn.prompt);
+  const request = requestFrom(spawn.prompt);
+  assert.equal(harness.rows.length, 1);
+  const backstop = harness.rows[0]!;
+  assert.equal(backstop.threadId, TOOL_CONTEXT.threadId);
+  assert.equal(backstop.sendAt, request.deadlineAtEpochMs + 10 * 60_000, "backstop follows the deadline by ten minutes");
+  assert.equal(harness.sendCalls[0]!.mode, "auto");
+  assert.equal(harness.sendCalls[0]!.input[0].visibility, "agent-only");
+  assert.ok(backstop.content[0].text.includes(marker));
+  assert.match(backstop.content[0].text, /perspectives_read_result with this invocationMarker/);
   assert.ok(spawn.title.includes(marker));
   assert.equal(spawn.parentThreadId, undefined);
   assert.equal(spawn.lifecycleOwnerThreadId, TOOL_CONTEXT.threadId);
+  assert.deepEqual(spawn.pluginMetadata, { role: "coordinator" });
   assert.equal(spawn.visibility, "hidden");
   assert.equal(spawn.originKind, undefined);
   assert.match(receipt, /Coordinator: @thread:coordinator-1/);
   assert.ok(receipt.includes(marker));
-  assert.match(receipt, /No requesting-thread follow-up is scheduled/);
+  assert.match(receipt, /one completion message/);
+  assert.match(receipt, /caller backstop queued for .* is removed when that message is delivered/);
 });
+
+test("a backstop whose queue response is lost is confirmed from durable queue state", async () => {
+  const harness = makeHarness({ sendMode: "persist-then-throw" });
+  await gather(harness);
+  assert.equal(harness.sendCalls.length, 1, "the backstop send is not retried");
+  assert.equal(harness.spawnCalls.length, 1);
+});
+
+for (const sendMode of ["throw-without-row", "row-with-wrong-content", "row-with-failure"] as const) {
+  test(`an unconfirmed caller backstop (${sendMode}) prevents the coordinator spawn`, async () => {
+    const harness = makeHarness({ sendMode });
+    await assert.rejects(gather(harness), /caller backstop for invocation .* could not be confirmed; no coordinator was spawned/);
+    assert.equal(harness.spawnCalls.length, 0);
+  });
+}
 
 test("an ambiguous spawn response recovers exactly one committed child by marker and prompt", async () => {
   const harness = makeHarness({ spawnMode: "commit-then-throw" });
@@ -187,23 +219,23 @@ test("an ambiguous spawn response recovers exactly one committed child by marker
 
   assert.match(receipt, /Coordinator: @thread:coordinator-committed/);
   assert.equal(harness.spawnCalls.length, 1, "recovery must not retry the spawn");
-  assert.equal(harness.rows.length, 0, "no caller reminder is created");
+  assert.equal(harness.rows.length, 1, "only the caller backstop is queued");
   assert.ok(harness.events.includes("list-children"));
   assert.ok(harness.events.includes("read-initial-event"));
 });
 
-test("an unresolved spawn returns launch uncertain without false success or blind retry", async () => {
+test("an unresolved spawn returns launch uncertain and keeps the backstop for later lookup", async () => {
   const harness = makeHarness({ spawnMode: "throw-without-commit" });
 
   await assert.rejects(gather(harness), (error: Error) => {
     assert.match(error.message, /Launch uncertain/);
     assert.match(error.message, new RegExp(markerFrom(harness.spawnCalls[0]!.prompt)));
-    assert.match(error.message, /No requesting-thread follow-up is scheduled/);
+    assert.match(error.message, /A caller backstop is queued for .* will look the run up by this marker/);
     return true;
   });
   assert.equal(harness.spawnCalls.length, 1);
   assert.equal(harness.children.length, 0);
-  assert.equal(harness.rows.length, 0, "no caller reminder is created even on uncertainty");
+  assert.equal(harness.rows.length, 1, "the backstop remains the recovery path for an uncertain launch");
 });
 
 test("marker match without the exact initial request prompt is not a recovered child", async () => {
@@ -211,7 +243,7 @@ test("marker match without the exact initial request prompt is not a recovered c
 
   await assert.rejects(gather(harness), /Launch uncertain/);
   assert.equal(harness.children.length, 1);
-  assert.equal(harness.rows.length, 0);
+  assert.equal(harness.rows.length, 1);
 });
 
 test("a missing initial request event leaves committed spawn identity uncertain", async () => {
@@ -219,7 +251,7 @@ test("a missing initial request event leaves committed spawn identity uncertain"
 
   await assert.rejects(gather(harness), /Launch uncertain/);
   assert.equal(harness.spawnCalls.length, 1);
-  assert.equal(harness.rows.length, 0);
+  assert.equal(harness.rows.length, 1);
 });
 
 test("multiple marker matches remain ambiguous and keep their separate child records", async () => {
@@ -231,7 +263,7 @@ test("multiple marker matches remain ambiguous and keep their separate child rec
     return true;
   });
   assert.equal(harness.children.length, 2);
-  assert.equal(harness.rows.length, 0);
+  assert.equal(harness.rows.length, 1);
   assert.equal(harness.spawnCalls.length, 1);
 });
 
@@ -264,7 +296,7 @@ test("a replay starts a separate coordinator and gives concrete duplicate-disclo
   assert.match(secondReceipt, /identical requests may be intentional/);
   assert.notEqual(harness.children[0]!.id, harness.children[1]!.id);
   assert.notEqual(markerFrom(firstPrompt), markerFrom(secondPrompt));
-  assert.equal(harness.rows.length, 0);
+  assert.equal(harness.rows.length, 2, "each run has its own caller backstop");
   assert.equal(harness.children.length, 2);
   assert.match(firstPrompt, /"callerThreadId": "caller-1"/);
   assert.match(firstPrompt, /"orderedLenses": \[/);

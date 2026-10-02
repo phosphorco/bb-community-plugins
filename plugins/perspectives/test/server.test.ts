@@ -70,11 +70,12 @@ describe("Perspectives agent tool registration", () => {
       ordinary.instructions === undefined || ordinary.instructions.length <= bbToolTextLimit,
       `caller dynamic instructions exceed BB's ${bbToolTextLimit}-character limit`,
     );
-    expect(ordinary.instructions).toContain("launch-intent queue row");
-    expect(ordinary.instructions).toContain("explicit queue recovery or operator action");
-    expect(ordinary.instructions).toContain("intermediate event text and native notice excerpts are not research findings");
-    expect(ordinary.instructions).toContain("latest successful completed turn's final persisted agent message");
-    expect(ordinary.instructions).toContain("No requesting-thread follow-up is scheduled");
+    expect(ordinary.instructions).toContain("woken once when the panel publishes");
+    expect(ordinary.instructions).toContain("Perspectives panel backstop");
+    expect(ordinary.instructions).toContain("exact standalone receipt line");
+    expect(ordinary.instructions).toContain("never retry it blindly");
+    // Coordinator mechanics are the coordinator's concern, not the caller's.
+    assert.doesNotMatch(ordinary.instructions!, /launch-intent|wrap-up|deadline wake|coverage judgment/);
 
     const recognizableWorker = configure({
       ...callerContext,
@@ -89,15 +90,20 @@ describe("Perspectives agent tool registration", () => {
       thread: { ...callerContext.thread, id: "coordinator", title: "renamed coordinator", parentThreadId: "caller" },
     });
     expect(renamedPluginOriginCoordinator.tools).toEqual([
-      "help",
       "perspectives_coordinator_step",
       "perspectives_publish_result",
     ]);
     expect(configure({
       ...callerContext,
       origin: { kind: null, pluginId: "perspectives" },
+      pluginMetadata: { role: "coordinator" },
+      thread: { ...callerContext.thread, id: "coordinator-v2", title: "renamed v2 coordinator", parentThreadId: null },
+    }).tools).toEqual(["perspectives_coordinator_step", "perspectives_publish_result"]);
+    expect(configure({
+      ...callerContext,
+      origin: { kind: null, pluginId: "perspectives" },
       thread: { ...callerContext.thread, id: "plugin-helper", title: "expert helper", parentThreadId: null },
-    }).tools).toEqual(["help", "perspectives_coordinator_step", "perspectives_publish_result"]);
+    }).tools).toEqual([]);
     expect(configure({
       ...callerContext,
       origin: { kind: null, pluginId: "rosetta-slack" },

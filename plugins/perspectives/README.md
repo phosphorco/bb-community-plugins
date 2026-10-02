@@ -5,71 +5,119 @@ Perspectives registers five native BB agent tools:
 - `help` asks one focused expert for a concise, read-only, source-cited answer. It is synchronous; the expert's answer is the tool result.
 - `gather_perspectives` accepts 2–7 distinct caller-supplied lenses and starts a background panel.
 - `perspectives_coordinator_step` reconciles one authenticated coordinator run through BB's thread and queue SDK.
-- `perspectives_publish_result` creates and verifies that coordinator's immutable result artifact.
-- `perspectives_read_result` lets a caller find or read a verified direct-child coordinator artifact.
+- `perspectives_publish_result` creates and verifies that coordinator's immutable result artifact, then notifies the caller.
+- `perspectives_read_result` lets a caller find or read the verified artifact of a coordinator it owns.
 
-## Restart-resilient panel lifecycle
+[COORDINATOR_DESIGN.md](COORDINATOR_DESIGN.md) records the recovery design in
+detail; this file summarizes behavior and limits.
 
-`gather_perspectives` spawns a hidden lifecycle-owned coordinator without
-scheduling a follow-up in the requesting thread. The coordinator ID is the run ID. An ambiguous coordinator spawn
-is rediscovered from the first persisted `client/turn/requested` input and
-direct parent relation; no unique match means launch uncertain. Replaying a
-request may create another coordinator. Identical request identities can be
-intentional, so possible duplicates and their artifacts stay separate.
+## Roles
+
+| Thread | Relationship | Responsibility |
+| --- | --- | --- |
+| Caller | the agent that calls `gather_perspectives` | Launches the panel, then reads and presents the verified artifact when woken. |
+| Coordinator | hidden root thread, lifecycle-owned by the caller | Agent turns call `perspectives_coordinator_step`; the coordinator writes the synthesis and calls `perspectives_publish_result`. |
+| Worker | hidden child of the coordinator, also lifecycle-owned by it | Researches one lens read-only; its final message is the evidence. |
+
+Plugin code, not the agents, does the orchestration: queue rows, worker spawns,
+reconciliation, artifact bytes, the completion message, and the backstop.
+
+## Wake budget
+
+BB reports every turn a child finishes to its parent and starts a parent turn
+for it. Workers are the coordinator's children, so each worker report wakes the
+coordinator to reconcile. The coordinator has no parent: its bookkeeping turns
+never wake the caller. Lifecycle ownership still archives and deletes the
+panel with the caller.
+
+The caller is woken once per successful run, by an agent-only
+`Perspectives panel result ready` message that the publish tool sends after the
+artifact passes readback verification. `gather_perspectives` also queues a
+`Perspectives panel backstop` in the caller before it spawns the coordinator,
+targeted 10 minutes after the run deadline (about 35 minutes after launch). An
+completion message that BB has delivered to the caller removes it; a message
+that is only queued keeps it, because a queued row can still fail. The
+backstop is therefore delivered only when the completion was not confirmed
+as delivered, the coordinator failed silently, publication
+never happened, or the launch was uncertain. If its removal fails, it arrives
+anyway and the read tool answers from the presentation receipt (below).
+
+## Panel lifecycle
+
+`gather_perspectives` validates the request and execution settings, confirms
+the caller backstop row (no coordinator is spawned without it), then spawns
+the coordinator with a versioned request in its first prompt. The coordinator
+ID is the run ID. An ambiguous spawn is rediscovered from the first persisted
+`client/turn/requested` input among this plugin's hidden root threads owned by
+the caller; no unique match means launch uncertain, and the backstop remains
+the recovery path. Replaying a request may create another coordinator.
+Identical request identities can be intentional, so possible duplicates and
+their artifacts stay separate.
 
 The coordinator calls its registered BB tools from auto mode; orchestration
 and artifact writes do not depend on shell commands or shell approval. Before
-launching workers, it confirms both the wrap-up and deadline queue rows.
-Only when both are confirmed or already due may it create ordinary hidden
-worker children. Each lens also gets a scheduled launch-intent row before its
-spawn attempt. The 2–7 extra rows are scheduled for the coordinator launch-intent time (26 minutes):
-they freeze a lens after an ambiguous spawn so a late child commit cannot be
-blindly retried. Keep them until the final artifact has passed readback
-verification; then remove the still-pending wrap-up, deadline, and launch
-intent rows. If publication never completes, the intent rows can dispatch at
-26 minutes and prompt reconciliation.
+launching workers, it confirms both its wrap-up (20 minutes) and deadline
+(25 minutes) queue rows. Only when both are confirmed or already due may it
+create workers. Each lens first gets a launch-intent row in the coordinator,
+scheduled at 26 minutes, so a late-committing ambiguous spawn is never blindly
+retried. All of these rows are removed after the artifact passes readback; if
+publication never completes, intent rows wake the coordinator to reconcile.
+
+At the wrap-up time, active workers are asked to return their strongest
+supported findings. When the deadline wake is handled, remaining active
+workers are stopped and the available final outputs are reconciled.
 
 If at least one required wake row has a persisted `failureReason`, the other
 wake state is known, and no worker launch intent or child exists, the
 coordinator can publish a failed artifact immediately. The publisher rechecks
-the queue states and absence of worker attempts. It states that no research
-was performed. An ambiguous or unavailable queue state does not authorize
-workers or early publication; the coordinator ends the turn with setup
-uncertainty and relies on any confirmed wake, explicit
-queue recovery.
+the queue states and absence of worker attempts, and the artifact states that
+no research was performed. An ambiguous or unavailable queue state does not
+authorize workers or early publication; the coordinator ends the turn, and
+recovery depends on a confirmed wake, the caller backstop, or explicit queue
+recovery.
 
-Native worker reports and scheduled wakes prompt reconciliation. For each
-verified worker, BB's latest persisted final agent message is the research
-output. If no final message exists, that lens is unavailable. Intermediate
-event text and excerpts in native notices are not treated as usable partial
-findings. When the deadline wake is handled, remaining verified active workers
-are stopped and the available final outputs are reconciled. The coordinator
-supplies a conservative complete/partial coverage assessment. Product code
-separately reports mechanical worker-output availability and caps complete
-status unless every requested lens has exactly one idle verified worker with a
-persisted final output. Missing, duplicate, inactive, or unavailable worker
-outputs prevent complete status. The coordinator's coverage assessment is not
-mechanically verified: even `Status: complete` does not prove sources were
-adequately inspected or that the synthesis is factually complete. The prompt
-instructs the coordinator to choose partial whenever a lens could not inspect
-sources, cannot answer, or coverage is uncertain. Legacy publish calls without
+## Evidence and coverage
+
+For each verified worker, BB's latest persisted final agent message is the
+research output. If no final message exists, that lens is unavailable.
+Intermediate event text and excerpts in native notices are not treated as
+usable partial findings.
+
+The coordinator supplies a conservative complete/partial coverage assessment.
+Product code separately reports mechanical worker-output availability and caps
+complete status unless every requested lens has exactly one idle verified
+worker with a persisted final output. The assessment is not mechanically
+verified: even `Status: complete` does not prove sources were adequately
+inspected or that the synthesis is factually complete. Publish calls without
 a coverage choice default to partial.
+
+Experts cite material factual claims from primary evidence they actually
+inspected, distinguish supplied context from inference, preserve disagreement,
+and identify unknowns. Queue acceptance, spawn responses, worker count, and
+native notices do not prove delivery or completion, and agreement is not
+treated as proof.
 
 ## Authorization and trust limits
 
-Coordinator authentication uses the persisted protocol-versioned request in
-the first `client/turn/requested` event, the current `context.threadId`, its
-direct `parentThreadId`, and matching project/environment. A mutable title is
-only a discovery hint; renaming a coordinator or worker does not invalidate a
-run. Coordinator effects stay on that context thread's children, queue, and
-storage. Caller retrieval accepts only a verified hidden coordinator lifecycle-owned by the
-current caller (or a legacy parented coordinator). The synchronous tool-configuration callback cannot inspect
-persisted events, so a Perspectives-origin thread receives help and
-scoped coordinator operations unless its title marks a worker; that title is
-used only to withhold tools. Other plugin-origin callers retain gather/read
-access. Tool execution still verifies persisted identity and
-ownership/project/environment. Recognizable workers receive no Perspectives
-tools, and the gather and help handlers reject verified workers after a rename.
+Coordinator operations authenticate the current `context.threadId` against
+the persisted protocol-versioned request in its first `client/turn/requested`
+event, the caller recorded there, and matching project/environment. A v2
+coordinator must have no parent and be lifecycle-owned by that caller; a
+legacy v1 coordinator must be the caller's direct child. Caller retrieval
+accepts only such a verified coordinator of the current caller. Titles are
+discovery hints only; renaming a coordinator or worker does not invalidate a
+run. Coordinator effects are confined to its own children, queue, and storage,
+plus the caller's completion message and backstop.
+
+The synchronous tool-configuration callback cannot inspect persisted events,
+so it only chooses what to advertise. Recognizable workers get no Perspectives
+tools. Coordinators, identified by role metadata seeded at spawn (older v2 runs
+by their title prefix, legacy v1 runs by their parent), get only the step and
+publish tools. Other threads this plugin creates, the `help` planner and
+expert, get none, so they cannot delegate. Every other thread, including other
+plugins' threads, gets `help`, `gather_perspectives`, and
+`perspectives_read_result`. Execution still verifies persisted identity, and
+the gather and help handlers reject verified workers and coordinators.
 
 Worker read-only behavior is an instruction, not a host sandbox guarantee.
 Worker permission mode may be inherited or explicitly configured up to the
@@ -81,10 +129,8 @@ contract before using untrusted sources.
 Persisted prompt text is durable identity evidence, not a cryptographic
 capability. A user able to create a hidden thread with a lookalike request can
 spoof the marker. Such a thread can affect only its own thread and direct
-children, and retrieval still requires its actual lifecycle owner (or legacy parent) to be the caller.
-The plugin adds no journal or checkpoint store. Protocol version 1 has a
-stable request decoder; future request-format changes must add a new version
-without changing the v1 decoder.
+children, and retrieval still requires its actual lifecycle owner (or legacy
+parent) to be the caller. The plugin adds no journal or checkpoint store.
 
 ## Artifact bytes and verification
 
@@ -92,10 +138,10 @@ The result file is `perspectives/results/<coordinator-id>.md` in coordinator
 thread storage. Product code defines the body as the exact UTF-8 byte slice
 between the first `<!-- perspectives-body:start -->` after the fixed header
 and the final `<!-- perspectives-body:end -->` before the fixed footer. Quoted
-delimiters inside the synthesis remain body text. It computes a SHA-256 over that slice and
-places it in the file's terminal marker. The full-file SHA-256 is returned by
-the publish/read tools because embedding it in the same file would change the
-bytes being hashed.
+delimiters inside the synthesis remain body text. It computes a SHA-256 over
+that slice and places it in the file's terminal marker. The full-file SHA-256
+is returned by the publish/read tools because embedding it in the same file
+would change the bytes being hashed.
 
 Publication uses the BB SDK's atomic create-only file write
 (`expectedSha256: null`, mode `0600`) and then reads the file back. It checks
@@ -104,54 +150,65 @@ host SHA-256, and byte length. An identical existing file is idempotent; a
 divergent or corrupt file is never overwritten. The caller tool repeats full
 file verification against the coordinator ID before returning the artifact.
 
+## Completion message and presentation receipts
+
+The completion message is sent once per artifact digest. Send intent is
+recorded in coordinator metadata before dispatch, and caller queue rows and
+request events establish acceptance. Replays reconcile acceptance and never
+blindly repeat a persisted attempt. An uncertain or merely queued message
+keeps the backstop, and a failed queued row does not count as acceptance.
+The metadata write is not a compare-and-set, so simultaneous publication calls
+can still duplicate a notification.
+
+After verifying the artifact, the read tool finds the caller's latest
+successful `turn/completed` event and pages backward through that turn's
+`item/completed` events. It suppresses the body only when the turn's last
+completed item is an agent message containing the exact standalone receipt
+comment with the run ID and full-file SHA-256. The BB event API returns stored
+agent-message text, so the comment is available to this check while normal
+Markdown rendering hides it. The caller includes the receipt line returned by
+the tool in its final answer. A missing, mismatched, interrupted, or
+unreadable final answer returns the full artifact again; the scan is bounded
+to five 100-event pages. An explicit user request can retrieve it again with
+`includeArtifact: true`. Legacy markerless presentations, duplicate messages,
+and retries can still repeat a result, so the plugin does not claim
+exactly-once presentation.
+
 ## Timing and delivery limits
 
-The 20-minute wrap-up, 25-minute deadline, and 26-minute internal launch-intent wakes are
-scheduling targets, not delivery guarantees. Queue acceptance does not prove
-provider acknowledgement. If a scheduled row gets `failureReason` and the
-native report is also lost, BB does not guarantee another wake; explicit
-queue recovery or operator action is required. A lost completion message requires explicit caller retrieval. The plugin does not claim eventual delivery,
-exactly-once worker creation, or a strict wall-clock deadline.
+The 20-minute wrap-up, 25-minute deadline, 26-minute launch-intent, and
+35-minute backstop times are scheduling targets, not delivery guarantees.
+Queue acceptance does not prove provider acknowledgement. If a scheduled row
+gets `failureReason` and the other signals are also lost, BB does not
+guarantee another wake; explicit queue recovery or operator action is
+required. A run that is still unpublished when the backstop arrives is
+reported as missing rather than awaited. The plugin does not claim eventual
+delivery, exactly-once worker creation, or a strict wall-clock deadline.
 
-## Execution settings and evidence
+## Execution settings
 
-Planner settings apply to the synchronous `help` planner and the gather
-coordinator. Worker settings apply to the helper and panel workers. Blank
-provider/model settings and `inherit` selectors use the caller's resolved
-tuple; configured tuples are validated before gather queues work. The plugin
-does not silently escalate a permission mode. A `full` mode is used only when
-the caller already has it or the operator explicitly selects it in settings.
-Worker instructions are policy guidance; the selected provider permission
-mode remains the actual authority envelope.
+Planner settings apply to the synchronous `help` planner and the panel
+coordinator, which also writes the synthesis. Worker settings apply to the
+`help` expert and panel workers. Blank provider/model settings and `inherit`
+selectors use the caller's resolved tuple; configured tuples are validated
+before gather queues work. The plugin does not silently escalate a permission
+mode. A `full` mode is used only when the caller already has it or the
+operator explicitly selects it in settings.
 
-Experts cite material factual claims from primary evidence they actually
-inspected, distinguish supplied context from inference, preserve disagreement,
-and identify unknowns. Queue acceptance, spawn responses, worker count, and
-native notices do not prove delivery or completion. The coordinator must not
-claim eventual delivery, exactly-once execution, guaranteed recovery, complete
-coverage, or reliability without direct primary evidence. It does not treat
-agreement or worker count as proof. Use the presentation-receipt behavior
-below to avoid repeating a result when durable evidence exists; keep internal
-worker references out of the caller-facing answer.
+## Compatibility
 
-No follow-up is scheduled in the requesting thread. After verifying the artifact,
-it finds the latest successful `turn/completed` event, then pages backward
-through that turn's `item/completed` events. Suppression requires the turn's
-last completed item itself to be an agent message whose text contains an exact
-standalone receipt comment with both the run ID and full-file SHA-256; a
-receipt in an earlier assistant message followed by another completed item is
-not enough. The BB
-event API returns stored agent-message text, so the comment remains available
-to the check while normal Markdown rendering hides it. The caller should
-include the exact receipt line returned by the tool in its final answer after
-presenting the result. A missing, mismatched, interrupted, or unreadable final
-answer returns the full artifact again. The scan is bounded to five 100-event
-pages; if the receipt is outside that window, the tool returns the artifact.
-An explicit user request can retrieve it again with `includeArtifact: true`.
-Legacy presentations without a receipt may repeat. The caller relies on explicit
-completion messages; a lost report requires explicit retrieval of the artifact.
-Native duplicate reports and retries can still produce repeated visibility,
-so the plugin does not claim exactly-once presentation.
+New runs use protocol v2 and require a BB host whose threads expose
+`lifecycleOwnerThreadId`; on other hosts `gather_perspectives` fails before
+any queue row or thread is created, and launch is acknowledged only after the
+created coordinator's ownership is confirmed. The server SDK declarations of
+the pinned `@get-bb/plugin-sdk` omit the field, so it is passed through the
+public spawn request and checked on the returned thread. Protocol v1 runs
+remain readable: they keep parent authentication and BB's native parent
+reports, and their previously queued caller reminders are left untouched. The
+persisted request decoder accepts exactly versions 1 and 2; a future request
+format must add a version rather than change these. The legacy request field
+`callerBackstopAtEpochMs` names the launch-intent time, not the caller
+backstop.
 
 ## Install and development
 
@@ -166,36 +223,3 @@ Development checks for this package are `npm run test --workspace
 @phosphorco/bb-plugin-perspectives`, `npm run typecheck --workspace
 @phosphorco/bb-plugin-perspectives`, and `npm run build --workspace
 @phosphorco/bb-plugin-perspectives` from `community-plugins/`.
-
-Cleanup attempts to remove editable run-specific wrap-up requests from verified
-idle or errored workers, including on subsequent already-published tool calls.
-Failures are reported and retried on later calls; no cleanup timer is added.
-Claimed requests and completion between the final status check and send can
-still cause an extra turn; closing that race requires an atomic BB send guard.
-Previously queued caller reminders are not automatically migrated on upgrade.
-The legacy protocol field `callerBackstopAtEpochMs` now names only the internal
-launch-intent schedule; it does not schedule a caller message.
-
-
-## Lifecycle ownership and final notification
-
-New runs use protocol v2: the hidden coordinator has no parent and is
-lifecycle-owned by the requesting thread. Its ordinary experts retain the
-coordinator as parent and also use it as lifecycle owner. Worker reports still
-wake synthesis, while intermediate coordinator turns do not wake the caller.
-Protocol v1 retains legacy parent authentication and native reporting.
-
-After artifact readback, the plugin sends an explicit final completion message
-through the thread SDK. A coordinator metadata digest records send intent
-before dispatch; caller queue rows and request events establish acceptance.
-Replays reconcile acceptance and never blindly repeat a persisted attempt.
-A crash between intent and send, unavailable evidence, or a lost response can
-leave delivery uncertain; explicit artifact retrieval is then needed. This
-is bounded delivery, not an exactly-once or eventual-delivery guarantee. The
-metadata write is not a compare-and-set; simultaneous publication calls can
-still duplicate a notification. No requesting-thread timer is added.
-
-This mode requires a BB host exposing lifecycleOwnerThreadId. The plugin
-checks the created thread's ownership before acknowledging launch. Registry
-SDK declarations omit that host extension; it is passed through the public
-SDK spawn request and checked on the returned thread, without a fork edit.

@@ -4,65 +4,21 @@ import type { BbPluginApi, PluginAgentToolContext } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 
 const PLANNER_PHASE_TIMEOUT_MS = 15_000;
-const PANEL_WRAP_UP_AFTER_MS = 20 * 60_000;
-const RUN_HARD_CAP_MS = 25 * 60_000;
-const SYNTHESIS_RESERVE_MS = 120_000;
-const SYNTHESIS_PHASE_TIMEOUT_MS = 90_000;
 const SPAWN_TIMEOUT_MS = 60_000;
 const HELPER_PHASE_TIMEOUT_MS = 250_000;
 const MAX_SYNTHESIS_EVIDENCE_CHARS = 240_000;
 const INTERNAL_REQUEST_GRACE_MS = 2_000;
 
-/**
- * Test seams for the gather pipeline's wall-clock budgets. Production always
- * uses the defaults: wrap-up steer after 20 minutes of continuous panel work
- * and a hard cap of 25 minutes on the whole run, after which every remaining
- * agent is stopped and whatever was gathered is synthesized and delivered.
- */
+/** Test seam for the coordinator spawn-response budget; production uses the default. */
 export interface GatherTiming {
-  readonly plannerTimeoutMs?: number;
-  readonly wrapUpAfterMs?: number;
-  readonly hardCapMs?: number;
-  readonly synthesisTimeoutMs?: number;
-  readonly synthesisReserveMs?: number;
   readonly spawnTimeoutMs?: number;
 }
 
-interface ResolvedGatherTiming {
-  readonly plannerTimeoutMs: number;
-  readonly wrapUpAfterMs: number;
-  readonly hardCapMs: number;
-  readonly synthesisTimeoutMs: number;
-  readonly synthesisReserveMs: number;
-  readonly spawnTimeoutMs: number;
-}
-
-export function resolveGatherTiming(timing?: GatherTiming): ResolvedGatherTiming {
-  const duration = (value: number | undefined, fallback: number): number =>
-    value !== undefined && Number.isFinite(value) && value > 0
-      ? Math.max(1, Math.floor(value))
-      : fallback;
-  const hardCapMs = duration(timing?.hardCapMs, RUN_HARD_CAP_MS);
-  return {
-    plannerTimeoutMs: Math.min(
-      duration(timing?.plannerTimeoutMs, PLANNER_PHASE_TIMEOUT_MS),
-      hardCapMs,
-    ),
-    wrapUpAfterMs: Math.min(
-      duration(timing?.wrapUpAfterMs, PANEL_WRAP_UP_AFTER_MS),
-      hardCapMs,
-    ),
-    hardCapMs,
-    synthesisTimeoutMs: Math.min(
-      duration(timing?.synthesisTimeoutMs, SYNTHESIS_PHASE_TIMEOUT_MS),
-      hardCapMs,
-    ),
-    synthesisReserveMs: Math.min(
-      duration(timing?.synthesisReserveMs, SYNTHESIS_RESERVE_MS),
-      Math.max(0, hardCapMs - 1),
-    ),
-    spawnTimeoutMs: Math.min(duration(timing?.spawnTimeoutMs, SPAWN_TIMEOUT_MS), hardCapMs),
-  };
+function resolveSpawnTimeout(timing?: GatherTiming): number {
+  const value = timing?.spawnTimeoutMs;
+  return value !== undefined && Number.isFinite(value) && value > 0
+    ? Math.max(1, Math.floor(value))
+    : SPAWN_TIMEOUT_MS;
 }
 
 const perspectiveSchema = z.object({
@@ -136,18 +92,9 @@ interface SpawnedAgent {
   stop(): Promise<void>;
 }
 
-interface PanelAgent extends SpawnedAgent {
-  readonly perspective: Perspective;
-}
-
 interface GeneratedPlan {
   readonly perspectives: Perspective[];
   readonly threadIds: string[];
-}
-
-interface SynthesisResult {
-  readonly output: string;
-  readonly threadId?: string;
 }
 
 type Threads = BbPluginApi["sdk"]["threads"];
@@ -180,8 +127,6 @@ const SOURCE_INSTRUCTIONS = `Evidence and citation requirements:
 - Never invent a citation, URL, file path, line number, quotation, or source detail. Distinguish sourced facts from your own analysis or inference.
 - When a claim relies only on the supplied context, say so explicitly instead of presenting the context as independently verified.
 - End with a short \`## Sources\` section listing only the sources actually used. If no source inspection was necessary, say that the answer is analysis based on the supplied question and context.`;
-
-const WRAP_UP_MESSAGE = `Wrap up now. Return the highest-signal conclusions, recommendation, risks, and important unknowns. Do not begin new investigation.`;
 
 function abortError(): Error {
   return new DOMException("The perspectives tool was interrupted.", "AbortError");
@@ -370,89 +315,6 @@ Question:
 ${question}${context ? `\n\nContext:\n${context}` : ""}
 
 Answer from this perspective only. Return only the minimum needed to materially inform the decision: lead with the conclusion, support it with evidence, and include only consequential tradeoffs, risks, or unknowns. Do not restate the question or your role.`;
-}
-
-function synthesisPrompt(
-  question: string,
-  context: string,
-  results: readonly PerspectiveResult[],
-  plannerThreadIds: readonly string[],
-): string {
-  const maximumOutputChars = Math.max(
-    1,
-    Math.floor(MAX_SYNTHESIS_EVIDENCE_CHARS / Math.max(1, results.length)),
-  );
-  const evidence = results
-    .map((result) => {
-      const truncated = result.output.length > maximumOutputChars;
-      const output = result.output.slice(0, maximumOutputChars);
-      const availability = result.status === "succeeded"
-        ? "Complete"
-        : result.output
-          ? `Incomplete (${result.status.replace("_", " ")})`
-          : `Unavailable (${result.status.replace("_", " ")})`;
-      const error = result.error ? `\nFailure detail: ${result.error.slice(0, 1_000)}` : "";
-      const answer = output
-        ? `\n\n${output}${truncated ? "\n\n[Output truncated to fit the synthesis context.]" : ""}`
-        : "\n\n[No usable answer was returned.]";
-      const provenance = result.threadId
-        ? `\nInternal evidence thread: @thread:${result.threadId}`
-        : "";
-      return `### ${result.perspective.name}\nWhy employed: ${result.perspective.rationale}\nStatus: ${availability}${error}${provenance}${answer}`;
-    })
-    .join("\n\n---\n\n");
-
-  return `Synthesize the independent expert perspectives below into one decision-ready answer.
-
-${READ_ONLY_INSTRUCTIONS}
-
-Return concise Markdown with these sections:
-## Unified Answer
-## Perspective Takeaways
-## Disagreements and Tradeoffs
-## Risks and Unknowns
-## Confidence
-## Sources
-
-Preserve meaningful dissent. Do not treat the number of similar answers as proof. Do not invent facts absent from the perspective outputs. Explicitly account for unavailable perspectives as limits on confidence; failure details and partial outputs are context, not completed expert conclusions.
-
-Preserve source citations from the perspective outputs and keep them next to the claims they support. Prefer primary sources, deduplicate repeated sources, and include only sources that a perspective actually inspected in the Sources section. Never invent or repair a missing citation. If a material claim lacks support, qualify it as analysis, inference, supplied context, or an unresolved evidence gap.
-
-Return only the decision-ready answer. Do not describe the orchestration pipeline, worker lifecycle, thread structure, or internal statuses except where missing evidence materially affects confidence. Do not include thread IDs or internal consultation references.
-
-Question:
-${question}${context ? `\n\nContext:\n${context}` : ""}
-
-Perspective outputs:
-${evidence}
-
-Internal planning provenance: ${plannerThreadIds.map((threadId) => `@thread:${threadId}`).join(" · ") || "unavailable"}
-
-The internal thread references above are inspectability metadata, not evidence. Do not include them in the answer or Sources section.`;
-}
-
-function fallbackSynthesis(
-  results: readonly PerspectiveResult[],
-  failure: string,
-  partialSynthesis: string = "",
-): string {
-  const maximumOutputChars = Math.max(
-    1,
-    Math.floor(MAX_SYNTHESIS_EVIDENCE_CHARS / Math.max(1, results.length)),
-  );
-  const outputs = results.map((item) => {
-    const detail = item.error ? ` — ${item.error.slice(0, 1_000)}` : "";
-    const truncated = item.output.length > maximumOutputChars;
-    const answer = item.output
-      ? `${item.output.slice(0, maximumOutputChars)}${truncated ? "\n\n[Output truncated.]" : ""}`
-      : "No usable answer returned.";
-    return `### ${item.perspective.name}\n\n_Status: ${item.status}${detail}_\n\n${answer}`;
-  }).join("\n\n");
-
-  const partial = partialSynthesis
-    ? `\n\n## Partial synthesis\n\n${partialSynthesis}\n\nThis synthesis was interrupted and may be incomplete.`
-    : "";
-  return `## Synthesis unavailable\n\n${failure}${partial}\n\n## Perspective outputs\n\n${outputs}`;
 }
 
 function fallbackPerspectives(lenses: readonly string[]): Perspective[] {
@@ -818,57 +680,6 @@ async function createSpawnContexts(
   };
 }
 
-async function nextResult(
-  pending: ReadonlyMap<string, PanelAgent>,
-): Promise<{ agent: PanelAgent; result: PerspectiveResult }> {
-  return Promise.race(
-    [...pending.values()].map((agent) => agent.result.then((result) => ({ agent, result }))),
-  );
-}
-
-export async function collectPanelResults(
-  agents: readonly PanelAgent[],
-  wrapUpAt: number,
-): Promise<PerspectiveResult[]> {
-  const pending = new Map(agents.map((agent) => [agent.threadId, agent]));
-  const results = new Map<string, PerspectiveResult>();
-  let wrapUpSent = false;
-
-  while (pending.size > 0) {
-    if (!wrapUpSent) {
-      const remainingMs = wrapUpAt - Date.now();
-      if (remainingMs > 0) {
-        let deadlineTimer: ReturnType<typeof setTimeout> | undefined;
-        const wrapUpTime = new Promise<{ kind: "wrap_up" }>((resolve) => {
-          deadlineTimer = setTimeout(() => resolve({ kind: "wrap_up" }), remainingMs);
-        });
-        const raced = await Promise.race([
-          nextResult(pending).then((value) => ({ kind: "result" as const, value })),
-          wrapUpTime,
-        ]);
-        if (deadlineTimer !== undefined) clearTimeout(deadlineTimer);
-        if (raced.kind === "result") {
-          pending.delete(raced.value.agent.threadId);
-          results.set(raced.value.agent.threadId, raced.value.result);
-          continue;
-        }
-      }
-
-      wrapUpSent = true;
-      for (const agent of pending.values()) {
-        void agent.steer(WRAP_UP_MESSAGE).catch(() => undefined);
-      }
-      continue;
-    }
-
-    const completed = await nextResult(pending);
-    pending.delete(completed.agent.threadId);
-    results.set(completed.agent.threadId, completed.result);
-  }
-
-  return agents.map((agent) => results.get(agent.threadId)!);
-}
-
 async function generatePlan(
   bb: BbPluginApi,
   context: SpawnContext,
@@ -920,69 +731,6 @@ async function generatePlan(
     return { perspectives: fallbackPerspectives(requestedLenses), threadIds };
   }
   throw new Error(`Unable to generate expert perspectives: ${lastError}`);
-}
-
-async function synthesize(
-  bb: BbPluginApi,
-  context: SpawnContext,
-  question: string,
-  sharedContext: string,
-  results: readonly PerspectiveResult[],
-  plannerThreadIds: readonly string[],
-  phaseDeadline: number,
-): Promise<SynthesisResult> {
-  const internalThreadIds = [
-    ...plannerThreadIds,
-    ...results.map((result) => result.threadId).filter(Boolean),
-  ];
-  if (!results.some((result) => result.output)) {
-    return {
-      output: fallbackSynthesis(
-        results,
-        "No perspective returned usable output, so there was no evidence to synthesize.",
-      ),
-    };
-  }
-
-  const synthesisPerspective: Perspective = {
-    name: "Synthesis",
-    rationale: "Unify the completed perspectives without erasing disagreement.",
-    expertPrompt: "You are a rigorous synthesis editor who preserves evidence, disagreement, and uncertainty while producing a decision-ready answer.",
-  };
-  let agent: SpawnedAgent;
-  try {
-    agent = await spawnAgent(
-      bb,
-      context,
-      "Perspective synthesis",
-      synthesisPrompt(question, sharedContext, results, plannerThreadIds),
-      synthesisPerspective,
-      phaseDeadline,
-    );
-  } catch (error) {
-    return {
-      output: fallbackSynthesis(
-        results,
-        `The synthesis agent could not be launched: ${error instanceof Error ? error.message : String(error)}`,
-      ),
-    };
-  }
-  const result = await agent.result;
-  if (result.status === "succeeded") {
-    return {
-      output: withoutInternalThreadReferences(result.output, internalThreadIds),
-      threadId: agent.threadId,
-    };
-  }
-
-  return {
-    output: fallbackSynthesis(
-      results,
-      `The synthesis agent did not complete: ${result.error ?? "unknown provider failure"}`,
-      withoutInternalThreadReferences(result.output, internalThreadIds),
-    ),
-    threadId: agent.threadId,
-  };
 }
 
 export async function runHelp(
@@ -1039,12 +787,11 @@ export async function runHelp(
   );
 }
 
-export const GATHER_RESULT_HEADER = "Perspectives panel result";
-export const GATHER_FAILURE_HEADER = "Perspectives panel failed";
 
 const COORDINATOR_WRAP_UP_MS = 20 * 60_000;
 const COORDINATOR_DEADLINE_MS = 25 * 60_000;
 const LAUNCH_INTENT_GRACE_MS = 60_000;
+const CALLER_BACKSTOP_GRACE_MS = 10 * 60_000;
 const COORDINATOR_ARTIFACT_PATH = "perspectives/results/$BB_THREAD_ID.md";
 const COORDINATOR_MARKER_PREFIX = "perspectives-invocation:";
 const THREAD_LIST_PAGE_SIZE = 100;
@@ -1151,6 +898,79 @@ After synthesis, call \`perspectives_publish_result\` exactly once with the comp
 The coordinator wake targets depend on BB's scheduled-message sweep and host availability. Queue acceptance is not delivery. A failed queue row does not wake this coordinator automatically; if the native report is also lost, BB currently needs explicit queue recovery or operator action. Never promise an eventual wake, exactly-once creation, or a strict wall-clock deadline.`;
 }
 
+/**
+ * The caller backstop recovers a lost completion message, a silently failed
+ * coordinator, or an ambiguous launch. It is queued in the caller before the
+ * coordinator spawn and removed once the completion message is delivered, so a
+ * successful run wakes the caller once. It targets 10 minutes after the
+ * deadline so a slow but successful publication normally removes it first.
+ */
+function callerBackstopAt(request: Pick<CoordinatorRunRequest, "deadlineAtEpochMs">): number {
+  return request.deadlineAtEpochMs + CALLER_BACKSTOP_GRACE_MS;
+}
+
+function callerBackstopMessage(marker: string, sendAt: number): string {
+  return `Perspectives panel backstop\nInvocation marker: ${marker}\nScheduled target: ${new Date(sendAt).toISOString()}\n\nNo delivered completion message was confirmed for this panel before the backstop was due. Call perspectives_read_result with this invocationMarker. If it reports the result was already presented, say nothing further about it. Otherwise present the verified artifact, or report the missing, uncertain, or duplicate run as the tool describes. Do not start another panel unless the user asks.`;
+}
+
+function isPendingCallerBackstopRow(
+  row: { readonly threadId?: string; readonly sendAt?: number | null; readonly content?: unknown; readonly failureReason?: string | null; readonly editable?: boolean },
+  callerThreadId: string,
+  sendAt: number,
+  message: string,
+): boolean {
+  return row.threadId === callerThreadId && row.sendAt === sendAt && row.failureReason === null &&
+    row.editable === true && textContent(row.content) === message;
+}
+
+async function confirmCallerBackstop(
+  bb: BbPluginApi,
+  callerThreadId: string,
+  marker: string,
+  sendAt: number,
+  signal: AbortSignal,
+): Promise<string> {
+  const message = callerBackstopMessage(marker, sendAt);
+  try {
+    const response = await bb.sdk.threads.send({
+      threadId: callerThreadId,
+      mode: "auto",
+      sendAt,
+      input: [{ type: "text", text: message, mentions: [], visibility: "agent-only" }],
+    });
+    if (response.delivery === "queued" && isPendingCallerBackstopRow(response.queuedMessage, callerThreadId, sendAt, message)) {
+      return response.queuedMessage.id;
+    }
+  } catch {
+    // Inspect durable queue state below before deciding whether acceptance is unknown.
+  }
+  const matches = (await bb.sdk.threads.queuedMessages.list({ threadId: callerThreadId, signal }))
+    .filter((row) => isPendingCallerBackstopRow(row, callerThreadId, sendAt, message));
+  if (matches.length === 1) return matches[0]!.id;
+  throw new Error(`The caller backstop for invocation ${marker} could not be confirmed${matches.length > 1 ? " uniquely" : ""}; no coordinator was spawned.`);
+}
+
+/** Removes the pending caller backstop after the completion message was accepted. */
+async function removeCallerBackstop(
+  bb: BbPluginApi,
+  request: CoordinatorRunRequest,
+  signal: AbortSignal,
+): Promise<"removed" | "absent" | "retained"> {
+  const sendAt = callerBackstopAt(request);
+  const message = callerBackstopMessage(request.invocationMarker, sendAt);
+  try {
+    const rows = (await bb.sdk.threads.queuedMessages.list({ threadId: request.callerThreadId, signal }))
+      .filter((row) => isPendingCallerBackstopRow(row, request.callerThreadId, sendAt, message));
+    if (rows.length === 0) return "absent";
+    for (const row of rows) {
+      await bb.sdk.threads.queuedMessages.delete({ threadId: request.callerThreadId, queuedMessageId: row.id });
+    }
+    return "removed";
+  } catch {
+    return "retained";
+  }
+}
+
 async function listChildrenByParent(threads: Threads, parentThreadId: string, signal?: AbortSignal) {
   const children: Awaited<ReturnType<Threads["list"]>> = [];
   let offset = 0;
@@ -1176,19 +996,35 @@ function coordinatorBelongsTo(thread: LifecycleThread, request: CoordinatorRunRe
     : thread.parentThreadId === request.callerThreadId;
 }
 
-async function listCallerCoordinators(threads: Threads, callerThreadId: string, signal?: AbortSignal) {
+/**
+ * Candidate coordinators for a caller: legacy v1 coordinators are its direct
+ * children; v2 coordinators are root threads this plugin created and the
+ * caller lifecycle-owns. BB lists cannot filter by owner, so the second query
+ * is narrowed to this plugin's root threads in the project and filtered here.
+ */
+async function listCallerCoordinators(threads: Threads, pluginId: string, callerThreadId: string, signal?: AbortSignal) {
   const caller = await threads.get({ threadId: callerThreadId, ...(signal ? { signal } : {}) });
-  const candidates: Awaited<ReturnType<Threads["list"]>> = [];
-  for (let offset = 0;; offset += 100) {
-    const page = await threads.list({ projectId: caller.projectId, includeHidden: true, limit: 100, offset, ...(signal ? { signal } : {}) });
-    candidates.push(...page.filter(thread => thread.visibility === "hidden" &&
-      (thread.parentThreadId === callerThreadId || (thread as LifecycleThread).lifecycleOwnerThreadId === callerThreadId)));
-    if (page.length < 100) return candidates;
+  const candidates = (await listChildrenByParent(threads, callerThreadId, signal))
+    .filter((thread) => thread.visibility === "hidden" && thread.parentThreadId === callerThreadId);
+  for (let offset = 0;; offset += THREAD_LIST_PAGE_SIZE) {
+    const page = await threads.list({
+      projectId: caller.projectId,
+      originPluginId: pluginId,
+      hasParent: false,
+      includeHidden: true,
+      limit: THREAD_LIST_PAGE_SIZE,
+      offset,
+      ...(signal ? { signal } : {}),
+    });
+    candidates.push(...page.filter((thread) => thread.visibility === "hidden" && thread.parentThreadId === null &&
+      (thread as LifecycleThread).lifecycleOwnerThreadId === callerThreadId));
+    if (page.length < THREAD_LIST_PAGE_SIZE) return candidates;
   }
 }
 
 async function rediscoverCoordinator(
   threads: Threads,
+  pluginId: string,
   callerThreadId: string,
   marker: string,
   expectedPrompt: string,
@@ -1199,11 +1035,7 @@ async function rediscoverCoordinator(
   | { readonly kind: "unavailable" }
 > {
   try {
-    const children = await listCallerCoordinators(threads, callerThreadId);
-    const candidates = children.filter((child) =>
-      (child.parentThreadId === callerThreadId || (child as LifecycleThread).lifecycleOwnerThreadId === callerThreadId) &&
-      child.visibility === "hidden"
-    );
+    const candidates = await listCallerCoordinators(threads, pluginId, callerThreadId);
     const verified: string[] = [];
     for (const child of candidates) {
       // BB prompt history omits agent-only spawn input. The initial request
@@ -1260,7 +1092,7 @@ async function spawnCoordinator(
   if (outcome.kind === "spawned") return outcome.id;
 
   const discovery = typeof args.prompt === "string"
-    ? await rediscoverCoordinator(bb.sdk.threads, callerThreadId, marker, args.prompt)
+    ? await rediscoverCoordinator(bb.sdk.threads, bb.pluginId, callerThreadId, marker, args.prompt)
     : { kind: "unavailable" as const };
   if (discovery.kind === "one") return discovery.coordinatorId;
   const spawnReason = outcome.kind === "timeout"
@@ -1274,11 +1106,13 @@ async function spawnCoordinator(
   throw new Error(`Launch uncertain: coordinator spawn is ambiguous (${spawnReason}); ${discoveryReason}. No successful launch was confirmed, and this invocation did not retry it.`);
 }
 
-function launchReceipt(runId: string, marker: string, lensCount: number): string {
-  return `Perspectives panel launched for ${lensCount} lenses.\n\nRun ID: ${runId}\nCoordinator: @thread:${runId}\nInvocation marker: ${marker}. No requesting-thread follow-up is scheduled.\nArtifact: perspectives/results/${runId}.md\n\nThe coordinator reconciles native child reports and scheduled wakes, then publishes one complete, partial, or failed artifact. After verified publication, the plugin sends one explicit completion message; no requesting-thread reminder is scheduled. When the report arrives, verify the artifact by coordinator ID and relative path, then present it once. After restart, compare older coordinator prompts by caller ID, question, context, ordered lenses, project/environment, and execution settings; disclose matching runs as possible duplicates with separate IDs because identical requests may be intentional. Keep their artifacts separate. Do not wait or poll for the result. The 20- and 25-minute coordinator wakes are scheduling targets, not delivery guarantees.`;
+function launchReceipt(runId: string, marker: string, lensCount: number, backstopAt: number): string {
+  return `Perspectives panel launched for ${lensCount} lenses.\n\nRun ID: ${runId}\nCoordinator: @thread:${runId}\nInvocation marker: ${marker}\nArtifact: perspectives/results/${runId}.md\n\nThis is a launch receipt, not the result. The coordinator works without waking this thread. After it publishes a verified artifact, this thread receives one completion message; then call perspectives_read_result with the coordinator ID and present the result once. A caller backstop queued for ${new Date(backstopAt).toISOString()} is removed when that message is delivered and otherwise prompts the same lookup by marker. If this request is replayed after a restart, compare coordinator prompts by caller ID, question, context, ordered lenses, project/environment, and execution settings, and disclose matching runs as possible duplicates with separate IDs because identical requests may be intentional; keep their artifacts separate. Do not wait or poll for the result.`;
 }
 
-const WORKER_TITLE_PREFIX = "Perspectives worker ";
+export const WORKER_TITLE_PREFIX = "Perspectives worker ";
+export const COORDINATOR_TITLE_PREFIX = "Perspectives coordinator ";
+export const COORDINATOR_ROLE = "coordinator";
 const ARTIFACT_BODY_START = "<!-- perspectives-body:start -->\n";
 const ARTIFACT_BODY_END = "\n<!-- perspectives-body:end -->";
 const MAX_RECONCILED_OUTPUT_CHARS = MAX_SYNTHESIS_EVIDENCE_CHARS;
@@ -1787,7 +1621,9 @@ async function reconcileWorkers(
     if (slotChildren.length > 1) state = "duplicate";
     else if (suspiciousBySlot.has(index)) state = "identity-unavailable";
     else if (slotChildren.length === 0) {
-      state = ambiguousSpawn.has(index) ? "launch-uncertain" : "launch-uncertain";
+      // Without a recorded launch intent no worker spawn was attempted for
+      // this slot; any recorded or ambiguous attempt may have committed late.
+      state = ambiguousSpawn.has(index) || launchIntents[index] !== "not-attempted" ? "launch-uncertain" : "not-launched";
       if (Date.now() < request.deadlineAtEpochMs) allTerminal = false;
     } else if (workerRecords.some((record) => isActiveStatus(record.status))) state = "running";
     else if (workerRecords.some((record) => record.output !== null)) {
@@ -1967,33 +1803,62 @@ async function isVerifiedPanelCoordinator(
   }
 }
 
-async function notifyPublishedResult(bb: BbPluginApi, runId: string, request: CoordinatorRunRequest, artifact: ValidatedArtifact, signal: AbortSignal): Promise<string> {
-  if (request.protocolVersion === 1) return "legacy-native-parent-report";
+async function notifyPublishedResult(
+  bb: BbPluginApi,
+  runId: string,
+  request: CoordinatorRunRequest,
+  artifact: ValidatedArtifact,
+  signal: AbortSignal,
+): Promise<{ readonly completionDelivery: string; readonly callerBackstop: string }> {
+  if (request.protocolVersion === 1) return { completionDelivery: "legacy-native-parent-report", callerBackstop: "legacy" };
+  const { status, delivered } = await sendCompletionMessage(bb, runId, request, artifact, signal);
+  // Acceptance only stops resends. The backstop is replaced only once the
+  // caller has the message as a request; a merely queued message could still
+  // fail or be removed, so it keeps the backstop as the recovery path.
+  const callerBackstop = delivered ? await removeCallerBackstop(bb, request, signal) : "retained";
+  return { completionDelivery: status, callerBackstop };
+}
+
+interface CompletionMessageOutcome {
+  readonly status: "accepted" | "uncertain-no-blind-retry" | "unavailable";
+  /** BB delivered the message to the caller rather than only queueing it. */
+  readonly delivered: boolean;
+}
+
+async function sendCompletionMessage(bb: BbPluginApi, runId: string, request: CoordinatorRunRequest, artifact: ValidatedArtifact, signal: AbortSignal): Promise<CompletionMessageOutcome> {
   const message = `Perspectives panel result ready\nRun ID: ${runId}\nStatus: ${artifact.status}\nFull-file SHA-256: ${artifact.fileSha256}\nUse perspectives_read_result with coordinatorId ${runId} to verify and retrieve the artifact before presenting it.`;
-  const reconcile = async () => {
+  const reconcile = async (): Promise<"delivered" | "queued" | "none"> => {
     const [rows, events] = await Promise.all([
       bb.sdk.threads.queuedMessages.list({ threadId: request.callerThreadId, signal }),
       bb.sdk.threads.events.list({ threadId: request.callerThreadId, types: ["client/turn/requested"], order: "desc", limit: "100", signal }),
     ]);
-    return rows.some(row => textContent(row.content) === message) || events.some(event => eventText(event) === message);
+    if (events.some(event => eventText(event) === message)) return "delivered";
+    return rows.some(row => row.threadId === request.callerThreadId && row.failureReason === null && textContent(row.content) === message)
+      ? "queued"
+      : "none";
   };
+  const fromReconcile = (state: "delivered" | "queued" | "none"): CompletionMessageOutcome | undefined =>
+    state === "none" ? undefined : { status: "accepted", delivered: state === "delivered" };
   try {
-    if (await reconcile()) return "accepted";
+    const existing = fromReconcile(await reconcile());
+    if (existing) return existing;
     const metadata = await bb.sdk.threads.getPluginMetadata({ threadId: runId, pluginId: bb.pluginId, signal });
-    if (metadata.completionAccepted === artifact.fileSha256) return "accepted";
-    if (metadata.completionAttempt === artifact.fileSha256) return "uncertain-no-blind-retry";
+    // Acceptance recorded without an observable request or pending row: do
+    // not resend, and keep the backstop because delivery cannot be shown.
+    if (metadata.completionAccepted === artifact.fileSha256) return { status: "accepted", delivered: false };
+    if (metadata.completionAttempt === artifact.fileSha256) return { status: "uncertain-no-blind-retry", delivered: false };
     await bb.sdk.threads.updatePluginMetadata({ threadId: runId, pluginId: bb.pluginId, set: { completionAttempt: artifact.fileSha256 }, signal });
     const confirmed = await bb.sdk.threads.getPluginMetadata({ threadId: runId, pluginId: bb.pluginId, signal });
-    if (confirmed.completionAttempt !== artifact.fileSha256) return "unavailable";
+    if (confirmed.completionAttempt !== artifact.fileSha256) return { status: "unavailable", delivered: false };
     try {
       const sent = await bb.sdk.threads.send({ threadId: request.callerThreadId, mode: "auto", input: [{ type: "text", text: message, mentions: [], visibility: "agent-only" }] });
       if (sent.delivery === "sent" || sent.delivery === "queued") {
         try { await bb.sdk.threads.updatePluginMetadata({ threadId: runId, pluginId: bb.pluginId, set: { completionAccepted: artifact.fileSha256 }, signal }); } catch { /* Acceptance is already observed; a replay can reconcile the request. */ }
-        return "accepted";
+        return { status: "accepted", delivered: sent.delivery === "sent" };
       }
     } catch { /* Reconcile a lost response against durable acceptance below. */ }
-    return await reconcile() ? "accepted" : "uncertain-no-blind-retry";
-  } catch { return "unavailable"; }
+    return fromReconcile(await reconcile()) ?? { status: "uncertain-no-blind-retry", delivered: false };
+  } catch { return { status: "unavailable", delivered: false }; }
 }
 
 /** SDK-backed coordinator operation, authorized only for the persisted run's own thread. */
@@ -2005,10 +1870,10 @@ export async function runPerspectivesCoordinatorStep(
   const runId = context.threadId;
   const existing = await readThreadArtifact(bb, runId);
   if (existing.kind === "present") {
-    const completionDelivery = await notifyPublishedResult(bb, runId, request, existing.artifact, context.signal);
+    const notification = await notifyPublishedResult(bb, runId, request, existing.artifact, context.signal);
     const workerCleanup = await cleanupPublishedWorkers(bb, runId, request, context.signal);
     const pendingRunRowsRemoved = await cleanupPublishedRunRows(bb, runId, request, context.signal);
-    return JSON.stringify({ completionDelivery, workerCleanup, phase: "already-published", runId, status: existing.artifact.status, bodySha256: existing.artifact.bodySha256, fileSha256: existing.artifact.fileSha256, artifactRelativePath: artifactRelativePath(runId), pendingRunRowsRemoved });
+    return JSON.stringify({ ...notification, workerCleanup, phase: "already-published", runId, status: existing.artifact.status, bodySha256: existing.artifact.bodySha256, fileSha256: existing.artifact.fileSha256, artifactRelativePath: artifactRelativePath(runId), pendingRunRowsRemoved });
   }
   if (existing.kind !== "missing") throw artifactReadFailure(runId, existing);
 
@@ -2288,10 +2153,10 @@ export async function runPerspectivesPublishResult(
   const runId = context.threadId;
   const existing = await readThreadArtifact(bb, runId);
   if (existing.kind === "present") {
-    const completionDelivery = await notifyPublishedResult(bb, runId, request, existing.artifact, context.signal);
+    const notification = await notifyPublishedResult(bb, runId, request, existing.artifact, context.signal);
     const workerCleanup = await cleanupPublishedWorkers(bb, runId, request, context.signal);
     const pendingRunRowsRemoved = await cleanupPublishedRunRows(bb, runId, request, context.signal);
-    return JSON.stringify({ completionDelivery, workerCleanup, phase: "already-published", runId, status: existing.artifact.status, artifactRelativePath: artifactRelativePath(runId), bodySha256: existing.artifact.bodySha256, fileSha256: existing.artifact.fileSha256, pendingRunRowsRemoved });
+    return JSON.stringify({ ...notification, workerCleanup, phase: "already-published", runId, status: existing.artifact.status, artifactRelativePath: artifactRelativePath(runId), bodySha256: existing.artifact.bodySha256, fileSha256: existing.artifact.fileSha256, pendingRunRowsRemoved });
   }
   if (existing.kind !== "missing") throw artifactReadFailure(runId, existing);
 
@@ -2322,12 +2187,12 @@ export async function runPerspectivesPublishResult(
   const artifact = buildArtifact(runId, status, body);
   const verified = await publishBytesCreateOnly(bb, runId, artifact);
 
-  const completionDelivery = await notifyPublishedResult(bb, runId, request, verified, context.signal);
+  const notification = await notifyPublishedResult(bb, runId, request, verified, context.signal);
   const workerCleanup = await cleanupPublishedWorkers(bb, runId, request, context.signal);
   const pendingRunRowsRemoved = await cleanupPublishedRunRows(bb, runId, request, context.signal);
 
   return JSON.stringify({
-    completionDelivery,
+    ...notification,
     workerCleanup,
     phase: "published",
     runId,
@@ -2441,7 +2306,7 @@ export async function runPerspectivesReadResult(
     coordinatorIds = [input.coordinatorId];
   } else {
     try {
-      const children = await listCallerCoordinators(bb.sdk.threads, context.threadId, context.signal);
+      const children = await listCallerCoordinators(bb.sdk.threads, bb.pluginId, context.threadId, context.signal);
       const verifiedIds: string[] = [];
       for (const child of children) {
         if (child.visibility !== "hidden") continue;
@@ -2472,15 +2337,15 @@ export async function runPerspectivesReadResult(
     ? "not-found"
     : await callerPresentationEvidence(bb, context.threadId, coordinatorId, result.artifact.fileSha256, context.signal);
   if (priorPresentation === "matched") {
-    return `Perspectives artifact ${coordinatorId} was already presented according to the exact receipt in the latest successfully completed caller turn's final agent message. The artifact remains retrievable on a user request by calling perspectives_read_result with includeArtifact: true. This tool creates no requesting-thread follow-up; older runs may retain a previously queued reminder.\nStatus: ${result.artifact.status}\nArtifact: ${artifactRelativePath(coordinatorId)}\nBody SHA-256: ${result.artifact.bodySha256}\nFull-file SHA-256: ${result.artifact.fileSha256}\nPresentation receipt:\n${marker}`;
+    return `Perspectives artifact ${coordinatorId} was already presented according to the exact receipt in the latest successfully completed caller turn's final agent message. The artifact remains retrievable on a user request by calling perspectives_read_result with includeArtifact: true. A backstop or duplicate notice for an already presented run needs no further answer.\nStatus: ${result.artifact.status}\nArtifact: ${artifactRelativePath(coordinatorId)}\nBody SHA-256: ${result.artifact.bodySha256}\nFull-file SHA-256: ${result.artifact.fileSha256}\nPresentation receipt:\n${marker}`;
   }
   const evidenceNote = priorPresentation === "unavailable"
     ? "The latest persisted final output could not be read, so this tool returns the artifact to avoid risking silent loss."
     : "No exact presentation marker was found in the latest persisted final output, so this tool returns the artifact. A legacy markerless presentation may be repeated.";
-  return `Verified Perspectives artifact for run ${coordinatorId}.\nStatus: ${result.artifact.status}\nArtifact: ${artifactRelativePath(coordinatorId)}\nBody SHA-256: ${result.artifact.bodySha256}\nFull-file SHA-256: ${result.artifact.fileSha256}\nThis tool creates no requesting-thread follow-up; older runs may retain a previously queued reminder. ${evidenceNote}\n\n${result.artifact.content}\n\nAfter presenting this artifact in your final response, include this exact standalone receipt line so a later read can verify durable presentation:\n${marker}`;
+  return `Verified Perspectives artifact for run ${coordinatorId}.\nStatus: ${result.artifact.status}\nArtifact: ${artifactRelativePath(coordinatorId)}\nBody SHA-256: ${result.artifact.bodySha256}\nFull-file SHA-256: ${result.artifact.fileSha256}\n${evidenceNote}\n\n${result.artifact.content}\n\nAfter presenting this artifact in your final response, include this exact standalone receipt line so a later read can verify durable presentation:\n${marker}`;
 }
 
-/** Launch one durable hidden coordinator without scheduling a caller reminder. */
+/** Queue the caller backstop, then launch one durable hidden lifecycle-owned coordinator. */
 export async function runGatherPerspectives(
   bb: BbPluginApi,
   input: { question: string; context?: string; lenses: readonly string[] },
@@ -2502,13 +2367,13 @@ export async function runGatherPerspectives(
     throw new Error("This BB host does not expose lifecycle ownership; no Perspectives coordinator was created.");
   }
   const sharedContext = clean(input.context);
-  const resolved = resolveGatherTiming(timing);
+  const spawnTimeoutMs = resolveSpawnTimeout(timing);
   const contexts = await createSpawnContexts(
     bb,
     toolContext,
     executionSettings,
     toolContext.signal,
-    resolved.spawnTimeoutMs,
+    spawnTimeoutMs,
   );
   const startedAt = Date.now();
   const marker = `${COORDINATOR_MARKER_PREFIX}${randomUUID()}`;
@@ -2544,7 +2409,10 @@ export async function runGatherPerspectives(
     projectId: contexts.planner.projectId,
     environment: contexts.planner.environment,
     lifecycleOwnerThreadId: toolContext.threadId,
-    title: `Perspectives coordinator ${marker}`,
+    // Advertising hint for the synchronous configure callback only; tool
+    // execution authenticates the persisted request and lifecycle owner.
+    pluginMetadata: { role: COORDINATOR_ROLE },
+    title: `${COORDINATOR_TITLE_PREFIX}${marker}`,
     prompt,
     visibility: "hidden",
     providerId: coordinatorExecution.providerId,
@@ -2555,21 +2423,24 @@ export async function runGatherPerspectives(
     executionInputSources,
   };
 
+  const backstopAt = callerBackstopAt(request);
+  await confirmCallerBackstop(bb, toolContext.threadId, marker, backstopAt, toolContext.signal);
+
   try {
     const coordinatorId = await spawnCoordinator(
       bb,
       spawnArgs,
       toolContext.threadId,
       marker,
-      resolved.spawnTimeoutMs,
+      spawnTimeoutMs,
     );
     const created = await bb.sdk.threads.get({ threadId: coordinatorId, signal: toolContext.signal });
     if (created.parentThreadId !== null || (created as LifecycleThread).lifecycleOwnerThreadId !== toolContext.threadId || created.visibility !== "hidden") {
       throw new Error("Launch uncertain: the host did not confirm lifecycle ownership; this run was not retried.");
     }
-    return launchReceipt(coordinatorId, marker, lenses.length);
+    return launchReceipt(coordinatorId, marker, lenses.length, backstopAt);
   } catch (error) {
-    throw new Error(`${errorMessage(error)} Invocation marker: ${marker}. No requesting-thread follow-up is scheduled. No successful launch was confirmed; use the marker for later rediscovery and do not retry the spawn blindly.`);
+    throw new Error(`${errorMessage(error)} Invocation marker: ${marker}. A caller backstop is queued for ${new Date(backstopAt).toISOString()} and will look the run up by this marker. No successful launch was confirmed; do not retry the spawn blindly.`);
   }
 }
 

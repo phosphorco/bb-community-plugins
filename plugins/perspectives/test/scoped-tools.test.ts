@@ -153,6 +153,11 @@ function makeHarness(options: {
           }
           if (text.startsWith("Perspectives panel result ready")) {
             if (completionSendFault.mode === "before") throw new Error("ambiguous response without commit");
+            if (completionSendFault.mode === "queued") {
+              const row = { id: `queue-${++nextRowId}`, threadId: args.threadId, sendAt: null, content: args.input, failureReason: null, editable: true };
+              rows.push(row);
+              return { delivery: "queued", queuedMessage: row };
+            }
             requestedMessages.set(args.threadId, [...requestedMessages.get(args.threadId) ?? [], text]);
             if (completionSendFault.mode === "after") throw new Error("response lost after acceptance");
           }
@@ -332,9 +337,22 @@ test("registered SDK tools reconcile, publish exact bytes, survive rename, and r
   harness.initialPrompts.set(coordinatorId, `${harness.initialPrompts.get(coordinatorId)}\nUpdated non-identity instructions.`);
   const coordinatorConfig = harness.configure({
     origin: { kind: null, pluginId: "perspectives" },
-    thread: { id: coordinatorId, title: coordinator.title, parentThreadId: "caller", sourceThreadId: null },
+    pluginMetadata: { role: "coordinator" },
+    thread: { id: coordinatorId, title: coordinator.title, parentThreadId: null, sourceThreadId: null },
   });
-  assert.deepEqual(coordinatorConfig.tools, ["help", "perspectives_coordinator_step", "perspectives_publish_result"]);
+  assert.deepEqual(coordinatorConfig.tools, ["perspectives_coordinator_step", "perspectives_publish_result"], "a renamed coordinator keeps its tools through role metadata");
+  const preMetadataCoordinatorConfig = harness.configure({
+    origin: { kind: null, pluginId: "perspectives" },
+    pluginMetadata: {},
+    thread: { id: "older-v2", title: "Perspectives coordinator perspectives-invocation:00000000-0000-0000-0000-000000000000", parentThreadId: null, sourceThreadId: null },
+  });
+  assert.deepEqual(preMetadataCoordinatorConfig.tools, ["perspectives_coordinator_step", "perspectives_publish_result"]);
+  const helpExpertConfig = harness.configure({
+    origin: { kind: null, pluginId: "perspectives" },
+    pluginMetadata: {},
+    thread: { id: "help-expert", title: "Help: runtime", parentThreadId: null, sourceThreadId: null },
+  });
+  assert.deepEqual(helpExpertConfig.tools, [], "help planners and experts cannot delegate or orchestrate");
 
   const firstStep = await harness.call("perspectives_coordinator_step", {}, coordinatorId);
   assert.equal((JSON.parse(harness.text(firstStep)) as any).readyToPublish, false);
@@ -358,7 +376,7 @@ test("registered SDK tools reconcile, publish exact bytes, survive rename, and r
     origin: { kind: null, pluginId: "perspectives" },
     thread: { id: workers[0]!.id, title: workers[0]!.title, parentThreadId: coordinatorId, sourceThreadId: null },
   });
-  assert.deepEqual(renamedWorkerConfig.tools, ["help", "perspectives_coordinator_step", "perspectives_publish_result"]);
+  assert.deepEqual(renamedWorkerConfig.tools, ["perspectives_coordinator_step", "perspectives_publish_result"], "advertised only; execution rejects the renamed worker");
 
   const invalidWorker = await harness.call("perspectives_coordinator_step", {}, workers[0]!.id);
   assert.equal(invalidWorker.isError, true);
@@ -391,22 +409,20 @@ test("registered SDK tools reconcile, publish exact bytes, survive rename, and r
   const callerRead = await harness.call("perspectives_read_result", { coordinatorId }, "caller");
   assert.equal(typeof callerRead, "string");
   assert.match(callerRead, /Full-file SHA-256:/);
-  assert.match(callerRead, /This tool creates no requesting-thread follow-up/);
   assert.match(callerRead, /<!-- perspectives-presented run-id=coordinator-1 file-sha256=[0-9a-f]{64} -->/);
   assert.match(callerRead, /terminal run-id=coordinator-1 status=complete/);
-  assert.equal(harness.rows.filter((row) => row.threadId === "caller").length, 0, "verified retrieval creates no caller reminder");
+  assert.equal(harness.rows.filter((row) => row.threadId === "caller").length, 0, "the delivered completion message removed the caller backstop");
 
   const fileDigest = harness.text(callerRead).match(/Full-file SHA-256: ([0-9a-f]{64})/)![1]!;
   harness.setFinalOutput("caller", `Presented the verified panel.\n<!-- perspectives-presented run-id=${coordinatorId} file-sha256=${fileDigest} -->`);
   const alreadyPresented = await harness.call("perspectives_read_result", { coordinatorId }, "caller");
   assert.match(harness.text(alreadyPresented), /already presented according to the exact receipt in the latest successfully completed caller turn's final agent message/);
   assert.match(harness.text(alreadyPresented), /remains retrievable on a user request/);
-  assert.match(harness.text(alreadyPresented), /This tool creates no requesting-thread follow-up/);
+  assert.match(harness.text(alreadyPresented), /needs no further answer/);
   assert.match(harness.text(alreadyPresented), new RegExp(`\\n<!-- perspectives-presented run-id=${coordinatorId} file-sha256=${fileDigest} -->$`));
   assert.doesNotMatch(harness.text(alreadyPresented), /## Synthesis/);
   const explicitlyRetrieved = await harness.call("perspectives_read_result", { coordinatorId, includeArtifact: true }, "caller");
   assert.match(harness.text(explicitlyRetrieved), /## Synthesis/);
-  assert.match(harness.text(explicitlyRetrieved), /This tool creates no requesting-thread follow-up/);
   const unrelatedRead = await harness.call("perspectives_read_result", { coordinatorId }, "unrelated-caller");
   assert.equal(unrelatedRead.isError, true);
   assert.match(harness.text(unrelatedRead), /not a verified hidden coordinator owned/);
@@ -434,6 +450,9 @@ test("ambiguous wake setup launches no workers and keeps publication closed", as
   assert.equal(step.phase, "wake-setup-uncertain");
   assert.equal(step.readyToPublish, false);
   assert.match(step.limitation, /explicit recovery or operator action/);
+  assert.deepEqual(step.outcomes.map((outcome: any) => outcome.state), ["not-launched", "not-launched"],
+    "a slot with no recorded launch intent was never attempted, so it is not launch-uncertain");
+  assert.equal(harness.rows.filter((row) => row.threadId === "caller").length, 1, "the caller backstop covers a run that cannot proceed");
   assert.equal([...harness.threads.values()].filter((thread) => thread.parentThreadId === coordinatorId).length, 0);
   const publish = await harness.call("perspectives_publish_result", { synthesis: "No synthesis until work is terminal." }, coordinatorId);
   assert.equal(publish.isError, true);
@@ -575,7 +594,7 @@ test("pre-commit write failure reports missing readback and leaves publication r
   assert.equal(harness.fileWriteAttempts.length, 1);
   assert.equal(harness.fileWriteCommits.length, 0);
   assert.equal(harness.outputs.size, 2, "both persisted worker outputs remain available");
-  assert.equal(harness.rows.filter((row) => row.threadId === "caller").length, 0, "no caller reminder is queued");
+  assert.equal(harness.rows.filter((row) => row.threadId === "caller").length, 1, "the caller backstop remains while publication is unfinished");
 
   const recovered = await harness.call("perspectives_publish_result", input, coordinatorId);
   assert.notEqual(recovered.isError, true, harness.text(recovered));
@@ -637,7 +656,6 @@ test("artifact read before a caller final answer returns the artifact without sc
   const coordinatorId = await publishRun(harness, "complete");
   const read = await harness.call("perspectives_read_result", { coordinatorId }, "caller");
   assert.match(harness.text(read), /Verified Perspectives artifact/);
-  assert.match(harness.text(read), /This tool creates no requesting-thread follow-up/);
   assert.match(harness.text(read), /No exact presentation marker was found/);
   assert.match(harness.text(read), /## Synthesis/);
   assert.equal(harness.outputs.has("caller"), false, "a read result is not treated as durable presentation evidence");
@@ -653,7 +671,7 @@ test("matching exact receipt in the latest persisted final agent output suppress
 
   const repeated = await harness.call("perspectives_read_result", { coordinatorId }, "caller");
   assert.match(harness.text(repeated), /already presented according to the exact receipt in the latest successfully completed caller turn's final agent message/);
-  assert.match(harness.text(repeated), /This tool creates no requesting-thread follow-up/);
+  assert.match(harness.text(repeated), /needs no further answer/);
   assert.match(harness.text(repeated), /remains retrievable on a user request/);
   assert.doesNotMatch(harness.text(repeated), /## Synthesis/);
   assert.equal(harness.rows.filter((row) => row.threadId === "caller").length, 0);
@@ -670,7 +688,6 @@ test("an intermediate assistant message receipt cannot stand in for the complete
   const read = await harness.call("perspectives_read_result", { coordinatorId }, "caller");
   assert.match(harness.text(read), /Verified Perspectives artifact/);
   assert.match(harness.text(read), /## Synthesis/);
-  assert.match(harness.text(read), /This tool creates no requesting-thread follow-up/);
 });
 
 test("a matching receipt from an interrupted turn is not durable presentation evidence", async () => {
@@ -708,7 +725,6 @@ test("a presentation receipt with a mismatched digest does not suppress the arti
   const repeated = await harness.call("perspectives_read_result", { coordinatorId }, "caller");
   assert.match(harness.text(repeated), /Verified Perspectives artifact/);
   assert.match(harness.text(repeated), /## Synthesis/);
-  assert.match(harness.text(repeated), /This tool creates no requesting-thread follow-up/);
 });
 
 test("caller final-output discovery failure returns full artifact without suppressing", async () => {
@@ -717,7 +733,6 @@ test("caller final-output discovery failure returns full artifact without suppre
   const read = await harness.call("perspectives_read_result", { coordinatorId }, "caller");
   assert.match(harness.text(read), /latest persisted final output could not be read/);
   assert.match(harness.text(read), /## Synthesis/);
-  assert.match(harness.text(read), /This tool creates no requesting-thread follow-up/);
 });
 
 test("possible duplicate coordinator runs keep their artifacts separate without scheduling reminders", async () => {
@@ -843,7 +858,7 @@ test("wrap-up rechecks worker status after queue reads and retains exact interna
   assert.ok(wrap.sendAt >= started + 20 * 60_000 && wrap.sendAt <= Date.now() + 20 * 60_000);
   assert.equal(deadline.sendAt - wrap.sendAt, 5 * 60_000);
   assert.ok(runRows.filter(r => r.content[0].text.startsWith("Perspectives worker launch intent:")).every(r => r.sendAt === deadline.sendAt + 60_000));
-  assert.equal(harness.rows.filter(r => r.threadId === "caller").length, 0);
+  assert.equal(harness.rows.filter(r => r.threadId === "caller").length, 1, "only the caller backstop is queued in the caller");
   const workers = [...harness.threads.values()].filter(t => t.parentThreadId === runId);
   harness.completeOnQueueRead.add(workers[0]!.id);
   const realNow = Date.now;
@@ -855,13 +870,13 @@ test("wrap-up rechecks worker status after queue reads and retains exact interna
   assert.equal(sends.length, 1, "only the worker still active at the final status check is steered");
 });
 
-test("legacy queued caller reminders are not misrepresented by read receipts", async () => {
+test("legacy queued caller reminders are left untouched by publication and reads", async () => {
   const harness = makeHarness();
+  harness.rows.push({ id: "legacy-backstop", threadId: "caller", editable: true, failureReason: null, content: [{ type: "text", text: "Perspectives panel result caller backstop" }] });
   const runId = await publishRun(harness, "complete");
-  harness.rows.push({ id: "legacy-backstop", threadId: "caller", editable: true, content: [{ type: "text", text: "Perspectives panel result caller backstop" }] });
   const read = await harness.call("perspectives_read_result", { coordinatorId: runId }, "caller");
-  assert.match(harness.text(read), /older runs may retain a previously queued reminder/);
-  assert.ok(harness.rows.some(r => r.id === "legacy-backstop"));
+  assert.match(harness.text(read), /Verified Perspectives artifact/);
+  assert.deepEqual(harness.rows.filter(r => r.threadId === "caller").map(r => r.id), ["legacy-backstop"]);
 });
 
 
@@ -875,6 +890,8 @@ test("lifecycle coordinator sends a completion only after verified publication a
   for (const worker of [...harness.threads.values()].filter(t => t.parentThreadId === runId)) assert.equal(worker.lifecycleOwnerThreadId, runId);
   const result = JSON.parse(harness.text(await harness.call("perspectives_publish_result", { synthesis: "Final evidence", coverage: "complete" }, runId)));
   assert.equal(result.completionDelivery, "accepted");
+  assert.equal(result.callerBackstop, "removed");
+  assert.equal(harness.rows.filter((row) => row.threadId === "caller").length, 0, "a delivered completion replaces the backstop");
   assert.equal(harness.requestedMessages.get("caller")!.length, 1);
   const send = harness.events.findIndex(e => e.startsWith("send:Perspectives panel result ready"));
   assert.ok(harness.events.lastIndexOf("file-read", send) >= 0);
@@ -892,6 +909,9 @@ test("completion response loss reconciles acceptance and uncertain attempts neve
     harness.completionSendFault.mode = mode;
     const first = JSON.parse(harness.text(await harness.call("perspectives_publish_result", { synthesis: "Final evidence" }, runId)));
     assert.equal(first.completionDelivery, mode === "after" ? "accepted" : "uncertain-no-blind-retry");
+    assert.equal(first.callerBackstop, mode === "after" ? "removed" : "retained");
+    assert.equal(harness.rows.filter((row) => row.threadId === "caller").length, mode === "after" ? 0 : 1,
+      "an unconfirmed completion keeps the backstop as the caller's recovery path");
     harness.completionSendFault.mode = "";
     await harness.call("perspectives_coordinator_step", {}, runId);
     assert.equal(harness.events.filter(e => e.startsWith("send:Perspectives panel result ready")).length, 1);
@@ -943,4 +963,60 @@ test("persisted completion intent without a send freezes retries while leaving t
   assert.equal(replay.completionDelivery, "uncertain-no-blind-retry");
   assert.equal(harness.events.filter(e => e.startsWith("send:Perspectives panel result ready")).length, before);
   assert.match(harness.text(await harness.call("perspectives_read_result", { coordinatorId: runId }, "caller")), /Verified Perspectives artifact/);
+});
+
+
+test("a failed backstop delete is reported and leaves the run published", async () => {
+  const harness = makeHarness();
+  const runId = await readyToPublishRun(harness);
+  const backstop = harness.rows.find((row) => row.threadId === "caller")!;
+  harness.failedDeletes.add(backstop.id);
+  const result = JSON.parse(harness.text(await harness.call("perspectives_publish_result", { synthesis: "Final evidence" }, runId)));
+  assert.equal(result.phase, "published");
+  assert.equal(result.completionDelivery, "accepted");
+  assert.equal(result.callerBackstop, "retained");
+  harness.failedDeletes.clear();
+  const replay = JSON.parse(harness.text(await harness.call("perspectives_coordinator_step", {}, runId)));
+  assert.equal(replay.callerBackstop, "removed", "a later reconciliation removes the retained backstop");
+  assert.equal(harness.events.filter(e => e.startsWith("send:Perspectives panel result ready")).length, 1);
+});
+
+test("a backstop read after presentation is answered from the receipt without repeating the body", async () => {
+  const harness = makeHarness();
+  const runId = await publishRun(harness, "complete");
+  const prompt = harness.initialPrompts.get(runId)!;
+  const marker = prompt.match(/"invocationMarker":\s*"([^"]+)"/)![1]!;
+  const first = await harness.call("perspectives_read_result", { coordinatorId: runId }, "caller");
+  const digest = harness.text(first).match(/Full-file SHA-256: ([0-9a-f]{64})/)![1]!;
+  harness.setFinalOutput("caller", `Presented.\n<!-- perspectives-presented run-id=${runId} file-sha256=${digest} -->`);
+  const byMarker = await harness.call("perspectives_read_result", { invocationMarker: marker }, "caller");
+  assert.match(harness.text(byMarker), /already presented/);
+  assert.match(harness.text(byMarker), /needs no further answer/);
+  assert.doesNotMatch(harness.text(byMarker), /## Synthesis/);
+});
+
+
+test("a merely queued completion message keeps the backstop until the caller has the request", async () => {
+  const harness = makeHarness();
+  const runId = await readyToPublishRun(harness);
+  harness.completionSendFault.mode = "queued";
+  const first = JSON.parse(harness.text(await harness.call("perspectives_publish_result", { synthesis: "Final evidence" }, runId)));
+  assert.equal(first.completionDelivery, "accepted");
+  assert.equal(first.callerBackstop, "retained", "a queued message could still fail, so the backstop stays");
+  const completionRow = harness.rows.find((row) => row.threadId === "caller" && row.content[0].text.startsWith("Perspectives panel result ready"))!;
+  assert.ok(harness.rows.some((row) => row.threadId === "caller" && row.content[0].text.startsWith("Perspectives panel backstop")));
+
+  // A later failure of the queued completion does not count as acceptance or delivery.
+  completionRow.failureReason = "dispatch failed";
+  const afterFailure = JSON.parse(harness.text(await harness.call("perspectives_coordinator_step", {}, runId)));
+  assert.equal(afterFailure.callerBackstop, "retained");
+  assert.ok(harness.rows.some((row) => row.threadId === "caller" && row.content[0].text.startsWith("Perspectives panel backstop")));
+
+  // Once the caller has the completion as a request, reconciliation removes the backstop.
+  harness.rows.splice(harness.rows.indexOf(completionRow), 1);
+  harness.requestedMessages.set("caller", [completionRow.content[0].text]);
+  const delivered = JSON.parse(harness.text(await harness.call("perspectives_coordinator_step", {}, runId)));
+  assert.equal(delivered.completionDelivery, "accepted");
+  assert.equal(delivered.callerBackstop, "removed");
+  assert.equal(harness.events.filter(e => e.startsWith("send:Perspectives panel result ready")).length, 1, "never resent");
 });

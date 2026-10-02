@@ -7,6 +7,9 @@ import {
   runPerspectivesCoordinatorStep,
   runPerspectivesPublishResult,
   runPerspectivesReadResult,
+  COORDINATOR_ROLE,
+  COORDINATOR_TITLE_PREFIX,
+  WORKER_TITLE_PREFIX,
   type PerspectivesExecutionSettings,
   type PhaseExecutionSettings,
 } from "./Perspectives.ts";
@@ -83,7 +86,7 @@ export default function plugin(bb: BbPluginApi): void {
     plannerProvider: {
       type: "string",
       label: "Planner provider ID",
-      description: "Blank inherits the caller provider. Also applies to final synthesis.",
+      description: "Blank inherits the caller provider. Applies to the help planner and the panel coordinator, which also writes the synthesis.",
       default: "",
     },
     plannerModel: {
@@ -102,7 +105,7 @@ export default function plugin(bb: BbPluginApi): void {
     plannerPermission: {
       type: "select",
       label: "Planner permission",
-      description: "The authority envelope for planner and synthesis threads. Prompt instructions remain read-only.",
+      description: "The authority envelope for the help planner and the panel coordinator. Prompt instructions remain read-only.",
       options: [...permissionOptions],
       default: "inherit",
     },
@@ -175,12 +178,8 @@ export default function plugin(bb: BbPluginApi): void {
 
   bb.agents.registerTool({
     name: "gather_perspectives",
-    description: `Launch a recoverable background expert panel for 2–7 distinct caller-supplied lenses. ${LENSES_EXAMPLE_TEXT} The tool creates a hidden coordinator lifecycle-owned by the caller with a persisted invocation marker and request identity; it schedules no follow-up in the requesting thread. It returns a success receipt only after the coordinator ID is known; an ambiguous spawn without one verified coordinator is reported as launch uncertain. The coordinator reconciles native worker reports against persisted child state and full outputs, then publishes one complete, partial, or failed artifact. It targets wrap-up at 20 minutes, a deadline wake at 25 minutes, and internal launch-intent wakes at 26 minutes; unfinished workers stop when the deadline wake is eventually handled. These are scheduling targets, not strict delivery guarantees. Read and verify the full artifact before presenting the result.`,
-    instructions: `Use gather_perspectives for consequential questions. Supply the question, relevant facts, constraints, and 2–7 distinct lenses. ${LENSES_EXAMPLE_TEXT} This returns a launch receipt, not the result. It confirms a verified hidden coordinator before reporting success; no requesting-thread timer is scheduled. If an ambiguous spawn cannot be reconciled to exactly one coordinator, report launch uncertainty, never retry blindly.
-
-The coordinator reconciles native worker reports with persisted child state and full final outputs, then publishes a complete, partial, or failed artifact. Queue and host delays mean scheduled times are targets, not guarantees; a failed queue row does not ensure a wake. Unavailable outputs are not evidence, and partial or failed work must be disclosed. Coverage is the coordinator's judgment, not mechanically proven: choose partial if any lens could not inspect sources, cannot answer, or coverage is uncertain. Preserve citations, distinguish evidence from inference, and identify unknowns.
-
-When the result arrives, use perspectives_read_result to verify and retrieve the full artifact before answering. Include its exact standalone receipt comment in your final answer after presenting the artifact. Do not claim exactly-once or eventual delivery, wait, poll, or re-invoke. Keep internal worker and planner references out of the caller-facing answer. help returns its expert answer directly.`,
+    description: `Launch a background expert panel for 2–7 distinct caller-supplied lenses. ${LENSES_EXAMPLE_TEXT} The tool queues one caller backstop, then creates a hidden coordinator lifecycle-owned by the caller. It returns a launch receipt only after the coordinator ID is known; an ambiguous spawn without one verified coordinator is reported as launch uncertain. The coordinator runs one hidden read-only worker per lens, stops unfinished workers at about 25 minutes, and publishes one verified complete, partial, or failed artifact. The caller is then woken once by a completion message; the backstop (about 35 minutes after launch) is removed when that message is delivered and otherwise prompts recovery. Times are scheduling targets, not delivery guarantees.`,
+    instructions: `Use gather_perspectives for consequential questions. Supply the question, relevant facts, constraints, and 2–7 distinct lenses. ${LENSES_EXAMPLE_TEXT} This returns a launch receipt, not the result. If the launch is reported uncertain, report that and never retry blindly. When the completion or backstop message arrives, call perspectives_read_result and present the verified artifact with its receipt line. Partial or failed status, unavailable lenses, and unknowns must be disclosed; do not wait, poll, or re-invoke.`,
     presentation: { label: {
       pending: "Launching an expert perspective panel",
       completed: "Launched an expert perspective panel",
@@ -256,30 +255,32 @@ When the result arrives, use perspectives_read_result to verify and retrieve the
   });
 
   bb.agents.configure((context) => {
-    const recognizablePanelWorker = context.thread.title?.startsWith("Perspectives worker ") ?? false;
-    if (recognizablePanelWorker) {
+    if (context.thread.title?.startsWith(WORKER_TITLE_PREFIX)) {
       return { tools: [], skills: [] };
     }
 
     if (context.origin.pluginId === bb.pluginId) {
       // Configure is synchronous, so durable run identity cannot be checked
-      // here. Advertise help and scoped coordinator tools to plugin-origin
-      // threads; every operation authenticates the current
-      // thread and its first persisted request event when executed. The title
-      // is deliberately not used to grant access, so coordinator renames work.
-      return { tools: ["help", "perspectives_coordinator_step", "perspectives_publish_result"], skills: [] };
+      // here; these hints only choose what to advertise. Coordinators carry
+      // seeded role metadata (v2 runs before seeding carry the coordinator
+      // title prefix, legacy v1 runs a parent). Every operation authenticates
+      // the persisted request and caller ownership when it executes. Other
+      // threads this plugin creates are help planners and experts, which must
+      // not delegate.
+      const coordinator = context.pluginMetadata?.role === COORDINATOR_ROLE ||
+        (context.thread.title?.startsWith(COORDINATOR_TITLE_PREFIX) ?? false) ||
+        context.thread.parentThreadId !== null;
+      return coordinator
+        ? { tools: ["perspectives_coordinator_step", "perspectives_publish_result"], skills: [] }
+        : { tools: [], skills: [] };
     }
 
     return {
       tools: ["help", "gather_perspectives", "perspectives_read_result"],
       skills: [],
-      instructions: `Perspectives experts are advisory and read-only. Give gather_perspectives the question, relevant facts, constraints, and 2–7 distinct lenses. ${LENSES_EXAMPLE_TEXT} Its launch receipt is not the result: success means a verified hidden coordinator is known. On ambiguous spawn, the tool reconciles the persisted marker and ownership; without exactly one verified coordinator it reports launch uncertainty. Never retry an ambiguous launch blindly.
+      instructions: `Perspectives experts are advisory and read-only. help answers synchronously. For consequential questions, give gather_perspectives the question, relevant facts, constraints, and 2–7 distinct lenses. ${LENSES_EXAMPLE_TEXT} It returns a launch receipt, not the result; the panel works in the background without waking this thread. If the launch is reported uncertain, never retry it blindly.
 
-The ordinary hidden coordinator schedules wrap-up and deadline wakes. Before each worker spawn, it confirms a per-lens launch-intent queue row scheduled at 26 minutes in the coordinator; an ambiguous slot stays frozen across wakes. Reconcile completion messages with persisted child status and full final outputs. Missing final output is unavailable evidence; intermediate event text and native notice excerpts are not research findings. The coordinator publishes a complete, partial, or failed artifact. Complete also requires its explicit coverage judgment; this is not proof of factual completeness. Choose partial when a lens cannot inspect sources or answer, or coverage is uncertain. Preserve citations, disagreements, and unknowns; distinguish evidence from inference.
-
-On a completion message or explicit retrieval request, use perspectives_read_result with the coordinator ID or invocation marker. It verifies persisted caller ownership and exact artifact bytes. Present the returned artifact and include its exact standalone receipt comment in your final answer. No requesting-thread follow-up is scheduled. It suppresses a repeated body only when the latest successful completed turn's final persisted agent message is its last completed item and bears the exact run-ID and full-file-digest receipt; otherwise it returns the artifact. A legacy markerless answer or duplicate completion message may repeat. The caller can request the body with includeArtifact: true. Do not claim exactly-once or eventual delivery.
-
-Scheduled times are targets. A failed queue row does not ensure a wake; if the completion message is also lost, explicit queue recovery or operator action may be needed. On recovery, zero verified coordinators is a failure or uncertainty; multiple runs are possible duplicates with separate artifacts. Never merge them. Report missing, corrupt, or cross-host-unavailable artifacts honestly. Do not expose worker or planner references, wait, poll, or re-invoke. help returns its expert answer directly.`,
+This thread is woken once when the panel publishes ("Perspectives panel result ready"). If that message was not confirmed, a "Perspectives panel backstop" message arrives instead, about 35 minutes after launch. On either, call perspectives_read_result with the coordinator ID or invocation marker it names. Present the verified artifact and include the exact standalone receipt line it returns in your final answer; if the tool reports the result was already presented, say nothing further about it. Preserve the artifact's citations, disagreements, and unknowns, and do not claim more coverage than its status states. Report missing, corrupt, uncertain, partial, or failed runs honestly, and keep possible duplicate runs separate. Do not wait, poll, or re-invoke for a result, and do not expose internal worker references.`,
     };
   });
 
