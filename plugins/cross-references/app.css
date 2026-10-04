@@ -4,7 +4,7 @@
 .cross-references__metric { display: inline-flex; align-items: center; gap: 3px; }
 .cross-references__metric + .cross-references__metric { padding-left: 6px; border-left: 1px solid var(--border); }
 .cross-references__metric svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.8; }
-.cross-references__count { min-width: 15px; padding: 1px 4px; border-radius: 999px; color: var(--primary-foreground); background: var(--primary); font-size: 9px; font-variant-numeric: tabular-nums; line-height: 1.35; text-align: center; }
+.cross-references__count { display: inline-flex; align-items: center; justify-content: center; min-width: 16px; height: 16px; padding: 0 4px; border-radius: 999px; color: var(--muted-foreground); background: var(--muted); font-size: 9px; font-variant-numeric: tabular-nums; line-height: 1; }
 .cross-references__popover { position: fixed; z-index: 60; display: grid; gap: 8px; width: min(360px, calc(100vw - 16px)); max-height: min(360px, 60vh); overflow-y: auto; padding: 12px; border: 1px solid var(--border); border-radius: 9px; color: var(--popover-foreground); background: var(--popover); box-shadow: 0 10px 30px color-mix(in srgb, var(--foreground) 18%, transparent); outline: none; }
 .cross-references__popover > header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .cross-references__popover > header strong { font-size: 12px; }
