@@ -1,0 +1,33 @@
+{
+  "name": "@phosphorco/bb-plugin-compact-display",
+  "version": "0.1.0",
+  "type": "module",
+  "license": "MIT",
+  "description": "Reduce prompt editor height and spacing when enabled.",
+  "author": "Phosphor",
+  "homepage": "https://github.com/phosphorco/bb-community-plugins/tree/main/plugins/compact-display#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/phosphorco/bb-community-plugins.git",
+    "directory": "plugins/compact-display"
+  },
+  "publishConfig": { "access": "public", "registry": "https://registry.npmjs.org" },
+  "keywords": ["bb", "bb-plugin", "compact", "appearance", "composer"],
+  "engines": { "bb": ">=0.42.0 <1.0.0", "bbPluginSdk": ">=0.4.47" },
+  "bb": {
+    "name": "Compact display",
+    "description": "Reduce prompt editor height and spacing. Enable this plugin for compact display; disable it to restore the default spacing.",
+    "branding": { "icon": "Minimize2" },
+    "server": "./server.ts",
+    "app": "./app.ts",
+    "skills": []
+  },
+  "files": ["dist/", "README.md", "LICENSE", "server.ts", "app.ts"],
+  "dependencies": {},
+  "devDependencies": { "@get-bb/plugin-sdk": "0.4.47", "typescript": "^5.9.3" },
+  "scripts": {
+    "build": "node ../../tools/bb-target-cli.mjs plugin build .",
+    "dev": "node ../../tools/bb-target-cli.mjs plugin dev .",
+    "typecheck": "tsc --noEmit"
+  }
+}
