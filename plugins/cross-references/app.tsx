@@ -17,7 +17,7 @@ import type {
 } from "./model.ts";
 import type { rpcContract } from "./rpc-contract.ts";
 import "./app.css";
-import { displayLabel } from "./presentation.ts";
+import { displayLabel, mergeReferenceRows, referenceIdentityKey } from "./presentation.ts";
 
 const EMPTY_BACKLINKS: ListBacklinksResponse = { rows: [], total: 0, nextCursor: null };
 const EMPTY_FORWARDS: ListForwardReferencesResponse = { rows: [], total: 0, nextCursor: null };
@@ -66,7 +66,7 @@ function useThreadReferences(projectId: string, threadId: string) {
   const [loadingMore, setLoadingMore] = useState<LoadingMore>({ forward: false, backlink: false });
   const [error, setError] = useState<string | null>(null);
   const [stale, setStale] = useState(false);
-  const sequence = useRef(0);
+  const refreshGeneration = useRef(0);
   const mounted = useRef(true);
   const initializedIdentity = useRef<string | null>(null);
   const refreshInFlight = useRef(false);
@@ -88,21 +88,21 @@ function useThreadReferences(projectId: string, threadId: string) {
       while (refreshPending.current && mounted.current) {
         refreshPending.current = false;
         const request = identityRef.current;
-        const requestSequence = ++sequence.current;
+        const requestGeneration = ++refreshGeneration.current;
         const source = { provider: "bb", keys: { project: request.projectId, thread: request.threadId } };
         try {
           const [forward, backlink] = await Promise.all([
             rpcRef.current.call("listForwardReferences", { source, pageSize: 25 }),
             rpcRef.current.call("listBacklinks", { target: source, pageSize: 25 }),
           ]);
-          if (mounted.current && request.key === identityRef.current.key && requestSequence === sequence.current) {
+          if (mounted.current && request.key === identityRef.current.key && requestGeneration === refreshGeneration.current) {
             setPages({ forward, backlink });
             setError(null);
             setLoading(false);
             setStale(false);
           }
         } catch (cause) {
-          if (mounted.current && request.key === identityRef.current.key && requestSequence === sequence.current) {
+          if (mounted.current && request.key === identityRef.current.key && requestGeneration === refreshGeneration.current) {
             setError(cause instanceof Error ? cause.message : "Could not load references.");
             setLoading(false);
           }
@@ -164,28 +164,30 @@ function useThreadReferences(projectId: string, threadId: string) {
 
   const loadMore = useCallback(async (direction: Direction) => {
     const cursor = pagesRef.current[direction].nextCursor;
-    if (cursor == null || moreInFlight.current[direction] || !mounted.current) return;
+    // Refresh replaces the complete page set and invalidates older pagination.
+    // Pagination in either direction must never invalidate a refresh or its peer.
+    if (cursor == null || moreInFlight.current[direction] || refreshInFlight.current || refreshPending.current || !mounted.current) return;
     moreInFlight.current[direction] = true;
     setLoadingMore((current) => ({ ...current, [direction]: true }));
     const request = identityRef.current;
-    const requestSequence = ++sequence.current;
+    const requestGeneration = refreshGeneration.current;
     const source = { provider: "bb", keys: { project: request.projectId, thread: request.threadId } };
     try {
       if (direction === "forward") {
         const next = await rpcRef.current.call("listForwardReferences", { source, pageSize: 25, cursor });
-        if (mounted.current && request.key === identityRef.current.key && requestSequence === sequence.current) {
-          setPages((current) => ({ ...current, forward: { rows: [...current.forward.rows, ...next.rows], total: next.total, nextCursor: next.nextCursor } }));
+        if (mounted.current && request.key === identityRef.current.key && requestGeneration === refreshGeneration.current) {
+          setPages((current) => ({ ...current, forward: { rows: mergeReferenceRows(current.forward.rows, next.rows, (row) => row.target), total: next.total, nextCursor: next.nextCursor } }));
           setError(null);
         }
       } else {
         const next = await rpcRef.current.call("listBacklinks", { target: source, pageSize: 25, cursor });
-        if (mounted.current && request.key === identityRef.current.key && requestSequence === sequence.current) {
-          setPages((current) => ({ ...current, backlink: { rows: [...current.backlink.rows, ...next.rows], total: next.total, nextCursor: next.nextCursor } }));
+        if (mounted.current && request.key === identityRef.current.key && requestGeneration === refreshGeneration.current) {
+          setPages((current) => ({ ...current, backlink: { rows: mergeReferenceRows(current.backlink.rows, next.rows, (row) => row.source), total: next.total, nextCursor: next.nextCursor } }));
           setError(null);
         }
       }
     } catch (cause) {
-      if (mounted.current && request.key === identityRef.current.key && requestSequence === sequence.current) {
+      if (mounted.current && request.key === identityRef.current.key && requestGeneration === refreshGeneration.current) {
         setError(cause instanceof Error ? cause.message : "Could not load more references.");
       }
     } finally {
@@ -338,7 +340,7 @@ function ReferenceSection({ heading, rows, total, nextCursor, loadingMore, onLoa
     {rows.length > 0 && <ul>{rows.map((row, index) => {
       const resource = direction === "forward" ? (row as ForwardReferenceRow).target : (row as BacklinkRow).source;
       const url = resource.presentation.url;
-      return <li key={`${row.producerPluginId}:${row.revision}:${row.position}:${index}`}><ResourceLink
+      return <li key={referenceIdentityKey(resource)}><ResourceLink
         resource={resource}
         first={index === 0}
         check={direction === "forward" && url !== undefined ? checksByUrl.get(url) : undefined}

@@ -84,12 +84,12 @@ export interface BacklinkRow {
 
 export interface ListBacklinksResponse {
   rows: BacklinkRow[];
-  /** Exact number of matching directed occurrences at this page's upper bound. */
+  /** Exact number of distinct source resources at this page's upper bound. */
   total: number;
   nextCursor: string | null;
 }
 
-/** The outgoing view of one stored directed edge. No inverse is persisted. */
+/** The deduplicated outgoing view of stored directed edges. No inverse is persisted. */
 export interface ListForwardReferencesInput {
   source: ResourceIdentity;
   /** Limits the outgoing view to one source-owner when supplied. */
@@ -107,7 +107,7 @@ export interface ForwardReferenceRow {
 
 export interface ListForwardReferencesResponse {
   rows: ForwardReferenceRow[];
-  /** Exact number of matching directed occurrences at this page's upper bound. */
+  /** Exact number of distinct target resources at this page's upper bound. */
   total: number;
   nextCursor: string | null;
 }

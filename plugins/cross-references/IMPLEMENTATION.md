@@ -250,39 +250,52 @@ listBacklinks takes { target: ResourceIdentity, pageSize?: number, cursor?: stri
 pageSize defaults to 25 and is restricted to 1–100. It resolves the target
 by the exact unique identity and returns an empty page when absent. Each row
 contains the source resource/presentation, claimed producer ID, projection
-revision, target presentation snapshot, and target position. Rows from two
-producers remain separate occurrences even when their source and target
-identities agree.
+revision, target presentation snapshot, and target position. Rows are
+deduplicated by exact source identity across producers. The lowest matching
+occurrence ID within the captured upper bound supplies the complete row,
+including its presentation and claimed producer metadata.
+An earlier occurrence without a presentation URL still wins over a later
+navigable occurrence. Fields are never mixed between producers.
 
 Its output is { rows: BacklinkRow[], total: number, nextCursor: string | null },
 where each BacklinkRow has { source: Resource, producerPluginId: string,
 revision: number, targetPresentation: Presentation, position: number }.
-`total` counts all matching occurrences through the page's captured upper ID,
+`total` counts distinct matching sources through the page's captured upper ID,
 so a header count is not mistaken for the number of rows in its first page.
 The occurrence ID is cursor-internal and is not a resource identity.
 
 The cursor is base64url without padding over compact JSON
 {v:1,targetDigest,upperId,afterId}. The first page captures
 upperId = COALESCE(MAX(reference_occurrences.id), 0) and uses afterId = 0.
-Later pages require the target digest to match the requested identity, filter
-id > afterId AND id <= upperId, return rows ordered by occurrence ID, and
+Later pages require the target digest to match the requested identity. Group
+matching occurrences with id <= upperId by exact source first, then filter
+the representative IDs by id > afterId, order them by occurrence ID, and
 encode the last returned ID only when an extra row exists. The occurrence ID
 is never reused. A cursor is invalid, not silently repurposed, when its version,
 digest, bounds, or encoding is wrong. This is bounded pagination over
 eventually changing data, not a cross-request SQLite snapshot.
+Deleting the representative can cause a surviving occurrence of an already
+returned identity to appear on a later page. The thread surface merges pages
+by exact resource identity, replacing the complete row on overlap while
+always advancing the returned cursor, including on overlap-only pages.
+Realtime refresh replaces the accumulated pages to reconcile removals. A
+refresh invalidates older pagination; pagination cannot invalidate refresh
+or pagination in the other direction, and does not start during refresh.
 
 listForwardReferences takes { source: ResourceIdentity, producerPluginId?:
 string, pageSize?: number, cursor?: string }. It reads the same active
 reference_occurrences rows by source projection and returns target
-resource/presentation, producer ID, revision, and position. Supplying a
-producer limits the outgoing view to that source-owner. Its cursor is bound to
+resource/presentation, producer ID, revision, and position. It deduplicates by
+exact target identity before pagination and uses the lowest matching
+occurrence ID to supply each row. Supplying a producer limits matching
+occurrences to that source-owner before deduplication. Its cursor is bound to
 the exact source identity and optional producer filter. The operation does not
-write an inverse edge: the returned occurrence is the one that listBacklinks
-returns when its target is opened.
+write an inverse edge. Forward and backlink reads may select different
+representative occurrences because a forward read can be producer-filtered.
 
 Its output is { rows: ForwardReferenceRow[], total: number, nextCursor: string
-| null }. `total` is the same upper-bound-stable exact count used by backlink
-pages, restricted to the requested source and optional producer.
+| null }. `total` counts distinct targets within the captured upper bound,
+restricted to the requested source and optional producer.
 
 checkForwardReferences takes { source: ResourceIdentity, producerPluginId?:
 string } and has no graph mutation, cursor, or persistence. It reads the
@@ -330,9 +343,12 @@ UNIQUE(provider, canonical_keys_json). It does not deduplicate on presentation,
 URL, producer, or discovery time. It deduplicates occurrences only within one
 current producer projection, by exact target identity; a repeated target in
 one incoming ordered list is rejected. Different producers asserting the same
-source/target retain different occurrence rows. Display grouping is query/UI
-derived, initially by exact source and target IDs, and retains each contributing
-occurrence and producer. There is no display_groups table.
+source/target retain different occurrence rows. List reads derive display
+grouping by exact source and target IDs; counts and pages use these groups.
+Each group exposes its first matching occurrence's producer metadata; all
+producer assertions remain available through getProjection. Labels and
+presentation URLs never participate in grouping, and URL queries and fragments
+remain distinct identities. There is no display_groups table.
 
 ### Local-first source contracts
 

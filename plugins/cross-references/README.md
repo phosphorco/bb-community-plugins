@@ -103,6 +103,17 @@ exact resource identity, durable complete-set projections, forward-reference
 and backlink reads, source-aware invalidation, and a compact per-thread
 References control. Machine Monitor and Thread Links are source adapters.
 
+The lists show each exact target once in Forward references and each exact
+source once in Backlinks, even when multiple producers assert the same link.
+Counts and pagination use those distinct resources. The first matching
+occurrence supplies the displayed label; each producer keeps its own durable
+projection, so removing one assertion leaves the link visible while another
+producer still supplies it.
+If a producer changes while pages are loading, the list merges repeated
+identities and adopts the surviving producer's complete row. Realtime refresh
+reconciles removals. The first matching presentation may omit a clickable URL
+even if another producer supplies one.
+
 Thread Links now projects its automatic assistant-message observations using a
 small, explicit URL convention. A generic web target has exact identity
 `{ provider: "url", keys: { href } }`, where `href` is the platform-normalized

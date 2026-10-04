@@ -1,3 +1,22 @@
+import type { ResourceIdentity } from "./model.ts";
+
+/** RPC resources already have canonical values; key insertion order is irrelevant. */
+export function referenceIdentityKey(resource: ResourceIdentity): string {
+  return JSON.stringify([resource.provider, Object.entries(resource.keys).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0)]);
+}
+
+/** Replace the whole row when a surviving producer reappears on a later page. */
+export function mergeReferenceRows<Row>(
+  previous: readonly Row[],
+  incoming: readonly Row[],
+  resourceFor: (row: Row) => ResourceIdentity,
+): Row[] {
+  const rows = new Map<string, Row>();
+  for (const row of previous) rows.set(referenceIdentityKey(resourceFor(row)), row);
+  for (const row of incoming) rows.set(referenceIdentityKey(resourceFor(row)), row);
+  return [...rows.values()];
+}
+
 const GENERIC_LINK_LABELS = new Set([
   "", "link", "the link", "here", "see here", "this", "url", "click here", "this link", "link here", "this page",
   "read more", "more", "source",

@@ -2,21 +2,23 @@
 
 import { createHash } from "node:crypto";
 
-import { fireEvent, waitFor } from "@testing-library/react";
-import { expect, test } from "vitest";
+import { act, cleanup, fireEvent, waitFor } from "@testing-library/react";
+import { afterEach, expect, test } from "vitest";
 
 import { loadPluginApp, renderSlot } from "@get-bb/plugin-sdk/testing/app";
+
+afterEach(cleanup);
 
 function threadDigest(projectId: string, threadId: string): string {
   const json = JSON.stringify({ provider: "bb", keys: { project: projectId, thread: threadId } });
   return createHash("sha256").update(json, "utf8").digest("hex");
 }
 
-const forwardRow = (label = "Thread B") => ({
+const forwardRow = (label = "Thread B", threadId = "thr_target01") => ({
   target: {
     provider: "bb",
-    keys: { project: "proj_target01", thread: "thr_target01" },
-    presentation: { label, detail: "BB thread", url: "/projects/proj_target01/threads/thr_target01" },
+    keys: { project: "proj_target01", thread: threadId },
+    presentation: { label, detail: "BB thread", url: `/projects/proj_target01/threads/${threadId}` },
   },
   producerPluginId: "thread-links",
   revision: 1,
@@ -33,6 +35,127 @@ const backlinkRow = (label = "Machine Monitor") => ({
   revision: 1,
   targetPresentation: { label: "Header thread" },
   position: 0,
+});
+
+function deferred<Value>() {
+  let resolve!: (value: Value) => void;
+  const promise = new Promise<Value>((done) => { resolve = done; });
+  return { promise, resolve };
+}
+
+test.each(["forward", "backlink"] as const)("merges overlapping %s pages and advances an overlap-only cursor", async (direction) => {
+  const app = await loadPluginApp(() => import("../app.tsx"));
+  const initial = direction === "forward" ? forwardRow("Original") : backlinkRow("Original");
+  const replacement = { ...initial, producerPluginId: "surviving-producer", revision: 2, position: 1 };
+  if ("target" in replacement) replacement.target = { ...replacement.target, presentation: { ...replacement.target.presentation, label: "Replacement" } };
+  else replacement.source = { ...replacement.source, presentation: { ...replacement.source.presentation, label: "Replacement" } };
+  const distinct = direction === "forward" ? forwardRow("Distinct", "thr_distinct") : {
+    ...backlinkRow("Distinct"), source: { ...backlinkRow("Distinct").source, keys: { page: "another-page", plugin: "another-plugin" } },
+  };
+  const cursors: (string | undefined)[] = [];
+  const page = (input: { cursor?: string }) => {
+    cursors.push(input.cursor);
+    return input.cursor === undefined
+      ? { rows: [initial], total: 2, nextCursor: "overlap-only" }
+      : input.cursor === "overlap-only"
+        ? { rows: [replacement], total: 2, nextCursor: "distinct-page" }
+        : { rows: [distinct], total: 2, nextCursor: null };
+  };
+  const slot = renderSlot(app.threadHeaderActions[0]!,
+    { threadId: "thr_overlap", projectId: "proj_overlap", isCompactViewport: false },
+    { rpc: {
+      listForwardReferences: direction === "forward" ? page : () => ({ rows: [], total: 0, nextCursor: null }),
+      listBacklinks: direction === "backlink" ? page : () => ({ rows: [], total: 0, nextCursor: null }),
+      checkForwardReferences: () => [],
+    } } as any);
+  const countName = direction === "forward" ? "2 forward references" : "2 backlinks";
+  fireEvent.click(await slot.findByRole("button", { name: `Cross-references: ${countName}` }));
+  const regionName = direction === "forward" ? "Forward references" : "Backlinks";
+  const loadName = `Load more ${direction === "forward" ? "forward references" : "backlinks"}`;
+  const originalElement = slot.getByText("Original").closest("li");
+  fireEvent.click(slot.getByRole("button", { name: loadName }));
+  await slot.findByText("Replacement");
+  expect(slot.queryByText("Original")).toBeNull();
+  expect(slot.getByRole("region", { name: regionName }).querySelectorAll("li")).toHaveLength(1);
+  expect(slot.getByText("Replacement").closest("li")).toBe(originalElement);
+  await waitFor(() => expect((slot.getByRole("button", { name: loadName }) as HTMLButtonElement).disabled).toBe(false));
+  fireEvent.click(slot.getByRole("button", { name: loadName }));
+  await slot.findByText("Distinct");
+  expect(slot.getByRole("region", { name: regionName }).querySelectorAll("li")).toHaveLength(2);
+  expect(cursors).toEqual([undefined, "overlap-only", "distinct-page"]);
+  expect(slot.queryByRole("button", { name: loadName })).toBeNull();
+  slot.lifecycle.unmount();
+});
+
+test("load-more cannot discard an in-flight realtime refresh", async () => {
+  const app = await loadPluginApp(() => import("../app.tsx"));
+  const refreshed = deferred<{ rows: ReturnType<typeof forwardRow>[]; total: number; nextCursor: null }>();
+  let calls = 0;
+  const slot = renderSlot(app.threadHeaderActions[0]!,
+    { threadId: "thr_refresh_race", projectId: "proj_refresh_race", isCompactViewport: false },
+    { rpc: {
+      listForwardReferences: (input: { cursor?: string }) => {
+        calls++;
+        if (input.cursor !== undefined) return { rows: [forwardRow("Unwanted page", "thr_old_page")], total: 2, nextCursor: null };
+        return calls === 1 ? { rows: [forwardRow("Deleted target")], total: 2, nextCursor: "old-cursor" } : refreshed.promise;
+      },
+      listBacklinks: () => ({ rows: [], total: 0, nextCursor: null }),
+      checkForwardReferences: () => [],
+    } } as any);
+  fireEvent.click(await slot.findByRole("button", { name: "Cross-references: 2 forward references" }));
+  await slot.behavior.emitRealtime("cross-references-changed", {
+    protocolVersion: 1, affectedIdentityDigests: [threadDigest("proj_refresh_race", "thr_refresh_race")],
+  });
+  await waitFor(() => expect(calls).toBe(2));
+  fireEvent.click(slot.getByRole("button", { name: "Load more forward references" }));
+  expect(calls).toBe(2);
+  await act(async () => refreshed.resolve({ rows: [forwardRow("Refreshed target", "thr_refreshed")], total: 1, nextCursor: null }));
+  await slot.findByText("Refreshed target");
+  expect(slot.queryByText("Deleted target")).toBeNull();
+  expect(slot.queryByText("Unwanted page")).toBeNull();
+  expect(slot.getByRole("button", { name: "Cross-references: 1 forward reference" })).toBeTruthy();
+  slot.lifecycle.unmount();
+});
+
+test("both directions accept concurrent page results and a refresh invalidates older pagination", async () => {
+  const app = await loadPluginApp(() => import("../app.tsx"));
+  const nextForward = deferred<{ rows: ReturnType<typeof forwardRow>[]; total: number; nextCursor: string | null }>();
+  const nextBacklink = deferred<{ rows: ReturnType<typeof backlinkRow>[]; total: number; nextCursor: null }>();
+  const obsoleteForward = deferred<{ rows: ReturnType<typeof forwardRow>[]; total: number; nextCursor: null }>();
+  let forwardCalls = 0;
+  let backlinkCalls = 0;
+  const slot = renderSlot(app.threadHeaderActions[0]!,
+    { threadId: "thr_parallel", projectId: "proj_parallel", isCompactViewport: false },
+    { rpc: {
+      listForwardReferences: (input: { cursor?: string }) => {
+        forwardCalls++;
+        return input.cursor !== undefined ? (input.cursor === "obsolete-next" ? obsoleteForward.promise : nextForward.promise) : { rows: [forwardRow()], total: 2, nextCursor: "forward-next" };
+      },
+      listBacklinks: (input: { cursor?: string }) => {
+        backlinkCalls++;
+        return input.cursor !== undefined ? nextBacklink.promise : { rows: [backlinkRow()], total: 2, nextCursor: "backlink-next" };
+      },
+      checkForwardReferences: () => [],
+    } } as any);
+  fireEvent.click(await slot.findByRole("button", { name: "Cross-references: 2 forward references, 2 backlinks" }));
+  fireEvent.click(slot.getByRole("button", { name: "Load more forward references" }));
+  fireEvent.click(slot.getByRole("button", { name: "Load more backlinks" }));
+  await waitFor(() => { expect(forwardCalls).toBe(2); expect(backlinkCalls).toBe(2); });
+  await act(async () => nextBacklink.resolve({ rows: [backlinkRow("Updated backlink")], total: 2, nextCursor: null }));
+  await slot.findByText("Updated backlink");
+  await act(async () => nextForward.resolve({ rows: [forwardRow("Updated forward")], total: 2, nextCursor: "obsolete-next" }));
+  await slot.findByText("Updated forward");
+  fireEvent.click(slot.getByRole("button", { name: "Load more forward references" }));
+  await waitFor(() => expect(forwardCalls).toBe(3));
+  // A realtime refresh supersedes the newly-pending forward page.
+  await slot.behavior.emitRealtime("cross-references-changed", {
+    protocolVersion: 1, affectedIdentityDigests: [threadDigest("proj_parallel", "thr_parallel")],
+  });
+  await waitFor(() => { expect(forwardCalls).toBe(4); expect(backlinkCalls).toBe(3); });
+  await slot.findByText("Machine Monitor");
+  await act(async () => obsoleteForward.resolve({ rows: [forwardRow("Obsolete target", "thr_obsolete")], total: 2, nextCursor: null }));
+  expect(slot.queryByText("Obsolete target")).toBeNull();
+  slot.lifecycle.unmount();
 });
 
 test("the References header presents directed forward references and backlinks in one accessible dialog", async () => {
@@ -167,7 +290,7 @@ test("paginates forward references independently from backlinks", async () => {
           forwardInputs.push(input);
           return forwardInputs.length === 1
             ? { rows: [forwardRow("First target")], total: 2, nextCursor: "forward-page-2" }
-            : { rows: [forwardRow("Second target")], total: 2, nextCursor: null };
+            : { rows: [forwardRow("Second target", "thr_target02")], total: 2, nextCursor: null };
         },
         listBacklinks: (input: unknown) => {
           backlinkInputs.push(input);

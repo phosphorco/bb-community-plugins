@@ -182,17 +182,19 @@ test("cascades projection occurrences but restricts resource deletion", (t) => {
   assert.equal(db.prepare("DELETE FROM resources WHERE id = ?").run(targetResourceId).changes, 1);
 });
 
-test("returns exact bounded backlinks with source context, producer occurrences, and stable cursors", (t) => {
+test("deduplicates backlinks by exact source before counting and paginating", (t) => {
   const { db, store } = makeStore();
   t.after(() => db.close());
   const target = makeThread("Shared target");
   for (const producerPluginId of ["producer-one", "producer-two", "producer-three"]) {
-    assert.equal(store.applyProjection(makeCommand({
-      producerPluginId,
-      source: makeResource("shared-source", "Shared source"),
-      targets: [target],
-      revision: 1,
-    })).outcome, "applied");
+    for (const sourceId of ["source-one", "source-two", "source-three"]) {
+      assert.equal(store.applyProjection(makeCommand({
+        producerPluginId,
+        source: makeResource(sourceId, "Shared source"),
+        targets: [target],
+        revision: 1,
+      })).outcome, "applied");
+    }
   }
 
   const targetIdentity = { provider: target.provider, keys: target.keys };
@@ -211,14 +213,15 @@ test("returns exact bounded backlinks with source context, producer occurrences,
   assert.deepEqual(
     [first.rows[0], second.rows[0], third.rows[0]].map((row) => ({
       source: row?.source.presentation.label,
+      keys: row?.source.keys,
       producer: row?.producerPluginId,
       position: row?.position,
       target: row?.targetPresentation.label,
     })),
     [
-      { source: "Shared source", producer: "producer-one", position: 0, target: "Shared target" },
-      { source: "Shared source", producer: "producer-two", position: 0, target: "Shared target" },
-      { source: "Shared source", producer: "producer-three", position: 0, target: "Shared target" },
+      { source: "Shared source", keys: { source: "source-one" }, producer: "producer-one", position: 0, target: "Shared target" },
+      { source: "Shared source", keys: { source: "source-two" }, producer: "producer-one", position: 0, target: "Shared target" },
+      { source: "Shared source", keys: { source: "source-three" }, producer: "producer-one", position: 0, target: "Shared target" },
     ],
   );
   assert.throws(() => store.listBacklinks({ target: targetIdentity, pageSize: 0 }), /pageSize/);
@@ -231,13 +234,6 @@ test("returns exact bounded backlinks with source context, producer occurrences,
   assert.throws(() => store.listBacklinks({ target: targetIdentity, cursor: oversizedCursor }), /bounds/);
   assert.deepEqual(store.listBacklinks({ target: { provider: "bb", keys: { project: "proj_12345678", thread: "thr_absent01" } }, pageSize: 100 }), { rows: [], total: 0, nextCursor: null });
 
-  const plan = db.prepare(
-    `EXPLAIN QUERY PLAN
-       SELECT id FROM reference_occurrences
-        WHERE target_resource_id = ? AND id > ? AND id <= ?
-        ORDER BY id ASC LIMIT ?`,
-  ).all(1, 0, 100, 2) as Array<{ detail: string }>;
-  assert.ok(plan.some((entry) => entry.detail.includes("reference_occurrences_target_idx")), JSON.stringify(plan));
 });
 
 test("reads one directed occurrence as a forward reference at its source and a backlink at a BB-thread target", (t) => {
@@ -327,6 +323,152 @@ test("binds forward-reference pages to an optional producer filter", (t) => {
   });
   assert.deepEqual(page.rows.map((row) => row.target.keys), [threadLinksTarget.keys]);
   assert.equal(page.nextCursor, null);
+});
+
+test("deduplicates forward targets across producers before pagination and preserves exact URL identity", (t) => {
+  const { db, store } = makeStore();
+  t.after(() => db.close());
+  const source = makeThread("Source", "thr_dedup_source");
+  const urls = ["https://example.test/doc?version=1", "https://example.test/doc?version=2", "https://example.test/doc?version=2#section"];
+  const targets: Resource[] = urls.map((href) => ({
+    provider: "url", keys: { href }, presentation: { label: "Same label", url: href },
+  }));
+  for (const producerPluginId of ["producer-one", "producer-two"]) {
+    store.applyProjection(makeCommand({
+      source, producerPluginId,
+      targets: targets.map((target) => ({ ...target, presentation: { ...target.presentation, detail: producerPluginId } })),
+    }));
+  }
+  const sourceIdentity = { provider: source.provider, keys: source.keys };
+  const first = store.listForwardReferences({ source: sourceIdentity, pageSize: 1 });
+  assert.equal(first.total, 3);
+  assert.equal(first.rows[0]?.target.presentation.detail, "producer-one");
+  assert.equal(first.rows[0]?.producerPluginId, "producer-one");
+  // Neither a new unique target nor a duplicate asserted after capture enters this page set.
+  store.applyProjection(makeCommand({
+    source, producerPluginId: "producer-three", targets: [targets[0]!, makeThread("New target", "thr_new_target")],
+  }));
+  const second = store.listForwardReferences({ source: sourceIdentity, pageSize: 1, cursor: first.nextCursor! });
+  const third = store.listForwardReferences({ source: sourceIdentity, pageSize: 1, cursor: second.nextCursor! });
+  assert.deepEqual([first, second, third].flatMap((page) => page.rows.map((row) => row.target.keys.href)), urls);
+  assert.deepEqual([first.total, second.total, third.total], [3, 3, 3]);
+  assert.equal(third.nextCursor, null);
+  assert.equal(store.listForwardReferences({ source: sourceIdentity }).total, 4);
+  const filtered = store.listForwardReferences({ source: sourceIdentity, producerPluginId: "producer-two" });
+  assert.equal(filtered.total, 3);
+  assert.ok(filtered.rows.every((row) => row.producerPluginId === "producer-two"));
+  assert.ok(filtered.rows.every((row) => row.target.presentation.detail === "producer-two"));
+  assert.equal(store.getProjection({ source: sourceIdentity, producerPluginId: "producer-two" }).projection?.targets.length, 3);
+});
+
+test("removing one producer keeps the shared link until the final assertion is removed", (t) => {
+  const { db, store } = makeStore();
+  t.after(() => db.close());
+  const source = makeThread("First presentation", "thr_shared_source");
+  const target = makeThread("First target", "thr_shared_target");
+  store.applyProjection(makeCommand({ source, targets: [target], producerPluginId: "producer-one" }));
+  const secondSource = { ...source, presentation: { label: "Second presentation" } };
+  const secondTarget = { ...target, presentation: { label: "Second target", url: "/projects/proj_12345678/threads/thr_shared_target" } };
+  store.applyProjection(makeCommand({ source: secondSource, targets: [secondTarget], producerPluginId: "producer-two" }));
+  const sourceIdentity = { provider: source.provider, keys: source.keys };
+  const targetIdentity = { provider: target.provider, keys: target.keys };
+  assert.equal(store.listForwardReferences({ source: sourceIdentity }).total, 1);
+  assert.equal(store.listBacklinks({ target: targetIdentity }).total, 1);
+  assert.equal(store.listForwardReferences({ source: sourceIdentity }).rows[0]?.target.presentation.label, "First target");
+  assert.equal(store.listForwardReferences({ source: sourceIdentity }).rows[0]?.target.presentation.url, undefined, "the first complete occurrence wins even without a URL");
+  assert.equal(store.listBacklinks({ target: targetIdentity }).rows[0]?.source.presentation.label, "First presentation");
+  assert.equal((db.prepare("SELECT COUNT(*) AS count FROM reference_occurrences").get() as { count: number }).count, 2);
+  store.applyProjection(makeCommand({ source, targets: [], producerPluginId: "producer-one", revision: 2, expectedRevision: 1, tombstone: true }));
+  const forward = store.listForwardReferences({ source: sourceIdentity });
+  const backward = store.listBacklinks({ target: targetIdentity });
+  assert.equal(forward.total, 1);
+  assert.equal(backward.total, 1);
+  assert.equal(forward.rows[0]?.target.presentation.label, "Second target");
+  assert.equal(forward.rows[0]?.target.presentation.url, secondTarget.presentation.url);
+  assert.equal(backward.rows[0]?.source.presentation.label, "Second presentation");
+  assert.equal(forward.rows[0]?.producerPluginId, "producer-two");
+  assert.equal(backward.rows[0]?.producerPluginId, "producer-two");
+  store.applyProjection(makeCommand({ source: secondSource, targets: [], producerPluginId: "producer-two", revision: 2, expectedRevision: 1 }));
+  assert.deepEqual(store.listForwardReferences({ source: sourceIdentity }), { rows: [], total: 0, nextCursor: null });
+  assert.deepEqual(store.listBacklinks({ target: targetIdentity }), { rows: [], total: 0, nextCursor: null });
+});
+
+test("captured cursors continue after representative deletion with coherent surviving rows", (t) => {
+  for (const direction of ["forward", "backlink"] as const) {
+    const { db, store } = makeStore();
+    t.after(() => db.close());
+    const source = makeResource("source-a");
+    const target = makeThread("Target A", "thr_a");
+    store.applyProjection(makeCommand({
+      source, targets: direction === "forward" ? [target, makeThread("Target B", "thr_b")] : [target],
+      producerPluginId: "producer-one",
+    }));
+    if (direction === "backlink") store.applyProjection(makeCommand({
+      source: makeResource("source-b"), targets: [target], producerPluginId: "producer-one",
+    }));
+    const survivor = { ...target, presentation: { label: "Surviving target" } };
+    store.applyProjection(makeCommand({
+      source: { ...source, presentation: { label: "Surviving source" } },
+      targets: [survivor], producerPluginId: "producer-two",
+    }));
+    const sourceIdentity = { provider: source.provider, keys: source.keys };
+    const targetIdentity = { provider: target.provider, keys: target.keys };
+    const read = (cursor?: string) => direction === "forward"
+      ? store.listForwardReferences({ source: sourceIdentity, pageSize: 1, cursor })
+      : store.listBacklinks({ target: targetIdentity, pageSize: 1, cursor });
+    const first = read();
+    assert.equal(first.total, 2);
+    assert.equal(first.rows[0]?.producerPluginId, "producer-one");
+    store.applyProjection(makeCommand({
+      source, targets: direction === "forward" ? [makeThread("Target B", "thr_b")] : [],
+      producerPluginId: "producer-one", revision: 2, expectedRevision: 1,
+    }));
+    // Replacement deletes IDs inside the capture and inserts IDs beyond it.
+    // A surviving assertion can therefore reappear; the UI must merge identity.
+    let page = read(first.nextCursor!);
+    assert.equal(page.total, direction === "forward" ? 1 : 2);
+    while (page.nextCursor !== null) page = read(page.nextCursor);
+    assert.equal(page.rows[0]?.producerPluginId, "producer-two");
+    if ("target" in page.rows[0]!) assert.equal(page.rows[0].target.presentation.label, "Surviving target");
+    else assert.equal(page.rows[0]?.source.presentation.label, "Surviving source");
+    assert.equal(read().total, 2);
+  }
+});
+
+test("production grouped count and page queries use indexed occurrence access", (t) => {
+  const { db, store } = makeStore();
+  t.after(() => db.close());
+  const source = makeResource("plan-source");
+  const targets = Array.from({ length: 32 }, (_, index) => makeThread(`Target ${index}`, `thr_plan_${index}`));
+  for (let index = 0; index < 8; index++) store.applyProjection(makeCommand({ source, targets, producerPluginId: `producer-${index}` }));
+  const prepare = db.prepare.bind(db);
+  const plans: Array<{ sql: string; details: string[] }> = [];
+  // Inspect the exact statements and parameters the store executes, so this
+  // cannot silently keep testing a superseded query.
+  db.prepare = ((sql: string) => {
+    const statement = prepare(sql);
+    if (!sql.includes("MIN(reference_occurrences.id)")) return statement;
+    return new Proxy(statement, {
+      get(target, key) {
+        const member = Reflect.get(target, key);
+        if ((key === "get" || key === "all") && typeof member === "function") return (...parameters: unknown[]) => {
+          const plan = prepare(`EXPLAIN QUERY PLAN ${sql}`).all(...parameters) as Array<{ detail: string }>;
+          plans.push({ sql, details: plan.map((row) => row.detail) });
+          return Reflect.apply(member, target, parameters);
+        };
+        return typeof member === "function" ? member.bind(target) : member;
+      },
+    });
+  }) as typeof db.prepare;
+  const sourceIdentity = { provider: source.provider, keys: source.keys };
+  store.listBacklinks({ target: { provider: targets[0]!.provider, keys: targets[0]!.keys } });
+  store.listForwardReferences({ source: sourceIdentity });
+  store.listForwardReferences({ source: sourceIdentity, producerPluginId: "producer-3" });
+  assert.equal(plans.length, 6, "count and page queries for all three views");
+  for (const plan of plans) {
+    assert.ok(plan.details.some((detail) => /SEARCH reference_occurrences USING.*INDEX/.test(detail)), JSON.stringify(plan));
+    assert.ok(!plan.details.some((detail) => /^SCAN reference_occurrences\b/.test(detail)), JSON.stringify(plan));
+  }
 });
 
 test("does not reuse occurrence ids after complete replacement", (t) => {

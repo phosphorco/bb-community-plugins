@@ -583,11 +583,18 @@ export class CrossReferenceStore {
     const targetRow = this.findResource(targetIdentity);
     if (targetRow === null) return { rows: [], total: 0, nextCursor: null };
 
-    const total = (this.db.prepare(
-      `SELECT COUNT(*) AS total
+    // Group within the captured upper bound before applying afterId or LIMIT:
+    // duplicate producer assertions must not leak into later pages.
+    const matching = `SELECT MIN(reference_occurrences.id) AS occurrence_id
          FROM reference_occurrences
-        WHERE target_resource_id = ?
-          AND id <= ?`,
+         JOIN source_projections
+           ON source_projections.id = reference_occurrences.projection_id
+        WHERE reference_occurrences.target_resource_id = ?
+          AND source_projections.tombstone = 0
+          AND reference_occurrences.id <= ?
+        GROUP BY source_projections.source_resource_id`;
+    const total = (this.db.prepare(
+      `SELECT COUNT(*) AS total FROM (${matching})`,
     ).get(targetRow.id, cursor.upperId) as { total: number }).total;
 
     const rows = this.db.prepare(
@@ -599,17 +606,17 @@ export class CrossReferenceStore {
               source_projections.revision,
               reference_occurrences.target_presentation_json,
               reference_occurrences.position
-         FROM reference_occurrences
+         FROM (${matching}) AS matching
+         JOIN reference_occurrences
+           ON reference_occurrences.id = matching.occurrence_id
          JOIN source_projections
            ON source_projections.id = reference_occurrences.projection_id
          JOIN resources AS source_resources
            ON source_resources.id = source_projections.source_resource_id
-        WHERE reference_occurrences.target_resource_id = ?
-          AND reference_occurrences.id > ?
-          AND reference_occurrences.id <= ?
+        WHERE reference_occurrences.id > ?
         ORDER BY reference_occurrences.id ASC
         LIMIT ?`,
-    ).all(targetRow.id, cursor.afterId, cursor.upperId, pageSize + 1) as BacklinkQueryRow[];
+    ).all(targetRow.id, cursor.upperId, cursor.afterId, pageSize + 1) as BacklinkQueryRow[];
 
     const hasNext = rows.length > pageSize;
     const page = hasNext ? rows.slice(0, pageSize) : rows;
@@ -636,9 +643,8 @@ export class CrossReferenceStore {
   }
 
   /**
-   * Read the outgoing side of the exact edge index. A row here is the same
-   * stored occurrence that listBacklinks exposes from its target; no reverse
-   * relationship is materialized.
+   * Read one representative occurrence per exact target identity. Producer
+   * projections retain all assertions; no reverse relationship is materialized.
    */
   listForwardReferences(input: ListForwardReferencesInput): ListForwardReferencesResponse {
     const sourceIdentity = normalizeIdentityInput(input.source);
@@ -657,15 +663,17 @@ export class CrossReferenceStore {
     const sourceRow = this.findResource(sourceIdentity);
     if (sourceRow === null) return { rows: [], total: 0, nextCursor: null };
 
-    const total = (this.db.prepare(
-      `SELECT COUNT(*) AS total
+    const matching = `SELECT MIN(reference_occurrences.id) AS occurrence_id
          FROM source_projections
          JOIN reference_occurrences
            ON reference_occurrences.projection_id = source_projections.id
         WHERE source_projections.source_resource_id = ?
           AND source_projections.tombstone = 0
           AND (? IS NULL OR source_projections.producer_plugin_id = ?)
-          AND reference_occurrences.id <= ?`,
+          AND reference_occurrences.id <= ?
+        GROUP BY reference_occurrences.target_resource_id`;
+    const total = (this.db.prepare(
+      `SELECT COUNT(*) AS total FROM (${matching})`,
     ).get(sourceRow.id, producerPluginId, producerPluginId, cursor.upperId) as { total: number }).total;
 
     const rows = this.db.prepare(
@@ -676,19 +684,17 @@ export class CrossReferenceStore {
               source_projections.producer_plugin_id,
               source_projections.revision,
               reference_occurrences.position
-         FROM source_projections
+         FROM (${matching}) AS matching
          JOIN reference_occurrences
-           ON reference_occurrences.projection_id = source_projections.id
+           ON reference_occurrences.id = matching.occurrence_id
+         JOIN source_projections
+           ON source_projections.id = reference_occurrences.projection_id
          JOIN resources AS target_resources
            ON target_resources.id = reference_occurrences.target_resource_id
-        WHERE source_projections.source_resource_id = ?
-          AND source_projections.tombstone = 0
-          AND (? IS NULL OR source_projections.producer_plugin_id = ?)
-          AND reference_occurrences.id > ?
-          AND reference_occurrences.id <= ?
+        WHERE reference_occurrences.id > ?
         ORDER BY reference_occurrences.id ASC
         LIMIT ?`,
-    ).all(sourceRow.id, producerPluginId, producerPluginId, cursor.afterId, cursor.upperId, pageSize + 1) as ForwardReferenceQueryRow[];
+    ).all(sourceRow.id, producerPluginId, producerPluginId, cursor.upperId, cursor.afterId, pageSize + 1) as ForwardReferenceQueryRow[];
 
     const hasNext = rows.length > pageSize;
     const page = hasNext ? rows.slice(0, pageSize) : rows;

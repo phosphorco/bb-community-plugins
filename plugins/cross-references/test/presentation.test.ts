@@ -1,6 +1,21 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { displayLabel } from "../presentation.ts";
+import { displayLabel, mergeReferenceRows } from "../presentation.ts";
+
+test("page merging uses exact identity and replaces coherent whole rows", () => {
+  const initial = { resource: { provider: "bb", keys: { project: "p", thread: "t" } }, label: "First", producer: "one", revision: 1, position: 0 };
+  const updated = { resource: { provider: "bb", keys: { thread: "t", project: "p" } }, label: "Updated", producer: "two", revision: 2, position: 3 };
+  const otherProvider = { ...updated, resource: { ...updated.resource, provider: "custom" } };
+  assert.deepEqual(mergeReferenceRows([initial], [updated, otherProvider], (row) => row.resource), [updated, otherProvider]);
+  assert.equal(initial.label, "First", "merging must not mutate existing rows");
+});
+
+test("page merging preserves query and fragment distinctions even with identical labels", () => {
+  const rows = ["https://h.test/p?v=1", "https://h.test/p?v=2", "https://h.test/p?v=2#section"].map((href) => ({
+    resource: { provider: "url", keys: { href } }, label: "Same label",
+  }));
+  assert.deepEqual(mergeReferenceRows(rows.slice(0, 1), rows, (row) => row.resource), rows);
+});
 
 const text = (label: string, url?: string) => displayLabel(label, url).text;
 const shown = (label: string, url?: string) => text(label, url) ?? "";
