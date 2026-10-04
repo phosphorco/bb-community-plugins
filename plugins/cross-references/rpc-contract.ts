@@ -120,6 +120,7 @@ const backlinkRowSchema = z.object({
   revision: revisionSchema.nonnegative(),
   targetPresentation: presentationSchema,
   position: z.number().int().min(0).max(MAX_TARGETS - 1).refine(Number.isSafeInteger),
+  lastSeenAt: revisionSchema.nonnegative().nullable().optional(),
 }).strict();
 
 const listBacklinksInputSchema = z.object({
@@ -139,6 +140,7 @@ const forwardReferenceRowSchema = z.object({
   producerPluginId: producerPluginIdSchema,
   revision: revisionSchema.nonnegative(),
   position: z.number().int().min(0).max(MAX_TARGETS - 1).refine(Number.isSafeInteger),
+  lastSeenAt: revisionSchema.nonnegative().nullable().optional(),
 }).strict();
 
 const listForwardReferencesInputSchema = z.object({

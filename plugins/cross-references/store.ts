@@ -1,10 +1,12 @@
 import { Buffer } from "node:buffer";
+import { randomUUID } from "node:crypto";
 import type Database from "better-sqlite3";
 
 import {
   canonicalizeIdentity,
   canonicalizeResource,
   serializeResource,
+  projectionPayloadDigest,
   type CanonicalIdentity,
   type CanonicalResource,
   type Presentation,
@@ -98,6 +100,16 @@ export const crossReferencesMigrations = [
   // statement, so modifying the initial index migration would strand users.
   `CREATE INDEX IF NOT EXISTS source_projections_source_idx
      ON source_projections(source_resource_id, id)`,
+  `ALTER TABLE reference_occurrences ADD COLUMN last_seen_at INTEGER
+     CHECK (last_seen_at IS NULL OR last_seen_at >= 0)`,
+  `CREATE TABLE assistant_link_jobs (
+     thread_id TEXT PRIMARY KEY, project_id TEXT NOT NULL,
+     version INTEGER NOT NULL, deleted INTEGER NOT NULL DEFAULT 0,
+     retry_at INTEGER NOT NULL DEFAULT 0, attempts INTEGER NOT NULL DEFAULT 0
+   );
+   CREATE TABLE assistant_link_sync (
+     thread_id TEXT PRIMARY KEY, synced_at INTEGER NOT NULL
+   )`,
 ] as const;
 
 export function enableForeignKeys(db: Sqlite): void {
@@ -141,6 +153,7 @@ interface BacklinkQueryRow {
   revision: number;
   target_presentation_json: string;
   position: number;
+  last_seen_at: number | null;
 }
 
 interface ForwardReferenceQueryRow {
@@ -151,6 +164,7 @@ interface ForwardReferenceQueryRow {
   producer_plugin_id: string;
   revision: number;
   position: number;
+  last_seen_at: number | null;
 }
 
 export interface BacklinkCursor {
@@ -171,6 +185,11 @@ export interface ForwardReferenceCursor {
 export interface ApplyProjectionStoreResult extends ApplyProjectionResponse {
   changed: boolean;
   signal: CrossReferencesChangedSignal | null;
+}
+
+export interface ObservedReference {
+  target: Resource;
+  lastSeenAt: number | null;
 }
 
 function rowValue<T extends object>(row: T | undefined): T | null {
@@ -568,6 +587,74 @@ export class CrossReferenceStore {
     };
   }
 
+  /** Update native observations from source messages. Retain disabled-producer
+   * snapshots as historical source truth until explicit thread deletion. */
+  replaceObservedThreadReferences(source: Resource, observed: readonly ObservedReference[], complete: boolean, deleted = false): CrossReferencesChangedSignal[] {
+    const canonicalSource = canonicalizeResource(source);
+    const sourceIdentity = { provider: source.provider, keys: source.keys };
+    const incoming = observed.map((row) => {
+      const target = canonicalizeResource(row.target);
+      if (row.lastSeenAt !== null) {
+        validateRevision(row.lastSeenAt, "lastSeenAt", 0);
+        if (row.lastSeenAt > 8_640_000_000_000_000) throw new CrossReferenceValidationError("lastSeenAt exceeds the date range.");
+      }
+      return { target: serializeResource(target), key: target.canonicalIdentityJson, lastSeenAt: row.lastSeenAt };
+    });
+    return this.db.transaction(() => {
+      const current = this.getProjection({ producerPluginId: "cross-references", source: sourceIdentity }).projection;
+      const legacy = this.getProjection({ producerPluginId: "thread-links", source: sourceIdentity }).projection;
+      const unique = new Map<string, typeof incoming[number]>();
+      for (const row of incoming) {
+        const prior = unique.get(row.key);
+        if (prior === undefined || (row.lastSeenAt ?? -1) > (prior.lastSeenAt ?? -1)) unique.set(row.key, row);
+      }
+      if (!complete && !deleted) {
+        for (const target of (current?.targets ?? [])) {
+          const key = canonicalizeResource(target).canonicalIdentityJson;
+          if (!unique.has(key)) unique.set(key, { key, target, lastSeenAt: null });
+        }
+      }
+      const selected = deleted ? [] : [...unique.values()].sort((a, b) => (b.lastSeenAt ?? -1) - (a.lastSeenAt ?? -1) || (a.key < b.key ? -1 : a.key > b.key ? 1 : 0)).slice(0, 256);
+      const targets = selected.map((row) => row.target);
+      const signals: CrossReferencesChangedSignal[] = [];
+      const replace = (producerPluginId: string, prior: typeof current, tombstone: boolean, next: Resource[]) => {
+        const digest = projectionPayloadDigest(producerPluginId, canonicalSource, tombstone, next.map(canonicalizeResource));
+        if (prior?.payloadDigest === digest) return;
+        const result = this.applyProjection({
+          protocolVersion: 1, producerPluginId, mutationId: randomUUID(), source,
+          revision: (prior?.revision ?? 0) + 1, expectedRevision: prior?.revision ?? 0,
+          payloadDigest: digest, tombstone, targets: next,
+        });
+        if (result.signal !== null) signals.push(result.signal);
+      };
+      // Preserve previously known times when a bounded scan is incomplete.
+      const sourceRow = this.findResource(canonicalSource);
+      const priorTimes = sourceRow === null ? [] : this.db.prepare(`SELECT target_resource_id, last_seen_at FROM reference_occurrences
+        JOIN source_projections ON source_projections.id = reference_occurrences.projection_id
+        WHERE source_projections.source_resource_id = ? AND source_projections.producer_plugin_id = 'cross-references'`).all(sourceRow.id) as Array<{ target_resource_id: number; last_seen_at: number | null }>;
+      const times = new Map(priorTimes.map((row) => [row.target_resource_id, row.last_seen_at]));
+      replace("cross-references", current, deleted, targets);
+      const storedSource = this.findResource(canonicalSource)!;
+      const projection = this.findProjection("cross-references", storedSource.id)!;
+      let timeChanged = false;
+      const update = this.db.prepare(`UPDATE reference_occurrences SET last_seen_at = ?
+        WHERE projection_id = ? AND target_resource_id = ? AND last_seen_at IS NOT ?`);
+      for (const row of selected) {
+        const resourceId = this.findResource(canonicalizeResource(row.target))!.id;
+        const timestamp = !complete ? Math.max(row.lastSeenAt ?? -1, times.get(resourceId) ?? -1) : row.lastSeenAt;
+        const value = timestamp === -1 ? null : timestamp;
+        const changed = update.run(value, projection.id, resourceId, value).changes > 0;
+        timeChanged = timeChanged || changed;
+      }
+      if (deleted && legacy !== null && !legacy.tombstone) replace("thread-links", legacy, true, []);
+      if (timeChanged && signals.length === 0) signals.push({
+        protocolVersion: 1, producerPluginId: "cross-references", sourceIdentityDigest: canonicalSource.identityDigest,
+        revision: projection.revision, affectedIdentityDigests: [canonicalSource.identityDigest, ...selected.map((row) => canonicalizeResource(row.target).identityDigest)],
+      });
+      return signals;
+    })();
+  }
+
   listBacklinks(input: ListBacklinksInput): ListBacklinksResponse {
     const targetIdentity = normalizeIdentityInput(input.target);
     const pageSize = defaultPageSize(input.pageSize);
@@ -585,7 +672,7 @@ export class CrossReferenceStore {
 
     // Group within the captured upper bound before applying afterId or LIMIT:
     // duplicate producer assertions must not leak into later pages.
-    const matching = `SELECT MIN(reference_occurrences.id) AS occurrence_id
+    const matching = `SELECT MIN(reference_occurrences.id) AS occurrence_id, MAX(reference_occurrences.last_seen_at) AS last_seen_at
          FROM reference_occurrences
          JOIN source_projections
            ON source_projections.id = reference_occurrences.projection_id
@@ -598,7 +685,7 @@ export class CrossReferenceStore {
     ).get(targetRow.id, cursor.upperId) as { total: number }).total;
 
     const rows = this.db.prepare(
-      `SELECT reference_occurrences.id AS occurrence_id,
+      `SELECT reference_occurrences.id AS occurrence_id, matching.last_seen_at,
               source_resources.provider AS source_provider,
               source_resources.canonical_keys_json AS source_canonical_keys_json,
               source_projections.source_presentation_json,
@@ -638,6 +725,7 @@ export class CrossReferenceStore {
       revision: row.revision,
       targetPresentation: parseJson<Presentation>(row.target_presentation_json, "target presentation"),
       position: row.position,
+      lastSeenAt: row.last_seen_at,
     }));
     return { rows: backlinkRows, total: validateRevision(total, "backlink total", 0), nextCursor };
   }
@@ -663,7 +751,7 @@ export class CrossReferenceStore {
     const sourceRow = this.findResource(sourceIdentity);
     if (sourceRow === null) return { rows: [], total: 0, nextCursor: null };
 
-    const matching = `SELECT MIN(reference_occurrences.id) AS occurrence_id
+    const matching = `SELECT MIN(reference_occurrences.id) AS occurrence_id, MAX(reference_occurrences.last_seen_at) AS last_seen_at
          FROM source_projections
          JOIN reference_occurrences
            ON reference_occurrences.projection_id = source_projections.id
@@ -677,7 +765,7 @@ export class CrossReferenceStore {
     ).get(sourceRow.id, producerPluginId, producerPluginId, cursor.upperId) as { total: number }).total;
 
     const rows = this.db.prepare(
-      `SELECT reference_occurrences.id AS occurrence_id,
+      `SELECT reference_occurrences.id AS occurrence_id, matching.last_seen_at,
               target_resources.provider AS target_provider,
               target_resources.canonical_keys_json AS target_canonical_keys_json,
               reference_occurrences.target_presentation_json,
@@ -716,6 +804,7 @@ export class CrossReferenceStore {
       producerPluginId: row.producer_plugin_id,
       revision: row.revision,
       position: row.position,
+      lastSeenAt: row.last_seen_at,
     }));
     return { rows: forwardRows, total: validateRevision(total, "forward-reference total", 0), nextCursor };
   }

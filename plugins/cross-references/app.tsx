@@ -17,7 +17,7 @@ import type {
 } from "./model.ts";
 import type { rpcContract } from "./rpc-contract.ts";
 import "./app.css";
-import { displayLabel, mergeReferenceRows, referenceIdentityKey } from "./presentation.ts";
+import { displayLabel, mergeReferenceRows, referenceIdentityKey, referenceRecency } from "./presentation.ts";
 
 const EMPTY_BACKLINKS: ListBacklinksResponse = { rows: [], total: 0, nextCursor: null };
 const EMPTY_FORWARDS: ListForwardReferencesResponse = { rows: [], total: 0, nextCursor: null };
@@ -288,18 +288,21 @@ type PopoverPosition = { top: number; left: number };
 
 function ResourceLink({
   resource,
+  lastSeenAt,
   first,
   check,
   checking,
   checkError,
 }: {
   resource: ForwardReferenceRow["target"] | BacklinkRow["source"];
+  lastSeenAt?: number | null;
   first: boolean;
   check?: ForwardReferenceStatus;
   checking?: boolean;
   checkError?: boolean;
 }) {
   const navigate = useBbNavigate();
+  const recency = referenceRecency(lastSeenAt);
   const showStatus = checking !== undefined && checkError !== undefined && resource.presentation.url !== undefined;
   const status = showStatus ? linkStatusPresentation(check, checking, checkError) : null;
   const label = displayLabel(resource.presentation.label, resource.presentation.url);
@@ -308,8 +311,9 @@ function ResourceLink({
   const content = <>
     {primary !== null && <strong className={label.derived ? "cross-references__label-derived" : undefined} data-cross-reference-derived={label.derived || undefined}>{primary}</strong>}
     {label.derived && <span className="cross-references__visually-hidden">{` ${label.note}`}</span>}
-    {(resource.presentation.detail != null || status !== null) && <span className="cross-references__link-meta">
+    {(resource.presentation.detail != null || status !== null || recency !== null) && <span className="cross-references__link-meta">
       {resource.presentation.detail != null && <small>{resource.presentation.detail}</small>}
+      {recency !== null && <time className="cross-references__recency" dateTime={recency.iso} title={recency.title} aria-label={recency.title}>{recency.text}</time>}
       {status !== null && <span className={`cross-references__link-status cross-references__link-status-${status.tone}`} title={status.title} aria-label={status.title}>{status.label}</span>}
     </span>}
   </>;
@@ -342,6 +346,7 @@ function ReferenceSection({ heading, rows, total, nextCursor, loadingMore, onLoa
       const url = resource.presentation.url;
       return <li key={referenceIdentityKey(resource)}><ResourceLink
         resource={resource}
+        lastSeenAt={row.lastSeenAt}
         first={index === 0}
         check={direction === "forward" && url !== undefined ? checksByUrl.get(url) : undefined}
         checking={direction === "forward" && url !== undefined ? checking : undefined}

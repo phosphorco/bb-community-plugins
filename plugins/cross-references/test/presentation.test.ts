@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { displayLabel, mergeReferenceRows } from "../presentation.ts";
+import { referenceRecency, displayLabel, mergeReferenceRows } from "../presentation.ts";
 
 test("page merging uses exact identity and replaces coherent whole rows", () => {
   const initial = { resource: { provider: "bb", keys: { project: "p", thread: "t" } }, label: "First", producer: "one", revision: 1, position: 0 };
@@ -91,4 +91,14 @@ test("long labels keep their distinguishing tail within the length limit", () =>
   assert.equal(text("link", `https://h.test${atLimit}`), atLimit);
   assert.equal([...shown("link", `https://h.test/${"b".repeat(90)}#${"c".repeat(20)}`)].length, 60);
   assert.ok(shown("link", `https://h.test/${"b".repeat(90)}#tail`).endsWith("#tail"));
+});
+
+test("recency handles unknown, invalid, future and day-old source timestamps", () => {
+  assert.equal(referenceRecency(null), null);
+  assert.equal(referenceRecency(undefined), null);
+  assert.equal(referenceRecency(NaN), null);
+  assert.equal(referenceRecency(-1), null);
+  assert.equal(referenceRecency(8_640_000_000_000_001), null);
+  assert.equal(referenceRecency(100, 90)?.text, "just now");
+  assert.equal(referenceRecency(0, 3 * 86_400_000)?.text, "3d ago");
 });

@@ -429,3 +429,25 @@ test("drops generic link text with no path and lets the host line name the row",
   expect(link.getAttribute("title")).toBe(`Link text "link" — ${url}`);
   slot.lifecycle.unmount();
 });
+
+test("both directions show source recency with exact timestamp tooltips and omit unknown times", async () => {
+  const app = await loadPluginApp(() => import("../app.tsx"));
+  const timestamp = Date.now() - 2 * 60 * 60_000;
+  const slot = renderSlot(app.threadHeaderActions[0]!,
+    { threadId: "thr_recency", projectId: "proj_recency", isCompactViewport: false },
+    { rpc: {
+      listForwardReferences: () => ({ rows: [{ ...forwardRow("Known"), lastSeenAt: timestamp }, forwardRow("Unknown", "thr_unknown")], total: 2, nextCursor: null }),
+      listBacklinks: () => ({ rows: [{ ...backlinkRow(), lastSeenAt: timestamp }], total: 1, nextCursor: null }),
+      checkForwardReferences: () => [],
+    } } as any);
+  fireEvent.click(await slot.findByRole("button", { name: "Cross-references: 2 forward references, 1 backlink" }));
+  const times = document.querySelectorAll("time.cross-references__recency");
+  expect(times).toHaveLength(2);
+  for (const time of times) {
+    expect(time.textContent).toBe("2h ago");
+    expect(time.getAttribute("datetime")).toBe(new Date(timestamp).toISOString());
+    expect(time.getAttribute("title")).toBe(`Last linked ${new Date(timestamp).toLocaleString()}`);
+  }
+  expect(slot.getByText("Unknown").closest("li")?.querySelector("time")).toBeNull();
+  slot.lifecycle.unmount();
+});

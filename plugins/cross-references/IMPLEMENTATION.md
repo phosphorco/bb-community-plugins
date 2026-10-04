@@ -20,7 +20,7 @@ The first slice includes:
 
 - one installation-local Cross References SQLite database;
 - exact canonical identity for BB projects, BB threads, the Machine Monitor
-  page, and normalized HTTP(S) URL resources from Thread Links;
+  page, and normalized HTTP(S) URL resources from assistant messages;
 - bounded applyProjection, getProjection, exact listBacklinks, and exact
   listForwardReferences RPC contracts;
 - Machine Monitor-owned local attachments, complete-set replacement, and a
@@ -28,7 +28,7 @@ The first slice includes:
 - a bounded thread picker backed by BB thread search/get; and
 - a compact, per-thread References header action with native BB thread
   navigation in both directions; and
-- a Thread Links-owned durable projection of automatic assistant-message
+- a native Cross References durable projection of automatic assistant-message
   HTTP(S) URLs, with verified same-installation BB-thread URLs represented by
   richer thread identity.
 
@@ -41,8 +41,8 @@ It does not include:
 - GitHub, Sticky Notes, federation, or private per-principal authorization;
 - a universal resource browser, generic component registry, DOM injection, or
   plugin-to-plugin React injection; or
-- automatic cleanup based only on thread.deleted, producer disablement, or an
-  unavailable Cross References runtime.
+- automatic cleanup of arbitrary producer projections based only on
+  thread.deleted, producer disablement, or an unavailable runtime.
 
 The first-slice public read contract is exact-only. Normalized key rows may be
 written for a later contained read model, but no implementation or test may
@@ -255,7 +255,9 @@ deduplicated by exact source identity across producers. The lowest matching
 occurrence ID within the captured upper bound supplies the complete row,
 including its presentation and claimed producer metadata.
 An earlier occurrence without a presentation URL still wins over a later
-navigable occurrence. Fields are never mixed between producers.
+navigable occurrence. Presentation fields are never mixed between producers. `lastSeenAt` is a
+separate aggregate: the maximum known source-message timestamp among matching
+occurrences within the captured cursor bound, or null when unknown.
 
 Its output is { rows: BacklinkRow[], total: number, nextCursor: string | null },
 where each BacklinkRow has { source: Resource, producerPluginId: string,
@@ -312,27 +314,56 @@ resource, digest, or backlink.
 
 ### Ownership and deduplication
 
-Machine Monitor owns its source attachments and their presentation snapshots;
-Thread Links owns its assistant-message observation index and its projection
-outbox. Cross References owns only the shared projection/index. The Cross
-References database never reaches into either source plugin's private database.
+Machine Monitor owns its source attachments and presentation snapshots.
+Cross References also owns native assistant-message observations under producer
+ID `cross-references`. It reads BB's public timeline API, never another plugin's
+private database. Thread Links is retired on bb-machine; its last accepted
+projection remains visible as historical source truth, including after native
+backfill. Exact grouping prevents those assertions duplicating display rows.
+The legacy projection covered only visible automatically observed original URLs
+with unedited titles; manual entries and preferences are not imported.
 
-Thread Links projects only its immutable `original_url` values that were
-automatically observed in assistant messages and remain visible with an
-unedited title. Manually added, hidden, and user-edited links remain its local
-URL-inspection behavior. An eligible HTTP(S) URL normally projects as a
-`url/href` target. A same-installation URL that parses as a BB thread route is
-first resolved through `bb.sdk.threads.get`; success publishes the
-`bb/{project,thread}` target, while failure falls back to its HTTP(S) URL
-target. Relative BB routes have no HTTP(S) fallback.
+Assistant Markdown links and autolinks are collected; code and images are
+excluded. Exact normalized HTTP(S) URLs keep query and fragment identity;
+authority credentials are removed and credential-shaped query/fragment values
+are rejected by the shared URL contract. Relative or same-host BB thread routes
+require an exact project/thread match from `bb.sdk.threads.get`; unresolved
+absolute links retain a web fallback, while unresolved relative links are omitted.
 
-Thread Links retains a durable source-sweep cursor. After startup and at a
-bounded periodic cadence, it walks eligible indexed-link sources plus active
-prior projections, recomputes each complete source set, and reconciles it with
-Cross References. This backfills the URL convention without a manual visit and
-eventually repairs a reset peer index. The sweep never chunks one source's
-target set across projections: the 256-target complete-set bound remains
-authoritative.
+`assistant_link_jobs` owns pending source IDs, monotonically increasing job
+versions, deletion intent, attempts and retry deadlines. Events enqueue work
+synchronously before returning. One abort-aware `bb.background.service` worker
+resumes jobs on startup; known native/legacy projections seed backfill. Forward
+reads coalesce pending work and throttle recently synced sources for 30 seconds.
+Viewed sources take priority over fresh startup backfill without invalidating
+an in-flight generation or bypassing failed-job backoff. No all-host thread
+enumeration or frontend polling is added.
+
+A scan reads at most 50 pages (100 segments each), ignores nested rows, merges
+assistant rows by message ID, and selects at most 256 distinct targets by latest
+source-message time. Only a complete scan removes unseen native targets. A
+bounded incomplete scan retains previous native targets and known times within
+the projection cap. Failed scans retain prior graph state and retry with capped
+exponential delay (one second to one minute). A newer job version or abort
+prevents stale results from committing. Projection/time replacement and job
+acknowledgment are one SQLite transaction; invalidation publishes after commit.
+Reload recreates the worker from the same database rather than relying on
+process-local promises. Verification includes a real database close/reopen;
+it does not claim a full host restart test.
+
+`reference_occurrences.last_seen_at` stores original assistant message time,
+independent of projection revision and indexing time. Timestamp-only updates
+retain occurrence IDs. Read groups aggregate MAX time while the first matching
+occurrence supplies presentation/producer metadata; timestamps are not identity
+or sorting keys for query pagination. BacklinkRow and ForwardReferenceRow expose
+optional nullable `lastSeenAt` (milliseconds). UI `<time>` elements show muted
+relative age and full-date tooltips; unknown values are omitted and rendering
+creates no recurring frontend work. The badge continues to count distinct rows.
+
+Explicit native thread deletion tombstones native and retained Thread Links
+projections together, leaving unrelated producer projections untouched. The
+retired plugin registration and private data remain retained.
+
 Machine Monitor already obtains its own database and runs ordered migrations during plugin load
 ([machine-monitor/server.ts](../machine-monitor/server.ts#L19-L56)); its current
 sampling service is supervised and abort-aware
@@ -556,11 +587,9 @@ needsConfiguration.
 
 The last accepted projection remains potentially stale when Machine Monitor is
 disabled. Only a delivered active empty projection or explicit tombstone
-removes live occurrences. Thread Links is the source owner for a deleted thread
-and retains a durable tombstone until Cross References acknowledges it. The
-first slice does not infer that action for arbitrary producers from BB's
-observe-only thread.deleted event; another source must decide and deliver its
-own lifecycle mutation.
+removes live occurrences. Cross References persists deletion intent for its native thread source and the
+retained Thread Links projection. It does not infer lifecycle mutations for
+arbitrary producers from BB's observe-only thread.deleted event.
 
 ## Dependency-ordered execution strategy
 

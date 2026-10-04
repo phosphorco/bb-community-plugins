@@ -102,3 +102,12 @@ export function displayLabel(label: string, url: string | undefined): DisplayLab
   const note = original === "" ? "(from URL)" : `(from URL; link text "${original}")`;
   return { text, derived: true, title, note };
 }
+
+/** Computed on render: no timer or polling for row timestamps. */
+export function referenceRecency(timestamp: number | null | undefined, now = Date.now()): { text: string; iso: string; title: string } | null {
+  if (timestamp == null || !Number.isSafeInteger(timestamp) || timestamp < 0 || timestamp > 8_640_000_000_000_000) return null;
+  const date = new Date(timestamp);
+  const minutes = Math.floor(Math.max(0, now - timestamp) / 60_000);
+  const text = minutes < 1 ? "just now" : minutes < 60 ? `${minutes}m ago` : minutes < 1_440 ? `${Math.floor(minutes / 60)}h ago` : `${Math.floor(minutes / 1_440)}d ago`;
+  return { text, iso: date.toISOString(), title: `Last linked ${date.toLocaleString()}` };
+}

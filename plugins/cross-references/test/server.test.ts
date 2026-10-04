@@ -59,7 +59,11 @@ test("registers the typed RPCs, verifies FK-backed storage, and publishes commit
   t.after(() => { globalThis.fetch = originalFetch; });
   const signals: Array<{ channel: string; payload: unknown }> = [];
   let handlers: Record<string, (input: any) => unknown> | null = null;
+  const events = new Map<string, (event: any) => void>();
+  const services: string[] = [];
   const bb = {
+    events: { on: (name: string, handler: (event: any) => void) => events.set(name, handler) },
+    background: { service: (name: string) => services.push(name) },
     storage: {
       database: () => db,
       migrate: (_database: Database.Database, migrations: string[]) => migrations.forEach((migration) => db.exec(migration)),
@@ -72,6 +76,11 @@ test("registers the typed RPCs, verifies FK-backed storage, and publishes commit
     },
   } as any;
   crossReferencesPlugin(bb);
+  assert.deepEqual(services, ["cross-references-assistant-links"]);
+  assert.deepEqual([...events.keys()], ["thread.idle", "thread.failed", "thread.deleted"]);
+  events.get("thread.idle")!({ thread: { projectId: "proj_event", id: "thr_event" } });
+  events.get("thread.deleted")!({ thread: { projectId: "proj_event", id: "thr_event" } });
+  assert.equal((db.prepare("SELECT deleted FROM assistant_link_jobs WHERE thread_id = ?").get("thr_event") as { deleted: number }).deleted, 1);
 
   const parsed = await rpcContract.applyProjection.input["~standard"].validate(input);
   assert.equal("issues" in parsed, false);

@@ -80,6 +80,8 @@ export interface BacklinkRow {
   revision: number;
   targetPresentation: Presentation;
   position: number;
+  /** Latest source-message time across matching assertions; null when unknown. */
+  lastSeenAt?: number | null;
 }
 
 export interface ListBacklinksResponse {
@@ -103,6 +105,7 @@ export interface ForwardReferenceRow {
   producerPluginId: string;
   revision: number;
   position: number;
+  lastSeenAt?: number | null;
 }
 
 export interface ListForwardReferencesResponse {

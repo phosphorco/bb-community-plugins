@@ -53,30 +53,22 @@ The direction preserves meaning. “This conversation cites that thread” is no
 the same claim as “that thread cites this conversation.” Both views are
 valuable, but one durable fact supplies them.
 
-### URL observation and cross-reference navigation have different jobs
+### Assistant links and recency
 
-[Thread Links](https://github.com/phosphorco/bb-plugins/tree/main/plugins/thread-links) remains the specialist
-that observes URLs in messages and presents URL-specific information such as
-their occurrences. Cross References consumes the relationships those
-observations establish and makes them navigable across the application. When
-its Forward references view is opened, it also performs the same bounded URL
-status scan as Thread Links for current outgoing targets: one
+Cross References collects HTTP(S) links directly from assistant messages using
+BB's public thread timeline API. A local thread route is verified before it
+becomes a native thread reference; other web links remain exact URL resources.
+Forward references and backlinks show the latest source-message time as a
+muted relative timestamp, with the full date on hover. Unknown times are omitted.
+Repeated links count once; their latest occurrence supplies recency.
+
+Opening Forward references performs a bounded URL status scan: one
 unauthenticated GET per unique destination, up to ten, with manual redirects,
 a five-second timeout, body cancellation, and a one-minute in-memory cache.
 Status is ephemeral display data, never a graph fact.
 
-That division keeps each surface honest:
-
-- **Thread Links** answers: “Which URLs did this message contain?”
-- **Cross References** answers: “What does this context point to, and what
-  other contexts point here?” Its Forward references view can also show the
-  bounded, current HTTP result for an outgoing URL.
-
-The two products should feel coordinated, not competing. Every eligible
-HTTP(S) URL seen in an assistant response creates a forward reference promptly;
-a resolved BB-thread target also gains the corresponding backlink. An ordinary
-external URL is still a meaningful forward reference even though BB cannot
-show a native backlink at its destination.
+Thread Links is retired on bb-machine. Its installed registration and private
+data remain retained while Cross References owns new assistant-link collection.
 
 ### References should be present only when there is a relationship to show
 
@@ -101,7 +93,8 @@ than a new availability dependency for message links or local attachments.
 The shipped proving slice already supplies the directed, source-owned model:
 exact resource identity, durable complete-set projections, forward-reference
 and backlink reads, source-aware invalidation, and a compact per-thread
-References control. Machine Monitor and Thread Links are source adapters.
+References control. Machine Monitor remains a source adapter; Cross References
+also owns its native assistant-message observations.
 
 The lists show each exact target once in Forward references and each exact
 source once in Backlinks, even when multiple producers assert the same link.
@@ -114,28 +107,32 @@ identities and adopts the surviving producer's complete row. Realtime refresh
 reconciles removals. The first matching presentation may omit a clickable URL
 even if another producer supplies one.
 
-Thread Links now projects its automatic assistant-message observations using a
-small, explicit URL convention. A generic web target has exact identity
+Automatic assistant-message observations use a small, explicit URL convention. A generic web target has exact identity
 `{ provider: "url", keys: { href } }`, where `href` is the platform-normalized
 HTTP(S) URL. Query and fragment remain part of identity because Cross
 References does not guess which URL components are semantic. URLs with
-authority credentials are sanitized before Thread Links stores them; URLs with
+authority credentials are sanitized before indexing; URLs with
 credential-shaped query or fragment parameters, and URLs that exceed the
 shared key bound, are not indexed. Cross References independently rejects
 noncanonical or unsafe `url/href` targets at its RPC boundary.
 
-For a same-installation URL that has the shape of a BB thread route, Thread
-Links verifies the target through BB first. A verified target is represented
+For a same-installation URL that has the shape of a BB thread route, Cross
+References verifies the target through BB first. A verified target is represented
 by its richer `bb/{project,thread}` identity and gains the native backlink. If
 verification fails, its ordinary HTTP(S) URL identity remains the forward
 reference instead. This preserves the observed relationship without claiming
 that an unverified route is a live BB thread.
 
-Thread Links sweeps existing eligible source threads in bounded, durable
-batches after reload and periodically thereafter. The sweep reconciles each
-source's complete projection with Cross References, so older observations gain
-URL references and a reset Cross References index is repaired without a user
-reopening every thread.
+A single supervised worker persists pending source IDs, retries failures, and
+resumes after reload. Startup seeds known native and legacy source projections;
+thread completion/failure/deletion events and reading a thread's forward list
+also enqueue work. Each scan reads at most 50 timeline pages and publishes at
+most 256 distinct targets, preferring recent links. An incomplete scan retains
+previously known native references. Historical legacy assertions remain visible
+until explicit source deletion, because disabling a producer preserves its last
+projection. Cross References does not read the retired plugin's private data or
+import its manual additions, hidden-link preferences, or edited titles.
+Relative timestamps update when the view renders; there is no row timer.
 
 ## Technical contracts
 
