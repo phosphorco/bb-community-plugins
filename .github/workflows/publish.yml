@@ -40,7 +40,7 @@ permissions:
   id-token: write
 
 concurrency:
-  group: npm-publish-${{ github.ref }}
+  group: npm-publish-${{ github.ref }}-${{ inputs.plugin }}
   cancel-in-progress: false
 
 jobs:
@@ -127,9 +127,9 @@ jobs:
       - name: Install locked dependencies
         run: npm ci
 
-      - name: Build library for package tests
-        if: ${{ startsWith(steps.release.outputs.path, 'packages/') }}
-        run: npm run build --workspace "${{ steps.release.outputs.workspace }}"
+      - name: Build shared packages for tests
+        # Packages test against their own dist, and plugins import the workspace-linked packages' dist.
+        run: npm run build --workspace packages/bb-identity --workspace packages/bb-provider-settings
 
       - name: Test
         run: npm run test --workspace "${{ steps.release.outputs.workspace }}"
