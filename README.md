@@ -39,10 +39,10 @@ Each plugin is published independently to npm by its prefixed release tag:
 ```sh
 bb plugin install npm:@phosphorco/bb-plugin-cross-references@^0.1.0
 bb plugin install npm:@phosphorco/bb-plugin-machine-monitor@^0.1.0
-bb plugin install npm:@phosphorco/bb-plugin-agentation-mentions@^0.1.0
-bb plugin install npm:@phosphorco/bb-plugin-perspectives@^0.2.0
-bb plugin install npm:@phosphorco/bb-plugin-sticky-notes@^0.1.1
-bb plugin install npm:@phosphorco/bb-plugin-bb-ui-reference@^0.1.1
+bb plugin install npm:@phosphorco/bb-plugin-agentation-mentions@^0.2.0
+bb plugin install npm:@phosphorco/bb-plugin-perspectives@^0.3.0
+bb plugin install npm:@phosphorco/bb-plugin-sticky-notes@^0.1.2
+bb plugin install npm:@phosphorco/bb-plugin-bb-ui-reference@^0.1.2
 bb plugin install npm:@phosphorco/bb-plugin-analytics@^0.1.0
 bb plugin install npm:@phosphorco/bb-plugin-restart-resume@^0.1.0
 bb plugin install npm:@phosphorco/bb-plugin-attach-text-snippets@^0.1.0

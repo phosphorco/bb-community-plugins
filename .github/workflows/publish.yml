@@ -175,13 +175,9 @@ jobs:
 
       - name: Publish public package
         if: ${{ !inputs.dry_run }}
-        run: |
-          if [[ "${{ steps.release.outputs.path }}" == packages/* ]]; then
-            npm publish --ignore-scripts --access public --workspace "${{ steps.release.outputs.workspace }}" --provenance
-          else
-            npm publish --ignore-scripts --access public --workspace "${{ steps.release.outputs.workspace }}"
-          fi
+        # The repository is public, so every release carries SLSA provenance.
+        run: npm publish --ignore-scripts --access public --provenance --workspace "${{ steps.release.outputs.workspace }}"
         env:
-          # Required for the first release. Once npm trusted publishing is
-          # configured, npm uses GitHub OIDC before falling back to this token.
+          # Only needed for a package's first release. Once npm trusted publishing
+          # is configured, npm uses GitHub OIDC before falling back to this token.
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

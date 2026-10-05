@@ -1,6 +1,6 @@
 {
   "name": "@phosphorco/bb-plugin-sticky-notes",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "type": "module",
   "license": "MIT",
   "description": "Leave shared, movable sticky notes on bb threads for asynchronous collaboration.",

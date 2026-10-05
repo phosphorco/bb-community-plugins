@@ -3,8 +3,10 @@
 Imported from Agentation by Scott Sunarto through version 0.2.2; derivative
 releases use the separate `agentation-mentions` package and tag prefix.
 
-## Unreleased
+## agentation-mentions 0.2.0
 
+- Require plugin SDK `^0.5.29` (bb hosts that ship SDK 0.5) and use the
+  published `@phosphorco/bb-identity` 0.1.0 for identity and attribution.
 - Stop contributing unresolved annotation counts and proactive lookup
   instructions to unrelated agent turns. Annotation context is now attached
   only through an explicit mention or delivery action.

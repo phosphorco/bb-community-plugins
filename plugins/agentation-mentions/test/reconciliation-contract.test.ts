@@ -23,7 +23,7 @@ test("Agentation to Mentions has one distinct package, collection, runtime, and 
   const server = readFileSync(join(pluginRoot, "server.ts"), "utf8");
 
   assert.equal(manifest.name, "@phosphorco/bb-plugin-agentation-mentions");
-  assert.equal(manifest.version, "0.1.0");
+  assert.equal(manifest.version, "0.2.0");
   assert.equal(manifest.bb.name, "Agentation → Mentions");
   assert.equal(manifest.repository.directory, "plugins/agentation-mentions");
   assert.equal(

@@ -47,7 +47,7 @@ feedback.
 ## Install
 
 ```sh
-bb plugin install npm:@phosphorco/bb-plugin-agentation-mentions@^0.1.0
+bb plugin install npm:@phosphorco/bb-plugin-agentation-mentions@^0.2.0
 ```
 
 From this repository:

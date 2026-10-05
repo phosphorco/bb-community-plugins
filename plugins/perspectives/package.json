@@ -1,6 +1,6 @@
 {
   "name": "@phosphorco/bb-plugin-perspectives",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "type": "module",
   "license": "MIT",
   "description": "Independent expert help and phase-bounded perspective synthesis for bb agents.",

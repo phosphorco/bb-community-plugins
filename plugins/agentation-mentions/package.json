@@ -1,6 +1,6 @@
 {
   "name": "@phosphorco/bb-plugin-agentation-mentions",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "type": "module",
   "license": "MIT AND PolyForm-Shield-1.0.0",
   "description": "Based on Agentation by Scott Sunarto; adds bb mentions, queued delivery, and verified identity tags to visual feedback.",
