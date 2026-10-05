@@ -1,0 +1,14 @@
+import assert from 'node:assert/strict';
+import React from 'react';
+import {renderToString} from 'react-dom/server';
+import {RoleSettingsEditor,ProviderSettingsDirectory} from '@phosphorco/bb-provider-settings/react';
+assert.equal(process.env.NODE_ENV,'production');
+let calls=0;
+const unexpected=async()=>{calls++;throw Error('SSR must not read or browse')};
+const client={pluginId:'production-owner',read:unexpected,describe:unexpected,validate:unexpected,save:unexpected};
+const sdk={providers:{list:unexpected,models:unexpected},plugins:{list:unexpected,callRpc:unexpected}};
+const role={id:'role',label:'Production role',choiceKinds:['inherit','fields'],cascade:'caller-v1',providerPolicy:'any',saveValidation:'invocation',applies:'Next invocation',writable:true};
+const editor=renderToString(React.createElement(RoleSettingsEditor,{client,role,catalogSdk:sdk}));
+const directory=renderToString(React.createElement(ProviderSettingsDirectory,{sdk,reconnectKey:0}));
+assert.match(editor,/Production role/);assert.match(editor,/Reading/);assert.match(editor,/>Save</);assert.match(directory,/Refresh/);assert.equal(calls,0);
+console.log('production React public import/render passed; SSR source witness, no native picker/composer claim');

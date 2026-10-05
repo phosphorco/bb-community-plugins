@@ -1,0 +1,21 @@
+import type { BbPluginApi } from '@get-bb/plugin-sdk';
+import type { PluginBrowserBbSdk } from '@get-bb/plugin-sdk/app';
+import type { RoleChoice, ProviderCatalog, RoleDescriptorV1 } from '@phosphorco/bb-provider-settings';
+import { createOwnerClient, readCatalog, registerProviderSettingsOwner } from '@phosphorco/bb-provider-settings/bb';
+import { RoleSettingsEditor, ProviderSettingsDirectory } from '@phosphorco/bb-provider-settings/react';
+declare const server: BbPluginApi;
+declare const browser: PluginBrowserBbSdk;
+declare const role: RoleDescriptorV1;
+declare const catalog: ProviderCatalog;
+const choice: RoleChoice = {kind:'fields',fields:{model:'id-kept'}};
+const serverClient = createOwnerClient(server.sdk,'owner-b');
+const browserClient = createOwnerClient(browser,'owner-b');
+void readCatalog(server.sdk,{kind:'environment',environmentId:'env'},'p');
+void readCatalog(browser,{kind:'host',hostId:'host'},'p');
+registerProviderSettingsOwner(server,[]);
+void browserClient.validate('expert',choice);
+void serverClient.save('expert',choice,'fingerprint');
+// Full picker context comes from explicit catalog SDK and optional labelled seed.
+void RoleSettingsEditor({client:browserClient,role,catalogSdk:browser,sampleRoute:{kind:'host',hostId:'host'},seed:async()=>({selection:{providerId:'p',model:'m',reasoningLevel:'low'},label:'Preview seed'})});
+void ProviderSettingsDirectory({sdk:browser,reconnectKey:1});
+void catalog;
