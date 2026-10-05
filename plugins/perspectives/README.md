@@ -223,3 +223,42 @@ Development checks for this package are `npm run test --workspace
 @phosphorco/bb-plugin-perspectives`, `npm run typecheck --workspace
 @phosphorco/bb-plugin-perspectives`, and `npm run build --workspace
 @phosphorco/bb-plugin-perspectives` from `community-plugins/`.
+
+### Provider settings local pilot (shipping held)
+
+The source pilot registers the shared owner protocol for `planner` (help planner,
+panel coordinator and synthesis) and `expert` (help experts and panel workers).
+Each role owns only its provider/model/reasoning keys. Permission controls remain
+in this plugin's native settings form and are never written by a shared Save.
+Stored nonblank catalog IDs remain exact until deliberately changed. Blank legacy
+values and the native `inherit` sentinel become absent fields in the adapter.
+
+Shared intent is global; eligibility is checked against the calling thread at
+invocation. Optional host/environment samples are read-only catalog context,
+never caller defaults or a storage destination. Partial model/reasoning intent
+without a provider stays deferred. Read does not browse catalogs, provision an
+environment, or migrate settings. Inherit/reset needs no destination. Existing
+runs retain the execution tuples frozen in their protocol-v2 request.
+
+This increment is verified locally against a hash-bound npm archive, not a
+published dependency or loaded native host. The production manifest and community
+lockfile intentionally retain their original dependency metadata. Release is
+blocked until the shared package is published and the ordinary npm dependency,
+source file list, supported SDK/build target and app entry are separately agreed.
+The existing native form remains the local editor; no shared React controls or
+mounted native picker proof are claimed by this server-only increment.
+
+The source-fixture runner lives at
+`plugins/packages/bb-provider-settings/test/integration/consumers/perspectives/run-packed.mjs`
+in the canonical workspace. It installs the immutable archive with ordinary npm,
+temporarily links only that installed package for canonical source resolution,
+checks the leaf and actual factory/handler driver, and retires its link, npm cache
+and fixture. Receipts label SDK tests and bundles as source/build evidence, never
+native role capabilities. Native first-turn execution, restart/wake behavior on
+an actual host, owner calls and final release packaging remain separate gates.
+
+The legacy native form still trims provider/model only at invocation. Shared
+Read/Save and raw fingerprints preserve the configured nonblank bytes. Thus a
+padded saved ID invokes the same tuple as its unpadded form without migrating the
+stored intent. Specific unavailable-provider/model/reasoning diagnostics remain
+feature-facing; diagnostic row lookup cannot generate an execution tuple.

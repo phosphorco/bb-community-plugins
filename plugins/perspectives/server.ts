@@ -1,5 +1,6 @@
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
+import { decodePhase, registerPerspectivesSettings } from "./execution-settings.ts";
 
 import {
   runGatherPerspectives,
@@ -69,15 +70,11 @@ function phaseSettings(
   reasoningLevel: string,
   permissionMode: string,
 ): PhaseExecutionSettings {
+  const decoded = decodePhase(providerId, model, reasoningLevel);
+  if (!decoded.ok) throw new Error(decoded.issues.map(issue => issue.message).join("; "));
   return {
-    ...(providerId.trim() ? { providerId: providerId.trim() } : {}),
-    ...(model.trim() ? { model: model.trim() } : {}),
-    ...(reasoningLevel !== "inherit"
-      ? { reasoningLevel: reasoningLevel as PhaseExecutionSettings["reasoningLevel"] }
-      : {}),
-    ...(permissionMode !== "inherit"
-      ? { permissionMode: permissionMode as PhaseExecutionSettings["permissionMode"] }
-      : {}),
+    ...(decoded.value.kind === "fields" ? { ...decoded.value.fields, reasoningLevel: decoded.value.fields.reasoningLevel as PhaseExecutionSettings["reasoningLevel"] } : {}),
+    ...(permissionMode !== "inherit" ? { permissionMode: permissionMode as PhaseExecutionSettings["permissionMode"] } : {}),
   };
 }
 
@@ -136,6 +133,8 @@ export default function plugin(bb: BbPluginApi): void {
       default: "inherit",
     },
   });
+
+  registerPerspectivesSettings(bb, settings);
 
   async function readExecutionSettings(): Promise<PerspectivesExecutionSettings> {
     const values = await settings.get();

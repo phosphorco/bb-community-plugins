@@ -17,6 +17,7 @@ describe("Perspectives agent tool registration", () => {
     let configure!: (context: any) => { tools: string[]; skills: string[]; instructions?: string };
     const bb = {
       pluginId: "perspectives",
+      rpc: { register: () => undefined },
       settings: {
         define: (descriptors: Record<string, any>) => {
           settingDescriptors = descriptors;

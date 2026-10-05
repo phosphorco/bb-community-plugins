@@ -2,6 +2,9 @@ import { createHash, randomUUID } from "node:crypto";
 import { relative, resolve, sep } from "node:path";
 import type { BbPluginApi, PluginAgentToolContext } from "@get-bb/plugin-sdk";
 import { z } from "zod";
+import { resolveCallerCascade, type ProviderCatalog } from "@phosphorco/bb-provider-settings";
+import { readCatalog } from "@phosphorco/bb-provider-settings/bb";
+import { perspectivesPolicy } from "./execution-settings.ts";
 
 const PLANNER_PHASE_TIMEOUT_MS = 15_000;
 const SPAWN_TIMEOUT_MS = 60_000;
@@ -601,44 +604,56 @@ async function createSpawnContexts(
   ): Promise<ResolvedExecution> => {
     if (!hasOverrides(configured)) return inheritedExecution;
 
-    const providerId = clean(configured.providerId) || inheritedExecution.providerId;
-    const provider = (await providers()).find((candidate) => candidate.id === providerId);
-    if (!provider?.available) {
-      throw configurationError(
-        `Configured ${phase} provider ${JSON.stringify(providerId)} is unavailable on the caller's environment host.`,
-      );
-    }
-
-    const options = await models(providerId);
-    const availableModels = [...options.models, ...options.selectedOnlyModels];
+    // Permission-only settings deliberately trigger this same cascade; the
+    // no-override fast path above remains catalog-free.
+    const availableProviders = await providers();
+    // Legacy native form trims at invocation only. Stored intent/read/fingerprint
+    // remain byte-exact in the owner adapter.
+    const requestedProvider = clean(configured.providerId);
     const requestedModel = clean(configured.model);
-    const inheritedModel = providerId === inheritedExecution.providerId
-      ? inheritedExecution.model
-      : "";
-    const model = requestedModel
-      ? availableModels.find(
-          (candidate) => candidate.id === requestedModel || candidate.model === requestedModel,
-        )
-      : availableModels.find((candidate) => candidate.model === inheritedModel) ??
-        availableModels.find((candidate) => candidate.isDefault);
-    if (!model) {
-      const detail = requestedModel
-        ? `model ${JSON.stringify(requestedModel)}`
-        : "a default model";
-      throw configurationError(
-        `Configured ${phase} provider ${JSON.stringify(providerId)} does not expose ${detail}.`,
-      );
+    const invocationProvider = requestedProvider || inheritedExecution.providerId;
+    let diagnosticCatalog: ProviderCatalog | undefined;
+    const resolved = await resolveCallerCascade({
+      ...(requestedProvider ? { providerId: requestedProvider } : {}),
+      ...(requestedModel ? { model: requestedModel } : {}),
+      ...(configured.reasoningLevel !== undefined ? { reasoningLevel: configured.reasoningLevel } : {}),
+    }, inheritedExecution, availableProviders.map(({ id, available, capabilities }) => ({ id, available, capabilities })), async providerId => {
+      const { catalog } = await readCatalog({ providers: {
+        list: async () => availableProviders,
+        models: (args: Parameters<BbPluginApi["sdk"]["providers"]["models"]>[0]) => {
+          if (!args?.providerId) throw new Error("Caller cascade requires a nonempty provider ID.");
+          return models(args.providerId);
+        },
+      } }, caller.environmentId ? { kind: "environment", environmentId: caller.environmentId } : null, providerId);
+      diagnosticCatalog = catalog;
+      return catalog;
+    }, perspectivesPolicy);
+    if (resolved.kind !== "override") {
+      if (resolved.kind === "rejected" && resolved.issues.some(issue => issue.code === "provider-unavailable")) {
+        throw configurationError(`Configured ${phase} provider ${JSON.stringify(invocationProvider)} is unavailable on the caller's environment host.`);
+      }
+      if (resolved.kind === "rejected" && resolved.issues.some(issue => issue.code === "model-unavailable")) {
+        const detail = requestedModel ? `model ${JSON.stringify(requestedModel)}` : "a default model";
+        throw configurationError(`Configured ${phase} provider ${JSON.stringify(invocationProvider)} does not expose ${detail}.`);
+      }
+      if (resolved.kind === "rejected" && resolved.issues.some(issue => issue.code === "reasoning-unsupported") && diagnosticCatalog) {
+        // Diagnostic row lookup only; the public cascade remains authoritative
+        // and this branch cannot produce an execution tuple.
+        const rows = [...diagnosticCatalog.models, ...diagnosticCatalog.selectedOnlyModels];
+        const row = requestedModel ? rows.find(row => row.id === requestedModel || row.model === requestedModel)
+          : (invocationProvider === inheritedExecution.providerId ? rows.find(row => row.model === inheritedExecution.model) : undefined) ?? rows.find(row => row.isDefault);
+        if (row) {
+          const reasoning = configured.reasoningLevel ?? (invocationProvider === inheritedExecution.providerId && row.model === inheritedExecution.model ? inheritedExecution.reasoningLevel : row.defaultReasoningEffort);
+          throw configurationError(`Configured ${phase} reasoning level ${JSON.stringify(reasoning)} is unavailable for ${invocationProvider}/${row.model}.`);
+        }
+      }
+      const detail = resolved.kind === "rejected" ? resolved.issues.map(issue => issue.message).join("; ") : "No execution resolved";
+      throw configurationError(`Configured ${phase} execution is unavailable: ${detail}.`);
     }
-
-    const reasoningLevel = configured.reasoningLevel ??
-      (providerId === inheritedExecution.providerId && model.model === inheritedExecution.model
-        ? inheritedExecution.reasoningLevel
-        : model.defaultReasoningEffort);
-    if (!model.supportedReasoningEfforts.some((item) => item.reasoningEffort === reasoningLevel)) {
-      throw configurationError(
-        `Configured ${phase} reasoning level ${JSON.stringify(reasoningLevel)} is unavailable for ${providerId}/${model.model}.`,
-      );
-    }
+    const providerId = resolved.fields.providerId!;
+    const provider = availableProviders.find(candidate => candidate.id === providerId)!;
+    const options = await models(providerId);
+    const reasoningLevel = resolved.fields.reasoningLevel as ReasoningLevel;
 
     const permissionMode = configured.permissionMode ?? inheritedExecution.permissionMode;
     if (!provider.capabilities.permissionModes.includes(permissionMode)) {
@@ -654,10 +669,8 @@ async function createSpawnContexts(
 
     return {
       providerId,
-      model: model.model,
-      serviceTier: provider.capabilities.supportsServiceTier
-        ? inheritedExecution.serviceTier ?? "default"
-        : undefined,
+      model: resolved.fields.model!,
+      serviceTier: resolved.fields.serviceTier,
       reasoningLevel,
       permissionMode,
     };

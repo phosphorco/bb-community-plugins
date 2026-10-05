@@ -55,6 +55,7 @@ function makeHarness(options: {
   });
 
   const bb = {
+    rpc: { register: () => undefined },
     pluginId: "perspectives",
     settings: {
       define: (descriptors: Record<string, any>) => ({
