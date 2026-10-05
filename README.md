@@ -53,10 +53,22 @@ The plugins are also submitted to the BB Community marketplace for installation 
 ## Release
 
 Push an immutable `<plugin-id>/vX.Y.Z` tag whose version matches that plugin's
-manifest. GitHub Actions tests, typechecks, builds, inspects, and publishes only
-the tagged workspace. The first release uses the repository's `NPM_TOKEN`;
-after trusted publishing is configured for each npm package, releases use OIDC
-with automatic npm provenance.
+manifest. Shared libraries use `<name>/v<version>` tags:
+`bb-identity/v0.1.0` and `bb-provider-settings/v0.1.0` for their initial releases.
+GitHub Actions tests, typechecks, builds, inspects, and publishes only the tagged
+workspace. Library releases include npm provenance.
+
+To verify an existing tagged release without publishing, dispatch `publish.yml`,
+select the plugin or library, and set `dry_run` to `true`. The workflow runs the
+same checks, prints `dry run: <workspace>`, and uploads
+`release-receipt-<name>` with the dry-run flag, workspace, source path, commit SHA,
+and target name. The publish step is skipped; tag pushes publish normally.
+
+Bootstrap each package's first release with a temporary repository `NPM_TOKEN`.
+Then configure its npm trusted publisher for the `phosphorco` organization,
+`bb-community-plugins` repository, and `publish.yml` workflow, and delete the
+token. Subsequent releases use GitHub OIDC; the workflow retains the token
+fallback for first releases.
 
 ## Develop
 

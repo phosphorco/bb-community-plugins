@@ -16,6 +16,12 @@ on:
           - sticky-notes
           - bb-ui-reference
           - attach-text-snippets
+          - bb-identity
+          - bb-provider-settings
+      dry_run:
+        type: boolean
+        default: false
+        description: Verify the release and upload a receipt without publishing
   push:
     tags:
       - "message-timings-nerd/v*"
@@ -26,6 +32,8 @@ on:
       - "sticky-notes/v*"
       - "bb-ui-reference/v*"
       - "attach-text-snippets/v*"
+      - "bb-identity/v*"
+      - "bb-provider-settings/v*"
 
 permissions:
   contents: read
@@ -52,6 +60,9 @@ jobs:
           registry-url: "https://registry.npmjs.org"
           package-manager-cache: false
 
+      - name: Upgrade npm for trusted publishing
+        run: npm install -g npm@^11.5.1
+
       - name: Select and verify the tagged package
         id: release
         shell: bash
@@ -68,7 +79,13 @@ jobs:
             sticky-notes) workspace="@phosphorco/bb-plugin-sticky-notes" ;;
             bb-ui-reference) workspace="@phosphorco/bb-plugin-bb-ui-reference" ;;
             attach-text-snippets) workspace="@phosphorco/bb-plugin-attach-text-snippets" ;;
+            bb-identity) workspace="@phosphorco/bb-identity" ;;
+            bb-provider-settings) workspace="@phosphorco/bb-provider-settings" ;;
             *) echo "Unsupported release plugin: $plugin" >&2; exit 1 ;;
+          esac
+          case "$plugin" in
+            bb-identity|bb-provider-settings) path="packages/$plugin" ;;
+            *) path="plugins/$plugin" ;;
           esac
           package_version="$(npm pkg get version --workspace "$workspace" | node -e 'let input=""; process.stdin.on("data", chunk => input += chunk); process.stdin.on("end", () => console.log(Object.values(JSON.parse(input))[0]))')"
           release_tag="$plugin/v$package_version"
@@ -77,14 +94,20 @@ jobs:
             exit 1
           }
           tag_commit="$(git rev-parse "$release_tag^{commit}")"
-          git diff --quiet "$tag_commit" HEAD -- "plugins/$plugin" || {
+          git diff --quiet "$tag_commit" HEAD -- "$path" || {
             echo "The tagged $plugin source differs from the requested workflow revision" >&2
             exit 1
           }
           echo "workspace=$workspace" >> "$GITHUB_OUTPUT"
+          echo "path=$path" >> "$GITHUB_OUTPUT"
+          echo "plugin=$plugin" >> "$GITHUB_OUTPUT"
 
       - name: Install locked dependencies
         run: npm ci
+
+      - name: Build library for package tests
+        if: ${{ startsWith(steps.release.outputs.path, 'packages/') }}
+        run: npm run build --workspace "${{ steps.release.outputs.workspace }}"
 
       - name: Test
         run: npm run test --workspace "${{ steps.release.outputs.workspace }}"
@@ -98,8 +121,44 @@ jobs:
       - name: Inspect package contents
         run: npm pack --dry-run --ignore-scripts --workspace "${{ steps.release.outputs.workspace }}"
 
+      - name: Write release receipt
+        if: ${{ always() }}
+        env:
+          DRY_RUN: ${{ inputs.dry_run || false }}
+          RELEASE_WORKSPACE: ${{ steps.release.outputs.workspace }}
+          RELEASE_PATH: ${{ steps.release.outputs.path }}
+          RELEASE_PLUGIN: ${{ steps.release.outputs.plugin }}
+        run: |
+          node <<'NODE'
+          const fs = require('node:fs');
+          const dryRun = process.env.DRY_RUN === 'true';
+          const workspace = process.env.RELEASE_WORKSPACE;
+          fs.writeFileSync('release-receipt.json', JSON.stringify({
+            dryRun,
+            workspace,
+            path: process.env.RELEASE_PATH,
+            sha: process.env.GITHUB_SHA,
+            plugin: process.env.RELEASE_PLUGIN,
+          }) + '\n');
+          if (dryRun) console.log(`dry run: ${workspace}`);
+          NODE
+
+      - name: Upload release receipt
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: release-receipt-${{ steps.release.outputs.plugin }}
+          path: release-receipt.json
+          if-no-files-found: error
+
       - name: Publish public package
-        run: npm publish --ignore-scripts --access public --workspace "${{ steps.release.outputs.workspace }}"
+        if: ${{ !inputs.dry_run }}
+        run: |
+          if [[ "${{ steps.release.outputs.path }}" == packages/* ]]; then
+            npm publish --ignore-scripts --access public --workspace "${{ steps.release.outputs.workspace }}" --provenance
+          else
+            npm publish --ignore-scripts --access public --workspace "${{ steps.release.outputs.workspace }}"
+          fi
         env:
           # Required for the first release. Once npm trusted publishing is
           # configured, npm uses GitHub OIDC before falling back to this token.

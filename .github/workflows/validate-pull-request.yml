@@ -2,6 +2,9 @@ name: Validate pull request
 
 on:
   pull_request:
+  push:
+    branches:
+      - main
 
 permissions:
   contents: read
@@ -21,6 +24,11 @@ jobs:
 
       - name: Install locked dependencies
         run: npm ci
+
+      - name: Build libraries for package tests
+        run: |
+          npm run build --workspace @phosphorco/bb-identity
+          npm run build --workspace @phosphorco/bb-provider-settings
 
       - name: Test
         run: npm run test
@@ -51,3 +59,9 @@ jobs:
 
       - name: Inspect Message Timings Nerd package
         run: npm pack --dry-run --ignore-scripts --workspace @phosphorco/bb-plugin-message-timings-nerd
+
+      - name: Inspect BB Identity package
+        run: npm pack --dry-run --ignore-scripts --workspace @phosphorco/bb-identity
+
+      - name: Inspect BB Provider Settings package
+        run: npm pack --dry-run --ignore-scripts --workspace @phosphorco/bb-provider-settings
