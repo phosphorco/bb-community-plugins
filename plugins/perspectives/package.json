@@ -48,9 +48,11 @@
     "README.md",
     "LICENSE",
     "server.ts",
-    "Perspectives.ts"
+    "Perspectives.ts",
+    "execution-settings.ts"
   ],
   "dependencies": {
+    "@phosphorco/bb-provider-settings": "0.1.0",
     "zod": "4.3.6"
   },
   "devDependencies": {
