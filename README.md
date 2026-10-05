@@ -20,6 +20,18 @@
 | [Restart Resume](plugins/restart-resume/) | Resume threads left interrupted by a host daemon restart, with project-specific recovery messages. |
 | [Attach Text Snippets](plugins/attach-text-snippets/) | Paste long text into durable thread files and attach compact references to conversations. |
 
+## Packages
+
+Shared libraries for bb integrations, published to npm:
+
+| Package | Purpose |
+|---|---|
+| [`@phosphorco/bb-identity`](packages/bb-identity/) | Portable identity, provenance, and state contracts for BB integrations. |
+| [`@phosphorco/bb-provider-settings`](packages/bb-provider-settings/) | Explicit owner-bound provider role settings. |
+
+Plugins in this repository depend on their exact released versions; npm
+workspaces link them to the local `packages/` sources during development.
+
 ## Install directly
 
 Each plugin is published independently to npm by its prefixed release tag:
