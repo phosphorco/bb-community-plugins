@@ -53,6 +53,20 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Acquire the pinned plugin SDK artifacts (public phosphorco/bb-workspace)
+        # machine-monitor and analytics build against the fork SDK tarball at ../sdk-artifacts.
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          repository: phosphorco/bb-workspace
+          ref: b0280c61c44d23773420d742c02a27519b121b68
+          path: workspace-artifacts
+          sparse-checkout: sdk-artifacts
+          persist-credentials: false
+
+      - name: Place SDK artifacts beside the checkout
+        run: mv "$GITHUB_WORKSPACE/workspace-artifacts/sdk-artifacts" "$GITHUB_WORKSPACE/../sdk-artifacts" && rm -rf "$GITHUB_WORKSPACE/workspace-artifacts"
+
+
       - name: Set up Node and npm
         uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
