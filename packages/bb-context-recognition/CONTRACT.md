@@ -159,19 +159,34 @@ claims. `negotiateVersion(envelope, [1])` returns `max(shared)`:
 
 ### 4.2 Enumeration
 
-`enumerateRecognitionSuppliers({sdk, owner, signal, onRow, exclude})`:
+`enumerateRecognitionSuppliers({sdk, owner, signal, onRow, onProgress, exclude, knownAbsent, previouslyReady})`:
 
 `owner` is a per-consumer handle from `createRecognitionDiscoveryOwner()`. It
 owns only the current pass generation and abort controller; consumers dispose it
 on release. Consumers sharing an SDK use separate owners, never a global registry.
 
 1. Call `sdk.plugins.list()` once per pass.
-2. Probe only plugins whose status is `running` (or `degraded`), excluding the
-   consumer's own id; sort ids; cap at `LIMITS.plugins`.
-3. Describe with concurrency `LIMITS.concurrency` and `LIMITS.describeMs` per
-   call, under `LIMITS.discoveryMs` overall.
+2. Probe every plugin whose status is `running` (or `degraded`), excluding the
+   consumer's own id. Previously ready IDs go first, then unknown IDs; each
+   group is sorted by ID. Explicit consumer-owned `knownAbsent` IDs are skipped
+   until a relevant `plugins-changed` event (or a whole-list invalidation) clears
+   them. `previouslyReady` takes precedence over a contradictory absent entry.
+3. Describe with concurrency `LIMITS.concurrency` and at most `LIMITS.describeMs`
+   per call, under a `LIMITS.discoveryMs` discovery slice. Targets not reached
+   remain `pending`; an immediate continuation of the same generation opens
+   another slice. This is a finite drain of the one listed set, not polling or
+   retrying completed failures. Cancellation fences the entire drain.
+   `LIMITS.plugins` caps **ready suppliers admitted per consumer**, not targets
+   probed. Admission uses the same priority order; excess ready rows have
+   `admitted: false` and contribute no routes. They remain visible diagnostics.
 4. Rows are keyed by **target plugin id**; names inside describe are not trusted
    as the key. `onRow` fires per plugin so a slow supplier never hides others.
+   `onProgress` supplies isolated row and route snapshots as states settle,
+   including admission/contested-provider changes. Consumers may patch a late
+   supplier immediately without waiting for the drain to finish. `omittedCount`
+   counts ready suppliers excluded by admission, not absent plugins or the
+   excluded consumer. Cache inputs are explicit ID collections; the helper has
+   no SDK-global cache or scheduler.
 5. Each pass carries a generation token; starting a pass aborts the previous one
    and drops its late rows.
 
@@ -467,14 +482,15 @@ registerRecognitionSupplier(bb, {
 ## 8. Limits
 
 `LIMITS` is exported from the root; schemas enforce the data bounds, runners
-enforce the time bounds.
+enforce the time bounds. Discovery admission, concurrency and time budgets are
+consumer policy; they are not wire DTO bounds.
 
 | Limit | Value | Applies to |
 |---|---|---|
-| `plugins` | 32 | Suppliers probed per pass |
+| `plugins` | 32 | Ready suppliers admitted per consumer (discovery policy) |
 | `concurrency` | 4 | Parallel calls per stage |
 | `describeMs` | 500 | Per describe |
-| `discoveryMs` | 3000 | Whole enumeration |
+| `discoveryMs` | 3000 | Each immediate discovery continuation slice |
 | `linkifyMs` | 500 | Per linkify call |
 | `linkifyStageMs` | 1500 | All linkify calls for one text |
 | `resolveMs` | 1500 | Per resolve call |
@@ -532,7 +548,7 @@ guarantees only the canonical-result cap above. (SDK 0.5.29 offers no raw access
 | Added optional output field | Same wire version; outputs tolerate unknown fields |
 | Added input field, changed meaning, new required field | New wire version and new method names (`…V2Linkify`) |
 | New reason code, basis or tone | New wire version (decoders map unknown reasons to `source-error`, but bases and tones are strict) |
-| New entry or helper | New package version; `LIMITS` do not change within wire v1 |
+| New entry or helper, changed discovery policy | New package version; wire data bounds do not change within wire v1 |
 
 Suppliers may advertise `[1, 2]` and serve both. Consumers negotiate per
 plugin. Package `0.x` minors may add helpers; exports and peer ranges stay
@@ -709,3 +725,6 @@ recursive resolution of excerpts, writes of any kind, polling, and fork changes.
 
 Later, not v1: cards for targets of explicit Markdown links (today they are
 excluded and only appear in `context.links`).
+
+Package 0.2.0 changes discovery admission and adds explicit cache inputs and
+progressive continuation snapshots. RPC names and wire v1 DTO bounds remain unchanged.

@@ -9,7 +9,8 @@ import type {
   DescribeEnvelope, CapabilitiesV1, LinkifyInputV1, LinkifyOutputV1,
   ResolveInputV1, ResolveOutputV1, ProviderClaimV1, TaggedCandidateV1, SourceIdentity, Span,
 } from '@phosphorco/bb-context-recognition';
-import { registerRecognitionSupplier, createSupplierClient } from '@phosphorco/bb-context-recognition/bb';
+import { registerRecognitionSupplier, createSupplierClient, enumerateRecognitionSuppliers } from '@phosphorco/bb-context-recognition/bb';
+import type { RecognitionDiscoverySnapshot } from '@phosphorco/bb-context-recognition/bb';
 import { runSupplierConformance, versionFixtures, arbitrationFixtures, workedExamples } from '@phosphorco/bb-context-recognition/testing';
 import type {
   SupplierConformanceOptions, SupplierConformanceReport, ConformanceCheck,
@@ -33,6 +34,15 @@ const options: SupplierConformanceOptions = {
   }, linkifyCases: [linkifyCase], resolveCases: [resolveCase],
 };
 const result: Promise<SupplierConformanceReport> = runSupplierConformance(options);
+const discoveryCache: Pick<Parameters<typeof enumerateRecognitionSuppliers>[0], 'knownAbsent' | 'previouslyReady' | 'onProgress'> = {
+  knownAbsent: new Set(['absent']), previouslyReady: ['supplier'],
+  onProgress(snapshot: RecognitionDiscoverySnapshot) {
+    const admitted: boolean | undefined = snapshot.rows[0]?.admitted;
+    const continuation: number = snapshot.continuation;
+    void [admitted, continuation, snapshot.routes];
+  },
+};
+void discoveryCache;
 void result.then(report => {
   const proof: 'source-conformance' = report.proof;
   const check: ConformanceCheck | undefined = report.checks[0];

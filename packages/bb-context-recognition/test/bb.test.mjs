@@ -95,7 +95,7 @@ test('registration installs all methods, strict inputs, inert discovery and raw 
   await assert.rejects(registered.handlers[METHODS.resolve]({ version: 1, context, sources: [{ provider: 'example', id: '1' }], detail: 'label' }), UnsupportedStageError);
 });
 
-test('enumeration lists once, sorts/caps targets, excludes consumer, preserves independent failures', async () => {
+test('enumeration probes all targets and caps admitted ready suppliers, preserving independent failures', async () => {
   let lists = 0;
   const targets = [];
   const rows = [];
@@ -107,13 +107,44 @@ test('enumeration lists once, sorts/caps targets, excludes consumer, preserves i
   }, async () => { lists++; return { plugins: [...Array.from({ length: 35 }, (_, i) => ({ id: `p${String(i).padStart(2, '0')}`, status: 'running' })).reverse(), { id: 'consumer', status: 'running' }, { id: 'disabled', status: 'disabled' }] }; });
   const pass = await enumerateRecognitionSuppliers({ sdk: owner, owner: createRecognitionDiscoveryOwner(), exclude: 'consumer', onRow: row => rows.push(row) });
   assert.equal(lists, 1);
-  assert.equal(targets.length, LIMITS.plugins);
+  assert.equal(targets.length, 35);
   assert.deepEqual(targets, [...targets].sort());
-  assert.equal(pass.omittedCount, 5);
+  assert.equal(pass.omittedCount, 1);
   assert.equal(pass.rows.find(r => r.pluginId === 'p02').state, 'absent');
   assert.equal(pass.rows.find(r => r.pluginId === 'p03').state, 'incompatible');
   assert.equal(pass.rows.find(r => r.pluginId === 'p00').state, 'ready');
-  assert.equal(rows.length, LIMITS.plugins * 2);
+  assert.equal(rows.length, 70);
+  assert.equal(pass.rows.filter(r => r.admitted).length, LIMITS.plugins);
+  assert.equal(pass.rows.find(r => r.pluginId === 'p34').admitted, false);
+  assert.equal(pass.routes.has('p34'), false);
+});
+
+test('discovery continues past 64 candidates and warm absent cache admits the last supplier first', async () => {
+  const ids = [...Array.from({length:64},(_,i)=>`absent-${String(i).padStart(2,'0')}`),'zz-supplier'];
+  let calls=[],active=0,peak=0;
+  const runtime=sdk(async({pluginId})=>{
+    calls.push(pluginId);active++;peak=Math.max(peak,active);
+    try {await new Promise(r=>setTimeout(r,6));if(pluginId!=='zz-supplier')throw {status:404,body:{error:{code:'unknown_method'}}};return envelope(['late']);}
+    finally{active--;}
+  },async()=>({plugins:ids.map(id=>({id,status:'running'}))}));
+  const progress=[];const started=performance.now();
+  const cold=await enumerateRecognitionSuppliers({sdk:runtime,owner:createRecognitionDiscoveryOwner(),exclude:'consumer',budgets:{describeMs:20,discoveryMs:40},onProgress:p=>progress.push(p)});
+  const coldMs=performance.now()-started;
+  assert.equal(calls.length,65);assert.ok(peak<=4);
+  assert.equal(cold.rows.find(r=>r.pluginId==='zz-supplier').admitted,true);
+  assert.equal(cold.routes.get('late').pluginId,'zz-supplier');
+  assert.ok(cold.continuation>0);assert.ok(progress.some(p=>p.continuation>0&&p.rows.some(r=>r.state==='pending')));
+  assert.equal(cold.rows.some(r=>r.state==='pending'),false);
+  const knownAbsent=cold.rows.filter(r=>r.state==='absent').map(r=>r.pluginId);
+  calls=[];const warmStarted=performance.now();
+  const warm=await enumerateRecognitionSuppliers({sdk:runtime,owner:createRecognitionDiscoveryOwner(),exclude:'consumer',knownAbsent,previouslyReady:['zz-supplier'],budgets:{describeMs:20,discoveryMs:40}});
+  const warmMs=performance.now()-warmStarted;
+  assert.deepEqual(calls,['zz-supplier']);assert.equal(warm.rows[0].pluginId,'zz-supplier');
+  assert.equal(warm.continuation,0);assert.ok(warmMs<coldMs);
+  assert.equal(warm.rows.filter(r=>r.state==='absent').length,64);
+  // Invalidating the consumer-owned absent cache permits a formerly absent plugin to be probed again.
+  calls=[];await enumerateRecognitionSuppliers({sdk:runtime,owner:createRecognitionDiscoveryOwner(),exclude:'consumer',knownAbsent:knownAbsent.filter(id=>id!=='absent-00'),previouslyReady:['zz-supplier'],budgets:{describeMs:20,discoveryMs:40}});
+  assert.deepEqual(calls,['zz-supplier','absent-00']);
 });
 
 test('generation owner aborts stale pass and distinct consumers never cancel each other', async () => {

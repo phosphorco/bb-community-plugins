@@ -245,9 +245,18 @@ export interface RecognitionSupplierRow {
   generation: number;
   state: 'pending' | 'ready' | 'contested' | 'absent' | 'incompatible' | 'unavailable' | 'transient' | 'error';
   capabilities?: CapabilitiesV1;
+  /** Ready data is usable only when admitted; excess suppliers remain diagnostic rows. */
+  admitted?: boolean;
   /** Resolve contention is provider-specific; other claims remain usable. */
   contestedProviders?: { provider: string; pluginIds: string[] }[];
   error?: RecognitionErrorKind;
+}
+export interface RecognitionDiscoverySnapshot {
+  rows: RecognitionSupplierRow[];
+  routes: Map<string, ResolverRoute>;
+  omittedCount: number;
+  generation: number;
+  continuation: number;
 }
 async function lanes<T>(items: readonly T[], concurrency: number, run: (item: T, index: number) => Promise<void>): Promise<void> {
   let index = 0;
@@ -264,61 +273,82 @@ export async function enumerateRecognitionSuppliers(opts: {
   signal?: AbortSignal;
   exclude: string | readonly string[];
   onRow?(row: RecognitionSupplierRow): void;
+  onProgress?(snapshot: RecognitionDiscoverySnapshot): void;
+  knownAbsent?: ReadonlySet<string> | readonly string[];
+  previouslyReady?: ReadonlySet<string> | readonly string[];
   builtins?: readonly BuiltinRecognitionSupplier[];
   budgets?: RecognitionBudgets;
-}): Promise<{ rows: RecognitionSupplierRow[]; routes: Map<string, ResolverRoute>; omittedCount: number; generation: number }> {
+}): Promise<RecognitionDiscoverySnapshot> {
   const pass = opts.owner.begin();
   const abort = () => pass.cancel();
   opts.signal?.addEventListener('abort', abort, { once: true });
   if (opts.signal?.aborted) abort();
   const rows = new Map<string, RecognitionSupplierRow>();
-  const end = deadline(limit(opts.budgets?.discoveryMs, LIMITS.discoveryMs));
-  let omittedCount = 0;
+  const sliceMs = limit(opts.budgets?.discoveryMs, LIMITS.discoveryMs);
+  let end = deadline(sliceMs);
+  let continuation = 0;
+  const previouslyReady = new Set(opts.previouslyReady ?? []);
+  const knownAbsent = new Set(opts.knownAbsent ?? []);
+  const compare = (a: {pluginId:string}, b: {pluginId:string}) =>
+    Number(previouslyReady.has(b.pluginId)) - Number(previouslyReady.has(a.pluginId)) ||
+    (a.pluginId < b.pluginId ? -1 : a.pluginId > b.pluginId ? 1 : 0);
+  const snapshot = (): RecognitionDiscoverySnapshot => {
+    const ordered = [...rows.values()].sort(compare);
+    const ready = ordered.filter(row => row.state === 'ready' && row.capabilities);
+    const admitted = new Set(ready.slice(0, LIMITS.plugins).map(row => row.pluginId));
+    const routes = resolveRoutes(ready.filter(row => admitted.has(row.pluginId)).map(row => ({client:createSupplierClient(opts.sdk,row.pluginId),capabilities:row.capabilities!})), opts.builtins ?? []);
+    const resultRows = ordered.map(row => {
+      if (!row.capabilities || row.state !== 'ready') return structuredClone(row);
+      const contestedProviders = [...routes].flatMap(([provider,route]) => route.state === 'contested' && route.pluginIds.includes(row.pluginId) ? [{provider,pluginIds:[...route.pluginIds]}] : []).sort((a,b)=>a.provider < b.provider ? -1 : a.provider > b.provider ? 1 : 0);
+      return {...structuredClone(row),admitted:admitted.has(row.pluginId),...(contestedProviders.length ? {state:'contested' as const,contestedProviders} : {})};
+    });
+    return {rows:resultRows,routes,omittedCount:ready.length-admitted.size,generation:pass.generation,continuation};
+  };
+  const empty = (): RecognitionDiscoverySnapshot => ({rows:[],routes:resolveRoutes([],opts.builtins ?? []),omittedCount:0,generation:pass.generation,continuation});
   const publish = (row: RecognitionSupplierRow) => {
     if (!pass.current()) return;
     rows.set(row.pluginId, row);
     opts.onRow?.(structuredClone(row));
+    if (pass.current()) opts.onProgress?.(snapshot());
   };
   try {
     const listed = await isolated(s => opts.sdk.plugins.list({ signal: s }), end - performance.now(), pass.signal);
-    if (!pass.current()) return { rows: [], routes: resolveRoutes([], opts.builtins ?? []), omittedCount: 0, generation: pass.generation };
+    if (!pass.current()) return empty();
     const exclude = new Set(typeof opts.exclude === 'string' ? [opts.exclude] : opts.exclude);
-    const eligible = [...new Map(listed.plugins.filter(p => (p.status === 'running' || p.status === 'degraded') && !exclude.has(p.id)).map(p => [p.id, p])).values()].sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
-    const selected = eligible.slice(0, LIMITS.plugins);
-    omittedCount = listed.plugins.length - selected.length;
-    await lanes(selected, Math.max(1, limit(opts.budgets?.concurrency, LIMITS.concurrency)), async p => {
+    const eligible = [...new Map(listed.plugins.filter(p => (p.status === 'running' || p.status === 'degraded') && !exclude.has(p.id)).map(p => [p.id, p])).values()].sort((a,b)=>compare({pluginId:a.id},{pluginId:b.id}));
+    for (const p of eligible) publish({pluginId:p.id,displayName:p.name ?? null,listedStatus:p.status,generation:pass.generation,state:knownAbsent.has(p.id) && !previouslyReady.has(p.id) ? 'absent' : 'pending'});
+    let queue = eligible.filter(p => rows.get(p.id)?.state === 'pending');
+    const describeMs = Math.min(limit(opts.budgets?.describeMs,LIMITS.describeMs),sliceMs);
+    while (queue.length && pass.current()) {
+      const reached = new Set<string>();
+      await lanes(queue, Math.max(1, limit(opts.budgets?.concurrency, LIMITS.concurrency)), async p => {
       if (!pass.current()) return;
+      // Leave a whole per-call budget. Deferred targets stay pending until the
+      // immediate next slice, rather than becoming transport failures.
+      if (end-performance.now()<describeMs && reached.size>0) return;
+      reached.add(p.id);
       const base = { pluginId: p.id, displayName: p.name ?? null, listedStatus: p.status, generation: pass.generation };
-      publish({ ...base, state: 'pending' });
       try {
-        const result = await isolated(s => createSupplierClient(opts.sdk, p.id).describe(s), Math.min(limit(opts.budgets?.describeMs, LIMITS.describeMs), end - performance.now()), pass.signal);
+        const result = await isolated(s => createSupplierClient(opts.sdk, p.id).describe(s), Math.max(0,Math.min(describeMs,end-performance.now())), pass.signal);
         publish(result.state === 'ready' ? { ...base, state: 'ready', capabilities: result.capabilities } : { ...base, state: 'incompatible', error: 'incompatible' });
       } catch (error) {
         const kind = classifyRecognitionError(error);
-        if (kind === 'cancelled') return;
+        if (kind === 'cancelled') {
+          if (pass.current()) publish({...base,state:'transient',error:kind});
+          return;
+        }
         const state = kind === 'vanished' || kind === 'unavailable' ? 'unavailable' : kind === 'host-incompatible' || kind === 'incompatible' ? 'incompatible' : kind === 'absent' || kind === 'transient' ? kind : 'error';
         publish({ ...base, state, error: kind });
       }
-    });
-    if (!pass.current()) return { rows: [], routes: resolveRoutes([], opts.builtins ?? []), omittedCount, generation: pass.generation };
-    const finalRows = [...rows.values()].sort((a, b) => a.pluginId < b.pluginId ? -1 : a.pluginId > b.pluginId ? 1 : 0);
-    const ready = finalRows.flatMap(row => (row.state === 'ready' || row.state === 'contested') && row.capabilities ? [{ client: createSupplierClient(opts.sdk, row.pluginId), capabilities: row.capabilities }] : []);
-    const routes = resolveRoutes(ready, opts.builtins ?? []);
-    for (let i = 0; i < finalRows.length; i++) {
-      const row = finalRows[i]!;
-      if (!row.capabilities) continue;
-      const contestedProviders = [...routes].flatMap(([provider, route]) => route.state === 'contested' && route.pluginIds.includes(row.pluginId) ? [{ provider, pluginIds: [...route.pluginIds] }] : []).sort((a, b) => a.provider < b.provider ? -1 : a.provider > b.provider ? 1 : 0);
-      if (contestedProviders.length) {
-        const contested: RecognitionSupplierRow = { ...row, state: 'contested', contestedProviders };
-        finalRows[i] = contested;
-        publish(contested);
-      }
+      });
+      queue=queue.filter(p=>!reached.has(p.id));
+      if(queue.length && pass.current()){continuation++;opts.onProgress?.(snapshot());end=deadline(sliceMs);}
     }
-    if (!pass.current()) return { rows: [], routes: resolveRoutes([], opts.builtins ?? []), omittedCount, generation: pass.generation };
-    return { rows: finalRows, routes, omittedCount, generation: pass.generation };
+    if (!pass.current()) return empty();
+    return snapshot();
   } catch (error) {
     if (classifyRecognitionError(error) !== 'cancelled') throw new RecognitionCallError(classifyRecognitionError(error), error);
-    return { rows: [], routes: resolveRoutes([], opts.builtins ?? []), omittedCount, generation: pass.generation };
+    return empty();
   } finally {
     opts.signal?.removeEventListener('abort', abort);
     pass.finish();

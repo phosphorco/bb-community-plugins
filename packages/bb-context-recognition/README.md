@@ -1,8 +1,8 @@
 # @phosphorco/bb-context-recognition
 
-Status: **implemented, unpublished 0.1.0.** [CONTRACT.md](CONTRACT.md) defines
-wire v1. Package source conformance is checked separately from adopter, host
-and live proof; no npm release is claimed.
+Status: **0.2.0 release candidate; publication pending.** [CONTRACT.md](CONTRACT.md)
+defines unchanged wire v1. Package source conformance is separate from adopter,
+host and live proof.
 
 A generic, consumer-neutral contract that lets independently installed BB
 plugins recognize mentions in text and supply presentation data for them, in
@@ -39,3 +39,9 @@ way. It supersedes `@phosphorco/bb-brief-references`
 
 Consumers pin an exact registry version; plugins only, no fork changes;
 identity is attribution only.
+
+Discovery probes all eligible plugins through bounded continuation slices. Its
+32-supplier cap applies to admitted ready suppliers. Consumers provide
+`knownAbsent` and `previouslyReady` ID collections, invalidating absent entries
+on plugin lifecycle changes, and consume `onProgress` row/route snapshots for
+late enrichment. The package keeps no hidden discovery cache or polling loop.
