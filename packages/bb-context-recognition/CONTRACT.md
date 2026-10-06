@@ -78,7 +78,11 @@ type SourceIdentity = { provider: string; id: string; kind?: string };
   same id means the same thing in every consumer.
 - Providers starting with `bb.` are **reserved** for BB-native referents
   implemented as consumer built-ins: `bb.thread` (id `thr_…`, kind `session`)
-  and `bb.file` (id is a consumer-framed path, kind `file`). A consumer ignores
+  and `bb.file` (id `thr_…:path`, kind `file`). The file id embeds the
+  thread whose storage/environment frames the workspace-relative path. Built-in
+  resolution derives that frame from the id; `context.threadId` is attribution
+  only. A `bb.thread` resolver checks the target id independently of that
+  context. A consumer ignores
   contributed advertisements and candidates for a reserved provider it
   implements itself.
 
@@ -97,7 +101,10 @@ translate offsets back to their own document (e.g. add a window offset).
 - `FileTarget`: `{kind:'workspace', environmentId, path}` or
   `{kind:'thread-storage', threadId, path}`. A target is not a permission and
   does not prove the file exists; the resolver checks containment and existence
-  on the right host before returning one.
+  on the right host before returning one. A saved-projection supplier may instead
+  return the target recorded by a verified export, disclosing the projection age
+  and that current source existence is not re-checked. It performs no resolve-time
+  source stat or read; the native file opener handles a missing file.
 
 ### 3.4 Reasons (closed codes)
 
@@ -595,12 +602,17 @@ same URL inside `[the PR](…)` is excluded text and only appears in
 
 ### 11.3 Bare `plans/x.plan.pkl` vs Thread Brief's file linkifier
 
-Text: `Plan: plans/x.plan.pkl` in a thread whose environment is `env_abc123`.
+Text: `Plan: plans/x.plan.pkl` in thread `thr_example`, whose environment is
+`env_abc123`.
 
 | Origin | Candidate | Claim |
 |---|---|---|
-| Thread Brief built-in | `bb.file` id `plans/x.plan.pkl`, `explicit`, `high` | `generic` |
+| Thread Brief built-in | `bb.file` id `thr_example:plans/x.plan.pkl`, `explicit`, `high` | `generic` |
 | Plan Graph | `plan-graph` id `env_abc123:plans/x.plan.pkl`, kind `plan`, `explicit`, `high` | `typed` |
+
+The thread-framed `bb.file` identity and environment-framed `plan-graph`
+identity deliberately differ. Arbitration joins them only as primary and
+fallback for this occurrence, without equating their identity keys.
 
 Same span, same length, both explicit; step 3 makes Plan Graph primary and
 `bb.file` its fallback. Thread Brief resolves both in one pass (the file
@@ -617,8 +629,9 @@ is the floor, the typed card replaces it when it resolves.
 `@thread:thr_example` is recognized by Thread Brief's built-in linkifier as
 `bb.thread` / `thr_example` / `session`, `explicit`, `high`, typed. `bb.thread`
 is reserved, so any contributed candidate for it is dropped at step 1. The
-built-in resolver produces the native thread card (title, status, brief
-excerpt). Contributed linkifiers may still claim *other* providers on
+built-in resolver checks that target thread independently of the attribution
+`context.threadId`, then produces its native card (title, status, brief excerpt).
+Contributed linkifiers may still claim *other* providers on
 overlapping text; maximal munch and rank decide as usual.
 
 ## 12. Migration from `@phosphorco/bb-brief-references`

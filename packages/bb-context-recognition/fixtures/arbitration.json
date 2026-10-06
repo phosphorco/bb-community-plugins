@@ -510,7 +510,7 @@
           "match": "path",
           "source": {
             "provider": "bb.file",
-            "id": "one"
+            "id": "thr_example:one"
           },
           "confidence": "high",
           "provenance": {
@@ -585,7 +585,7 @@
               "match": "path",
               "source": {
                 "provider": "bb.file",
-                "id": "one"
+                "id": "thr_example:one"
               },
               "confidence": "high",
               "provenance": {
@@ -610,7 +610,7 @@
         },
         {
           "provider": "bb.file",
-          "id": "one"
+          "id": "thr_example:one"
         }
       ],
       "dropped": {}

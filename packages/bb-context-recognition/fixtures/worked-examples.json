@@ -247,7 +247,8 @@
           "surface": "document"
         },
         "links": [],
-        "environmentId": "env_abc123"
+        "environmentId": "env_abc123",
+        "threadId": "thr_example"
       }
     },
     "output": {
@@ -279,7 +280,7 @@
       "match": "plans/x.plan.pkl",
       "source": {
         "provider": "bb.file",
-        "id": "plans/x.plan.pkl",
+        "id": "thr_example:plans/x.plan.pkl",
         "kind": "file"
       },
       "confidence": "high",
@@ -318,7 +319,7 @@
     "name": "11.4-thread-builtin",
     "input": {
       "version": 1,
-      "text": "@thread:thr_8g6dcy2w3u",
+      "text": "@thread:thr_example",
       "format": "plain",
       "excluded": [],
       "context": {
@@ -334,12 +335,12 @@
         {
           "span": {
             "start": 0,
-            "end": 22
+            "end": 19
           },
-          "match": "@thread:thr_8g6dcy2w3u",
+          "match": "@thread:thr_example",
           "source": {
             "provider": "bb.thread",
-            "id": "thr_8g6dcy2w3u",
+            "id": "thr_example",
             "kind": "session"
           },
           "confidence": "high",
