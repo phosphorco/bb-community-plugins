@@ -1,0 +1,71 @@
+{
+  "name": "@phosphorco/bb-context-recognition",
+  "version": "0.1.0",
+  "type": "module",
+  "license": "MIT",
+  "description": "Bounded contextual mention recognition and data-only source presentation contracts.",
+  "author": "Phosphor",
+  "homepage": "https://github.com/phosphorco/bb-community-plugins/tree/main/packages/bb-context-recognition#readme",
+  "bugs": {
+    "url": "https://github.com/phosphorco/bb-community-plugins/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/phosphorco/bb-community-plugins.git",
+    "directory": "packages/bb-context-recognition"
+  },
+  "keywords": [
+    "bb",
+    "recognition",
+    "references",
+    "plugin-contract"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/types/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./bb": {
+      "types": "./dist/types/bb.d.ts",
+      "import": "./dist/bb.js"
+    },
+    "./testing": {
+      "types": "./dist/types/testing.d.ts",
+      "import": "./dist/testing.js"
+    }
+  },
+  "files": [
+    "dist/",
+    "fixtures/",
+    "README.md",
+    "CONTRACT.md",
+    "PACKAGING.md",
+    "LICENSE"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "dependencies": {
+    "zod": "^4.3.6"
+  },
+  "peerDependencies": {
+    "@get-bb/plugin-sdk": ">=0.5.29 <0.6"
+  },
+  "peerDependenciesMeta": {
+    "@get-bb/plugin-sdk": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@get-bb/plugin-sdk": "0.5.29",
+    "@types/bun": "1.3.14",
+    "@types/node": "^22",
+    "bun": "1.3.14",
+    "typescript": "^5.9.3"
+  },
+  "scripts": {
+    "build": "bun tools/build.mjs --entry src/index.ts --target browser --entry src/bb.ts --target browser --entry src/testing.ts --target browser --external zod --external @get-bb/plugin-sdk --external @get-bb/plugin-sdk/* && tsc --project tsconfig.declarations.json",
+    "test": "node tools/ordinary-test.mjs",
+    "typecheck": "tsc --noEmit"
+  }
+}

@@ -43,6 +43,7 @@ jobs:
         run: |
           npm run build --workspace @phosphorco/bb-identity
           npm run build --workspace @phosphorco/bb-provider-settings
+          npm run build --workspace @phosphorco/bb-context-recognition
 
       - name: Test
         run: npm run test
@@ -79,3 +80,6 @@ jobs:
 
       - name: Inspect BB Provider Settings package
         run: npm pack --dry-run --ignore-scripts --workspace @phosphorco/bb-provider-settings
+
+      - name: Inspect BB Context Recognition package
+        run: npm pack --dry-run --ignore-scripts --workspace @phosphorco/bb-context-recognition

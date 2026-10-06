@@ -1,0 +1,179 @@
+[
+  {
+    "name": "v1",
+    "envelope": {
+      "protocol": "bb-context-recognition",
+      "versions": [
+        1
+      ],
+      "capabilities": {
+        "revision": "fixture/1",
+        "linkify": {
+          "providers": [
+            {
+              "provider": "fixture",
+              "kinds": [
+                "item"
+              ],
+              "specificity": "typed"
+            }
+          ]
+        }
+      }
+    },
+    "expected": {
+      "state": "ready",
+      "version": 1,
+      "capabilities": {
+        "revision": "fixture/1",
+        "linkify": {
+          "providers": [
+            {
+              "provider": "fixture",
+              "kinds": [
+                "item"
+              ],
+              "specificity": "typed"
+            }
+          ]
+        }
+      }
+    }
+  },
+  {
+    "name": "v1-v2",
+    "envelope": {
+      "protocol": "bb-context-recognition",
+      "versions": [
+        1,
+        2
+      ],
+      "capabilities": {
+        "revision": "fixture/1",
+        "linkify": {
+          "providers": [
+            {
+              "provider": "fixture",
+              "kinds": [
+                "item"
+              ],
+              "specificity": "typed"
+            }
+          ]
+        }
+      }
+    },
+    "expected": {
+      "state": "ready",
+      "version": 1,
+      "capabilities": {
+        "revision": "fixture/1",
+        "linkify": {
+          "providers": [
+            {
+              "provider": "fixture",
+              "kinds": [
+                "item"
+              ],
+              "specificity": "typed"
+            }
+          ]
+        }
+      }
+    }
+  },
+  {
+    "name": "v2",
+    "envelope": {
+      "protocol": "bb-context-recognition",
+      "versions": [
+        2
+      ],
+      "capabilities": {
+        "future": "not v1"
+      }
+    },
+    "expected": {
+      "state": "incompatible",
+      "reason": "version"
+    }
+  },
+  {
+    "name": "empty",
+    "envelope": {
+      "protocol": "bb-context-recognition",
+      "versions": [],
+      "capabilities": {
+        "future": "not v1"
+      }
+    },
+    "expected": {
+      "state": "incompatible",
+      "reason": "schema"
+    }
+  },
+  {
+    "name": "zero",
+    "envelope": {
+      "protocol": "bb-context-recognition",
+      "versions": [
+        0
+      ],
+      "capabilities": {
+        "future": "not v1"
+      }
+    },
+    "expected": {
+      "state": "incompatible",
+      "reason": "schema"
+    }
+  },
+  {
+    "name": "noninteger",
+    "envelope": {
+      "protocol": "bb-context-recognition",
+      "versions": [
+        1.5
+      ],
+      "capabilities": {
+        "future": "not v1"
+      }
+    },
+    "expected": {
+      "state": "incompatible",
+      "reason": "schema"
+    }
+  },
+  {
+    "name": "seventeen",
+    "envelope": {
+      "protocol": "bb-context-recognition",
+      "versions": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13,
+        14,
+        15,
+        16,
+        17
+      ],
+      "capabilities": {
+        "future": "not v1"
+      }
+    },
+    "expected": {
+      "state": "incompatible",
+      "reason": "schema"
+    }
+  }
+]

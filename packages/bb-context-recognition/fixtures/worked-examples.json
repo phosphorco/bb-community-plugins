@@ -1,0 +1,356 @@
+[
+  {
+    "name": "11.1-text-a",
+    "input": {
+      "version": 1,
+      "text": "Follows https://github.com/phosphorco/bb-plugins/pull/310; see also #312.",
+      "format": "plain",
+      "excluded": [],
+      "context": {
+        "consumer": {
+          "pluginId": "thread-brief",
+          "surface": "document"
+        },
+        "links": [
+          {
+            "href": "https://github.com/phosphorco/bb-plugins/pull/310",
+            "span": {
+              "start": 8,
+              "end": 57
+            }
+          }
+        ]
+      }
+    },
+    "output": {
+      "candidates": [
+        {
+          "span": {
+            "start": 8,
+            "end": 57
+          },
+          "match": "https://github.com/phosphorco/bb-plugins/pull/310",
+          "source": {
+            "provider": "github",
+            "id": "github.com/phosphorco/bb-plugins#310",
+            "kind": "pull-request"
+          },
+          "confidence": "high",
+          "provenance": {
+            "basis": "explicit",
+            "explanation": "GitHub pull request URL."
+          }
+        },
+        {
+          "span": {
+            "start": 68,
+            "end": 72
+          },
+          "match": "#312",
+          "source": {
+            "provider": "github",
+            "id": "github.com/phosphorco/bb-plugins#312"
+          },
+          "confidence": "medium",
+          "provenance": {
+            "basis": "text-url",
+            "explanation": "Repository from the nearest GitHub link (phosphorco/bb-plugins).",
+            "evidence": {
+              "span": {
+                "start": 8,
+                "end": 57
+              }
+            }
+          }
+        }
+      ]
+    },
+    "resolutions": [
+      {
+        "source": {
+          "provider": "github",
+          "id": "github.com/phosphorco/bb-plugins#312"
+        },
+        "state": "ready",
+        "kind": "issue",
+        "revision": "2026-10-06T16:02:11Z",
+        "label": "phosphorco/bb-plugins#312",
+        "href": "https://github.com/phosphorco/bb-plugins/issues/312",
+        "card": {
+          "title": "Brief cards drop on transient describe",
+          "subtitle": "phosphorco/bb-plugins \u00b7 issue #312",
+          "status": "Open",
+          "tone": "success",
+          "updatedAt": "2026-10-06T16:02:11Z"
+        },
+        "maxAgeSeconds": 120,
+        "reasons": []
+      },
+      {
+        "source": {
+          "provider": "github",
+          "id": "github.com/phosphorco/bb-plugins#312"
+        },
+        "state": "unavailable",
+        "reasons": [
+          {
+            "code": "forbidden",
+            "summary": "GitHub token cannot read issues in phosphorco/bb-plugins."
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "name": "11.1-text-b",
+    "input": {
+      "version": 1,
+      "text": "Remaining: #4.",
+      "format": "plain",
+      "excluded": [],
+      "context": {
+        "consumer": {
+          "pluginId": "thread-brief",
+          "surface": "document"
+        },
+        "links": [],
+        "git": {
+          "branch": "brief-suppliers",
+          "upstream": {
+            "remote": "origin",
+            "branch": "brief-suppliers"
+          },
+          "remotes": [
+            {
+              "name": "origin",
+              "url": "git@github.com:phosphorco/bb-community-plugins.git"
+            }
+          ]
+        }
+      }
+    },
+    "output": {
+      "candidates": [
+        {
+          "span": {
+            "start": 11,
+            "end": 13
+          },
+          "match": "#4",
+          "source": {
+            "provider": "github",
+            "id": "github.com/phosphorco/bb-community-plugins#4"
+          },
+          "confidence": "low",
+          "provenance": {
+            "basis": "git-remote",
+            "explanation": "Repository from origin, the upstream of branch brief-suppliers.",
+            "evidence": {
+              "remote": "origin"
+            }
+          }
+        }
+      ]
+    }
+  },
+  {
+    "name": "11.2-github-url",
+    "input": {
+      "version": 1,
+      "text": "https://github.com/phosphorco/bb-plugins/pull/310",
+      "format": "plain",
+      "excluded": [],
+      "context": {
+        "consumer": {
+          "pluginId": "thread-brief",
+          "surface": "document"
+        },
+        "links": []
+      }
+    },
+    "output": {
+      "candidates": [
+        {
+          "span": {
+            "start": 0,
+            "end": 49
+          },
+          "match": "https://github.com/phosphorco/bb-plugins/pull/310",
+          "source": {
+            "provider": "github",
+            "id": "github.com/phosphorco/bb-plugins#310",
+            "kind": "pull-request"
+          },
+          "confidence": "high",
+          "provenance": {
+            "basis": "explicit",
+            "explanation": "GitHub pull request URL."
+          }
+        }
+      ]
+    },
+    "generic": {
+      "span": {
+        "start": 0,
+        "end": 49
+      },
+      "match": "https://github.com/phosphorco/bb-plugins/pull/310",
+      "source": {
+        "provider": "url",
+        "id": "https://github.com/phosphorco/bb-plugins/pull/310"
+      },
+      "confidence": "high",
+      "provenance": {
+        "basis": "explicit",
+        "explanation": "Fixture recognition."
+      }
+    },
+    "expectedPrimaryProvider": "github",
+    "expectedFallbackProvider": "url",
+    "excludedInput": {
+      "version": 1,
+      "text": "[the PR](https://github.com/phosphorco/bb-plugins/pull/310)",
+      "format": "plain",
+      "excluded": [
+        {
+          "start": 0,
+          "end": 59
+        }
+      ],
+      "context": {
+        "consumer": {
+          "pluginId": "thread-brief",
+          "surface": "document"
+        },
+        "links": [
+          {
+            "href": "https://github.com/phosphorco/bb-plugins/pull/310",
+            "span": {
+              "start": 0,
+              "end": 59
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "name": "11.3-plan-path",
+    "input": {
+      "version": 1,
+      "text": "Plan: plans/x.plan.pkl",
+      "format": "plain",
+      "excluded": [],
+      "context": {
+        "consumer": {
+          "pluginId": "thread-brief",
+          "surface": "document"
+        },
+        "links": [],
+        "environmentId": "env_abc123"
+      }
+    },
+    "output": {
+      "candidates": [
+        {
+          "span": {
+            "start": 6,
+            "end": 22
+          },
+          "match": "plans/x.plan.pkl",
+          "source": {
+            "provider": "plan-graph",
+            "id": "env_abc123:plans/x.plan.pkl",
+            "kind": "plan"
+          },
+          "confidence": "high",
+          "provenance": {
+            "basis": "explicit",
+            "explanation": "Fixture recognition."
+          }
+        }
+      ]
+    },
+    "generic": {
+      "span": {
+        "start": 6,
+        "end": 22
+      },
+      "match": "plans/x.plan.pkl",
+      "source": {
+        "provider": "bb.file",
+        "id": "plans/x.plan.pkl",
+        "kind": "file"
+      },
+      "confidence": "high",
+      "provenance": {
+        "basis": "explicit",
+        "explanation": "Fixture recognition."
+      }
+    },
+    "expectedPrimaryProvider": "plan-graph",
+    "expectedFallbackProvider": "bb.file",
+    "resolution": {
+      "source": {
+        "provider": "plan-graph",
+        "id": "env_abc123:plans/x.plan.pkl",
+        "kind": "plan"
+      },
+      "state": "ready",
+      "label": "x plan",
+      "card": {
+        "title": "x plan"
+      },
+      "fileTarget": {
+        "kind": "workspace",
+        "environmentId": "env_abc123",
+        "path": "plans/x.plan.pkl"
+      },
+      "reasons": [
+        {
+          "code": "informational",
+          "summary": "Saved projection."
+        }
+      ]
+    }
+  },
+  {
+    "name": "11.4-thread-builtin",
+    "input": {
+      "version": 1,
+      "text": "@thread:thr_8g6dcy2w3u",
+      "format": "plain",
+      "excluded": [],
+      "context": {
+        "consumer": {
+          "pluginId": "thread-brief",
+          "surface": "document"
+        },
+        "links": []
+      }
+    },
+    "output": {
+      "candidates": [
+        {
+          "span": {
+            "start": 0,
+            "end": 22
+          },
+          "match": "@thread:thr_8g6dcy2w3u",
+          "source": {
+            "provider": "bb.thread",
+            "id": "thr_8g6dcy2w3u",
+            "kind": "session"
+          },
+          "confidence": "high",
+          "provenance": {
+            "basis": "explicit",
+            "explanation": "Fixture recognition."
+          }
+        }
+      ]
+    },
+    "expectedPrimaryProvider": "bb.thread",
+    "contributedCopyDropped": true
+  }
+]

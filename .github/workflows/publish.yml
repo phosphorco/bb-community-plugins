@@ -18,6 +18,7 @@ on:
           - attach-text-snippets
           - bb-identity
           - bb-provider-settings
+          - bb-context-recognition
       dry_run:
         type: boolean
         default: false
@@ -34,6 +35,7 @@ on:
       - "attach-text-snippets/v*"
       - "bb-identity/v*"
       - "bb-provider-settings/v*"
+      - "bb-context-recognition/v*"
 
 permissions:
   contents: read
@@ -96,10 +98,11 @@ jobs:
             attach-text-snippets) workspace="@phosphorco/bb-plugin-attach-text-snippets" ;;
             bb-identity) workspace="@phosphorco/bb-identity" ;;
             bb-provider-settings) workspace="@phosphorco/bb-provider-settings" ;;
+            bb-context-recognition) workspace="@phosphorco/bb-context-recognition" ;;
             *) echo "Unsupported release plugin: $plugin" >&2; exit 1 ;;
           esac
           case "$plugin" in
-            bb-identity|bb-provider-settings) path="packages/$plugin" ;;
+            bb-identity|bb-provider-settings|bb-context-recognition) path="packages/$plugin" ;;
             *) path="plugins/$plugin" ;;
           esac
           package_version="$(npm pkg get version --workspace "$workspace" | node -e 'let input=""; process.stdin.on("data", chunk => input += chunk); process.stdin.on("end", () => console.log(Object.values(JSON.parse(input))[0]))')"
@@ -129,7 +132,7 @@ jobs:
 
       - name: Build shared packages for tests
         # Packages test against their own dist, and plugins import the workspace-linked packages' dist.
-        run: npm run build --workspace packages/bb-identity --workspace packages/bb-provider-settings
+        run: npm run build --workspace packages/bb-identity --workspace packages/bb-provider-settings --workspace packages/bb-context-recognition
 
       - name: Test
         run: npm run test --workspace "${{ steps.release.outputs.workspace }}"

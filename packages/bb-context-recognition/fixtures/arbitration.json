@@ -1,0 +1,1508 @@
+[
+  {
+    "name": "1-check-eligibility-providers-reserved-match",
+    "text": "abcd ef",
+    "excluded": [
+      {
+        "start": 0,
+        "end": 2
+      }
+    ],
+    "tagged": [
+      {
+        "candidate": {
+          "span": {
+            "start": 0,
+            "end": 2
+          },
+          "match": "ab",
+          "source": {
+            "provider": "fixture",
+            "id": "one"
+          },
+          "confidence": "high",
+          "provenance": {
+            "basis": "explicit",
+            "explanation": "Fixture recognition."
+          }
+        },
+        "origin": "contributed",
+        "pluginId": "bad",
+        "specificity": "typed",
+        "providers": [
+          "fixture"
+        ]
+      },
+      {
+        "candidate": {
+          "span": {
+            "start": 2,
+            "end": 4
+          },
+          "match": "cd",
+          "source": {
+            "provider": "fixture",
+            "id": "one"
+          },
+          "confidence": "high",
+          "provenance": {
+            "basis": "explicit",
+            "explanation": "Fixture recognition."
+          }
+        },
+        "origin": "contributed",
+        "pluginId": "wrong",
+        "specificity": "typed",
+        "providers": [
+          "other"
+        ]
+      },
+      {
+        "candidate": {
+          "span": {
+            "start": 0,
+            "end": 4
+          },
+          "match": "abcd",
+          "source": {
+            "provider": "bb.thread",
+            "id": "one"
+          },
+          "confidence": "high",
+          "provenance": {
+            "basis": "explicit",
+            "explanation": "Fixture recognition."
+          }
+        },
+        "origin": "contributed",
+        "pluginId": "reserved",
+        "specificity": "typed",
+        "providers": [
+          "bb.thread"
+        ]
+      },
+      {
+        "candidate": {
+          "span": {
+            "start": 0,
+            "end": 1
+          },
+          "match": "z",
+          "source": {
+            "provider": "fixture",
+            "id": "one"
+          },
+          "confidence": "high",
+          "provenance": {
+            "basis": "explicit",
+            "explanation": "Fixture recognition."
+          }
+        },
+        "origin": "contributed",
+        "pluginId": "mismatch",
+        "specificity": "typed",
+        "providers": [
+          "fixture"
+        ]
+      },
+      {
+        "candidate": {
+          "span": {
+            "start": 5,
+            "end": 7
+          },
+          "match": "ef",
+          "source": {
+            "provider": "fixture",
+            "id": "one"
+          },
+          "confidence": "high",
+          "provenance": {
+            "basis": "explicit",
+            "explanation": "Fixture recognition."
+          }
+        },
+        "origin": "contributed",
+        "pluginId": "supplier-a",
+        "specificity": "typed",
+        "providers": [
+          "fixture"
+        ]
+      },
+      {
+        "candidate": {
+          "span": {
+            "start": 0,
+            "end": 1
+          },
+          "match": "z",
+          "source": {
+            "provider": "bb.thread",
+            "id": "one"
+          },
+          "confidence": "high",
+          "provenance": {
+            "basis": "explicit",
+            "explanation": "Fixture recognition."
+          }
+        },
+        "origin": "builtin",
+        "pluginId": "host",
+        "specificity": "typed",
+        "providers": [
+          "bb.thread"
+        ]
+      }
+    ],
+    "expected": {
+      "occurrences": [
+        {
+          "candidate": {
+            "span": {
+              "start": 5,
+              "end": 7
+            },
+            "match": "ef",
+            "source": {
+              "provider": "fixture",
+              "id": "one"
+            },
+            "confidence": "high",
+            "provenance": {
+              "basis": "explicit",
+              "explanation": "Fixture recognition."
+            }
+          },
+          "origin": "contributed",
+          "pluginId": "supplier-a",
+          "specificity": "typed",
+          "providers": [
+            "fixture"
+          ],
+          "alsoBy": []
+        }
+      ],
+      "identities": [
+        {
+          "provider": "fixture",
+          "id": "one"
+        }
+      ],
+      "dropped": {
+        "bad": 1,
+        "wrong": 1,
+        "reserved": 1,
+        "mismatch": 1,
+        "host": 1
+      }
+    }
+  },
+  {
+    "name": "2-merge-duplicates-best-provenance",
+    "text": "abcd",
+    "excluded": [],
+    "tagged": [
+      {
+        "candidate": {
+          "span": {
+            "start": 0,
+            "end": 4
+          },
+          "match": "abcd",
+          "source": {
+            "provider": "fixture",
+            "id": "one"
+          },
+          "confidence": "medium",
+          "provenance": {
+            "basis": "text-url",
+            "explanation": "Fixture recognition."
+          }
+        },
+        "origin": "contributed",
+        "pluginId": "a",
+        "specificity": "typed",
+        "providers": [
+          "fixture"
+        ]
+      },
+      {
+        "candidate": {
+          "span": {
+            "start": 0,
+            "end": 4
+          },
+          "match": "abcd",
+          "source": {
+            "provider": "fixture",
+            "id": "one"
+          },
+          "confidence": "high",
+          "provenance": {
+            "basis": "explicit",
+            "explanation": "Fixture recognition."
+          }
+        },
+        "origin": "contributed",
+        "pluginId": "b",
+        "specificity": "typed",
+        "providers": [
+          "fixture"
+        ]
+      }
+    ],
+    "expected": {
+      "occurrences": [
+        {
+          "candidate": {
+            "span": {
+              "start": 0,
+              "end": 4
+            },
+            "match": "abcd",
+            "source": {
+              "provider": "fixture",
+              "id": "one"
+            },
+            "confidence": "high",
+            "provenance": {
+              "basis": "explicit",
+              "explanation": "Fixture recognition."
+            }
+          },
+          "origin": "contributed",
+          "pluginId": "b",
+          "specificity": "typed",
+          "providers": [
+            "fixture"
+          ],
+          "alsoBy": [
+            "a"
+          ]
+        }
+      ],
+      "identities": [
+        {
+          "provider": "fixture",
+          "id": "one"
+        }
+      ],
+      "dropped": {}
+    }
+  },
+  {
+    "name": "3-rank-maximal-munch-containment",
+    "text": "abcdef",
+    "excluded": [],
+    "tagged": [
+      {
+        "candidate": {
+          "span": {
+            "start": 4,
+            "end": 6
+          },
+          "match": "ef",
+          "source": {
+            "provider": "fixture",
+            "id": "one"
+          },
+          "confidence": "high",
+          "provenance": {
+            "basis": "explicit",
+            "explanation": "Fixture recognition."
+          }
+        },
+        "origin": "contributed",
+        "pluginId": "c",
+        "specificity": "typed",
+        "providers": [
+          "fixture"
+        ]
+      },
+      {
+        "candidate": {
+          "span": {
+            "start": 2,
+            "end": 4
+          },
+          "match": "cd",
+          "source": {
+            "provider": "fixture",
+            "id": "one"
+          },
+          "confidence": "high",
+          "provenance": {
+            "basis": "explicit",
+            "explanation": "Fixture recognition."
+          }
+        },
+        "origin": "contributed",
+        "pluginId": "b",
+        "specificity": "typed",
+        "providers": [
+          "fixture"
+        ]
+      },
+      {
+        "candidate": {
+          "span": {
+            "start": 0,
+            "end": 6
+          },
+          "match": "abcdef",
+          "source": {
+            "provider": "fixture",
+            "id": "one"
+          },
+          "confidence": "high",
+          "provenance": {
+            "basis": "explicit",
+            "explanation": "Fixture recognition."
+          }
+        },
+        "origin": "contributed",
+        "pluginId": "supplier-a",
+        "specificity": "typed",
+        "providers": [
+          "fixture"
+        ]
+      }
+    ],
+    "expected": {
+      "occurrences": [
+        {
+          "candidate": {
+            "span": {
+              "start": 0,
+              "end": 6
+            },
+            "match": "abcdef",
+            "source": {
+              "provider": "fixture",
+              "id": "one"
+            },
+            "confidence": "high",
+            "provenance": {
+              "basis": "explicit",
+              "explanation": "Fixture recognition."
+            }
+          },
+          "origin": "contributed",
+          "pluginId": "supplier-a",
+          "specificity": "typed",
+          "providers": [
+            "fixture"
+          ],
+          "alsoBy": []
+        }
+      ],
+      "identities": [
+        {
+          "provider": "fixture",
+          "id": "one"
+        }
+      ],
+      "dropped": {}
+    }
+  },
+  {
+    "name": "4-select-overlap",
+    "text": "abcdef",
+    "excluded": [],
+    "tagged": [
+      {
+        "candidate": {
+          "span": {
+            "start": 2,
+            "end": 6
+          },
+          "match": "cdef",
+          "source": {
+            "provider": "fixture",
+            "id": "two"
+          },
+          "confidence": "high",
+          "provenance": {
+            "basis": "explicit",
+            "explanation": "Fixture recognition."
+          }
+        },
+        "origin": "contributed",
+        "pluginId": "b",
+        "specificity": "typed",
+        "providers": [
+          "fixture"
+        ]
+      },
+      {
+        "candidate": {
+          "span": {
+            "start": 0,
+            "end": 4
+          },
+          "match": "abcd",
+          "source": {
+            "provider": "fixture",
+            "id": "one"
+          },
+          "confidence": "high",
+          "provenance": {
+            "basis": "explicit",
+            "explanation": "Fixture recognition."
+          }
+        },
+        "origin": "contributed",
+        "pluginId": "supplier-a",
+        "specificity": "typed",
+        "providers": [
+          "fixture"
+        ]
+      }
+    ],
+    "expected": {
+      "occurrences": [
+        {
+          "candidate": {
+            "span": {
+              "start": 0,
+              "end": 4
+            },
+            "match": "abcd",
+            "source": {
+              "provider": "fixture",
+              "id": "one"
+            },
+            "confidence": "high",
+            "provenance": {
+              "basis": "explicit",
+              "explanation": "Fixture recognition."
+            }
+          },
+          "origin": "contributed",
+          "pluginId": "supplier-a",
+          "specificity": "typed",
+          "providers": [
+            "fixture"
+          ],
+          "alsoBy": []
+        }
+      ],
+      "identities": [
+        {
+          "provider": "fixture",
+          "id": "one"
+        }
+      ],
+      "dropped": {}
+    }
+  },
+  {
+    "name": "5-fallback-typed-before-generic",
+    "text": "path",
+    "excluded": [],
+    "tagged": [
+      {
+        "candidate": {
+          "span": {
+            "start": 0,
+            "end": 4
+          },
+          "match": "path",
+          "source": {
+            "provider": "bb.file",
+            "id": "one"
+          },
+          "confidence": "high",
+          "provenance": {
+            "basis": "explicit",
+            "explanation": "Fixture recognition."
+          }
+        },
+        "origin": "builtin",
+        "pluginId": "host",
+        "specificity": "generic",
+        "providers": [
+          "bb.file"
+        ]
+      },
+      {
+        "candidate": {
+          "span": {
+            "start": 0,
+            "end": 4
+          },
+          "match": "path",
+          "source": {
+            "provider": "plan-graph",
+            "id": "one"
+          },
+          "confidence": "high",
+          "provenance": {
+            "basis": "explicit",
+            "explanation": "Fixture recognition."
+          }
+        },
+        "origin": "contributed",
+        "pluginId": "supplier-a",
+        "specificity": "typed",
+        "providers": [
+          "plan-graph"
+        ]
+      }
+    ],
+    "expected": {
+      "occurrences": [
+        {
+          "candidate": {
+            "span": {
+              "start": 0,
+              "end": 4
+            },
+            "match": "path",
+            "source": {
+              "provider": "plan-graph",
+              "id": "one"
+            },
+            "confidence": "high",
+            "provenance": {
+              "basis": "explicit",
+              "explanation": "Fixture recognition."
+            }
+          },
+          "origin": "contributed",
+          "pluginId": "supplier-a",
+          "specificity": "typed",
+          "providers": [
+            "plan-graph"
+          ],
+          "alsoBy": [],
+          "fallback": {
+            "candidate": {
+              "span": {
+                "start": 0,
+                "end": 4
+              },
+              "match": "path",
+              "source": {
+                "provider": "bb.file",
+                "id": "one"
+              },
+              "confidence": "high",
+              "provenance": {
+                "basis": "explicit",
+                "explanation": "Fixture recognition."
+              }
+            },
+            "origin": "builtin",
+            "pluginId": "host",
+            "specificity": "generic",
+            "providers": [
+              "bb.file"
+            ],
+            "alsoBy": []
+          }
+        }
+      ],
+      "identities": [
+        {
+          "provider": "plan-graph",
+          "id": "one"
+        },
+        {
+          "provider": "bb.file",
+          "id": "one"
+        }
+      ],
+      "dropped": {}
+    }
+  },
+  {
+    "name": "6-emit-sorted-unique-identities",
+    "text": "a b a",
+    "excluded": [],
+    "tagged": [
+      {
+        "candidate": {
+          "span": {
+            "start": 4,
+            "end": 5
+          },
+          "match": "a",
+          "source": {
+            "provider": "fixture",
+            "id": "one"
+          },
+          "confidence": "high",
+          "provenance": {
+            "basis": "explicit",
+            "explanation": "Fixture recognition."
+          }
+        },
+        "origin": "contributed",
+        "pluginId": "supplier-a",
+        "specificity": "typed",
+        "providers": [
+          "fixture"
+        ]
+      },
+      {
+        "candidate": {
+          "span": {
+            "start": 2,
+            "end": 3
+          },
+          "match": "b",
+          "source": {
+            "provider": "fixture",
+            "id": "two"
+          },
+          "confidence": "high",
+          "provenance": {
+            "basis": "explicit",
+            "explanation": "Fixture recognition."
+          }
+        },
+        "origin": "contributed",
+        "pluginId": "b",
+        "specificity": "typed",
+        "providers": [
+          "fixture"
+        ]
+      },
+      {
+        "candidate": {
+          "span": {
+            "start": 0,
+            "end": 1
+          },
+          "match": "a",
+          "source": {
+            "provider": "fixture",
+            "id": "one"
+          },
+          "confidence": "high",
+          "provenance": {
+            "basis": "explicit",
+            "explanation": "Fixture recognition."
+          }
+        },
+        "origin": "contributed",
+        "pluginId": "supplier-a",
+        "specificity": "typed",
+        "providers": [
+          "fixture"
+        ]
+      }
+    ],
+    "expected": {
+      "occurrences": [
+        {
+          "candidate": {
+            "span": {
+              "start": 0,
+              "end": 1
+            },
+            "match": "a",
+            "source": {
+              "provider": "fixture",
+              "id": "one"
+            },
+            "confidence": "high",
+            "provenance": {
+              "basis": "explicit",
+              "explanation": "Fixture recognition."
+            }
+          },
+          "origin": "contributed",
+          "pluginId": "supplier-a",
+          "specificity": "typed",
+          "providers": [
+            "fixture"
+          ],
+          "alsoBy": []
+        },
+        {
+          "candidate": {
+            "span": {
+              "start": 2,
+              "end": 3
+            },
+            "match": "b",
+            "source": {
+              "provider": "fixture",
+              "id": "two"
+            },
+            "confidence": "high",
+            "provenance": {
+              "basis": "explicit",
+              "explanation": "Fixture recognition."
+            }
+          },
+          "origin": "contributed",
+          "pluginId": "b",
+          "specificity": "typed",
+          "providers": [
+            "fixture"
+          ],
+          "alsoBy": []
+        },
+        {
+          "candidate": {
+            "span": {
+              "start": 4,
+              "end": 5
+            },
+            "match": "a",
+            "source": {
+              "provider": "fixture",
+              "id": "one"
+            },
+            "confidence": "high",
+            "provenance": {
+              "basis": "explicit",
+              "explanation": "Fixture recognition."
+            }
+          },
+          "origin": "contributed",
+          "pluginId": "supplier-a",
+          "specificity": "typed",
+          "providers": [
+            "fixture"
+          ],
+          "alsoBy": []
+        }
+      ],
+      "identities": [
+        {
+          "provider": "fixture",
+          "id": "one"
+        },
+        {
+          "provider": "fixture",
+          "id": "two"
+        }
+      ],
+      "dropped": {}
+    }
+  },
+  {
+    "name": "rank-explicit-before-inferred",
+    "text": "item",
+    "excluded": [],
+    "tagged": [
+      {
+        "candidate": {
+          "span": {
+            "start": 0,
+            "end": 4
+          },
+          "match": "item",
+          "source": {
+            "provider": "fixture",
+            "id": "one"
+          },
+          "confidence": "low",
+          "provenance": {
+            "basis": "context",
+            "explanation": "Fixture recognition."
+          }
+        },
+        "origin": "contributed",
+        "pluginId": "a",
+        "specificity": "typed",
+        "providers": [
+          "fixture"
+        ]
+      },
+      {
+        "candidate": {
+          "span": {
+            "start": 0,
+            "end": 4
+          },
+          "match": "item",
+          "source": {
+            "provider": "fixture",
+            "id": "two"
+          },
+          "confidence": "high",
+          "provenance": {
+            "basis": "explicit",
+            "explanation": "Fixture recognition."
+          }
+        },
+        "origin": "contributed",
+        "pluginId": "b",
+        "specificity": "generic",
+        "providers": [
+          "fixture"
+        ]
+      }
+    ],
+    "expected": {
+      "occurrences": [
+        {
+          "candidate": {
+            "span": {
+              "start": 0,
+              "end": 4
+            },
+            "match": "item",
+            "source": {
+              "provider": "fixture",
+              "id": "two"
+            },
+            "confidence": "high",
+            "provenance": {
+              "basis": "explicit",
+              "explanation": "Fixture recognition."
+            }
+          },
+          "origin": "contributed",
+          "pluginId": "b",
+          "specificity": "generic",
+          "providers": [
+            "fixture"
+          ],
+          "alsoBy": [],
+          "fallback": {
+            "candidate": {
+              "span": {
+                "start": 0,
+                "end": 4
+              },
+              "match": "item",
+              "source": {
+                "provider": "fixture",
+                "id": "one"
+              },
+              "confidence": "low",
+              "provenance": {
+                "basis": "context",
+                "explanation": "Fixture recognition."
+              }
+            },
+            "origin": "contributed",
+            "pluginId": "a",
+            "specificity": "typed",
+            "providers": [
+              "fixture"
+            ],
+            "alsoBy": []
+          }
+        }
+      ],
+      "identities": [
+        {
+          "provider": "fixture",
+          "id": "two"
+        },
+        {
+          "provider": "fixture",
+          "id": "one"
+        }
+      ],
+      "dropped": {}
+    }
+  },
+  {
+    "name": "rank-confidence",
+    "text": "item",
+    "excluded": [],
+    "tagged": [
+      {
+        "candidate": {
+          "span": {
+            "start": 0,
+            "end": 4
+          },
+          "match": "item",
+          "source": {
+            "provider": "fixture",
+            "id": "one"
+          },
+          "confidence": "low",
+          "provenance": {
+            "basis": "explicit",
+            "explanation": "Fixture recognition."
+          }
+        },
+        "origin": "contributed",
+        "pluginId": "a",
+        "specificity": "typed",
+        "providers": [
+          "fixture"
+        ]
+      },
+      {
+        "candidate": {
+          "span": {
+            "start": 0,
+            "end": 4
+          },
+          "match": "item",
+          "source": {
+            "provider": "fixture",
+            "id": "two"
+          },
+          "confidence": "medium",
+          "provenance": {
+            "basis": "explicit",
+            "explanation": "Fixture recognition."
+          }
+        },
+        "origin": "contributed",
+        "pluginId": "b",
+        "specificity": "typed",
+        "providers": [
+          "fixture"
+        ]
+      }
+    ],
+    "expected": {
+      "occurrences": [
+        {
+          "candidate": {
+            "span": {
+              "start": 0,
+              "end": 4
+            },
+            "match": "item",
+            "source": {
+              "provider": "fixture",
+              "id": "two"
+            },
+            "confidence": "medium",
+            "provenance": {
+              "basis": "explicit",
+              "explanation": "Fixture recognition."
+            }
+          },
+          "origin": "contributed",
+          "pluginId": "b",
+          "specificity": "typed",
+          "providers": [
+            "fixture"
+          ],
+          "alsoBy": [],
+          "fallback": {
+            "candidate": {
+              "span": {
+                "start": 0,
+                "end": 4
+              },
+              "match": "item",
+              "source": {
+                "provider": "fixture",
+                "id": "one"
+              },
+              "confidence": "low",
+              "provenance": {
+                "basis": "explicit",
+                "explanation": "Fixture recognition."
+              }
+            },
+            "origin": "contributed",
+            "pluginId": "a",
+            "specificity": "typed",
+            "providers": [
+              "fixture"
+            ],
+            "alsoBy": []
+          }
+        }
+      ],
+      "identities": [
+        {
+          "provider": "fixture",
+          "id": "two"
+        },
+        {
+          "provider": "fixture",
+          "id": "one"
+        }
+      ],
+      "dropped": {}
+    }
+  },
+  {
+    "name": "rank-builtin-before-plugin-id",
+    "text": "item",
+    "excluded": [],
+    "tagged": [
+      {
+        "candidate": {
+          "span": {
+            "start": 0,
+            "end": 4
+          },
+          "match": "item",
+          "source": {
+            "provider": "fixture",
+            "id": "one"
+          },
+          "confidence": "high",
+          "provenance": {
+            "basis": "explicit",
+            "explanation": "Fixture recognition."
+          }
+        },
+        "origin": "contributed",
+        "pluginId": "a",
+        "specificity": "typed",
+        "providers": [
+          "fixture"
+        ]
+      },
+      {
+        "candidate": {
+          "span": {
+            "start": 0,
+            "end": 4
+          },
+          "match": "item",
+          "source": {
+            "provider": "fixture",
+            "id": "two"
+          },
+          "confidence": "high",
+          "provenance": {
+            "basis": "explicit",
+            "explanation": "Fixture recognition."
+          }
+        },
+        "origin": "builtin",
+        "pluginId": "z",
+        "specificity": "typed",
+        "providers": [
+          "fixture"
+        ]
+      }
+    ],
+    "expected": {
+      "occurrences": [
+        {
+          "candidate": {
+            "span": {
+              "start": 0,
+              "end": 4
+            },
+            "match": "item",
+            "source": {
+              "provider": "fixture",
+              "id": "two"
+            },
+            "confidence": "high",
+            "provenance": {
+              "basis": "explicit",
+              "explanation": "Fixture recognition."
+            }
+          },
+          "origin": "builtin",
+          "pluginId": "z",
+          "specificity": "typed",
+          "providers": [
+            "fixture"
+          ],
+          "alsoBy": [],
+          "fallback": {
+            "candidate": {
+              "span": {
+                "start": 0,
+                "end": 4
+              },
+              "match": "item",
+              "source": {
+                "provider": "fixture",
+                "id": "one"
+              },
+              "confidence": "high",
+              "provenance": {
+                "basis": "explicit",
+                "explanation": "Fixture recognition."
+              }
+            },
+            "origin": "contributed",
+            "pluginId": "a",
+            "specificity": "typed",
+            "providers": [
+              "fixture"
+            ],
+            "alsoBy": []
+          }
+        }
+      ],
+      "identities": [
+        {
+          "provider": "fixture",
+          "id": "two"
+        },
+        {
+          "provider": "fixture",
+          "id": "one"
+        }
+      ],
+      "dropped": {}
+    }
+  },
+  {
+    "name": "rank-utf16-plugin-id",
+    "text": "item",
+    "excluded": [],
+    "tagged": [
+      {
+        "candidate": {
+          "span": {
+            "start": 0,
+            "end": 4
+          },
+          "match": "item",
+          "source": {
+            "provider": "fixture",
+            "id": "two"
+          },
+          "confidence": "high",
+          "provenance": {
+            "basis": "explicit",
+            "explanation": "Fixture recognition."
+          }
+        },
+        "origin": "contributed",
+        "pluginId": "a",
+        "specificity": "typed",
+        "providers": [
+          "fixture"
+        ]
+      },
+      {
+        "candidate": {
+          "span": {
+            "start": 0,
+            "end": 4
+          },
+          "match": "item",
+          "source": {
+            "provider": "fixture",
+            "id": "one"
+          },
+          "confidence": "high",
+          "provenance": {
+            "basis": "explicit",
+            "explanation": "Fixture recognition."
+          }
+        },
+        "origin": "contributed",
+        "pluginId": "A",
+        "specificity": "typed",
+        "providers": [
+          "fixture"
+        ]
+      }
+    ],
+    "expected": {
+      "occurrences": [
+        {
+          "candidate": {
+            "span": {
+              "start": 0,
+              "end": 4
+            },
+            "match": "item",
+            "source": {
+              "provider": "fixture",
+              "id": "one"
+            },
+            "confidence": "high",
+            "provenance": {
+              "basis": "explicit",
+              "explanation": "Fixture recognition."
+            }
+          },
+          "origin": "contributed",
+          "pluginId": "A",
+          "specificity": "typed",
+          "providers": [
+            "fixture"
+          ],
+          "alsoBy": [],
+          "fallback": {
+            "candidate": {
+              "span": {
+                "start": 0,
+                "end": 4
+              },
+              "match": "item",
+              "source": {
+                "provider": "fixture",
+                "id": "two"
+              },
+              "confidence": "high",
+              "provenance": {
+                "basis": "explicit",
+                "explanation": "Fixture recognition."
+              }
+            },
+            "origin": "contributed",
+            "pluginId": "a",
+            "specificity": "typed",
+            "providers": [
+              "fixture"
+            ],
+            "alsoBy": []
+          }
+        }
+      ],
+      "identities": [
+        {
+          "provider": "fixture",
+          "id": "one"
+        },
+        {
+          "provider": "fixture",
+          "id": "two"
+        }
+      ],
+      "dropped": {}
+    }
+  },
+  {
+    "name": "rank-utf16-provider",
+    "text": "item",
+    "excluded": [],
+    "tagged": [
+      {
+        "candidate": {
+          "span": {
+            "start": 0,
+            "end": 4
+          },
+          "match": "item",
+          "source": {
+            "provider": "z",
+            "id": "one"
+          },
+          "confidence": "high",
+          "provenance": {
+            "basis": "explicit",
+            "explanation": "Fixture recognition."
+          }
+        },
+        "origin": "contributed",
+        "pluginId": "A",
+        "specificity": "typed",
+        "providers": [
+          "z"
+        ]
+      },
+      {
+        "candidate": {
+          "span": {
+            "start": 0,
+            "end": 4
+          },
+          "match": "item",
+          "source": {
+            "provider": "a",
+            "id": "one"
+          },
+          "confidence": "high",
+          "provenance": {
+            "basis": "explicit",
+            "explanation": "Fixture recognition."
+          }
+        },
+        "origin": "contributed",
+        "pluginId": "A",
+        "specificity": "typed",
+        "providers": [
+          "a"
+        ]
+      }
+    ],
+    "expected": {
+      "occurrences": [
+        {
+          "candidate": {
+            "span": {
+              "start": 0,
+              "end": 4
+            },
+            "match": "item",
+            "source": {
+              "provider": "a",
+              "id": "one"
+            },
+            "confidence": "high",
+            "provenance": {
+              "basis": "explicit",
+              "explanation": "Fixture recognition."
+            }
+          },
+          "origin": "contributed",
+          "pluginId": "A",
+          "specificity": "typed",
+          "providers": [
+            "a"
+          ],
+          "alsoBy": [],
+          "fallback": {
+            "candidate": {
+              "span": {
+                "start": 0,
+                "end": 4
+              },
+              "match": "item",
+              "source": {
+                "provider": "z",
+                "id": "one"
+              },
+              "confidence": "high",
+              "provenance": {
+                "basis": "explicit",
+                "explanation": "Fixture recognition."
+              }
+            },
+            "origin": "contributed",
+            "pluginId": "A",
+            "specificity": "typed",
+            "providers": [
+              "z"
+            ],
+            "alsoBy": []
+          }
+        }
+      ],
+      "identities": [
+        {
+          "provider": "a",
+          "id": "one"
+        },
+        {
+          "provider": "z",
+          "id": "one"
+        }
+      ],
+      "dropped": {}
+    }
+  },
+  {
+    "name": "rank-utf16-identity-id",
+    "text": "item",
+    "excluded": [],
+    "tagged": [
+      {
+        "candidate": {
+          "span": {
+            "start": 0,
+            "end": 4
+          },
+          "match": "item",
+          "source": {
+            "provider": "a",
+            "id": "a"
+          },
+          "confidence": "high",
+          "provenance": {
+            "basis": "explicit",
+            "explanation": "Fixture recognition."
+          }
+        },
+        "origin": "contributed",
+        "pluginId": "A",
+        "specificity": "typed",
+        "providers": [
+          "a"
+        ]
+      },
+      {
+        "candidate": {
+          "span": {
+            "start": 0,
+            "end": 4
+          },
+          "match": "item",
+          "source": {
+            "provider": "a",
+            "id": "A"
+          },
+          "confidence": "high",
+          "provenance": {
+            "basis": "explicit",
+            "explanation": "Fixture recognition."
+          }
+        },
+        "origin": "contributed",
+        "pluginId": "A",
+        "specificity": "typed",
+        "providers": [
+          "a"
+        ]
+      }
+    ],
+    "expected": {
+      "occurrences": [
+        {
+          "candidate": {
+            "span": {
+              "start": 0,
+              "end": 4
+            },
+            "match": "item",
+            "source": {
+              "provider": "a",
+              "id": "A"
+            },
+            "confidence": "high",
+            "provenance": {
+              "basis": "explicit",
+              "explanation": "Fixture recognition."
+            }
+          },
+          "origin": "contributed",
+          "pluginId": "A",
+          "specificity": "typed",
+          "providers": [
+            "a"
+          ],
+          "alsoBy": [],
+          "fallback": {
+            "candidate": {
+              "span": {
+                "start": 0,
+                "end": 4
+              },
+              "match": "item",
+              "source": {
+                "provider": "a",
+                "id": "a"
+              },
+              "confidence": "high",
+              "provenance": {
+                "basis": "explicit",
+                "explanation": "Fixture recognition."
+              }
+            },
+            "origin": "contributed",
+            "pluginId": "A",
+            "specificity": "typed",
+            "providers": [
+              "a"
+            ],
+            "alsoBy": []
+          }
+        }
+      ],
+      "identities": [
+        {
+          "provider": "a",
+          "id": "A"
+        },
+        {
+          "provider": "a",
+          "id": "a"
+        }
+      ],
+      "dropped": {}
+    }
+  }
+]
