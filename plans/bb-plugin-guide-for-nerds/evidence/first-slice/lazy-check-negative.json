@@ -1,0 +1,18 @@
+{
+  "format1": {
+    "exit": 1,
+    "firstError": "AssertionError [ERR_ASSERTION]: Lazy proof requires generation-serving format 2"
+  },
+  "lost-content": {
+    "exit": 1,
+    "firstError": "AssertionError [ERR_ASSERTION]: Undeclared module: chunks/guide-content-MV2SQJ2Z.js"
+  },
+  "cross-generation": {
+    "exit": 1,
+    "firstError": "AssertionError [ERR_ASSERTION]: Cross-plugin/generation module"
+  },
+  "tampered-bytes": {
+    "exit": 1,
+    "firstError": "AssertionError [ERR_ASSERTION]: Byte count: app.js"
+  }
+}

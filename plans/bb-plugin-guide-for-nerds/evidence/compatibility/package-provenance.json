@@ -1,0 +1,42 @@
+[
+  {
+    "name": "@get-bb/plugin-sdk",
+    "version": "0.4.47",
+    "gitHead": "960255b98ce3dccdcb5754eb67a7f989236602a1",
+    "tarball": "https://registry.npmjs.org/@get-bb/plugin-sdk/-/plugin-sdk-0.4.47.tgz",
+    "integrity": "sha512-qGUaLAzAZM/BCAAK8iTetlSwzRplw/BtMXqamgjVD2nKFKucOPAWzQOp/CtufS3t/1p7cfQ09rZwUYtnXtKFIQ==",
+    "sha256": "baf248eaf541b5160974f9fe50b44c31249f7cfe747216b5370b3f54a58efa8f"
+  },
+  {
+    "name": "@get-bb/plugin-sdk",
+    "version": "0.5.29",
+    "gitHead": "0baa605b32a00619c1d7e3f32be6553ebcf8244a",
+    "tarball": "https://registry.npmjs.org/@get-bb/plugin-sdk/-/plugin-sdk-0.5.29.tgz",
+    "integrity": "sha512-eRIUeZUu3Q4gESo10ajF58yd32+6QdKRGJMPz2/WjxK7DAGNfY5kO2ZAKP+pWS7Bo1l92GrlcO29C15CCvg1aA==",
+    "sha256": "ae2bda9fd3438dd5f3aae6b81b7bf14240ceada7133beb748c181bb3431aa71e"
+  },
+  {
+    "name": "@get-bb/plugin-sdk",
+    "version": "0.6.23",
+    "gitHead": "985a267f363f9339472ae3175f49b73efb6f3329",
+    "tarball": "https://registry.npmjs.org/@get-bb/plugin-sdk/-/plugin-sdk-0.6.23.tgz",
+    "integrity": "sha512-KVgojEg/9ViHp5H2zqI37U0QcTH4B4RIym5ZMyabRXh0UWe7mC4KhlZmNMz305lrsdif666Fy1kMdyAMBBJ7RA==",
+    "sha256": "a0eec00d19bf26924dd812d161eab51d1aed67f2016300e03b89f804196fb2b0"
+  },
+  {
+    "name": "bb-app",
+    "version": "0.42.0",
+    "gitHead": "960255b98ce3dccdcb5754eb67a7f989236602a1",
+    "tarball": "https://registry.npmjs.org/bb-app/-/bb-app-0.42.0.tgz",
+    "integrity": "sha512-+S8pz8Ob6+ctTG01Wi7i6o9OKCpPg7IcZm+zuLs8XK3NjRM0YZVhO16C9FxZDgJoR7B28i60v6/76lBkLkRq4Q==",
+    "sha256": "66c4787dd975b5b457f4d157c76fb0805a38a31d39a9a46d6e3c4ac9f209cb52"
+  },
+  {
+    "name": "bb-app",
+    "version": "0.44.0",
+    "gitHead": "0baa605b32a00619c1d7e3f32be6553ebcf8244a",
+    "tarball": "https://registry.npmjs.org/bb-app/-/bb-app-0.44.0.tgz",
+    "integrity": "sha512-++yBrXnvHyfTasH3gFa/SUmOANoUq58RNyxTcgkVYgolEES1JqzHByCnvCgEqmb9eThwveFeihXm58Ut5bJ0Zg==",
+    "sha256": "5b657e2a4209702c9bf793c21b2ceee83d158a176ee80381f8df1e42845792a2"
+  }
+]

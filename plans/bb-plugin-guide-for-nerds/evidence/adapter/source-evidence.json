@@ -1,0 +1,73 @@
+{
+  "browserDiscovery": {
+    "hostId": "host_chtdmruc4g",
+    "instances": [],
+    "capability": "discovery only; no live proof"
+  },
+  "sources": [
+    {
+      "path": "fork/result-tree.lock",
+      "sha256": "a017e12519da4959dae1c720490ddff37ff192ec14f772575969888744f7ca8f"
+    },
+    {
+      "path": "fork/build/bb/packages/plugin-sdk/src/app-contract.ts",
+      "sha256": "d5b3de3a426a7beb2b2aaa79bc93f49150debdb61dcd2116270b249ebfe73d4c"
+    },
+    {
+      "path": "fork/build/bb/packages/plugin-sdk/bundled-types/bb-plugin-sdk-app.d.ts",
+      "sha256": "b77062edcc21bbf8e15a271a34c3fef8dc6949f419c299d62ced653e6ee8ee42"
+    },
+    {
+      "path": "fork/build/bb/apps/app/src/components/plugin/PluginAppOverlays.tsx",
+      "sha256": "01ba1f9c2a8f37c97813978675566f1735c4c09cac654ea05da83d7dd168062f"
+    },
+    {
+      "path": "fork/build/bb/apps/app/src/components/plugin/PluginSlotMount.tsx",
+      "sha256": "32604b0e597ac22d92f4d4076eddf5d0bc71146cb83d8d8a6d7344cbc4cfd67e"
+    },
+    {
+      "path": "fork/build/bb/apps/app/src/lib/plugin-sdk-hooks.ts",
+      "sha256": "3270e73a5fac60aadfed3f9c0c8252360d46a8a2a41b7cbbcd495945184a956f"
+    },
+    {
+      "path": "fork/build/bb/apps/app/src/components/plugin/plugin-context.ts",
+      "sha256": "a9b8d0e1a5459f4aa292b1365865759622047492ea454d6b74890db0e50dc04e"
+    },
+    {
+      "path": "fork/build/bb/apps/app/src/main.tsx",
+      "sha256": "f1db0e3b490d875d0d51063f941ec785eccb9471565279b1ba69ee6e6cfd6e26"
+    },
+    {
+      "path": "fork/build/bb/apps/app/src/components/layout/AppLayout.tsx",
+      "sha256": "97d14d04b708b7dcb1f225e398e6e259d2e12f68ed941cb17166968fdd27d35a"
+    },
+    {
+      "path": "fork/build/bb/plugins/plugin-api-docs/app.tsx",
+      "sha256": "04232842c5ee8749ed08f431a2f53e9e7280e0db9cc5741ac428be9bef6fcbef"
+    },
+    {
+      "path": "fork/build/bb/plugins/plugin-api-docs/src/product-map.tsx",
+      "sha256": "3d18769764cd9ae8407b26cd8d82f005b1e746b1481d65d147ff1e601bfdfb94"
+    },
+    {
+      "path": "fork/build/bb/plugins/plugin-api-docs/src/surface-card.tsx",
+      "sha256": "f501d6edc709b0c929a10a8e55288b6c2b94117de6ca5b54249b1885d6176af6"
+    },
+    {
+      "path": "community-plugins/plugins/bb-ui-reference/app.tsx",
+      "sha256": "439a3a37ae97a941ed76342da0e927d453e3590db9770de7e9ad61bf9bd62245"
+    },
+    {
+      "path": "community-plugins/node_modules/react/package.json",
+      "sha256": "64f0e0fbcc34bfd1893814409c807f417f94cef59ac6ca68285a7b91cea58984"
+    },
+    {
+      "path": "community-plugins/node_modules/jsdom/package.json",
+      "sha256": "9670cfae0de2c46a3276fa20815328e3903275b04cc8969a6f6be01f2c580043"
+    },
+    {
+      "path": "community-plugins/node_modules/@radix-ui/react-dismissable-layer/dist/index.mjs",
+      "sha256": "01df449a23d65bab1f2f2215a953cba74741419496ebd9a7932533f267cc873d"
+    }
+  ]
+}

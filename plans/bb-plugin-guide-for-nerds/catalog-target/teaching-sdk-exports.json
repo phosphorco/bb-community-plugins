@@ -1,0 +1,17 @@
+{
+  "sdk": "0.4.47",
+  "hostRenderableExports": [
+    "ThreadChat",
+    "Markdown",
+    "experimental_FileLink",
+    "UrlLink",
+    "experimental_NewThreadComposer",
+    "experimental_ProviderModelPicker",
+    "experimental_PermissionModePicker",
+    "experimental_SourceCode",
+    "experimental_Diff"
+  ],
+  "missingFromTeaching": [
+    "UrlLink"
+  ]
+}

@@ -1,0 +1,14 @@
+# Research bytes remain local; receipts and reproducible probe inputs are source.
+/catalog-target/archives/
+/catalog-target/published/
+/catalog-target/release-source/
+/catalog-target/deployed-upstream/
+/catalog-target/teaching/
+/catalog-target/npm/
+/evidence/compatibility/output-*/
+/evidence/compatibility/published-excerpts/
+/evidence/compatibility/registry/
+/evidence/compatibility/notices/
+/evidence/**/*.log
+/evidence/first-slice/touch-diagnosis/*.json
+!/evidence/first-slice/touch-diagnosis/*receipt.json

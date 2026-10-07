@@ -1,0 +1,18 @@
+mise WARN  tracking config: failed to ln -sf /tmp/nerd-overlay-sdk-proof-ssf3xm2t/package.json /home/ubuntu/.local/state/mise/tracked-configs/b2e677e19c58ab3: Read-only file system (os error 30)
+mise WARN  failed to write cache file: /home/ubuntu/.cache/mise/neovim/0.12.3/exec_env_f29bed27631494f6-eed99.msgpack.z Read-only file system (os error 30)
+TAP version 13
+# Subtest: public SDK .5.29 overlay registration and portal keep mock hook environment; local selection logs zero navigation
+ok 1 - public SDK .5.29 overlay registration and portal keep mock hook environment; local selection logs zero navigation
+  ---
+  duration_ms: 14.926094
+  type: 'test'
+  ...
+1..1
+# tests 1
+# suites 0
+# pass 1
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 345.691537

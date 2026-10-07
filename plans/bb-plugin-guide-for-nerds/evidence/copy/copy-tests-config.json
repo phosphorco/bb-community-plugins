@@ -1,0 +1,18 @@
+{
+  "extends": "/home/ubuntu/bb/community-plugins/plugins/plugin-guide-for-nerds/tsconfig.json",
+  "include": [
+    "/home/ubuntu/bb/community-plugins/plugins/plugin-guide-for-nerds/test/annotation-plugin-references.test.ts",
+    "/home/ubuntu/bb/community-plugins/plugins/plugin-guide-for-nerds/test/annotation-scope.test.ts",
+    "/home/ubuntu/bb/community-plugins/plugins/plugin-guide-for-nerds/test/annotation-clipboard-lifecycle.test.ts",
+    "/home/ubuntu/bb/community-plugins/plugins/plugin-guide-for-nerds/test/agent-reference.test.ts",
+    "/home/ubuntu/bb/community-plugins/plugins/plugin-guide-for-nerds/test/command-palette-interaction.test.ts",
+    "/home/ubuntu/bb/community-plugins/plugins/plugin-guide-for-nerds/test/annotation-mention-owner.test.ts"
+  ],
+  "exclude": [],
+  "compilerOptions": {
+    "typeRoots": [
+      "/home/ubuntu/bb/community-plugins/plugins/plugin-guide-for-nerds/node_modules/@types",
+      "/home/ubuntu/bb/community-plugins/node_modules/@types"
+    ]
+  }
+}

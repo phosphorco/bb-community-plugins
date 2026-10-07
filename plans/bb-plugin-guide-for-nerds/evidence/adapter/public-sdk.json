@@ -1,0 +1,10 @@
+{
+  "registryUrl": "https://registry.npmjs.org/@get-bb%2fplugin-sdk/0.5.29",
+  "version": "0.5.29",
+  "gitHead": "0baa605b32a00619c1d7e3f32be6553ebcf8244a",
+  "tarball": "https://registry.npmjs.org/@get-bb/plugin-sdk/-/plugin-sdk-0.5.29.tgz",
+  "integrity": "sha512-eRIUeZUu3Q4gESo10ajF58yd32+6QdKRGJMPz2/WjxK7DAGNfY5kO2ZAKP+pWS7Bo1l92GrlcO29C15CCvg1aA==",
+  "integrityVerified": true,
+  "declarationSha256": "c81d42a8215f9a0a362a99d9bae81d4ac78643bf7387f4b1b9e60816b2bd4f32",
+  "scratchPolicy": "unique /tmp directory; removed on success or failure; no shared installs"
+}

@@ -1,0 +1,47 @@
+{
+  "flat": {
+    "format": 1,
+    "appBytes": 8221,
+    "lazyPayloadInInitialTransfer": true,
+    "imports": []
+  },
+  "fork": {
+    "format": 2,
+    "generation": "b4d53c2f2bf443a282a90fb95d0256b8",
+    "staticClosure": [
+      "app.js",
+      "chunks/chunk-3D3DST75.js"
+    ],
+    "staticBytes": 6391,
+    "dynamicImports": [
+      "chunks/lazy-VSBYMGZ7.js"
+    ],
+    "files": [
+      {
+        "path": "app.css",
+        "bytes": 15787,
+        "sha256": "be12300b20492371b57725ca8002161428abdf3b48cc1935959dc9aa4c87ca88",
+        "contentType": "text/css; charset=utf-8"
+      },
+      {
+        "path": "app.js",
+        "bytes": 5194,
+        "sha256": "a86682d39141c1d767b5f52e9b09ed42d4194009277a24e2397253935476e1de",
+        "contentType": "text/javascript; charset=utf-8"
+      },
+      {
+        "path": "chunks/chunk-3D3DST75.js",
+        "bytes": 1197,
+        "sha256": "31a2cb6546800314ef55fcff40201b49a8f0478c17afc45749732fcb99291c5c",
+        "contentType": "text/javascript; charset=utf-8"
+      },
+      {
+        "path": "chunks/lazy-VSBYMGZ7.js",
+        "bytes": 1681,
+        "sha256": "a6205037a88a972a3eed50280b60f53b96666742c688247d99740b025726fe19",
+        "contentType": "text/javascript; charset=utf-8"
+      }
+    ]
+  },
+  "runtimeObserved": false
+}

@@ -1,0 +1,22 @@
+{
+  "generation": "565d7a1f296140fa8ca78a2d05c4e21c",
+  "sdkVersion": "0.5.29",
+  "builtWith": {
+    "bbVersion": "0.44.0",
+    "pluginSdkVersion": "0.5.29"
+  },
+  "manifestSha256": "4f18e368e2f3412a3c9ffc863b90a0ac318aaacd41f0132496aa855339f81d9b",
+  "initialStaticClosure": [
+    "app.js",
+    "chunks/chunk-EWVZPVZQ.js"
+  ],
+  "initialJavaScriptBytes": 12839,
+  "deferredContentClosure": [
+    "chunks/guide-content-MV2SQJ2Z.js",
+    "chunks/chunk-EWVZPVZQ.js"
+  ],
+  "contentEntry": "chunks/guide-content-MV2SQJ2Z.js",
+  "compiledFactory": "()=>import(\"/api/v1/plugins/plugin-guide-for-nerds/assets/g/565d7a1f296140fa8ca78a2d05c4e21c/chunks/guide-content-MV2SQJ2Z.js\")",
+  "eagerCssBytes": 120988,
+  "coverage": "Manifest bytes/hashes and parsed import graph; native network/lifecycle proof is separate."
+}

@@ -1,0 +1,94 @@
+{
+  "counts": {
+    "hostRenderable": 14,
+    "registryAll": 78,
+    "registryNonvisual": 16,
+    "registryRenderable": 62,
+    "semanticColorBridge": 56,
+    "themeBridge": 77
+  },
+  "deployedToRelease": {
+    "colorTokensUnavailableInDeployedUpstream": [],
+    "host": {
+      "added": [],
+      "changed": [],
+      "removed": []
+    },
+    "registry": {
+      "added": [],
+      "changed": [
+        "chrome-style-tokens",
+        "context-menu",
+        "dialog",
+        "dropdown-menu",
+        "popover",
+        "question-form",
+        "resource-row",
+        "responsive-overlay",
+        "select",
+        "workflow-progress"
+      ],
+      "removed": []
+    },
+    "theme": {
+      "added": [],
+      "changed": [],
+      "removed": []
+    }
+  },
+  "teachingToRelease": {
+    "hostInvalid": [
+      "experimental_UrlLink"
+    ],
+    "hostMissing": [
+      "ThreadTitle",
+      "UrlLink",
+      "experimental_BranchPicker",
+      "experimental_Icon",
+      "experimental_ProviderIcon",
+      "experimental_SidebarNavigationIcon"
+    ],
+    "registryInvalid": [],
+    "registryMissing": [
+      "activity-row-styles",
+      "branch-picker-primitives",
+      "chrome-style-tokens",
+      "coarse-pointer-sizing",
+      "coarse-pointer-visibility",
+      "delayed-loading",
+      "empty-state",
+      "icon",
+      "menu-item-hover",
+      "motion",
+      "option-display",
+      "overlay-trigger",
+      "plugin-icon",
+      "portal-scope",
+      "question-form",
+      "question-form-host",
+      "question-form-state",
+      "resource-atoms",
+      "resource-collection",
+      "resource-detail-controls",
+      "resource-detail-sections",
+      "resource-detail-shell",
+      "resource-list",
+      "resource-pagination",
+      "resource-route-label",
+      "resource-row",
+      "resource-toolbar",
+      "responsive-overlay",
+      "use-browser-dimming-modal",
+      "use-compact-viewport",
+      "use-media-query",
+      "use-pointer-coarse",
+      "utils",
+      "workflow-progress"
+    ],
+    "themeMissing": [
+      "--brand-discord",
+      "--version-upgrade"
+    ],
+    "themeStale": []
+  }
+}

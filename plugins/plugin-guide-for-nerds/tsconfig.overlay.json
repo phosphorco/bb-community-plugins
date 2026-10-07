@@ -1,0 +1,7 @@
+{
+  "extends": "./tsconfig.json",
+  "include": [
+    "src/floating",
+    "test/overlay*.test.*"
+  ]
+}

@@ -1,0 +1,155 @@
+{
+  "schemaVersion": 1,
+  "sourceOnlyScaffoldInputs": 35,
+  "completeTrackedDonorInputPresence": true,
+  "unchangedAuthoredInputs": [
+    {
+      "path": "src/anatomy-manifest.json",
+      "sha256": "facbb798eebbf8f84db3b310c2f403e88cec4ac7e6ec509a8a4d255d4db90f5c"
+    },
+    {
+      "path": "src/first-party-plugins.json",
+      "sha256": "a47e82ac93cf84642bf8a59dd1d04112e040a61a7010351a2e51560b7a987037"
+    },
+    {
+      "path": "src/surfaces.ts",
+      "sha256": "5dd674e43f80cd3bebcbbebd63068e2f16dd74437cb5935748fc93f3b6422941"
+    },
+    {
+      "path": "src/annotation.tsx",
+      "sha256": "1f73c4d6cec6376dbb77438e44017c927408acb410f8d3e358ebddd48d346984"
+    },
+    {
+      "path": "src/html-escape.ts",
+      "sha256": "c2513d84bc71ef631a08d2a1624615c8b572cbc4e2ec6f49f296f6138e6b0cea"
+    },
+    {
+      "path": "src/plugin-icons.ts",
+      "sha256": "070c12f21e19580f411aabd9ff7a824aa0b6fa1ee8363af2ba4cca45fa327f4c"
+    },
+    {
+      "path": "src/scroll-edges.ts",
+      "sha256": "994543ac45c68c43ea384bb09d22cfd6b4c0b2c554314def3d0e76a31b194528"
+    },
+    {
+      "path": "src/used-by.tsx",
+      "sha256": "f8bc24d4065e6b07877a51636bf4178d659b800d95abdaa0914f5c55b93134b7"
+    },
+    {
+      "path": "icons/ai-generative.svg",
+      "sha256": "4e87ef6283a4c2640c692b4d562fe6550102d9ed4b6b94f3db162371da4df220"
+    },
+    {
+      "path": "scripts/scaffold-surface-entry.d.mts",
+      "sha256": "902c82dbfd79b5cc120063e2bf529f72b3f8872f2aee0c80b34857e59f032b64"
+    }
+  ],
+  "editedFiles": [
+    {
+      "path": "server.ts",
+      "bytes": 637,
+      "donorSha256": "6fd0c3018802cb29afcd4a221df8d9358f1aae43d8759ec87a53911a77d20a44",
+      "sha256": "642f5c4cffe078ac23e38741e4b8c1b623398e1600ddced11e4c6a5b66d7635e"
+    },
+    {
+      "path": "src/agent-reference.ts",
+      "bytes": 4852,
+      "donorSha256": "c1e18f9f04f44d792bcbe3311f1d6e73f44f373f17da61203ad7a4a8a9c5be2c",
+      "sha256": "d2d9271c11c938d5b3939734cf5176de4bce7b071eeaa5e36c9722c8365e0957"
+    },
+    {
+      "path": "src/guide-content.tsx",
+      "bytes": 4145,
+      "donorSha256": null,
+      "sha256": "751479d0804e4de58d4f55ec7a40525eaf51b2718cb4d8390827b715f1782b37"
+    },
+    {
+      "path": "src/product-map.tsx",
+      "bytes": 34568,
+      "donorSha256": "3d18769764cd9ae8407b26cd8d82f005b1e746b1481d65d147ff1e601bfdfb94",
+      "sha256": "b95b847128c5810572be966b101adebbabac9cc976d9eaf426ab8a12c86e9026"
+    },
+    {
+      "path": "src/surface-card.tsx",
+      "bytes": 12977,
+      "donorSha256": "f501d6edc709b0c929a10a8e55288b6c2b94117de6ca5b54249b1885d6176af6",
+      "sha256": "2c797e9095f5a72632062df6baee6408a7242358aaf9507b26edbc196d14d1f3"
+    },
+    {
+      "path": "src/wireframes.tsx",
+      "bytes": 80875,
+      "donorSha256": "b7e6321b1e0bbb056b5c75f3ba190aaec6f3bbdc01eef36bc43bd1c44631b15b",
+      "sha256": "8e677907e1e359a6dd4beb324501d8166ba668b2ca64ccd6c7a42d3bd965c74e"
+    },
+    {
+      "path": "lib/guide-interaction.ts",
+      "bytes": 1103,
+      "donorSha256": null,
+      "sha256": "b9bf9c81f376fba438f855b53f8bb5ae4b51d998ff82f78c439a3cafd4c4fe72"
+    },
+    {
+      "path": "test/agent-reference.test.ts",
+      "bytes": 8445,
+      "donorSha256": "fe7526a975390a45f7144100de24cc4b86ca37f49dfdd0347876dec3452189d6",
+      "sha256": "38cb592e60f6e1574f79b4623b6e65f5591086462619c5a6810412aef5b33f28"
+    },
+    {
+      "path": "test/command-palette-interaction.test.ts",
+      "bytes": 5022,
+      "donorSha256": "d5e74e64d9400121c0342b6add2d5f0cd3bc2ac3ffe467296d42a05105074d30",
+      "sha256": "fce608fb304bea0f267dba7cdde9b771c14b44a018ed8010ef083af3c1549501"
+    },
+    {
+      "path": "test/annotation-plugin-references.test.ts",
+      "bytes": 5508,
+      "donorSha256": null,
+      "sha256": "77ce2b2fcb006a2e88637fa308e7c4b9a5531c164bd872be4457d9c084a5e0aa"
+    },
+    {
+      "path": "test/annotation-scope.test.ts",
+      "bytes": 6149,
+      "donorSha256": null,
+      "sha256": "170212f425391981e3402eb36ec8dc01242bf1b4cf2d0ad80cd18562d61ef6ff"
+    },
+    {
+      "path": "test/annotation-clipboard-lifecycle.test.ts",
+      "bytes": 4412,
+      "donorSha256": null,
+      "sha256": "5c62adacd17aa48a0aceec0a3a2e308ad5e998731503e69cc1b3a1d7bed4aaa6"
+    },
+    {
+      "path": "test/annotation-mention-owner.test.ts",
+      "bytes": 1237,
+      "donorSha256": null,
+      "sha256": "71b99b5d1a8a79575fe5800aecefbde17d547f36fb92d02e4fb9f9df64f8a368"
+    }
+  ],
+  "vendorFiles": [
+    {
+      "path": "components/ui/icon.tsx",
+      "sha256": "ba4eccb410a1291c1d80aff126aa24f463b4af574c8cd535df30e6a817862f47"
+    },
+    {
+      "path": "components/ui/plugin-icon.tsx",
+      "sha256": "80d5ac12581120ecc21fcdb9233ffcf76423c5317d75dba845a53f45fedbd3f0"
+    },
+    {
+      "path": "components/ui/switch.tsx",
+      "sha256": "d48a2dad0f6021b8436b5b28785fb772309b760bb4b22717468f6e256631a576"
+    },
+    {
+      "path": "components/ui/motion.ts",
+      "sha256": "c96650e4436a54f2280efef8a953b160beae30044f36f7af4a146296d5859f82"
+    },
+    {
+      "path": "lib/utils.ts",
+      "sha256": "bebe9a50d46ab609e089ed578507363110ccec8990d73fa9b86c58f221f570ac"
+    }
+  ],
+  "frozenContract": {
+    "path": "src/floating/contract.ts",
+    "sha256": "b0e0ba093178ba64fd33307444fcf6a0a5d502703113bac6e11c3070837dcf21",
+    "contentImportIsTypeOnly": true
+  },
+  "noSharedBuildOrRuntimeProof": true
+}

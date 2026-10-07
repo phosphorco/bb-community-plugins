@@ -1,0 +1,278 @@
+[
+  {
+    "classification": "renderable-host",
+    "experimental": true,
+    "importFrom": "@get-bb/plugin-sdk/app",
+    "name": "experimental_Icon"
+  },
+  {
+    "classification": "renderable-host",
+    "experimental": true,
+    "importFrom": "@get-bb/plugin-sdk/app",
+    "name": "experimental_ProviderIcon"
+  },
+  {
+    "classification": "renderable-host",
+    "experimental": false,
+    "importFrom": "@get-bb/plugin-sdk/app",
+    "name": "ThreadChat"
+  },
+  {
+    "classification": "renderable-host",
+    "experimental": false,
+    "importFrom": "@get-bb/plugin-sdk/app",
+    "name": "Markdown"
+  },
+  {
+    "classification": "renderable-host",
+    "experimental": true,
+    "importFrom": "@get-bb/plugin-sdk/app",
+    "name": "experimental_FileLink"
+  },
+  {
+    "classification": "renderable-host",
+    "experimental": false,
+    "importFrom": "@get-bb/plugin-sdk/app",
+    "name": "UrlLink"
+  },
+  {
+    "classification": "renderable-host",
+    "experimental": true,
+    "importFrom": "@get-bb/plugin-sdk/app",
+    "name": "experimental_NewThreadComposer"
+  },
+  {
+    "classification": "renderable-host",
+    "experimental": true,
+    "importFrom": "@get-bb/plugin-sdk/app",
+    "name": "experimental_ProviderModelPicker"
+  },
+  {
+    "classification": "renderable-host",
+    "experimental": true,
+    "importFrom": "@get-bb/plugin-sdk/app",
+    "name": "experimental_PermissionModePicker"
+  },
+  {
+    "classification": "renderable-host",
+    "experimental": true,
+    "importFrom": "@get-bb/plugin-sdk/app",
+    "name": "experimental_BranchPicker"
+  },
+  {
+    "classification": "nonvisual-function",
+    "experimental": true,
+    "importFrom": "@get-bb/plugin-sdk/app",
+    "name": "experimental_useBranches"
+  },
+  {
+    "classification": "nonvisual-function",
+    "experimental": true,
+    "importFrom": "@get-bb/plugin-sdk/app",
+    "name": "experimental_useCheckoutState"
+  },
+  {
+    "classification": "renderable-host",
+    "experimental": true,
+    "importFrom": "@get-bb/plugin-sdk/app",
+    "name": "experimental_SourceCode"
+  },
+  {
+    "classification": "renderable-host",
+    "experimental": true,
+    "importFrom": "@get-bb/plugin-sdk/app",
+    "name": "experimental_Diff"
+  },
+  {
+    "classification": "nonvisual-function",
+    "experimental": false,
+    "importFrom": "@get-bb/plugin-sdk/app",
+    "name": "useRpc"
+  },
+  {
+    "classification": "nonvisual-function",
+    "experimental": false,
+    "importFrom": "@get-bb/plugin-sdk/app",
+    "name": "useRealtime"
+  },
+  {
+    "classification": "nonvisual-function",
+    "experimental": false,
+    "importFrom": "@get-bb/plugin-sdk/app",
+    "name": "useRealtimeConnectionState"
+  },
+  {
+    "classification": "nonvisual-function",
+    "experimental": false,
+    "importFrom": "@get-bb/plugin-sdk/app",
+    "name": "useSettings"
+  },
+  {
+    "classification": "nonvisual-function",
+    "experimental": false,
+    "importFrom": "@get-bb/plugin-sdk/app",
+    "name": "useBbContext"
+  },
+  {
+    "classification": "nonvisual-function",
+    "experimental": true,
+    "importFrom": "@get-bb/plugin-sdk/app",
+    "name": "experimental_usePluginId"
+  },
+  {
+    "classification": "nonvisual-function",
+    "experimental": true,
+    "importFrom": "@get-bb/plugin-sdk/app",
+    "name": "experimental_useQuestionFormHost"
+  },
+  {
+    "classification": "nonvisual-function",
+    "experimental": false,
+    "importFrom": "@get-bb/plugin-sdk/app",
+    "name": "useBbNavigate"
+  },
+  {
+    "classification": "nonvisual-function",
+    "experimental": true,
+    "importFrom": "@get-bb/plugin-sdk/app",
+    "name": "experimental_useAppPanel"
+  },
+  {
+    "classification": "nonvisual-function",
+    "experimental": true,
+    "importFrom": "@get-bb/plugin-sdk/app",
+    "name": "experimental_useFixedTabTarget"
+  },
+  {
+    "classification": "nonvisual-function",
+    "experimental": false,
+    "importFrom": "@get-bb/plugin-sdk/app",
+    "name": "useComposer"
+  },
+  {
+    "classification": "nonvisual-function",
+    "experimental": false,
+    "importFrom": "@get-bb/plugin-sdk/app",
+    "name": "useComposers"
+  },
+  {
+    "classification": "nonvisual-function",
+    "experimental": false,
+    "importFrom": "@get-bb/plugin-sdk/app",
+    "name": "useComposerView"
+  },
+  {
+    "classification": "nonvisual-function",
+    "experimental": true,
+    "importFrom": "@get-bb/plugin-sdk/app",
+    "name": "experimental_useSidebarThreads"
+  },
+  {
+    "classification": "nonvisual-function",
+    "experimental": true,
+    "importFrom": "@get-bb/plugin-sdk/app",
+    "name": "experimental_useSidebarThreadActions"
+  },
+  {
+    "classification": "nonvisual-function",
+    "experimental": true,
+    "importFrom": "@get-bb/plugin-sdk/app",
+    "name": "experimental_useSidebarThreadPullRequest"
+  },
+  {
+    "classification": "nonvisual-function",
+    "experimental": true,
+    "importFrom": "@get-bb/plugin-sdk/app",
+    "name": "experimental_useSidebarThreadSplit"
+  },
+  {
+    "classification": "nonvisual-function",
+    "experimental": true,
+    "importFrom": "@get-bb/plugin-sdk/app",
+    "name": "experimental_useSidebarNavigation"
+  },
+  {
+    "classification": "nonvisual-function",
+    "experimental": true,
+    "importFrom": "@get-bb/plugin-sdk/app",
+    "name": "experimental_useSidebarNavigationSplit"
+  },
+  {
+    "classification": "renderable-host",
+    "experimental": true,
+    "importFrom": "@get-bb/plugin-sdk/app",
+    "name": "experimental_SidebarNavigationIcon"
+  },
+  {
+    "classification": "nonvisual-function",
+    "experimental": false,
+    "importFrom": "@get-bb/plugin-sdk/app",
+    "name": "useSidebarThreadDraft"
+  },
+  {
+    "classification": "nonvisual-function",
+    "experimental": false,
+    "importFrom": "@get-bb/plugin-sdk/app",
+    "name": "useSidebarThreadDraftIds"
+  },
+  {
+    "classification": "nonvisual-function",
+    "experimental": false,
+    "importFrom": "@get-bb/plugin-sdk/app",
+    "name": "useSidebarThreadRowStatus"
+  },
+  {
+    "classification": "nonvisual-function",
+    "experimental": false,
+    "importFrom": "@get-bb/plugin-sdk/app",
+    "name": "useSidebarThreadRowStatuses"
+  },
+  {
+    "classification": "nonvisual-function",
+    "experimental": false,
+    "importFrom": "@get-bb/plugin-sdk/app",
+    "name": "useSidebarSplitLayout"
+  },
+  {
+    "classification": "nonvisual-function",
+    "experimental": false,
+    "importFrom": "@get-bb/plugin-sdk/app",
+    "name": "useSidebarThreadShortcut"
+  },
+  {
+    "classification": "renderable-host",
+    "experimental": false,
+    "importFrom": "@get-bb/plugin-sdk/app",
+    "name": "ThreadTitle"
+  },
+  {
+    "classification": "nonvisual-function",
+    "experimental": false,
+    "importFrom": "@get-bb/plugin-sdk/app",
+    "name": "useEnvironmentProviders"
+  },
+  {
+    "classification": "nonvisual-function",
+    "experimental": false,
+    "importFrom": "@get-bb/plugin-sdk/app",
+    "name": "useSdk"
+  },
+  {
+    "classification": "nonvisual-function",
+    "experimental": true,
+    "importFrom": "@get-bb/plugin-sdk/app",
+    "name": "experimental_useProviders"
+  },
+  {
+    "classification": "nonvisual-function",
+    "experimental": true,
+    "importFrom": "@get-bb/plugin-sdk/app",
+    "name": "experimental_useCodeTheme"
+  },
+  {
+    "classification": "definition-function",
+    "experimental": false,
+    "importFrom": "@get-bb/plugin-sdk/app",
+    "name": "definePluginApp"
+  }
+]

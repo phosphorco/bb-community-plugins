@@ -1,0 +1,309 @@
+amends "workbench:plan"
+
+meta {
+  title = "BB Plugin Guide for Nerds"
+  goal = "Fork the complete Plugin Guide into an independently named community plugin, deliver its floating footer-toggle form first, then add current theme and Native UI catalogs, instant page changes, and measured lazy-loading improvements."
+}
+
+local sources = new Guard {
+  id = "source-discovery"
+  owner = "Implementation steward"
+  outcome = "Establish the exact complete Plugin Guide donor, BB UI Reference patterns, existing dirty work, running BB, published releases, and the constraints of an independent plugin."
+  observes {
+    "../fork/build/bb/plugins/plugin-api-docs/**"
+    "plugins/bb-ui-reference/**"
+    "plans/bb-plugin-guide-for-nerds/sources.json"
+    "plans/bb-plugin-guide-for-nerds/DESIGN.md"
+  }
+  oracle = (module.mechanical("node plans/bb-plugin-guide-for-nerds/check-discovery.mjs")) { once = true }
+}
+
+local planReview = new Guard {
+  id = "two-perspective-plan-review"
+  owner = "Execution Steward"
+  outcome = "Consume the verified two-perspective weak-area review, resolve material planning defects, and establish independent worker contracts before dispatching development."
+  observes {
+    "plans/bb-plugin-guide-for-nerds.plan.pkl"
+    "plans/bb-plugin-guide-for-nerds/DESIGN.md"
+    "plans/bb-plugin-guide-for-nerds/evidence/plan-review/**"
+    "verified Perspectives artifact for thr_wci32jcr5t"
+  }
+  needs { module.verified(sources) }
+  oracle = module.adjudicated("Read the byte-verified Perspectives artifact for both requested lenses; preserve citations, disagreements, coverage limits and exact receipt. Record accepted corrections and any reasoned disagreements. Correct native mounting/SDK/build assumptions, feasible lazy delivery, shared write ownership, dependencies, and acceptance instruments. Recheck the revised graph and define bounded worker outputs before development dispatch. A launch receipt cannot satisfy this review.", "Execution Steward")
+}
+
+local compatibility = new Action {
+  id = "extraction-compatibility"
+  owner = "Compatibility and extraction worker"
+  outcome = "Prove the exact public SDK, build CLI, host and registry-source contract for the initial independent plugin. Inspect installed/public declarations and a minimal build fixture, and establish actual chunk delivery support. Record an honest upstream-versus-fork capability matrix and omit-dev independent build conditions before full extraction. No shared installs or host changes."
+  grant { "plans/bb-plugin-guide-for-nerds/evidence/compatibility/**" }
+  needs { module.verified(planReview) }
+  oracle = module.adjudicated("Exact package versions/integrities, host/result-tree and actual CLI implementation are identified. Primary SDK evidence confirms every initial hook/overlay/icon contract and the matching registry imports; a retained minimal build fixture demonstrates emitted artifact format/static closure. Independent npm-install --omit=dev requirements are explicit. Any fork-specific asset delivery is accurately recorded with a supported plugin-local fallback or scoped compatibility floor, without claiming upstream runtime proof.", "Execution Steward")
+}
+
+local adapter = new Action {
+  id = "overlay-adapter-proof"
+  owner = "Floating overlay worker"
+  outcome = "Prove a context-preserving floating mounting path using the existing experimental_appOverlay plus React portal, with sidebarFooterAction and open-session cancellation. Establish local page-selection and content/frame interfaces without detached-root SDK/router hooks or private host providers. Prototype nested-dialog keyboard, focus and cancellation rules before extraction."
+  grant { "plans/bb-plugin-guide-for-nerds/evidence/adapter/**" }
+  needs { module.verified(planReview) }
+  oracle = module.adjudicated("Selected SDK and host source prove a native plugin React boundary retaining router/query/plugin contexts. Retained focused probe/tests establish the content/frame API, overlay-local page changes, nested-dialog Escape precedence, generation and per-open cancellation, late-import/clipboard cleanup, focus-return intent and pointer-capture disposal. Structural or harness proof is labeled separately from the later live browser gate. No copied private providers, second React runtime or host patch.", "Execution Steward")
+}
+
+local scaffold = new Action {
+  id = "independent-package-scaffold"
+  owner = "Execution Steward"
+  outcome = "Freeze the accepted SDK/build/content-frame contract and copy tracked source-only donor files into the canonical new plugin once. Establish manifest, TypeScript/test/build tooling, source-only vendoring/adaptation receipts, namespaces, full notices and acceptance scripts. Own shared package/lock installation and top-level app integration; then release disjoint source and floating subtrees to workers."
+  grant {
+    "plugins/plugin-guide-for-nerds/**"
+    "package-lock.json"
+    "README.md"
+    ".github/workflows/publish.yml"
+    "plans/bb-plugin-guide-for-nerds/WORKSTREAMS.md"
+    "plans/bb-plugin-guide-for-nerds/evidence/scaffold/**"
+  }
+  needs {
+    module.produced(compatibility); module.verified(compatibility)
+    module.produced(adapter); module.verified(adapter)
+  }
+  oracle = module.adjudicated("One source-only donor inventory and adaptation receipt retains all teaching maps/cards/assets/scripts/meaningful tests and complete upstream/UI Reference notices. No generated runtime/log state is copied. Exact independent manifest/pins and namespaced identities are correct; accepted content/frame signatures and exclusive worker file lists are written; shared installs/builds belong to the steward. Upcoming test instruments reject missing inputs. Copy is available for worker adaptation, not yet certified as a working plugin.", "Execution Steward")
+}
+
+local copy = new Action {
+  id = "copy-and-rename"
+  owner = "Compatibility and extraction worker"
+  outcome = "Adapt the scaffold's full donor source, maps, cards and meaningful tests into plugin-guide-for-nerds; display BB Plugin Guide for Nerds. Preserve MIT attribution and source hashes. Adapt internal shared-UI imports through the public SDK and version-matched vendored registry source. Give local navigation and agent-reference ownership the new plugin identity; preserve Copy for agent and co-installation with the original. Steward owns package script wiring. Prove the content subtree independently of the parallel frame implementation; shared build acceptance belongs to integration."
+  grant {
+    "plugins/plugin-guide-for-nerds/server.ts"
+    "plugins/plugin-guide-for-nerds/src/agent-reference.ts"
+    "plugins/plugin-guide-for-nerds/src/annotation.tsx"
+    "plugins/plugin-guide-for-nerds/src/html-escape.ts"
+    "plugins/plugin-guide-for-nerds/src/plugin-icons.ts"
+    "plugins/plugin-guide-for-nerds/src/product-map.tsx"
+    "plugins/plugin-guide-for-nerds/src/scroll-edges.ts"
+    "plugins/plugin-guide-for-nerds/src/surface-card.tsx"
+    "plugins/plugin-guide-for-nerds/src/surfaces.ts"
+    "plugins/plugin-guide-for-nerds/src/used-by.tsx"
+    "plugins/plugin-guide-for-nerds/src/wireframes.tsx"
+    "plugins/plugin-guide-for-nerds/src/guide-content.tsx"
+    "plugins/plugin-guide-for-nerds/components/**"
+    "plugins/plugin-guide-for-nerds/lib/**"
+    "plugins/plugin-guide-for-nerds/test/agent-reference.test.ts"
+    "plugins/plugin-guide-for-nerds/test/annotation*.test.*"
+    "plugins/plugin-guide-for-nerds/test/command-palette-interaction.test.ts"
+    "plugins/plugin-guide-for-nerds/test/composer-annotation-interaction.test.ts"
+    "plugins/plugin-guide-for-nerds/test/message-actions-interaction.test.ts"
+    "plugins/plugin-guide-for-nerds/test/mobile-guide.test.ts"
+    "plugins/plugin-guide-for-nerds/test/product-map.test.ts"
+    "plugins/plugin-guide-for-nerds/test/scaffold-surface-entry.test.ts"
+    "plugins/plugin-guide-for-nerds/test/surface-card.test.ts"
+    "plugins/plugin-guide-for-nerds/test/surfaces.test.ts"
+    "plugins/plugin-guide-for-nerds/test/used-by.test.ts"
+    "plugins/plugin-guide-for-nerds/test/wireframes.test.ts"
+    "plans/bb-plugin-guide-for-nerds/evidence/copy/**"
+  }
+  needs { module.produced(scaffold); module.verified(scaffold) }
+  oracle = module.mechanical("npm run test:fork --workspace @phosphorco/bb-plugin-plugin-guide-for-nerds && npm run typecheck:content --workspace @phosphorco/bb-plugin-plugin-guide-for-nerds")
+}
+
+local floating = new Action {
+  id = "floating-footer-toggle"
+  owner = "Floating overlay worker"
+  outcome = "Implement one draggable nonmodal frame/controller for the accepted experimental_appOverlay plus sidebarFooterAction integration. Preserve host SDK contexts, underlying route/draft and overlay-local selection. Establish first-open lazy content, close/Escape/focus, viewport/touch/scroll behavior, loading/retry and generation/open-session disposal. Independently build against the accepted content interface; steward owns top-level registration/CSS/manifest integration and serialized builds."
+  grant {
+    "plugins/plugin-guide-for-nerds/src/floating/**"
+    "plugins/plugin-guide-for-nerds/test/overlay*.test.*"
+    "plans/bb-plugin-guide-for-nerds/evidence/floating/**"
+  }
+  needs { module.produced(scaffold); module.verified(scaffold) }
+  oracle = module.mechanical("npm run test:overlay --workspace @phosphorco/bb-plugin-plugin-guide-for-nerds && npm run typecheck:overlay --workspace @phosphorco/bb-plugin-plugin-guide-for-nerds")
+}
+
+local floatingIntegration = new Action {
+  id = "first-slice-integration"
+  owner = "Execution Steward"
+  outcome = "Integrate the independently verified copied content and floating frame through native overlay/footer registrations. Own app.tsx, scoped CSS, registration/layout tests, content-loader and exact emitted-asset proof. Prove cold/retry/reload delivery in the initial slice and independent omit-dev package closure before live acceptance. A real Chromium witness caches failed module URLs, so recovery must use a generation-scoped cache-busting URL and emitted-graph checks rather than simply recalling identical import. Serialize builds at a frozen source identity."
+  grant {
+    "plugins/plugin-guide-for-nerds/app.tsx"
+    "plugins/plugin-guide-for-nerds/app.css"
+    "plugins/plugin-guide-for-nerds/app.test.tsx"
+    "plugins/plugin-guide-for-nerds/src/content-loader.ts"
+    "plugins/plugin-guide-for-nerds/test/plugin-app-layout.test.ts"
+    "plugins/plugin-guide-for-nerds/test/first-slice*.test.*"
+    "plugins/plugin-guide-for-nerds/scripts/check-lazy-build.mjs"
+    "plugins/plugin-guide-for-nerds/scripts/build.mjs"
+    "plugins/plugin-guide-for-nerds/package.json"
+    "plugins/plugin-guide-for-nerds/README.md"
+    "plans/bb-plugin-guide-for-nerds/evidence/first-slice/**"
+  }
+  needs { module.produced(copy); module.verified(copy); module.produced(floating); module.verified(floating) }
+  oracle = module.mechanical("npm run test:first-slice --workspace @phosphorco/bb-plugin-plugin-guide-for-nerds && npm run typecheck --workspace @phosphorco/bb-plugin-plugin-guide-for-nerds && npm run build --workspace @phosphorco/bb-plugin-plugin-guide-for-nerds && npm run build:lazy --workspace @phosphorco/bb-plugin-plugin-guide-for-nerds && npm run check:lazy-build --workspace @phosphorco/bb-plugin-plugin-guide-for-nerds")
+}
+
+local firstSlice = new Guard {
+  id = "first-requirement-proof"
+  owner = "Implementation steward"
+  outcome = "Demonstrate the copied and renamed guide floating over an existing BB page from its footer toggle before expanding the feature set."
+  observes {
+    "plugins/plugin-guide-for-nerds/**"
+    "plans/bb-plugin-guide-for-nerds/evidence/floating/**"
+    "canonical local BB plugin source and browser"
+  }
+  needs { module.produced(floatingIntegration); module.verified(floatingIntegration) }
+  oracle = module.adjudicated("Retain canonical browser evidence and exact build/source identity: all donor maps/cards work; footer toggles one instance; close/reopen/drag/resize/narrow/keyboard/touch work; arrows and card dismissal are not suppressed by the outer role=dialog; inner-menu/card/frame Escape precedence and focus return are correct; underlying route/draft and original guides remain; Copy for agent resolves to the new owner. Emitted entry/static closure and actual cold chunk requests prove deferred delivery; failed-import retry, superseded open, reload during import and delayed clipboard completion leave no orphan DOM/resources/focus changes. Disclose unobserved browser coverage; no harness result substitutes for live proof. Local proof only.", "Implementation steward")
+}
+
+local target = new Action {
+  id = "catalog-target-snapshot"
+  owner = "Implementation steward"
+  outcome = "Resolve the newest published stable BB and its matching SDK/build/registry inputs at execution time, separately record the deployed BB contract, and retain exact immutable theme-bridge, host-export, and registry-entry snapshots with hashes. Establish supported and newer-host-only entries; do not upgrade the host. Use no private fork imports or runtime source scans."
+  grant { "plans/bb-plugin-guide-for-nerds/catalog-target/**" }
+  needs { module.verified(sources); module.verified(planReview) }
+  oracle = module.adjudicated("Primary release/package evidence identifies exact BB version, matching SDK and build CLI, source revisions and hashes. The complete public theme bridge, renderable SDK host experiences, and registry entries are captured. Differences from the deployed contract and older UI Reference catalog are explicit; experimental and version-only capabilities cannot be presented as available on an unsupported host. Latest is a dated immutable target, not an unverified claim about a moving branch.", "Implementation steward")
+}
+
+local theme = new Action {
+  id = "theme-variable-catalog"
+  owner = "Implementation steward"
+  outcome = "Bring BB UI Reference's theme-variable teaching into the new guide: exact variable and utility names, semantic groups, live fill/text/border/ring demonstrations, descriptions, and click-to-copy. Refresh the complete theme dataset against the target snapshot; preserve unavailable/newer token labels and palette participation."
+  grant {
+    "plugins/plugin-guide-for-nerds/src/catalogs/theme/**"
+    "plugins/plugin-guide-for-nerds/test/theme-catalog*.test.*"
+    "plugins/plugin-guide-for-nerds/scripts/check-theme-catalog.mjs"
+    "plans/bb-plugin-guide-for-nerds/evidence/theme/**"
+  }
+  needs { module.produced(copy); module.verified(copy); module.produced(target); module.verified(target); module.verified(firstSlice) }
+  oracle = module.mechanical("npm run test:theme-catalog --workspace @phosphorco/bb-plugin-plugin-guide-for-nerds")
+}
+
+local nativeUi = new Action {
+  id = "native-ui-catalog"
+  owner = "Implementation steward"
+  outcome = "Bring the Native UI catalog into the new guide and refresh it against the target snapshot. Distinguish host-owned SDK experiences from source-vendored registry controls; show accurate import/install snippets, experimental/version markers, short usage guidance, and semantic illustrations. Do not import every catalog component to display its documentation."
+  grant {
+    "plugins/plugin-guide-for-nerds/src/catalogs/native-ui/**"
+    "plugins/plugin-guide-for-nerds/assets/native-ui/**"
+    "plugins/plugin-guide-for-nerds/test/native-catalog*.test.*"
+    "plugins/plugin-guide-for-nerds/scripts/check-native-catalog.mjs"
+    "plans/bb-plugin-guide-for-nerds/evidence/native-ui/**"
+  }
+  needs { module.produced(copy); module.verified(copy); module.produced(target); module.verified(target); module.verified(firstSlice) }
+  oracle = module.mechanical("npm run test:native-catalog --workspace @phosphorco/bb-plugin-plugin-guide-for-nerds")
+}
+
+local catalogs = new Action {
+  id = "catalog-sections"
+  owner = "Implementation steward"
+  outcome = "Add accessible Theme and Native UI sections to the proven floating guide. Deliberately widen the first-slice surfaces-only selection contract and frame validation for typed section/page/scroll seeds. Load each section only on selection; retain appropriate section/scroll state without keeping hidden observers or work alive. Preserve all donor maps and Copy for agent, copy feedback, navigation, theme, and failure behavior."
+  grant {
+    "plugins/plugin-guide-for-nerds/src/guide-content.tsx"
+    "plugins/plugin-guide-for-nerds/src/catalogs/index.tsx"
+    "plugins/plugin-guide-for-nerds/src/floating/contract.ts"
+    "plugins/plugin-guide-for-nerds/src/floating/index.tsx"
+    "plugins/plugin-guide-for-nerds/app.css"
+    "plugins/plugin-guide-for-nerds/test/catalog-sections*.test.*"
+    "plugins/plugin-guide-for-nerds/package.json"
+    "plans/bb-plugin-guide-for-nerds/evidence/catalogs/**"
+  }
+  needs {
+    module.produced(floating); module.verified(firstSlice)
+    module.produced(theme); module.verified(theme)
+    module.produced(nativeUi); module.verified(nativeUi)
+  }
+  oracle = module.mechanical("npm run test:catalog-sections --workspace @phosphorco/bb-plugin-plugin-guide-for-nerds && npm run typecheck --workspace @phosphorco/bb-plugin-plugin-guide-for-nerds && npm run build --workspace @phosphorco/bb-plugin-plugin-guide-for-nerds")
+}
+
+local currentness = new Guard {
+  id = "both-catalogs-current"
+  owner = "Implementation steward"
+  outcome = "Prove theme and Native UI catalogs cover the exact recorded newest stable inputs and accurately mark differences from the current host."
+  observes { "plugins/plugin-guide-for-nerds/src/catalogs/**"; "plans/bb-plugin-guide-for-nerds/catalog-target/**" }
+  needs { module.produced(theme); module.verified(theme); module.produced(nativeUi); module.verified(nativeUi) }
+  oracle = module.mechanical("npm run check:catalogs --workspace @phosphorco/bb-plugin-plugin-guide-for-nerds")
+}
+
+local instant = new Action {
+  id = "instant-page-switching"
+  owner = "Implementation steward"
+  outcome = "Replace animated page movement and height interpolation with immediate selected-page display. Remove transition-only 350ms timers and transform/height transitions in the page, fixture-scale, and mobile-card paths. Preserve keyboard, swipe, desktop/mobile views, card selection, sizing, last selection and scrolling. Cold lazy imports may show a loading state; loaded pages have no transition delay."
+  grant {
+    "plugins/plugin-guide-for-nerds/src/product-map.tsx"
+    "plugins/plugin-guide-for-nerds/src/surface-card.tsx"
+    "plugins/plugin-guide-for-nerds/test/navigation*.test.*"
+    "plugins/plugin-guide-for-nerds/test/product-map.test.*"
+    "plugins/plugin-guide-for-nerds/test/mobile-guide.test.*"
+    "plans/bb-plugin-guide-for-nerds/evidence/navigation/**"
+  }
+  needs { module.produced(floating); module.verified(firstSlice) }
+  oracle = module.mechanical("npm run test:navigation --workspace @phosphorco/bb-plugin-plugin-guide-for-nerds && npm run typecheck --workspace @phosphorco/bb-plugin-plugin-guide-for-nerds && npm run build --workspace @phosphorco/bb-plugin-plugin-guide-for-nerds")
+}
+
+local baseline = new Guard {
+  id = "performance-baseline"
+  owner = "Implementation steward"
+  outcome = "Capture reproducible closed idle, first open, warm reopen, page/section switch, drag/resize, and repeated close/reload witnesses before the performance pass. Use the completed catalogs and instant navigation as the control. Freeze protocol, failure predicates, and acceptable noise from the measured baseline."
+  observes {
+    "plugins/plugin-guide-for-nerds/**"
+    "plans/bb-plugin-guide-for-nerds/evidence/performance/control/**"
+    "canonical production BB browser"
+  }
+  needs { module.produced(catalogs); module.verified(catalogs); module.produced(instant); module.verified(instant) }
+  oracle = module.adjudicated("Retain exact source/build/browser/viewport/theme/pointer/cache/fixture identities and stable control samples. Measure production input-to-paint, long tasks, mounted pages, request counts, observers/timers, memory after repeated cycles, and actual entry/content asset closure. Attribution, if needed, is a separate instrumented lane. Set regression predicates from baseline noise before optimizing; document unavailable instrumentation instead of treating it as zero.", "Implementation steward")
+}
+
+local performance = new Action {
+  id = "lazy-content-performance"
+  owner = "Implementation steward"
+  outcome = "Keep closed startup limited to the footer action/controller; load maps and catalogs on demand and mount only the active page/section. Defer plugin list/catalog requests until open and share them per open guide. Remove all-slide observers and hidden measurement probes; preserve sizing with active-content measurements. Bound cached state and dispose listeners, observers, timers and requests on close/reload; guard late imports and use the build system's supported lazy output."
+  grant {
+    "plugins/plugin-guide-for-nerds/app.tsx"
+    "plugins/plugin-guide-for-nerds/src/floating/**"
+    "plugins/plugin-guide-for-nerds/src/guide-content.tsx"
+    "plugins/plugin-guide-for-nerds/src/product-map.tsx"
+    "plugins/plugin-guide-for-nerds/src/wireframes.tsx"
+    "plugins/plugin-guide-for-nerds/src/scroll-edges.ts"
+    "plugins/plugin-guide-for-nerds/src/surface-card.tsx"
+    "plugins/plugin-guide-for-nerds/src/used-by.tsx"
+    "plugins/plugin-guide-for-nerds/src/catalogs/index.tsx"
+    "plugins/plugin-guide-for-nerds/test/lifecycle*.test.*"
+    "plugins/plugin-guide-for-nerds/test/lazy*.test.*"
+    "plugins/plugin-guide-for-nerds/scripts/check-lazy-build.mjs"
+    "plugins/plugin-guide-for-nerds/package.json"
+    "plans/bb-plugin-guide-for-nerds/evidence/performance/candidate/**"
+  }
+  needs { module.verified(baseline); module.produced(catalogs); module.produced(instant) }
+  oracle = module.mechanical("npm run test:lifecycle --workspace @phosphorco/bb-plugin-plugin-guide-for-nerds && npm run typecheck --workspace @phosphorco/bb-plugin-plugin-guide-for-nerds && npm run build:lazy --workspace @phosphorco/bb-plugin-plugin-guide-for-nerds && npm run check:lazy-build --workspace @phosphorco/bb-plugin-plugin-guide-for-nerds")
+}
+
+local performanceProof = new Guard {
+  id = "performance-proof"
+  owner = "Implementation steward"
+  outcome = "Prove reduced work and preserved first-use behavior against the retained baseline with alternating production control/candidate runs."
+  observes { "plugins/plugin-guide-for-nerds/**"; "plans/bb-plugin-guide-for-nerds/evidence/performance/**" }
+  needs { module.produced(performance); module.verified(performance) }
+  oracle = module.adjudicated("Production evidence meets the frozen regression predicates and shows a lightweight closed entry, no guide DOM or content requests before first open, only the selected page/section mounted, instant warm switches, bounded retained state, and no guide-owned continuing work after close/reload. First-open keyboard/touch, import failure/retry, late completion, theme changes, Copy for agent, and viewport sizing remain correct. Report attribution and production data separately and disclose any uncovered measurements.", "Implementation steward")
+}
+
+local repository = new Guard {
+  id = "community-repository-checks"
+  owner = "Implementation steward"
+  outcome = "Verify the final selected community-plugin composition through the repository's required frozen install, tests, typecheck and build; identify unrelated pre-existing failures without erasing authored work."
+  observes { "plugins/plugin-guide-for-nerds/**"; "package-lock.json"; "community plugin composition" }
+  needs { module.verified(performanceProof); module.verified(currentness) }
+  oracle = module.mechanical("npm ci && npm run test && npm run typecheck && npm run build && npm run build:lazy --workspace @phosphorco/bb-plugin-plugin-guide-for-nerds && npm run check:lazy-build --workspace @phosphorco/bb-plugin-plugin-guide-for-nerds")
+}
+
+local acceptance = new Guard {
+  id = "complete-guide-acceptance"
+  owner = "Implementation steward"
+  outcome = "Review the full destination on the exact final plugin build and current host; retain a concise source/build/proof handoff without upgrading BB, publishing a package, or promoting workspace gitlinks."
+  observes { "plugins/plugin-guide-for-nerds/**"; "plans/bb-plugin-guide-for-nerds/**"; "canonical local BB browser" }
+  needs { module.verified(firstSlice); module.verified(currentness); module.verified(performanceProof); module.verified(repository) }
+  oracle = module.adjudicated("Final live evidence covers exact display name and independent IDs, footer-toggle floating guide, all copied maps/cards/agent references, theme and Native UI sections current to the recorded release, no page transition motion, lazy loading and measured performance. Recheck focus/keyboard/touch, drag/resize/narrow layouts, underlying draft/route, light/dark/distinct theme, original-guide coexistence, failure/retry and disposal. Report every remaining in-scope unknown and provenance/compatibility limit. First-slice evidence alone cannot satisfy full acceptance. Keep release/promotion outside this grant.", "Implementation steward")
+}
+
+nodes {
+  sources; planReview; compatibility; adapter; scaffold; copy; floating; floatingIntegration; firstSlice; target
+  theme; nativeUi; catalogs; currentness; instant
+  baseline; performance; performanceProof; repository; acceptance
+}

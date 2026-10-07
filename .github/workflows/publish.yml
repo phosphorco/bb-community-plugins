@@ -15,6 +15,7 @@ on:
           - perspectives
           - sticky-notes
           - bb-ui-reference
+          - plugin-guide-for-nerds
           - attach-text-snippets
           - bb-identity
           - bb-provider-settings
@@ -33,6 +34,7 @@ on:
       - "perspectives/v*"
       - "sticky-notes/v*"
       - "bb-ui-reference/v*"
+      - "plugin-guide-for-nerds/v*"
       - "attach-text-snippets/v*"
       - "bb-identity/v*"
       - "bb-provider-settings/v*"
@@ -97,6 +99,7 @@ jobs:
             perspectives) workspace="@phosphorco/bb-plugin-perspectives" ;;
             sticky-notes) workspace="@phosphorco/bb-plugin-sticky-notes" ;;
             bb-ui-reference) workspace="@phosphorco/bb-plugin-bb-ui-reference" ;;
+            plugin-guide-for-nerds) workspace="@phosphorco/bb-plugin-plugin-guide-for-nerds" ;;
             attach-text-snippets) workspace="@phosphorco/bb-plugin-attach-text-snippets" ;;
             bb-identity) workspace="@phosphorco/bb-identity" ;;
             bb-provider-settings) workspace="@phosphorco/bb-provider-settings" ;;

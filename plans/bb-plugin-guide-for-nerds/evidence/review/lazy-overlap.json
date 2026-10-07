@@ -1,0 +1,14 @@
+{
+  "observedAt": "2026-10-07T17:16:15.566Z",
+  "browser": "153.0.8010.12",
+  "requests": [
+    "http://127.0.0.1:38886/api/v1/plugins/plugin-guide-for-nerds/assets/g/f41bd357f0d24a1bb23019c3f1b7bba7/chunks/guide-content-EJSTWBCU.js",
+    "http://127.0.0.1:38886/api/v1/plugins/plugin-guide-for-nerds/assets/g/f41bd357f0d24a1bb23019c3f1b7bba7/chunks/guide-content-EJSTWBCU.js?bb-guide-retry=1"
+  ],
+  "assertions": [
+    "one cold failure",
+    "one pending fresh retry shared across close/reopen",
+    "only current frame mounted",
+    "final close disposes frame"
+  ]
+}

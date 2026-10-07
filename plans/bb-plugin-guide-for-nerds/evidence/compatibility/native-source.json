@@ -1,0 +1,10 @@
+{
+  "requested": "builtin:plugin-api-docs",
+  "resolved": "builtin:plugin-api-docs",
+  "engines": {
+    "bb": ">=0.0",
+    "bbPluginSdk": ">=0.4.3"
+  },
+  "installedAt": 1788891055283,
+  "history": []
+}

@@ -1,0 +1,222 @@
+{
+  "sourceRoot": "/home/ubuntu/bb/fork/build/bb",
+  "materializedCommit": "6a0f73a8fec9e6d578d89da2ee1bc9a9a8e697eb",
+  "resultTree": "006c86feb52ca604f23b4d422562d635500306ad",
+  "trackedSourceOnly": [
+    {
+      "path": "plugins/plugin-api-docs/PLUGIN_OVERVIEW.md",
+      "bytes": 1151,
+      "sha256": "f80b017fa501b7a495c3e52fb47fe28cfaecf5e554ad4821f3d371cea8a20faf"
+    },
+    {
+      "path": "plugins/plugin-api-docs/app.test.tsx",
+      "bytes": 2384,
+      "sha256": "7408434f8775829e7495df3bbcbaca3dacc00f4c2b1522f3ad0d83905aedc7dc"
+    },
+    {
+      "path": "plugins/plugin-api-docs/app.tsx",
+      "bytes": 3729,
+      "sha256": "04232842c5ee8749ed08f431a2f53e9e7280e0db9cc5741ac428be9bef6fcbef"
+    },
+    {
+      "path": "plugins/plugin-api-docs/icons/ai-generative.svg",
+      "bytes": 937,
+      "sha256": "4e87ef6283a4c2640c692b4d562fe6550102d9ed4b6b94f3db162371da4df220"
+    },
+    {
+      "path": "plugins/plugin-api-docs/package.json",
+      "bytes": 1485,
+      "sha256": "daca7f928d19c47ff58c6623065d51b771b2dba2596548b2803f130489a99351"
+    },
+    {
+      "path": "plugins/plugin-api-docs/scripts/scaffold-surface-entry.d.mts",
+      "bytes": 1218,
+      "sha256": "902c82dbfd79b5cc120063e2bf529f72b3f8872f2aee0c80b34857e59f032b64"
+    },
+    {
+      "path": "plugins/plugin-api-docs/scripts/scaffold-surface-entry.mjs",
+      "bytes": 4845,
+      "sha256": "5bf3b344eb6513de48ee855397ad55fbe1f53d525fa3861d718453c087b3cb7c"
+    },
+    {
+      "path": "plugins/plugin-api-docs/server.ts",
+      "bytes": 614,
+      "sha256": "6fd0c3018802cb29afcd4a221df8d9358f1aae43d8759ec87a53911a77d20a44"
+    },
+    {
+      "path": "plugins/plugin-api-docs/src/agent-reference.ts",
+      "bytes": 4437,
+      "sha256": "c1e18f9f04f44d792bcbe3311f1d6e73f44f373f17da61203ad7a4a8a9c5be2c"
+    },
+    {
+      "path": "plugins/plugin-api-docs/src/anatomy-manifest.json",
+      "bytes": 8835,
+      "sha256": "facbb798eebbf8f84db3b310c2f403e88cec4ac7e6ec509a8a4d255d4db90f5c"
+    },
+    {
+      "path": "plugins/plugin-api-docs/src/annotation.tsx",
+      "bytes": 3411,
+      "sha256": "1f73c4d6cec6376dbb77438e44017c927408acb410f8d3e358ebddd48d346984"
+    },
+    {
+      "path": "plugins/plugin-api-docs/src/first-party-plugins.json",
+      "bytes": 2738,
+      "sha256": "a47e82ac93cf84642bf8a59dd1d04112e040a61a7010351a2e51560b7a987037"
+    },
+    {
+      "path": "plugins/plugin-api-docs/src/html-escape.ts",
+      "bytes": 315,
+      "sha256": "c2513d84bc71ef631a08d2a1624615c8b572cbc4e2ec6f49f296f6138e6b0cea"
+    },
+    {
+      "path": "plugins/plugin-api-docs/src/plugin-icons.ts",
+      "bytes": 1756,
+      "sha256": "070c12f21e19580f411aabd9ff7a824aa0b6fa1ee8363af2ba4cca45fa327f4c"
+    },
+    {
+      "path": "plugins/plugin-api-docs/src/product-map.tsx",
+      "bytes": 32975,
+      "sha256": "3d18769764cd9ae8407b26cd8d82f005b1e746b1481d65d147ff1e601bfdfb94"
+    },
+    {
+      "path": "plugins/plugin-api-docs/src/scroll-edges.ts",
+      "bytes": 1793,
+      "sha256": "994543ac45c68c43ea384bb09d22cfd6b4c0b2c554314def3d0e76a31b194528"
+    },
+    {
+      "path": "plugins/plugin-api-docs/src/surface-card.tsx",
+      "bytes": 10816,
+      "sha256": "f501d6edc709b0c929a10a8e55288b6c2b94117de6ca5b54249b1885d6176af6"
+    },
+    {
+      "path": "plugins/plugin-api-docs/src/surfaces.ts",
+      "bytes": 72380,
+      "sha256": "5dd674e43f80cd3bebcbbebd63068e2f16dd74437cb5935748fc93f3b6422941"
+    },
+    {
+      "path": "plugins/plugin-api-docs/src/used-by.tsx",
+      "bytes": 5946,
+      "sha256": "f8bc24d4065e6b07877a51636bf4178d659b800d95abdaa0914f5c55b93134b7"
+    },
+    {
+      "path": "plugins/plugin-api-docs/src/wireframes.tsx",
+      "bytes": 79921,
+      "sha256": "b7e6321b1e0bbb056b5c75f3ba190aaec6f3bbdc01eef36bc43bd1c44631b15b"
+    },
+    {
+      "path": "plugins/plugin-api-docs/test/agent-reference.test.ts",
+      "bytes": 5464,
+      "sha256": "fe7526a975390a45f7144100de24cc4b86ca37f49dfdd0347876dec3452189d6"
+    },
+    {
+      "path": "plugins/plugin-api-docs/test/command-palette-interaction.test.ts",
+      "bytes": 4196,
+      "sha256": "d5e74e64d9400121c0342b6add2d5f0cd3bc2ac3ffe467296d42a05105074d30"
+    },
+    {
+      "path": "plugins/plugin-api-docs/test/composer-annotation-interaction.test.ts",
+      "bytes": 1450,
+      "sha256": "c8b30adb8be485a80adee3d16826298c30ad3d5ae85e466f444005ac5816f2a9"
+    },
+    {
+      "path": "plugins/plugin-api-docs/test/message-actions-interaction.test.ts",
+      "bytes": 2712,
+      "sha256": "f26b69bf83eac2e1c24009ddfbba1e85f3dad930e72fb3e57dac09289cca17ff"
+    },
+    {
+      "path": "plugins/plugin-api-docs/test/mobile-guide.test.ts",
+      "bytes": 9206,
+      "sha256": "28c5e8b302a5604ba1788ea2337f11e56c9fbc8e50567a0ea909240209a0f387"
+    },
+    {
+      "path": "plugins/plugin-api-docs/test/plugin-app-layout.test.ts",
+      "bytes": 468,
+      "sha256": "3be5ef7aa76209c51da3ede22bc848e5cb8ac7d10f3e7778eb3f05f1e6fc4b53"
+    },
+    {
+      "path": "plugins/plugin-api-docs/test/product-map.test.ts",
+      "bytes": 1585,
+      "sha256": "b255dd820567bb62f2e5584b4a07591ad5e66c2d54cd4d303c692bfa79e1529f"
+    },
+    {
+      "path": "plugins/plugin-api-docs/test/scaffold-surface-entry.test.ts",
+      "bytes": 4963,
+      "sha256": "8c77dc20b1a5c015c1672b1cb2c5e5a776d8d56e148559c329ef4eaf5f0963a7"
+    },
+    {
+      "path": "plugins/plugin-api-docs/test/setup.ts",
+      "bytes": 104,
+      "sha256": "f5a618f206355cdaf7602736706623b9d97cdc7bd9eeeba048d4a408c91e954c"
+    },
+    {
+      "path": "plugins/plugin-api-docs/test/surface-card.test.ts",
+      "bytes": 3183,
+      "sha256": "9512e266b789f88926e4959bba41698a7a17bf4660e321431b36df8469b4acde"
+    },
+    {
+      "path": "plugins/plugin-api-docs/test/surfaces.test.ts",
+      "bytes": 7298,
+      "sha256": "fe8327498ee11268f31b1bdd5b9339d058674dd6d748086605a84f4dbd8357f1"
+    },
+    {
+      "path": "plugins/plugin-api-docs/test/used-by.test.ts",
+      "bytes": 2724,
+      "sha256": "2b284765eb952cff2cfbd00e190a783c736ad9d9e1583c2148c571015aa939a6"
+    },
+    {
+      "path": "plugins/plugin-api-docs/test/wireframes.test.ts",
+      "bytes": 18107,
+      "sha256": "9944f3aa605569c0c854e964a3832fb550ca6531414fa3012b1f29aee1fda9af"
+    },
+    {
+      "path": "plugins/plugin-api-docs/tsconfig.json",
+      "bytes": 632,
+      "sha256": "8c7ce095b304ddc7dbfb0d9a77352b0cb2a9eadb756576c36de5255d2bf6fe9a"
+    },
+    {
+      "path": "plugins/plugin-api-docs/vitest.config.ts",
+      "bytes": 306,
+      "sha256": "974afa049d6f1917d692a37f6f7b646f3668fee2615e5825af7f6a477ca45335"
+    }
+  ],
+  "excludedGeneratedOrIgnored": [
+    "plugins/plugin-api-docs/.bundled-runtime/dist/.bb-artifacts/da70bcf3bd374f59a5e4cdf0ea009efb/app.css",
+    "plugins/plugin-api-docs/.bundled-runtime/dist/.bb-artifacts/da70bcf3bd374f59a5e4cdf0ea009efb/app.js",
+    "plugins/plugin-api-docs/.bundled-runtime/dist/.bb-artifacts/da70bcf3bd374f59a5e4cdf0ea009efb/app.meta.json",
+    "plugins/plugin-api-docs/.bundled-runtime/dist/app.meta.json",
+    "plugins/plugin-api-docs/.bundled-runtime/dist/package.json",
+    "plugins/plugin-api-docs/.bundled-runtime/dist/server.js",
+    "plugins/plugin-api-docs/.bundled-runtime/dist/server.js.map",
+    "plugins/plugin-api-docs/.bundled-runtime/dist/server.meta.json",
+    "plugins/plugin-api-docs/.bundled-runtime/icons/ai-generative.svg",
+    "plugins/plugin-api-docs/.bundled-runtime/package.json",
+    "plugins/plugin-api-docs/.turbo/turbo-prepare$colon$bundled.log",
+    "plugins/plugin-api-docs/.turbo/turbo-test.log",
+    "plugins/plugin-api-docs/.turbo/turbo-typecheck.log",
+    "plugins/plugin-api-docs/node_modules/.bin/bb-plugin-build",
+    "plugins/plugin-api-docs/node_modules/.bin/tsc",
+    "plugins/plugin-api-docs/node_modules/.bin/tsc6",
+    "plugins/plugin-api-docs/node_modules/.bin/vitest",
+    "plugins/plugin-api-docs/node_modules/.vite/vitest/3ce258c23bef73617388950ddfddd6edca4c13c0/results.json",
+    "plugins/plugin-api-docs/node_modules/@bb/plugin-build",
+    "plugins/plugin-api-docs/node_modules/@bb/shared-ui",
+    "plugins/plugin-api-docs/node_modules/@get-bb/plugin-sdk",
+    "plugins/plugin-api-docs/node_modules/@hugeicons/core-free-icons",
+    "plugins/plugin-api-docs/node_modules/@hugeicons/react",
+    "plugins/plugin-api-docs/node_modules/@testing-library/dom",
+    "plugins/plugin-api-docs/node_modules/@testing-library/react",
+    "plugins/plugin-api-docs/node_modules/@types/node",
+    "plugins/plugin-api-docs/node_modules/@types/react",
+    "plugins/plugin-api-docs/node_modules/@types/react-dom",
+    "plugins/plugin-api-docs/node_modules/jsdom",
+    "plugins/plugin-api-docs/node_modules/react",
+    "plugins/plugin-api-docs/node_modules/react-dom",
+    "plugins/plugin-api-docs/node_modules/typescript",
+    "plugins/plugin-api-docs/node_modules/typescript-7",
+    "plugins/plugin-api-docs/node_modules/vitest"
+  ],
+  "notice": {
+    "path": "fork/build/bb/LICENSE",
+    "sha256": "d10816aa30183af920bdd789a81b16847bcf3e287e1b3419dd7d85f6e3e8e7b0"
+  }
+}

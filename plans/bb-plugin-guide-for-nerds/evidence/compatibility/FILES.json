@@ -1,0 +1,447 @@
+{
+  "schemaVersion": 1,
+  "root": "/home/ubuntu/bb/community-plugins/plans/bb-plugin-guide-for-nerds/evidence/compatibility",
+  "files": [
+    {
+      "path": "COMPATIBILITY.md",
+      "bytes": 19177,
+      "sha256": "9a804a30ba6492bbe93ebb5a3dc42e64ba37bfb88d9759119d202073a2ff8659"
+    },
+    {
+      "path": "build-042.log",
+      "bytes": 1222,
+      "sha256": "9016457cbf09cf43741b35de941a2f3caaa7e7890dc7386aa100ee9b6f39af3f"
+    },
+    {
+      "path": "build-044-git-flags.log",
+      "bytes": 610,
+      "sha256": "d6c4a957e99a0e75ae63e39e81895c712fe8d0ba78e88327172370045740d13e"
+    },
+    {
+      "path": "build-044-omit-dev.log",
+      "bytes": 610,
+      "sha256": "d6c4a957e99a0e75ae63e39e81895c712fe8d0ba78e88327172370045740d13e"
+    },
+    {
+      "path": "build-044.log",
+      "bytes": 610,
+      "sha256": "d6c4a957e99a0e75ae63e39e81895c712fe8d0ba78e88327172370045740d13e"
+    },
+    {
+      "path": "build-fork-omit-dev.log",
+      "bytes": 867,
+      "sha256": "b6f18980cbbf32ac36700b15b6f7c90b0db45c54c295795a12dfa05e160cb89d"
+    },
+    {
+      "path": "check-output.log",
+      "bytes": 1440,
+      "sha256": "c19e349d0a0324ae4adf888388facda4b0d179e16b11e720c1a667488135023a"
+    },
+    {
+      "path": "check-output.mjs",
+      "bytes": 2678,
+      "sha256": "6825846ab7627e0ae275da5d0615083ea1991fb8c582432196267a56b8838b2f"
+    },
+    {
+      "path": "cleanup.json",
+      "bytes": 373,
+      "sha256": "6034c19b70c9580e1385259cdb36605a50b4b8d2ed1a843d5786d1d345994553"
+    },
+    {
+      "path": "cli-deps-install.log",
+      "bytes": 179,
+      "sha256": "83739b9817b51de0b1892ac6734dcba04d58787bf0bd1a64315495c0b47e5dd7"
+    },
+    {
+      "path": "donor-inputs.json",
+      "bytes": 8983,
+      "sha256": "6ebe1694cd4d91bf42ec4ad55e1a97f657f5260b3d79a90eb9d44cc9dccddd7d"
+    },
+    {
+      "path": "fetch-packages.py",
+      "bytes": 1044,
+      "sha256": "4f46ae0e7e799f48935ba5eabb1e973160bc3af075d202adb9f6bfef4e2c1498"
+    },
+    {
+      "path": "fixture/app.tsx",
+      "bytes": 959,
+      "sha256": "09af1cc51a1c31262979f9d2517cdcb2e84a391237ef27170799908758d305c5"
+    },
+    {
+      "path": "fixture/components/ui/icon.tsx",
+      "bytes": 211,
+      "sha256": "ba4eccb410a1291c1d80aff126aa24f463b4af574c8cd535df30e6a817862f47"
+    },
+    {
+      "path": "fixture/components/ui/motion.ts",
+      "bytes": 150,
+      "sha256": "c96650e4436a54f2280efef8a953b160beae30044f36f7af4a146296d5859f82"
+    },
+    {
+      "path": "fixture/components/ui/plugin-icon.tsx",
+      "bytes": 1532,
+      "sha256": "80d5ac12581120ecc21fcdb9233ffcf76423c5317d75dba845a53f45fedbd3f0"
+    },
+    {
+      "path": "fixture/components/ui/switch.tsx",
+      "bytes": 1964,
+      "sha256": "d48a2dad0f6021b8436b5b28785fb772309b760bb4b22717468f6e256631a576"
+    },
+    {
+      "path": "fixture/harness.mjs",
+      "bytes": 809,
+      "sha256": "0f23daab175159be525d838b90ceeb27b61812026dbe8758b7a413f5e630ebf4"
+    },
+    {
+      "path": "fixture/lazy.tsx",
+      "bytes": 284,
+      "sha256": "095caa0a8e4191e6bf0f2761c71195b03f346c0ec58897fd964d05ce374070ca"
+    },
+    {
+      "path": "fixture/lib/utils.ts",
+      "bytes": 591,
+      "sha256": "bebe9a50d46ab609e089ed578507363110ccec8990d73fa9b86c58f221f570ac"
+    },
+    {
+      "path": "fixture/package-lock.json",
+      "bytes": 35902,
+      "sha256": "030ec0f3300b5e4e62de5ea87fd4df0164d931a01af8c7ea4bcc11e61a19e9a4"
+    },
+    {
+      "path": "fixture/package.json",
+      "bytes": 776,
+      "sha256": "6382985b4d4c8396ade23c2456f2afdc88618f3b8a242613c76f11544e0853ae"
+    },
+    {
+      "path": "fixture/server.ts",
+      "bytes": 146,
+      "sha256": "04e6b71e10215d17244174c7ffc0d901b3f1f19fa7287221b5c9c045004dde3d"
+    },
+    {
+      "path": "fixture/tsconfig.json",
+      "bytes": 180,
+      "sha256": "28d762e82a89d2cc1c70929e3eeca0c0c545d2c05b42cc69d5ba8c88d83231fe"
+    },
+    {
+      "path": "git-install-flags.log",
+      "bytes": 177,
+      "sha256": "65ccff11bd54f0e7f33a61d48e894e1401a2adfaa9daab7b1af8c3c2007f9737"
+    },
+    {
+      "path": "harness.log",
+      "bytes": 213,
+      "sha256": "319adade230e43b10bc0d9c07785ab0b334371ada901a84de576e575d5e95afd"
+    },
+    {
+      "path": "install.log",
+      "bytes": 389,
+      "sha256": "86a8f5e97458774025dab759053df69573600ab6522bbc31e878042ac9f5183d"
+    },
+    {
+      "path": "native-source.json",
+      "bytes": 203,
+      "sha256": "fde874461e38b1fd9be7ec6ba20015e63f4efc5ff84f58f2d2869450a6d9bcd2"
+    },
+    {
+      "path": "notices/BB-upstream-MIT.txt",
+      "bytes": 1069,
+      "sha256": "d10816aa30183af920bdd789a81b16847bcf3e287e1b3419dd7d85f6e3e8e7b0"
+    },
+    {
+      "path": "notices/clsx-license",
+      "bytes": 1104,
+      "sha256": "9a9edad7baae52622bddf3c15b2ef8a33d2c89f2d25408ad13e8a7481c6b0c97"
+    },
+    {
+      "path": "notices/hugeicons-core-free-icons-LICENSE.md",
+      "bytes": 1066,
+      "sha256": "1658d8213209df7b9b86dfc05d724ede48d00dbc27abc15976ec7adec9601cde"
+    },
+    {
+      "path": "notices/hugeicons-react-LICENSE.md",
+      "bytes": 1066,
+      "sha256": "1658d8213209df7b9b86dfc05d724ede48d00dbc27abc15976ec7adec9601cde"
+    },
+    {
+      "path": "notices/react-LICENSE",
+      "bytes": 1088,
+      "sha256": "da6d3703ed11cbe42bd212c725957c98da23cbff1998c05fa4b3d976d1a58e93"
+    },
+    {
+      "path": "notices/tailwind-merge-LICENSE.md",
+      "bytes": 1070,
+      "sha256": "d4c70c7ce38cea8778f0aed3fc0bef0a9dbd27f13bd8b6773cbd6d37941971e5"
+    },
+    {
+      "path": "omit-dev-install.log",
+      "bytes": 180,
+      "sha256": "cd54ebe5e19ea4f368e5b2eb03cb5d33a143dc6ba64464d53c58d37f21e1f762"
+    },
+    {
+      "path": "omit-dev-tree.json",
+      "bytes": 973,
+      "sha256": "0456a9cae76d62045fcb3e0fcd04cf62771bf364fc7e8d82bd720da4f12fdfff"
+    },
+    {
+      "path": "output-044/app.css",
+      "bytes": 15787,
+      "sha256": "be12300b20492371b57725ca8002161428abdf3b48cc1935959dc9aa4c87ca88"
+    },
+    {
+      "path": "output-044/app.js",
+      "bytes": 8221,
+      "sha256": "2118a01ffeeba576ddea288e9a700fe6836ba33d4ca065a37b4f33d5d918031b"
+    },
+    {
+      "path": "output-044/app.meta.json",
+      "bytes": 222,
+      "sha256": "0e7fe9e096394523eff961f225d39df022b06392675012e73e68c6a7a68a83f6"
+    },
+    {
+      "path": "output-044/package.json",
+      "bytes": 18,
+      "sha256": "1239d4d885dcad42201a27ed9324f8f0f760b78700d8db9ced39a511cffe7eae"
+    },
+    {
+      "path": "output-044/server.js",
+      "bytes": 524,
+      "sha256": "1f93a4674279939477f25189dfa022be140b55359e15d4f049d6dcc8729aa208"
+    },
+    {
+      "path": "output-044/server.js.map",
+      "bytes": 191,
+      "sha256": "23b320ed88ccf9ddb618c493e29bdb23f2eae76af9735d45e78f1114d50d47f9"
+    },
+    {
+      "path": "output-044/server.meta.json",
+      "bytes": 222,
+      "sha256": "0e7fe9e096394523eff961f225d39df022b06392675012e73e68c6a7a68a83f6"
+    },
+    {
+      "path": "output-contract.json",
+      "bytes": 1284,
+      "sha256": "85faaa1e3b61599bf99c314c5fb5a42693536d9c9c0ad2358148a1c95b678ec0"
+    },
+    {
+      "path": "output-fork/.bb-artifacts/b4d53c2f2bf443a282a90fb95d0256b8/app.css",
+      "bytes": 15787,
+      "sha256": "be12300b20492371b57725ca8002161428abdf3b48cc1935959dc9aa4c87ca88"
+    },
+    {
+      "path": "output-fork/.bb-artifacts/b4d53c2f2bf443a282a90fb95d0256b8/app.js",
+      "bytes": 5194,
+      "sha256": "a86682d39141c1d767b5f52e9b09ed42d4194009277a24e2397253935476e1de"
+    },
+    {
+      "path": "output-fork/.bb-artifacts/b4d53c2f2bf443a282a90fb95d0256b8/app.meta.json",
+      "bytes": 1182,
+      "sha256": "a4601178f1239954d5dd93ff85fe368801209a8a8f6c43c53d958409032c51c8"
+    },
+    {
+      "path": "output-fork/.bb-artifacts/b4d53c2f2bf443a282a90fb95d0256b8/chunks/chunk-3D3DST75.js",
+      "bytes": 1197,
+      "sha256": "31a2cb6546800314ef55fcff40201b49a8f0478c17afc45749732fcb99291c5c"
+    },
+    {
+      "path": "output-fork/.bb-artifacts/b4d53c2f2bf443a282a90fb95d0256b8/chunks/lazy-VSBYMGZ7.js",
+      "bytes": 1681,
+      "sha256": "a6205037a88a972a3eed50280b60f53b96666742c688247d99740b025726fe19"
+    },
+    {
+      "path": "output-fork/app.css",
+      "bytes": 15787,
+      "sha256": "be12300b20492371b57725ca8002161428abdf3b48cc1935959dc9aa4c87ca88"
+    },
+    {
+      "path": "output-fork/app.js",
+      "bytes": 8221,
+      "sha256": "2118a01ffeeba576ddea288e9a700fe6836ba33d4ca065a37b4f33d5d918031b"
+    },
+    {
+      "path": "output-fork/app.meta.json",
+      "bytes": 1182,
+      "sha256": "a4601178f1239954d5dd93ff85fe368801209a8a8f6c43c53d958409032c51c8"
+    },
+    {
+      "path": "output-fork/package.json",
+      "bytes": 18,
+      "sha256": "1239d4d885dcad42201a27ed9324f8f0f760b78700d8db9ced39a511cffe7eae"
+    },
+    {
+      "path": "output-fork/server.js",
+      "bytes": 524,
+      "sha256": "1f93a4674279939477f25189dfa022be140b55359e15d4f049d6dcc8729aa208"
+    },
+    {
+      "path": "output-fork/server.js.map",
+      "bytes": 191,
+      "sha256": "23b320ed88ccf9ddb618c493e29bdb23f2eae76af9735d45e78f1114d50d47f9"
+    },
+    {
+      "path": "output-fork/server.meta.json",
+      "bytes": 222,
+      "sha256": "0e7fe9e096394523eff961f225d39df022b06392675012e73e68c6a7a68a83f6"
+    },
+    {
+      "path": "package-provenance.json",
+      "bytes": 2007,
+      "sha256": "148c1bcd181e9729e1d4ad100315e99e3fdbd71f1145ab2cfac5228d585faeee"
+    },
+    {
+      "path": "pinned-contract.json",
+      "bytes": 12636,
+      "sha256": "13e07b1248fb8dcc02d64837098f8762ff9800c0011beee4f8bce5edf04affbf"
+    },
+    {
+      "path": "published-excerpts/0.42.0/build-plugin-app.ts",
+      "bytes": 14511,
+      "sha256": "1c09c8e23899f8a1e144e20dc7bf7e82b3c0cdebc751f930f583d1546f5f5a87"
+    },
+    {
+      "path": "published-excerpts/0.42.0/build-toolchain.ts",
+      "bytes": 1048,
+      "sha256": "fb8a0353a1f30f46ebebdd17b5881b5c75b5a3346c6c050ab020b1f04facab29"
+    },
+    {
+      "path": "published-excerpts/0.42.0/plugins.ts",
+      "bytes": 25844,
+      "sha256": "47bf49b1c3013d97ae1d9e664ed01d4f0c500bfedba91a265d1ad0d0d876b54b"
+    },
+    {
+      "path": "published-excerpts/0.42.0/runtime-shims.mjs",
+      "bytes": 6251,
+      "sha256": "20a1ddbcb8d98f96734251c2d78990992473e9813a37b1bb44e56ed01a120595"
+    },
+    {
+      "path": "published-excerpts/0.42.0/toolchain.ts",
+      "bytes": 6198,
+      "sha256": "663bcfbd6c42c687e437dfa35acf59fe67cd58f4ec0e324aa6c1156833519f35"
+    },
+    {
+      "path": "published-excerpts/0.44.0/LICENSE",
+      "bytes": 1069,
+      "sha256": "d10816aa30183af920bdd789a81b16847bcf3e287e1b3419dd7d85f6e3e8e7b0"
+    },
+    {
+      "path": "published-excerpts/0.44.0/apps/server/src/routes/plugins.ts",
+      "bytes": 29398,
+      "sha256": "8afab5d1108cc79ff3c77cd8e783d88ebedd116da112c88b02c82a8ccda2c1fa"
+    },
+    {
+      "path": "published-excerpts/0.44.0/packages/plugin-build/src/build-plugin-app.ts",
+      "bytes": 14563,
+      "sha256": "ae90a22d370da002eadfe52f74b7b3e855d0b8a913a7ec6d017099ed4d0207e0"
+    },
+    {
+      "path": "published-excerpts/0.44.0/packages/plugin-build/src/runtime-shims.mjs",
+      "bytes": 6408,
+      "sha256": "12758ffce8d8043e25d825052408dc1391dc74370e3d2cc809c86afdb0d9f466"
+    },
+    {
+      "path": "published-excerpts/0.44.0/packages/plugin-build/src/toolchain.ts",
+      "bytes": 6294,
+      "sha256": "176821cded20ae6ef67a3b8fdccb73b5cf4e78a56a1b3b9d90120116de77de98"
+    },
+    {
+      "path": "published-excerpts/0.44.0/packages/plugin-registry/r/icon.json",
+      "bytes": 673,
+      "sha256": "bec8ac8c082e350a0e1932ddc7b9242cc0d7c424612d59af111c335b40ab9761"
+    },
+    {
+      "path": "published-excerpts/0.44.0/packages/plugin-registry/r/motion.json",
+      "bytes": 580,
+      "sha256": "79d1b885d2bf5fff7af2a7782d301836652613557366c02d917080d050dfb9a3"
+    },
+    {
+      "path": "published-excerpts/0.44.0/packages/plugin-registry/r/plugin-icon.json",
+      "bytes": 2141,
+      "sha256": "2a271cd218e579f972365e3c7e2387fa68c7678e01e4dea15d5db4398aa986c8"
+    },
+    {
+      "path": "published-excerpts/0.44.0/packages/plugin-registry/r/switch.json",
+      "bytes": 2567,
+      "sha256": "9b08034a8a2be98655a59b183fb4f0baa9b1da439189e6c81204daa568d77a42"
+    },
+    {
+      "path": "published-excerpts/0.44.0/packages/plugin-registry/r/utils.json",
+      "bytes": 1086,
+      "sha256": "915a421978a75bff6472d1dee201bfcfbbd0effa2385b365a61258ea40c6e5e4"
+    },
+    {
+      "path": "published-excerpts/0.44.0/packages/plugin-sdk/package.json",
+      "bytes": 6555,
+      "sha256": "440ef03e0073c67264b0e745ef4c444abd17424324638673c8cccd8b4732717f"
+    },
+    {
+      "path": "recheck-git-flags.log",
+      "bytes": 631,
+      "sha256": "be27f15dc641f7591b281962337ae8997cf8e8b9eb30f9eb78964c775d8cb133"
+    },
+    {
+      "path": "recheck.log",
+      "bytes": 621,
+      "sha256": "a28e34471b929ef6342f6f9a9b83a243fa1b695c34a68488d5ab34574f15f3e1"
+    },
+    {
+      "path": "registry/bb-app-0.42.0.json",
+      "bytes": 2809,
+      "sha256": "542e6136ad0b007e22d687fd0b3f23aa2bf4e13ecbe79c2a535bd03e753894ca"
+    },
+    {
+      "path": "registry/bb-app-0.44.0.json",
+      "bytes": 3162,
+      "sha256": "ebc4cb3ebe9892135a35c6504435cf9e9ce010a73b1f321e055acdd896fc6dd8"
+    },
+    {
+      "path": "registry/clsx-2.1.1.json",
+      "bytes": 1822,
+      "sha256": "9c31182e5608173479a064c05a10bfe600724781ae83fad18336a0945839b70a"
+    },
+    {
+      "path": "registry/get-bb-plugin-sdk-0.4.47.json",
+      "bytes": 6567,
+      "sha256": "1ecfaad7294ecf3b52b3ce5f7dded51383ca0be4d799b7fbbf5730cfd82bf118"
+    },
+    {
+      "path": "registry/get-bb-plugin-sdk-0.5.29.json",
+      "bytes": 6941,
+      "sha256": "4e3b77c94c85e9adcaefc16af3bc308a0438eadf988becabb7464b2c2e545f08"
+    },
+    {
+      "path": "registry/get-bb-plugin-sdk-0.6.23.json",
+      "bytes": 7174,
+      "sha256": "06a434f19f77d315a1983774286f38352a930a5d373c3670336d282e8607d6b3"
+    },
+    {
+      "path": "registry/hugeicons-core-free-icons-4.3.4.json",
+      "bytes": 7351,
+      "sha256": "ba37668fdbd9b9c579c786a0e031d9556de6b1a4c78e17f9f4fa6c15a0a72349"
+    },
+    {
+      "path": "registry/hugeicons-react-1.1.6.json",
+      "bytes": 2288,
+      "sha256": "9767b02e1cdace39f7bd885adc9bc686afe816680d9bb6c10411cb0a74e58183"
+    },
+    {
+      "path": "registry/tailwind-merge-3.5.0.json",
+      "bytes": 3695,
+      "sha256": "0c54b0e8815d76638e90575d74851731eace18381c72451eb34ac513bc972f08"
+    },
+    {
+      "path": "run-probe.sh",
+      "bytes": 3234,
+      "sha256": "6343a4483425eaa333ed9da183bc84acbf666a1d9107f728fcaf03529971e983"
+    },
+    {
+      "path": "sdk-facts.json",
+      "bytes": 7938,
+      "sha256": "79ec3d54db8e52c90291d2d0adfe42ec2f3b065a5acea1d2f2f85c0ad3f7cf06"
+    },
+    {
+      "path": "typecheck.log",
+      "bytes": 156,
+      "sha256": "7ff9917b39b98f44c18b400a18e772c6aaea7c62dc34fef171c92a6dc3c25a51"
+    }
+  ],
+  "note": "FILES.json is the manifest and intentionally excludes its own recursive hash"
+}

@@ -1,0 +1,5 @@
+mise WARN  failed to write cache file: /home/ubuntu/.cache/mise/neovim/0.12.3/exec_env_f29bed27631494f6-eed99.msgpack.z Read-only file system (os error 30)
+
+> @phosphorco/bb-plugin-plugin-guide-for-nerds@0.1.0 typecheck:overlay
+> tsc --noEmit -p tsconfig.overlay.json
+

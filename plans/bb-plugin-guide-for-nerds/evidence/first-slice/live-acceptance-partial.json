@@ -1,0 +1,113 @@
+{
+  "observedAt": "2026-10-06T21:37:22.776Z",
+  "origin": "http://127.0.0.1:38886",
+  "profile": "fresh ephemeral Chromium contexts; canonical BB; no imported credentials",
+  "cases": [
+    {
+      "name": "closed no guide DOM or deferred request"
+    },
+    {
+      "name": "native footer opens one scoped guide; route/draft preserved; cold deferred chunk",
+      "requests": [
+        "http://127.0.0.1:38886/api/v1/plugins/plugin-guide-for-nerds/assets/g/f0709f3fcdad4a94bf0b8108f7b39771/app.js?h=c075b92a3e903020",
+        "http://127.0.0.1:38886/api/v1/plugins/plugin-guide-for-nerds/assets/g/f0709f3fcdad4a94bf0b8108f7b39771/chunks/chunk-X2747INO.js",
+        "http://127.0.0.1:38886/api/v1/plugins/plugin-guide-for-nerds/assets/g/f0709f3fcdad4a94bf0b8108f7b39771/app.css?h=c075b92a3e903020",
+        "http://127.0.0.1:38886/api/v1/plugins/plugin-guide-for-nerds/assets/icon?h=4e87ef6283a4c264",
+        "http://127.0.0.1:38886/api/v1/plugins/plugin-guide-for-nerds/assets/g/f0709f3fcdad4a94bf0b8108f7b39771/chunks/guide-content-35Z7K4IV.js"
+      ],
+      "draftChecked": true
+    },
+    {
+      "name": "nonmodal scoped single scroll viewport",
+      "rect": {
+        "x": 460,
+        "y": 68,
+        "width": 960,
+        "height": 720
+      }
+    },
+    {
+      "name": "keyboard movement"
+    },
+    {
+      "name": "physical header drag"
+    },
+    {
+      "name": "keyboard and pointer resize"
+    },
+    {
+      "name": "page arrows work inside outer dialog"
+    },
+    {
+      "name": "native rich Copy for agent uses new plugin owner",
+      "clipboardTypes": [
+        "text/plain",
+        "text/html"
+      ]
+    },
+    {
+      "name": "card Escape precedes frame Escape"
+    },
+    {
+      "name": "outer dialog does not suppress card background dismissal"
+    },
+    {
+      "name": "close focus return and warm selection restoration"
+    },
+    {
+      "name": "host composer Escape does not dismiss guide"
+    },
+    {
+      "name": "actual failed chunk recovers with fresh generation-scoped URL",
+      "retries": [
+        "http://127.0.0.1:38886/api/v1/plugins/plugin-guide-for-nerds/assets/g/f0709f3fcdad4a94bf0b8108f7b39771/chunks/guide-content-35Z7K4IV.js",
+        "http://127.0.0.1:38886/api/v1/plugins/plugin-guide-for-nerds/assets/g/f0709f3fcdad4a94bf0b8108f7b39771/chunks/guide-content-35Z7K4IV.js?bb-guide-retry=1"
+      ]
+    },
+    {
+      "name": "close during real pending import leaves no orphan frame"
+    }
+  ],
+  "pageErrors": [],
+  "browser": "153.0.8010.12",
+  "build": {
+    "sdkMajor": 0,
+    "sdkVersion": "0.5.29",
+    "artifactFormatVersion": 2,
+    "pluginId": "plugin-guide-for-nerds",
+    "pluginVersion": "0.1.0",
+    "builtWith": {
+      "bbVersion": "0.44.0",
+      "pluginSdkVersion": "0.5.29"
+    },
+    "appArtifact": {
+      "generation": "f0709f3fcdad4a94bf0b8108f7b39771",
+      "files": [
+        {
+          "path": "app.css",
+          "bytes": 120988,
+          "sha256": "fd199b601ba5e898e37b5f615f0f8952f912c9b067e8f08588ddd5f9fb8264f1",
+          "contentType": "text/css; charset=utf-8"
+        },
+        {
+          "path": "app.js",
+          "bytes": 10051,
+          "sha256": "cf39a01dc0afd23e006b4137a3ee75260171cabfb55788649561a2756e4d344b",
+          "contentType": "text/javascript; charset=utf-8"
+        },
+        {
+          "path": "chunks/chunk-X2747INO.js",
+          "bytes": 2788,
+          "sha256": "6f3e1da9532a45f8918c5641e97d031851940f3fe3ed1bf1825953bb7442b344",
+          "contentType": "text/javascript; charset=utf-8"
+        },
+        {
+          "path": "chunks/guide-content-35Z7K4IV.js",
+          "bytes": 157561,
+          "sha256": "9e3003bf4df4ed972ca7c1687b8e9c2bdeef8dab6f2045a2b571f38a539a3471",
+          "contentType": "text/javascript; charset=utf-8"
+        }
+      ]
+    }
+  }
+}

@@ -16,6 +16,7 @@
 | [Perspectives](plugins/perspectives/) | Consult independent expert agents and synthesize evidence across caller-selected lenses. |
 | [Sticky Notes](plugins/sticky-notes/) | Leave shared, movable notes directly on bb threads. |
 | [BB UI Reference](plugins/bb-ui-reference/) | Explore BB's plugin surfaces and active semantic theme palette. |
+| [BB Plugin Guide for Nerds](plugins/plugin-guide-for-nerds/) | Open the complete Plugin Guide as a floating companion (in development). |
 | [Analytics](plugins/analytics/) | Explore fast, code-authored dashboards for agent tool reliability and performance. |
 | [Restart Resume](plugins/restart-resume/) | Resume threads left interrupted by a host daemon restart, with project-specific recovery messages. |
 | [Attach Text Snippets](plugins/attach-text-snippets/) | Paste long text into durable thread files and attach compact references to conversations. |

@@ -1,0 +1,18 @@
+{
+  "browser": "153.0.8010.12",
+  "probeOutcome": "native paced touch drag + resize/scroll closes on first tap; abrupt single-step probe failed with no click",
+  "inputs": [
+    {
+      "path": "/home/ubuntu/bb/community-plugins/plugins/plugin-guide-for-nerds/src/floating/index.tsx",
+      "sha256": "adb5ef64414c105aa53d8f2b23ca5fe83f239fdda4b653f484a904dd95da7cd1"
+    },
+    {
+      "path": "/home/ubuntu/bb/community-plugins/plugins/plugin-guide-for-nerds/dist/app.meta.json",
+      "sha256": "55120c8476fed88fefa67efb3ebe701fcdee75894ea8c69dddd2df307176522e"
+    },
+    {
+      "path": "/home/ubuntu/bb/community-plugins/plugins/plugin-guide-for-nerds/app.tsx",
+      "sha256": "f10c2de7f66c4f979b80318aa67fbba14eec102fb189283b0fed210823c33353"
+    }
+  ]
+}

@@ -1,0 +1,13 @@
+{
+  "extends": "./tsconfig.json",
+  "include": [
+    "server.ts",
+    "src/*.ts",
+    "src/*.tsx",
+    "components",
+    "lib"
+  ],
+  "exclude": [
+    "src/floating/**"
+  ]
+}

@@ -1,0 +1,14 @@
+[data-bb-plugin="plugin-guide-for-nerds"].nerd-guide-frame {
+  --guide-stage-gap: 12px;
+  isolation: isolate;
+}
+[data-bb-plugin="plugin-guide-for-nerds"] .nerd-guide-chrome-button:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+[data-bb-plugin="plugin-guide-for-nerds"] .nerd-guide-chrome-button:hover {
+  background: var(--state-hover) !important;
+}
+[data-bb-plugin="plugin-guide-for-nerds"] [data-guide-stage-viewport] {
+  scrollbar-gutter: stable;
+}

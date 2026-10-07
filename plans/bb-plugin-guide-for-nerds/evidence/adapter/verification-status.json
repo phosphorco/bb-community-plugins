@@ -1,0 +1,40 @@
+[
+  {
+    "output": "typecheck-output.txt",
+    "exitCode": 0,
+    "command": [
+      "/home/ubuntu/bb/community-plugins/node_modules/.bin/tsc",
+      "--noEmit",
+      "--strict",
+      "--skipLibCheck",
+      "--types",
+      "react",
+      "--module",
+      "NodeNext",
+      "--moduleResolution",
+      "NodeNext",
+      "--jsx",
+      "react-jsx",
+      "<unique-scratch>/contract.ts",
+      "<unique-scratch>/wiring.tsx"
+    ]
+  },
+  {
+    "output": "sdk-harness-output.txt",
+    "exitCode": 0,
+    "command": [
+      "node",
+      "--test",
+      "/home/ubuntu/bb/community-plugins/plans/bb-plugin-guide-for-nerds/evidence/adapter/sdk-harness.test.mjs"
+    ]
+  },
+  {
+    "output": "probe-output.txt",
+    "exitCode": 0,
+    "command": [
+      "node",
+      "--test",
+      "/home/ubuntu/bb/community-plugins/plans/bb-plugin-guide-for-nerds/evidence/adapter/probe.test.mjs"
+    ]
+  }
+]

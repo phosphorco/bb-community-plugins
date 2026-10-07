@@ -1,0 +1,253 @@
+[
+  {
+    "version": "0.4.47",
+    "files": [
+      {
+        "path": "bundled-types/bb-plugin-sdk-app.d.ts",
+        "sha256": "70d5f3eefc369b830bc9141fb1f76a9f671041ed35d230e2206c05d319fbd2b7"
+      },
+      {
+        "path": "bundled-types/bb-plugin-sdk-testing-app.d.ts",
+        "sha256": "ba84d22bc17c5169cacae598a034e29762e757ff57b64686c65eecd396619fc3"
+      },
+      {
+        "path": "dist/app.js",
+        "sha256": "880aa41d0be2231a108a21fd9ecf85872b69a2b482ac8080c003e575bf7adee4"
+      }
+    ],
+    "contracts": {
+      "declare const useSdk": [],
+      "declare const experimental_Icon": [],
+      "experimental_appOverlay(registration": [
+        {
+          "line": 1598,
+          "text": "    experimental_appOverlay(registration: ExperimentalAppOverlayRegistration): void;"
+        }
+      ],
+      "interface PluginSidebarFooterActionRegistration": [
+        {
+          "line": 936,
+          "text": "interface PluginSidebarFooterActionRegistration {"
+        }
+      ],
+      "declare function installTestPluginRuntime": [
+        {
+          "line": 133,
+          "text": "declare function installTestPluginRuntime(): void;"
+        }
+      ],
+      "declare function loadPluginApp": [
+        {
+          "line": 167,
+          "text": "declare function loadPluginApp(source: PluginAppSource): Promise<CapturedPluginApp>;"
+        }
+      ],
+      "declare function renderSlot": [
+        {
+          "line": 305,
+          "text": "declare function renderSlot<Props extends object, Contract extends PluginRpcContract = PluginRpcContract>(registration: {"
+        }
+      ],
+      "var useSdk": [],
+      "var experimental_Icon": []
+    }
+  },
+  {
+    "version": "0.5.29",
+    "files": [
+      {
+        "path": "bundled-types/bb-plugin-sdk-app.d.ts",
+        "sha256": "c81d42a8215f9a0a362a99d9bae81d4ac78643bf7387f4b1b9e60816b2bd4f32"
+      },
+      {
+        "path": "bundled-types/bb-plugin-sdk-testing-app.d.ts",
+        "sha256": "eb4fb8cc57ca68284b11195b08290302b250cc387ad747d300a1ced9fdb9fc2d"
+      },
+      {
+        "path": "dist/app.js",
+        "sha256": "4aba5aabc19ac841a724dcb7708f24de48561c201b4f0701f5ec90d93760f2f0"
+      }
+    ],
+    "contracts": {
+      "declare const useSdk": [
+        {
+          "line": 19956,
+          "text": "declare const useSdk: () => PluginBrowserBbSdk;"
+        }
+      ],
+      "declare const experimental_Icon": [
+        {
+          "line": 19912,
+          "text": "declare const experimental_Icon: react.ComponentType<ExperimentalIconProps>;"
+        }
+      ],
+      "experimental_appOverlay(registration": [
+        {
+          "line": 18638,
+          "text": "    experimental_appOverlay(registration: ExperimentalAppOverlayRegistration): void;"
+        }
+      ],
+      "interface PluginSidebarFooterActionRegistration": [
+        {
+          "line": 17637,
+          "text": "interface PluginSidebarFooterActionRegistration {"
+        }
+      ],
+      "declare function installTestPluginRuntime": [
+        {
+          "line": 170,
+          "text": "declare function installTestPluginRuntime(): void;"
+        }
+      ],
+      "declare function loadPluginApp": [
+        {
+          "line": 208,
+          "text": "declare function loadPluginApp(source: PluginAppSource): Promise<CapturedPluginApp>;"
+        }
+      ],
+      "declare function renderSlot": [
+        {
+          "line": 397,
+          "text": "declare function renderSlot<Props extends object, Contract extends PluginRpcContract = PluginRpcContract>(registration: {"
+        }
+      ],
+      "var useSdk": [
+        {
+          "line": 133,
+          "text": "var useSdk = runtimeFunction(\"useSdk\");"
+        }
+      ],
+      "var experimental_Icon": [
+        {
+          "line": 34,
+          "text": "var experimental_Icon = runtimeComponent(\"experimental_Icon\");"
+        }
+      ]
+    }
+  },
+  {
+    "version": "0.6.23",
+    "files": [
+      {
+        "path": "bundled-types/bb-plugin-sdk-app.d.ts",
+        "sha256": "d2c127633cdc7984a95bc942f8422ea6256d577d2c00f0998f1ae2a1dc806463"
+      },
+      {
+        "path": "bundled-types/bb-plugin-sdk-testing-app.d.ts",
+        "sha256": "fc32e43ea66ec8dd91faf4a31d913d31ef17049dd5b470d4367407e4ba187f4a"
+      },
+      {
+        "path": "dist/app.js",
+        "sha256": "d7664425610edc82254e732a2e2e3ab29fcd89db4d7e663e14f90bc3a527d6fb"
+      }
+    ],
+    "contracts": {
+      "declare const useSdk": [
+        {
+          "line": 21023,
+          "text": "declare const useSdk: () => PluginBrowserBbSdk;"
+        }
+      ],
+      "declare const experimental_Icon": [
+        {
+          "line": 20978,
+          "text": "declare const experimental_Icon: react.ComponentType<ExperimentalIconProps>;"
+        }
+      ],
+      "experimental_appOverlay(registration": [
+        {
+          "line": 19558,
+          "text": "    experimental_appOverlay(registration: ExperimentalAppOverlayRegistration): void;"
+        }
+      ],
+      "interface PluginSidebarFooterActionRegistration": [
+        {
+          "line": 18498,
+          "text": "interface PluginSidebarFooterActionRegistration {"
+        }
+      ],
+      "declare function installTestPluginRuntime": [
+        {
+          "line": 179,
+          "text": "declare function installTestPluginRuntime(): void;"
+        }
+      ],
+      "declare function loadPluginApp": [
+        {
+          "line": 217,
+          "text": "declare function loadPluginApp(source: PluginAppSource): Promise<CapturedPluginApp>;"
+        }
+      ],
+      "declare function renderSlot": [
+        {
+          "line": 419,
+          "text": "declare function renderSlot<Props extends object, Contract extends PluginRpcContract = PluginRpcContract>(registration: {"
+        }
+      ],
+      "var useSdk": [
+        {
+          "line": 137,
+          "text": "var useSdk = runtimeFunction(\"useSdk\");"
+        }
+      ],
+      "var experimental_Icon": [
+        {
+          "line": 34,
+          "text": "var experimental_Icon = runtimeComponent(\"experimental_Icon\");"
+        }
+      ]
+    }
+  },
+  {
+    "version": "0.6.15",
+    "evidenceOrigin": "catalog-target retained public tarball; source inspection only; no new fixture run",
+    "files": [
+      {
+        "path": "/home/ubuntu/bb/community-plugins/plans/bb-plugin-guide-for-nerds/catalog-target/published/plugin-sdk-0.6.15/bundled-types/bb-plugin-sdk-app.d.ts",
+        "sha256": "997b815252c70cae670fa342171754ef2e8aae1b2b9609f0d7c9e433c2288b12"
+      },
+      {
+        "path": "/home/ubuntu/bb/community-plugins/plans/bb-plugin-guide-for-nerds/catalog-target/published/plugin-sdk-0.6.15/bundled-types/bb-plugin-sdk-testing-app.d.ts",
+        "sha256": "fc32e43ea66ec8dd91faf4a31d913d31ef17049dd5b470d4367407e4ba187f4a"
+      }
+    ],
+    "contracts": {
+      "declare const useSdk": [
+        {
+          "line": 20320,
+          "text": "declare const useSdk: () => PluginBrowserBbSdk;"
+        }
+      ],
+      "declare const experimental_Icon": [
+        {
+          "line": 20276,
+          "text": "declare const experimental_Icon: react.ComponentType<ExperimentalIconProps>;"
+        }
+      ],
+      "experimental_appOverlay(registration": [
+        {
+          "line": 18884,
+          "text": "    experimental_appOverlay(registration: ExperimentalAppOverlayRegistration): void;"
+        }
+      ],
+      "declare function installTestPluginRuntime": [
+        {
+          "line": 179,
+          "text": "declare function installTestPluginRuntime(): void;"
+        }
+      ],
+      "declare function loadPluginApp": [
+        {
+          "line": 217,
+          "text": "declare function loadPluginApp(source: PluginAppSource): Promise<CapturedPluginApp>;"
+        }
+      ],
+      "declare function renderSlot": [
+        {
+          "line": 419,
+          "text": "declare function renderSlot<Props extends object, Contract extends PluginRpcContract = PluginRpcContract>(registration: {"
+        }
+      ]
+    }
+  }
+]

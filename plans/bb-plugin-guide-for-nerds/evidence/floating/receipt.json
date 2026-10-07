@@ -1,0 +1,54 @@
+{
+  "workerThread": "thr_rza2zq8dup",
+  "node": "floating-footer-toggle",
+  "implementationChecks": [
+    {
+      "command": "npm run test:overlay --workspace @phosphorco/bb-plugin-plugin-guide-for-nerds",
+      "cwd": "/home/ubuntu/bb/community-plugins",
+      "exitCode": 0,
+      "testsPassed": 25,
+      "output": "tests.txt"
+    },
+    {
+      "command": "npm run typecheck:overlay --workspace @phosphorco/bb-plugin-plugin-guide-for-nerds",
+      "cwd": "/home/ubuntu/bb/community-plugins",
+      "exitCode": 0,
+      "output": "typecheck.txt"
+    }
+  ],
+  "nativeLive": "pending; not tested by worker",
+  "sources": [
+    {
+      "path": "plugins/plugin-guide-for-nerds/src/floating/index.tsx",
+      "sha256": "adb5ef64414c105aa53d8f2b23ca5fe83f239fdda4b653f484a904dd95da7cd1"
+    },
+    {
+      "path": "plugins/plugin-guide-for-nerds/src/floating/geometry.ts",
+      "sha256": "4cc774eff0464d78896c465685f60285523c0f05dd00073af914c85e06adb6e0"
+    },
+    {
+      "path": "plugins/plugin-guide-for-nerds/src/floating/contract.ts",
+      "sha256": "b0e0ba093178ba64fd33307444fcf6a0a5d502703113bac6e11c3070837dcf21"
+    },
+    {
+      "path": "plugins/plugin-guide-for-nerds/test/overlay-frame.test.tsx",
+      "sha256": "6d2ca041206c5a2ea6d07a1dbd5295e4166464e41948e85ba8060f2381cc9285"
+    },
+    {
+      "path": "plugins/plugin-guide-for-nerds/package.json",
+      "sha256": "5bb4b4bbda4da262b7b8d276e1bc5f03494c238e2d233c9e0ba521d7febf8940"
+    },
+    {
+      "path": "plugins/plugin-guide-for-nerds/vitest.config.ts",
+      "sha256": "bebf85d80f9d45ce384ab39403a3bf14c0db0dd1c2e80cef5756847fe6d13fb0"
+    },
+    {
+      "path": "plugins/plugin-guide-for-nerds/tsconfig.overlay.json",
+      "sha256": "d5e33258d4e2dce267ad623c8e72f45d79b110509de593749433d693d340ef4b"
+    },
+    {
+      "path": "plugins/plugin-guide-for-nerds/test/setup.ts",
+      "sha256": "f5a618f206355cdaf7602736706623b9d97cdc7bd9eeeba048d4a408c91e954c"
+    }
+  ]
+}
