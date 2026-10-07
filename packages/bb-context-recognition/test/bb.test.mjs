@@ -295,3 +295,44 @@ test('registration deadlines abort noncooperating handler signals locally', asyn
   await assert.rejects(handlers[METHODS.linkify](input), error => error.kind === 'transient');
   assert.equal(handlerSignal.aborted, true);
 });
+
+test('coalesced progress initializes complete pending inventory for 500/2000 targets', async () => {
+  for (const count of [500, 2000]) {
+    const ids = Array.from({ length: count }, (_, i) => `p${String(i).padStart(4, '0')}`);
+    const snapshots = [], transitions = [];
+    let calls = 0;
+    const result = await enumerateRecognitionSuppliers({
+      sdk: sdk(async ({ pluginId }) => { calls++; return envelope([pluginId]); }, async () => ({ plugins: ids.map(id => ({ id, status: 'running' })) })),
+      owner: createRecognitionDiscoveryOwner(), exclude: 'consumer',
+      onRow: row => transitions.push(row), onProgress: snapshot => snapshots.push(snapshot),
+    });
+    assert.equal(calls, count);
+    assert.equal(transitions.length, count * 2);
+    assert.equal(snapshots[0].rows.length, count);
+    assert.ok(snapshots[0].rows.every(row => row.state === 'pending'));
+    assert.ok(snapshots.at(-1).rows.every(row => row.state === 'ready'));
+    assert.ok(snapshots.length < count / 4, `progress callbacks: ${snapshots.length}`);
+    assert.equal(result.rows.filter(row => row.admitted).length, LIMITS.plugins);
+    assert.equal(result.omittedCount, count - LIMITS.plugins);
+    assert.equal(result.routes.size, LIMITS.plugins);
+    // Previously delivered snapshots remain stable while later rows settle.
+    assert.ok(snapshots[0].rows.every(row => row.state === 'pending'));
+  }
+});
+
+test('cancelled generation clears scheduled progress and never publishes a stale timer', async () => {
+  const slow = deferred();
+  const owner = createRecognitionDiscoveryOwner();
+  const progress = [];
+  const runtime = sdk(async ({ pluginId }) => pluginId === 'b' ? slow.promise : envelope(['a']), async () => ({ plugins: ['a', 'b'].map(id => ({ id, status: 'running' })) }));
+  const result = enumerateRecognitionSuppliers({ sdk: runtime, owner, exclude: 'consumer', onProgress: p => progress.push(p) });
+  await new Promise(resolve => setTimeout(resolve, 5));
+  owner.dispose();
+  const stale = await result;
+  const before = progress.length;
+  await new Promise(resolve => setTimeout(resolve, 25));
+  slow.resolve(envelope(['b']));
+  await turn();
+  assert.deepEqual(stale.rows, []);
+  assert.equal(progress.length, before);
+});

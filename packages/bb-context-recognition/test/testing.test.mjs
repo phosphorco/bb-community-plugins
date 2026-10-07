@@ -88,6 +88,19 @@ test('generic supplier faults cannot pass strict-input rejection checks', async 
   expectFailure(report, 'linkify-strict:', /without a validation error/);
   expectFailure(report, 'resolve-strict:', /without a validation error/);
 });
+test('adversarial Unexpected database failure is never strict-input validation evidence', async () => {
+  const crashOnInvalid = (schema, healthy) => value => {
+    if (!schema.safeParse(value).success) throw new Error('Unexpected database failure');
+    return healthy(value);
+  };
+  const report = await runSupplierConformance(options(rawRegistration({ strict: false,
+    linkify: crashOnInvalid(LinkifyInputV1Schema, goodLinkify),
+    resolve: crashOnInvalid(ResolveInputV1Schema, goodResolve),
+  })));
+  expectFailure(report, 'linkify-strict:', /without a validation error/);
+  expectFailure(report, 'resolve-strict:', /without a validation error/);
+  assert.ok(report.checks.filter(c => c.name.includes('-strict:')).every(c => c.state === 'failed'));
+});
 for (const [name, linkify] of [
   ['malformed', () => ({ candidates: 'wrong' })],
   ['span', value => ({ candidates: value.text ? [candidate(value.text, 0, 3, { match: 'mismatch' })] : [] })],

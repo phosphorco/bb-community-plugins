@@ -1,4 +1,5 @@
 import {test} from 'node:test';
+import {spawnSync} from 'node:child_process';
 import assert from 'node:assert/strict';
 import {readFileSync,existsSync} from 'node:fs';
 import * as root from '@phosphorco/bb-context-recognition';
@@ -7,7 +8,7 @@ import * as kit from '@phosphorco/bb-context-recognition/testing';
 const text=name=>readFileSync(new URL('../'+name,import.meta.url),'utf8');
 function imports(source){return [...source.matchAll(/\b(?:from\s*|import\s*)["']([^"']+)["']/g)].map(m=>m[1]);}
 test('all entries self-resolve with matching emitted declarations; optional SDK only, no DOM peer',()=>{
- const manifest=JSON.parse(text('package.json'));assert.equal(manifest.name,'@phosphorco/bb-context-recognition');assert.equal(manifest.version,'0.2.0');
+ const manifest=JSON.parse(text('package.json'));assert.equal(manifest.name,'@phosphorco/bb-context-recognition');assert.equal(manifest.version,'0.3.0');
  assert.deepEqual(Object.keys(manifest.exports),['.','./bb','./testing']);
  for(const entry of Object.values(manifest.exports))for(const path of [entry.import,entry.types])assert.ok(existsSync(new URL('../'+path,import.meta.url)),path);
  assert.equal(manifest.devDependencies.bun,'1.3.14');assert.equal(manifest.devDependencies['@get-bb/plugin-sdk'],'0.5.29');assert.equal(manifest.peerDependenciesMeta['@get-bb/plugin-sdk'].optional,true);
@@ -23,4 +24,14 @@ test('emitted module boundaries keep SDK types out of production and share sibli
 });
 test('raw shared JSON fixtures exactly equal public kit fixture values',()=>{
  for(const [file,value] of [['versions',kit.versionFixtures],['arbitration',kit.arbitrationFixtures],['worked-examples',kit.workedExamples]])assert.deepEqual(JSON.parse(text('fixtures/'+file+'.json')),value);
+});
+
+test('packed consumer installs npm tarball and imports all three entries', { timeout: 360000 }, () => {
+ const result = spawnSync(process.execPath, [new URL('../tools/packed-consumer.mjs', import.meta.url).pathname], {encoding:'utf8',timeout:350000});
+ assert.ifError(result.error);
+ assert.equal(result.status,0,`${result.stdout}\n${result.stderr}`);
+ const receipt=JSON.parse(result.stdout.trim());
+ assert.equal(receipt.version,'0.3.0');
+ assert.deepEqual(receipt.entries,['.','./bb','./testing']);
+ assert.equal(receipt.sdk,'0.5.29');
 });

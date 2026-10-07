@@ -33,3 +33,22 @@ built-ins and presentation. The package schedules no retries or polling.
 This step does not publish the package, tag a release, adopt it in plugins or
 reload BB. Package source conformance is not host or live proof. Generated
 `dist/` output is never committed.
+
+For the 0.3.0 boundary, ordinary emitted-entry tests also invoke
+`tools/packed-consumer.mjs`: `npm pack`, install the tarball and exact optional
+SDK 0.5.29 with `--ignore-scripts --no-audit --no-fund` into a temporary consumer,
+import all three public entries and run registration conformance. Scratch and
+its npm cache are removed in `finally`, including failure. The canonical
+workspace dependencies and lock are not modified. This needs a coordinated
+check window and registry access for dependencies; it is source packaging
+proof, not live host proof or proof of the full peer range.
+
+`npm run benchmark:discovery` uses emitted entries and reports sample elapsed
+time, describe calls, onRow transitions, onProgress callbacks and total snapshot
+rows for 500/2000 ready and absent targets. It makes no universal performance
+claim. Run build/tests/benchmark/pack only under the steward's check window.
+
+The clean SDK 0.5.29 testing import also requires its optional runtime peers
+`better-sqlite3@12.10.0`, `cron-parser@5.5.0` and `hono@4.11.9`; the scratch
+consumer installs them explicitly. Install scripts remain disabled. The packed
+probe uses RPC registration only, so it does not open or test a native database.

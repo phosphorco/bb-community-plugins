@@ -138,8 +138,9 @@ export async function runSupplierConformance(options: SupplierConformanceOptions
     try { await rawCall(method, input, ms); }
     catch (error) {
       // A fault or timeout is not evidence of strict input rejection.
-      const e = error as { status?: number; body?: { error?: { code?: string } }; message?: string };
-      requireCheck(e.body?.error?.code === 'invalid_input' || /input.*(valid|schema)|invalid.*input|unrecognized|unknown key|parse|expected|too (big|small)/i.test(e.message ?? ''), 'Malformed input failed without a validation error');
+      const e = error as { code?: string; body?: { error?: { code?: string } }; name?: string; issues?: unknown };
+      const validationIssues = e.name === 'ZodError' && Array.isArray(e.issues) && e.issues.length > 0 && e.issues.every(issue => issue && typeof issue.code === 'string' && typeof issue.message === 'string' && Array.isArray(issue.path));
+      requireCheck(e.code === 'invalid_input' || e.body?.error?.code === 'invalid_input' || validationIssues, 'Malformed input failed without a validation error');
       return;
     }
     throw new Error('Registered method accepted malformed input');

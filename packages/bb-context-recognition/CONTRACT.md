@@ -1,7 +1,9 @@
 # @phosphorco/bb-context-recognition — v1 contract
 
-Status: **v1 contract, revision 3.** Implemented in this package; not yet
-adopted by a host or supplier.
+Status: **v1 contract, revision 4; package 0.3.0 source candidate.** Package
+0.2.0 is published; Thread Brief, GitHub Review and Plan Graph are source
+adopters of that boundary. Their 0.3.0 pins follow acceptance and release.
+Package source checks do not establish host or live composition proof.
 
 This package gives BB plugins one way to **recognize** mentions in text
 (*linkify*) and to turn the recognized identities into **presentation data**
@@ -53,7 +55,7 @@ Rules that follow from the table:
 There is no `/react` entry in v1. Consumers render cards with their own
 components (rule 4: data crosses plugins, components do not).
 
-Package version (`0.1.0`) and wire version (`1`) are separate numbers (§10).
+Package version (`0.3.0`) and wire version (`1`) are separate numbers (§10).
 
 ## 3. Identities, spans and shared types
 
@@ -77,14 +79,19 @@ type SourceIdentity = { provider: string; id: string; kind?: string };
   to a frame, the id embeds that frame (`env_abc123:plans/x.plan.pkl`), so the
   same id means the same thing in every consumer.
 - Providers starting with `bb.` are **reserved** for BB-native referents
-  implemented as consumer built-ins: `bb.thread` (id `thr_…`, kind `session`)
-  and `bb.file` (id `thr_…:path`, kind `file`). The file id embeds the
-  thread whose storage/environment frames the workspace-relative path. Built-in
-  resolution derives that frame from the id; `context.threadId` is attribution
-  only. A `bb.thread` resolver checks the target id independently of that
-  context. A consumer ignores
-  contributed advertisements and candidates for a reserved provider it
-  implements itself.
+  implemented as consumer built-ins. Their id grammars are consumer-defined,
+  not extra wire DTO fields. Thread Brief uses `bb.thread` (id `thr_…`, kind
+  `session`) and `bb.file` (kind `file`) with these file identity examples:
+  `thr_…:path` for unframed bare paths, `thr_…:workspace:path` and
+  `thr_…:thread-storage:path` for explicitly framed or absolute destinations.
+  Unframed bare paths resolve storage-first, then workspace, because the pure
+  linker cannot know which file exists. Framed identities resolve only in the
+  named root. To keep this grammar unambiguous, Thread Brief rejects unframed
+  paths whose first segment is literally `workspace:` or `thread-storage:`.
+  Built-in resolution derives the frame from the id; `context.threadId` is
+  attribution only. A `bb.thread` resolver checks the target id independently
+  of that context. A consumer ignores contributed advertisements and candidates
+  for a reserved provider it implements itself.
 
 ### 3.2 Spans
 
@@ -182,7 +189,12 @@ on release. Consumers sharing an SDK use separate owners, never a global registr
 4. Rows are keyed by **target plugin id**; names inside describe are not trusted
    as the key. `onRow` fires per plugin so a slow supplier never hides others.
    `onProgress` supplies isolated row and route snapshots as states settle,
-   including admission/contested-provider changes. Consumers may patch a late
+   after initializing the entire pending/known-absent inventory once. Eligible
+   IDs are ordered once per pass. Settlement snapshots are coalesced over
+   16 ms, with immediate initial, continuation and final flushes; no timer
+   survives the pass and stale generations publish nothing. `onRow` retains
+   individual initial and settlement transitions. Snapshots include
+   admission/contested-provider changes. Consumers may patch a late
    supplier immediately without waiting for the drain to finish. `omittedCount`
    counts ready suppliers excluded by admission, not absent plugins or the
    excluded consumer. Cache inputs are explicit ID collections; the helper has
@@ -346,9 +358,12 @@ considered, so reserved-provider filtering never requires a fabricated match:
    7. `pluginId`, then `provider`, then `id`, by UTF-16 code unit comparison.
 4. **Select.** Walk in rank order; accept a candidate if its span does not
    overlap an accepted one.
-5. **Fallback.** For each accepted candidate, the best-ranked rejected candidate
-   with the **identical span** and a different identity becomes its `fallback`
-   (at most one).
+5. **Fallback.** For each accepted candidate, consider rejected candidates
+   with the **identical span** and a different identity. Prefer the best-ranked
+   `builtin` candidate with `generic` specificity if present; otherwise use
+   the best-ranked other candidate. Keep at most one `fallback`. The primary
+   ranking above is unchanged. This native fallback floor preserves navigation
+   when several typed suppliers claim a span and typed resolution fails.
 6. **Emit** occurrences sorted by `start`, plus the unique set of identities
    (primaries and fallbacks) in first-occurrence order.
 
@@ -682,12 +697,19 @@ built-ins, so no compatibility shim is provided.
   reported as a conformance failure for contributed suppliers.
 - Linkify: schema validity; spans inside text with exact `match`; no candidate
   intersects `excluded`; only advertised providers; at most one candidate per
-  span; byte-identical output on a repeated call; completes within
-  `linkifyMs`; strict input rejection of unknown fields; behaviour with no
+  span; identical canonical JSON on a repeated call; each supplied call is locally
+  bounded by `linkifyMs`; strict input rejection of unknown fields; behaviour with no
   `git` and with empty `links`.
-- Resolve: one resolution per requested identity; no unrequested identities;
+- Resolve: at most one resolution per requested identity; omissions allowed
+  as transient outcomes; no unrequested identities;
   `card` only for `detail:'card'`; closed reason codes; response bytes within
-  limit; per-item `timeout` reasons instead of a call-level overrun.
+  limit; each supplied call is locally bounded by `resolveMs`. The kit does
+  not inject source stalls, prove remote cancellation, or verify that a
+  supplier converts its own deadline into per-item `timeout` reasons.
+- Malformed-input probes accept structured `invalid_input` (the SDK error
+  code or transport body) or a named `ZodError` with structured validation
+  issues. Generic faults, message matches and timeouts are failures. The kit
+  cannot prove the absence of handler I/O or all supplier policy from probes.
 - Arbitration vectors: shared JSON fixtures for `arbitrate` (overlap, containment,
   equal span typed vs generic, explicit vs inferred, duplicates across plugins,
   fallbacks) that consumers in any repository can replay.
@@ -723,8 +745,20 @@ recursive resolution of excerpts, writes of any kind, polling, and fork changes.
    "inferred" affordance whose tooltip is the provenance explanation, so a
    wrong guess is visible rather than hidden as plain text.
 
-Later, not v1: cards for targets of explicit Markdown links (today they are
-excluded and only appear in `context.links`).
+Explicit Markdown destinations may be submitted as separate linkify windows
+by a consumer, using the existing text/context input. This is consumer policy,
+not a wire extension. The consumer preserves authored hrefs, titles and anchor
+children, classifies local fragments and native routes, retains filesystem
+frames, and applies its document-wide budgets. Images, definitions and raw
+HTML admission likewise belong to the consumer.
 
 Package 0.2.0 changes discovery admission and adds explicit cache inputs and
 progressive continuation snapshots. RPC names and wire v1 DTO bounds remain unchanged.
+
+Package 0.3.0 adds the identical-span native fallback floor, stricter conformance
+validation evidence and coalesced discovery snapshots. Wire v1 DTOs, RPC names,
+entry exports and peer range remain unchanged. Package verification includes
+emitted-entry tests and a disposable consumer that installs the npm tarball and
+SDK 0.5.29 and imports all three entries. The 500/2000 eligible-plugin benchmark
+reports sample timing and callback/row counts; it is not a universal CPU bound
+or live SDK compatibility proof.

@@ -1,6 +1,7 @@
 # @phosphorco/bb-context-recognition
 
-Status: **0.2.0 release candidate; publication pending.** [CONTRACT.md](CONTRACT.md)
+Status: **0.3.0 source candidate; release pending.** Published 0.2.0 is the
+previous package boundary. [CONTRACT.md](CONTRACT.md)
 defines unchanged wire v1. Package source conformance is separate from adopter,
 host and live proof.
 
@@ -16,7 +17,9 @@ two separate stages:
 2. **Resolve** — identities in, bounded data-only presentations out (label,
    safe href or file target, card fields, reasons). The consumer renders.
 
-Thread Brief is the first consumer; any plugin surface can consume it the same
+Thread Brief is the first source adopter, with GitHub Review and Plan Graph
+as supplier adopters of 0.2.0. Their move to 0.3.0 follows package acceptance
+and publication; any plugin surface can consume it the same
 way. It supersedes `@phosphorco/bb-brief-references`
 ([migration](CONTRACT.md#12-migration-from-phosphorcobb-brief-references)).
 
@@ -45,3 +48,24 @@ Discovery probes all eligible plugins through bounded continuation slices. Its
 `knownAbsent` and `previouslyReady` ID collections, invalidating absent entries
 on plugin lifecycle changes, and consume `onProgress` row/route snapshots for
 late enrichment. The package keeps no hidden discovery cache or polling loop.
+
+Package 0.3.0 preserves wire v1 and the three public entries. It prefers a native
+generic fallback for identical spans, tightens malformed-input conformance
+probes, and coalesces discovery progress snapshots (initial, at most one per
+16 ms while settling, continuation and final flushes). `onRow` still delivers
+individual transitions. The complete pending inventory appears in the first
+snapshot; admission remains capped at 32 ready suppliers.
+
+Explicit Markdown destinations are consumer-selected linkify windows. The
+consumer owns authored navigation, anchor children, local fragments, filesystem
+frames and document-wide budgets; the package adds no destination protocol.
+
+`npm run test` exercises emitted entries, including an `npm pack` tarball
+installed in a disposable consumer with SDK 0.5.29. `npm run benchmark:discovery`
+reports 500/2000-plugin source timing, row and callback counts. Neither check
+establishes live BB loading or compatibility with every supported SDK version.
+
+The clean SDK 0.5.29 testing import also requires its optional runtime peers
+`better-sqlite3@12.10.0`, `cron-parser@5.5.0` and `hono@4.11.9`; the scratch
+consumer installs them explicitly. Install scripts remain disabled. The packed
+probe uses RPC registration only, so it does not open or test a native database.

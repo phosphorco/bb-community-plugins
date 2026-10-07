@@ -293,7 +293,8 @@ export async function enumerateRecognitionSuppliers(opts: {
     Number(previouslyReady.has(b.pluginId)) - Number(previouslyReady.has(a.pluginId)) ||
     (a.pluginId < b.pluginId ? -1 : a.pluginId > b.pluginId ? 1 : 0);
   const snapshot = (): RecognitionDiscoverySnapshot => {
-    const ordered = [...rows.values()].sort(compare);
+    // Rows are inserted once in priority order; settlement does not move them.
+    const ordered = [...rows.values()];
     const ready = ordered.filter(row => row.state === 'ready' && row.capabilities);
     const admitted = new Set(ready.slice(0, LIMITS.plugins).map(row => row.pluginId));
     const routes = resolveRoutes(ready.filter(row => admitted.has(row.pluginId)).map(row => ({client:createSupplierClient(opts.sdk,row.pluginId),capabilities:row.capabilities!})), opts.builtins ?? []);
@@ -305,18 +306,38 @@ export async function enumerateRecognitionSuppliers(opts: {
     return {rows:resultRows,routes,omittedCount:ready.length-admitted.size,generation:pass.generation,continuation};
   };
   const empty = (): RecognitionDiscoverySnapshot => ({rows:[],routes:resolveRoutes([],opts.builtins ?? []),omittedCount:0,generation:pass.generation,continuation});
+  let progressTimer: ReturnType<typeof setTimeout> | undefined;
+  let progressDirty = false;
+  const flushProgress = () => {
+    if (progressTimer !== undefined) clearTimeout(progressTimer);
+    progressTimer = undefined;
+    if (progressDirty && pass.current()) {
+      progressDirty = false;
+      opts.onProgress?.(snapshot());
+    }
+  };
   const publish = (row: RecognitionSupplierRow) => {
     if (!pass.current()) return;
     rows.set(row.pluginId, row);
     opts.onRow?.(structuredClone(row));
-    if (pass.current()) opts.onProgress?.(snapshot());
+    progressDirty = true;
+    if (opts.onProgress && progressTimer === undefined && pass.current()) {
+      progressTimer = setTimeout(flushProgress, 16);
+    }
   };
   try {
     const listed = await isolated(s => opts.sdk.plugins.list({ signal: s }), end - performance.now(), pass.signal);
     if (!pass.current()) return empty();
     const exclude = new Set(typeof opts.exclude === 'string' ? [opts.exclude] : opts.exclude);
     const eligible = [...new Map(listed.plugins.filter(p => (p.status === 'running' || p.status === 'degraded') && !exclude.has(p.id)).map(p => [p.id, p])).values()].sort((a,b)=>compare({pluginId:a.id},{pluginId:b.id}));
-    for (const p of eligible) publish({pluginId:p.id,displayName:p.name ?? null,listedStatus:p.status,generation:pass.generation,state:knownAbsent.has(p.id) && !previouslyReady.has(p.id) ? 'absent' : 'pending'});
+    // Initialize the complete inventory before notifying consumers.
+    for (const p of eligible) rows.set(p.id,{pluginId:p.id,displayName:p.name ?? null,listedStatus:p.status,generation:pass.generation,state:knownAbsent.has(p.id) && !previouslyReady.has(p.id) ? 'absent' : 'pending'});
+    for (const row of rows.values()) {
+      if (!pass.current()) break;
+      opts.onRow?.(structuredClone(row));
+    }
+    progressDirty = true;
+    flushProgress();
     let queue = eligible.filter(p => rows.get(p.id)?.state === 'pending');
     const describeMs = Math.min(limit(opts.budgets?.describeMs,LIMITS.describeMs),sliceMs);
     while (queue.length && pass.current()) {
@@ -342,14 +363,16 @@ export async function enumerateRecognitionSuppliers(opts: {
       }
       });
       queue=queue.filter(p=>!reached.has(p.id));
-      if(queue.length && pass.current()){continuation++;opts.onProgress?.(snapshot());end=deadline(sliceMs);}
+      if(queue.length && pass.current()){continuation++;progressDirty=true;flushProgress();end=deadline(sliceMs);}
     }
     if (!pass.current()) return empty();
+    flushProgress();
     return snapshot();
   } catch (error) {
     if (classifyRecognitionError(error) !== 'cancelled') throw new RecognitionCallError(classifyRecognitionError(error), error);
     return empty();
   } finally {
+    if (progressTimer !== undefined) clearTimeout(progressTimer);
     opts.signal?.removeEventListener('abort', abort);
     pass.finish();
   }

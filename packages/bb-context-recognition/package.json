@@ -1,6 +1,6 @@
 {
   "name": "@phosphorco/bb-context-recognition",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "type": "module",
   "license": "MIT",
   "description": "Bounded contextual mention recognition and data-only source presentation contracts.",
@@ -66,6 +66,8 @@
   "scripts": {
     "build": "bun tools/build.mjs --entry src/index.ts --target browser --entry src/bb.ts --target browser --entry src/testing.ts --target browser --external zod --external @get-bb/plugin-sdk --external @get-bb/plugin-sdk/* && tsc --project tsconfig.declarations.json",
     "test": "node tools/ordinary-test.mjs",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "benchmark:discovery": "node tools/benchmark-discovery.mjs",
+    "test:packed-consumer": "node tools/packed-consumer.mjs"
   }
 }

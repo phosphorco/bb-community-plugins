@@ -149,7 +149,7 @@ export function arbitrate(tagged:readonly TaggedCandidateV1[],options:{text:stri
  }
  const accepted:ArbitrationOccurrenceV1[]=[],rejected:RankedCandidateV1[]=[];
  for(const t of [...merged.values()].sort(rank)){if(accepted.some(a=>overlaps(a.candidate.span,t.candidate.span)))rejected.push(t);else accepted.push(t);}
- for(const a of accepted){a.alsoBy.sort(compareText);const f=rejected.find(t=>t.candidate.span.start===a.candidate.span.start&&t.candidate.span.end===a.candidate.span.end&&identityKey(t.candidate.source)!==identityKey(a.candidate.source));if(f)a.fallback={...f,alsoBy:[...f.alsoBy].sort(compareText)};}
+ for(const a of accepted){a.alsoBy.sort(compareText);const alternatives=rejected.filter(t=>t.candidate.span.start===a.candidate.span.start&&t.candidate.span.end===a.candidate.span.end&&identityKey(t.candidate.source)!==identityKey(a.candidate.source));const f=alternatives.find(t=>t.origin==='builtin'&&t.specificity==='generic')??alternatives[0];if(f)a.fallback={...f,alsoBy:[...f.alsoBy].sort(compareText)};}
  accepted.sort((a,b)=>a.candidate.span.start-b.candidate.span.start||a.candidate.span.end-b.candidate.span.end);
  const identities:SourceIdentity[]=[],keys=new Set<string>();
  for(const a of accepted)for(const c of [a.candidate,a.fallback?.candidate])if(c&&!keys.has(identityKey(c.source))){keys.add(identityKey(c.source));identities.push(c.source);}

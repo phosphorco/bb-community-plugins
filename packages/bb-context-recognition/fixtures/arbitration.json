@@ -1504,5 +1504,461 @@
       ],
       "dropped": {}
     }
+  },
+  {
+    "name": "native fallback floor over second typed claim",
+    "text": "item",
+    "excluded": [],
+    "tagged": [
+      {
+        "candidate": {
+          "span": {
+            "start": 0,
+            "end": 4
+          },
+          "match": "item",
+          "source": {
+            "provider": "other",
+            "id": "b-typed"
+          },
+          "confidence": "high",
+          "provenance": {
+            "basis": "explicit",
+            "explanation": "Fallback floor witness."
+          }
+        },
+        "origin": "contributed",
+        "pluginId": "b-typed",
+        "specificity": "typed",
+        "providers": [
+          "other"
+        ]
+      },
+      {
+        "candidate": {
+          "span": {
+            "start": 0,
+            "end": 4
+          },
+          "match": "item",
+          "source": {
+            "provider": "bb.file",
+            "id": "native-file"
+          },
+          "confidence": "high",
+          "provenance": {
+            "basis": "explicit",
+            "explanation": "Fallback floor witness."
+          }
+        },
+        "origin": "builtin",
+        "pluginId": "native-file",
+        "specificity": "generic",
+        "providers": [
+          "bb.file"
+        ]
+      },
+      {
+        "candidate": {
+          "span": {
+            "start": 0,
+            "end": 4
+          },
+          "match": "item",
+          "source": {
+            "provider": "plan-graph",
+            "id": "a-plan"
+          },
+          "confidence": "high",
+          "provenance": {
+            "basis": "explicit",
+            "explanation": "Fallback floor witness."
+          }
+        },
+        "origin": "contributed",
+        "pluginId": "a-plan",
+        "specificity": "typed",
+        "providers": [
+          "plan-graph"
+        ]
+      }
+    ],
+    "expected": {
+      "occurrences": [
+        {
+          "candidate": {
+            "span": {
+              "start": 0,
+              "end": 4
+            },
+            "match": "item",
+            "source": {
+              "provider": "plan-graph",
+              "id": "a-plan"
+            },
+            "confidence": "high",
+            "provenance": {
+              "basis": "explicit",
+              "explanation": "Fallback floor witness."
+            }
+          },
+          "origin": "contributed",
+          "pluginId": "a-plan",
+          "specificity": "typed",
+          "providers": [
+            "plan-graph"
+          ],
+          "alsoBy": [],
+          "fallback": {
+            "candidate": {
+              "span": {
+                "start": 0,
+                "end": 4
+              },
+              "match": "item",
+              "source": {
+                "provider": "bb.file",
+                "id": "native-file"
+              },
+              "confidence": "high",
+              "provenance": {
+                "basis": "explicit",
+                "explanation": "Fallback floor witness."
+              }
+            },
+            "origin": "builtin",
+            "pluginId": "native-file",
+            "specificity": "generic",
+            "providers": [
+              "bb.file"
+            ],
+            "alsoBy": []
+          }
+        }
+      ],
+      "identities": [
+        {
+          "provider": "plan-graph",
+          "id": "a-plan"
+        },
+        {
+          "provider": "bb.file",
+          "id": "native-file"
+        }
+      ],
+      "dropped": {}
+    }
+  },
+  {
+    "name": "native fallback floor best-ranked generic builtin",
+    "text": "item",
+    "excluded": [],
+    "tagged": [
+      {
+        "candidate": {
+          "span": {
+            "start": 0,
+            "end": 4
+          },
+          "match": "item",
+          "source": {
+            "provider": "bb.file",
+            "id": "z-native"
+          },
+          "confidence": "low",
+          "provenance": {
+            "basis": "context",
+            "explanation": "Fallback floor witness."
+          }
+        },
+        "origin": "builtin",
+        "pluginId": "z-native",
+        "specificity": "generic",
+        "providers": [
+          "bb.file"
+        ]
+      },
+      {
+        "candidate": {
+          "span": {
+            "start": 0,
+            "end": 4
+          },
+          "match": "item",
+          "source": {
+            "provider": "url",
+            "id": "c-generic"
+          },
+          "confidence": "high",
+          "provenance": {
+            "basis": "explicit",
+            "explanation": "Fallback floor witness."
+          }
+        },
+        "origin": "contributed",
+        "pluginId": "c-generic",
+        "specificity": "generic",
+        "providers": [
+          "url"
+        ]
+      },
+      {
+        "candidate": {
+          "span": {
+            "start": 0,
+            "end": 4
+          },
+          "match": "item",
+          "source": {
+            "provider": "bb.file",
+            "id": "native-file"
+          },
+          "confidence": "high",
+          "provenance": {
+            "basis": "explicit",
+            "explanation": "Fallback floor witness."
+          }
+        },
+        "origin": "builtin",
+        "pluginId": "native-file",
+        "specificity": "generic",
+        "providers": [
+          "bb.file"
+        ]
+      },
+      {
+        "candidate": {
+          "span": {
+            "start": 0,
+            "end": 4
+          },
+          "match": "item",
+          "source": {
+            "provider": "plan-graph",
+            "id": "a-plan"
+          },
+          "confidence": "high",
+          "provenance": {
+            "basis": "explicit",
+            "explanation": "Fallback floor witness."
+          }
+        },
+        "origin": "contributed",
+        "pluginId": "a-plan",
+        "specificity": "typed",
+        "providers": [
+          "plan-graph"
+        ]
+      }
+    ],
+    "expected": {
+      "occurrences": [
+        {
+          "candidate": {
+            "span": {
+              "start": 0,
+              "end": 4
+            },
+            "match": "item",
+            "source": {
+              "provider": "plan-graph",
+              "id": "a-plan"
+            },
+            "confidence": "high",
+            "provenance": {
+              "basis": "explicit",
+              "explanation": "Fallback floor witness."
+            }
+          },
+          "origin": "contributed",
+          "pluginId": "a-plan",
+          "specificity": "typed",
+          "providers": [
+            "plan-graph"
+          ],
+          "alsoBy": [],
+          "fallback": {
+            "candidate": {
+              "span": {
+                "start": 0,
+                "end": 4
+              },
+              "match": "item",
+              "source": {
+                "provider": "bb.file",
+                "id": "native-file"
+              },
+              "confidence": "high",
+              "provenance": {
+                "basis": "explicit",
+                "explanation": "Fallback floor witness."
+              }
+            },
+            "origin": "builtin",
+            "pluginId": "native-file",
+            "specificity": "generic",
+            "providers": [
+              "bb.file"
+            ],
+            "alsoBy": []
+          }
+        }
+      ],
+      "identities": [
+        {
+          "provider": "plan-graph",
+          "id": "a-plan"
+        },
+        {
+          "provider": "bb.file",
+          "id": "native-file"
+        }
+      ],
+      "dropped": {}
+    }
+  },
+  {
+    "name": "fallback without native remains best ranked",
+    "text": "item",
+    "excluded": [],
+    "tagged": [
+      {
+        "candidate": {
+          "span": {
+            "start": 0,
+            "end": 4
+          },
+          "match": "item",
+          "source": {
+            "provider": "url",
+            "id": "c-generic"
+          },
+          "confidence": "high",
+          "provenance": {
+            "basis": "explicit",
+            "explanation": "Fallback floor witness."
+          }
+        },
+        "origin": "contributed",
+        "pluginId": "c-generic",
+        "specificity": "generic",
+        "providers": [
+          "url"
+        ]
+      },
+      {
+        "candidate": {
+          "span": {
+            "start": 0,
+            "end": 4
+          },
+          "match": "item",
+          "source": {
+            "provider": "other",
+            "id": "b-typed"
+          },
+          "confidence": "high",
+          "provenance": {
+            "basis": "explicit",
+            "explanation": "Fallback floor witness."
+          }
+        },
+        "origin": "contributed",
+        "pluginId": "b-typed",
+        "specificity": "typed",
+        "providers": [
+          "other"
+        ]
+      },
+      {
+        "candidate": {
+          "span": {
+            "start": 0,
+            "end": 4
+          },
+          "match": "item",
+          "source": {
+            "provider": "plan-graph",
+            "id": "a-plan"
+          },
+          "confidence": "high",
+          "provenance": {
+            "basis": "explicit",
+            "explanation": "Fallback floor witness."
+          }
+        },
+        "origin": "contributed",
+        "pluginId": "a-plan",
+        "specificity": "typed",
+        "providers": [
+          "plan-graph"
+        ]
+      }
+    ],
+    "expected": {
+      "occurrences": [
+        {
+          "candidate": {
+            "span": {
+              "start": 0,
+              "end": 4
+            },
+            "match": "item",
+            "source": {
+              "provider": "plan-graph",
+              "id": "a-plan"
+            },
+            "confidence": "high",
+            "provenance": {
+              "basis": "explicit",
+              "explanation": "Fallback floor witness."
+            }
+          },
+          "origin": "contributed",
+          "pluginId": "a-plan",
+          "specificity": "typed",
+          "providers": [
+            "plan-graph"
+          ],
+          "alsoBy": [],
+          "fallback": {
+            "candidate": {
+              "span": {
+                "start": 0,
+                "end": 4
+              },
+              "match": "item",
+              "source": {
+                "provider": "other",
+                "id": "b-typed"
+              },
+              "confidence": "high",
+              "provenance": {
+                "basis": "explicit",
+                "explanation": "Fallback floor witness."
+              }
+            },
+            "origin": "contributed",
+            "pluginId": "b-typed",
+            "specificity": "typed",
+            "providers": [
+              "other"
+            ],
+            "alsoBy": []
+          }
+        }
+      ],
+      "identities": [
+        {
+          "provider": "plan-graph",
+          "id": "a-plan"
+        },
+        {
+          "provider": "other",
+          "id": "b-typed"
+        }
+      ],
+      "dropped": {}
+    }
   }
 ]
