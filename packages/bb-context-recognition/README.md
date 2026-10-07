@@ -1,8 +1,7 @@
 # @phosphorco/bb-context-recognition
 
-Status: **0.3.0 source candidate; release pending.** Published 0.2.0 is the
-previous package boundary. [CONTRACT.md](CONTRACT.md)
-defines unchanged wire v1. Package source conformance is separate from adopter,
+Status: **0.3.0 published.** [CONTRACT.md](CONTRACT.md) defines wire v1,
+unchanged since 0.1.0. Package source conformance is separate from adopter,
 host and live proof.
 
 A generic, consumer-neutral contract that lets independently installed BB
@@ -17,10 +16,8 @@ two separate stages:
 2. **Resolve** — identities in, bounded data-only presentations out (label,
    safe href or file target, card fields, reasons). The consumer renders.
 
-Thread Brief is the first source adopter, with GitHub Review and Plan Graph
-as supplier adopters of 0.2.0. Their move to 0.3.0 follows package acceptance
-and publication; any plugin surface can consume it the same
-way. It supersedes `@phosphorco/bb-brief-references`
+Thread Brief is the first consumer, with GitHub Review and Plan Graph as
+suppliers, all on 0.3.0; any plugin surface can consume it the same way. It supersedes `@phosphorco/bb-brief-references`
 ([migration](CONTRACT.md#12-migration-from-phosphorcobb-brief-references)).
 
 ## Where to read

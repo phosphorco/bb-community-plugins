@@ -1,9 +1,9 @@
 # @phosphorco/bb-context-recognition — v1 contract
 
-Status: **v1 contract, revision 4; package 0.3.0 source candidate.** Package
-0.2.0 is published; Thread Brief, GitHub Review and Plan Graph are source
-adopters of that boundary. Their 0.3.0 pins follow acceptance and release.
-Package source checks do not establish host or live composition proof.
+Status: **v1 contract, revision 4; package 0.3.0 published.** Thread Brief
+(consumer), GitHub Review and Plan Graph (suppliers) use 0.3.0. Package source
+checks do not establish host or live composition proof; adopters prove that
+separately.
 
 This package gives BB plugins one way to **recognize** mentions in text
 (*linkify*) and to turn the recognized identities into **presentation data**
