@@ -1,0 +1,86 @@
+{
+  "name": "@phosphorco/bb-cross-references",
+  "version": "0.1.0",
+  "type": "module",
+  "license": "MIT",
+  "description": "Shared Cross References v1 codecs, explicit clients, and reference controls.",
+  "author": "Phosphor",
+  "homepage": "https://github.com/phosphorco/bb-community-plugins/tree/main/packages/bb-cross-references#readme",
+  "bugs": {
+    "url": "https://github.com/phosphorco/bb-community-plugins/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/phosphorco/bb-community-plugins.git",
+    "directory": "packages/bb-cross-references"
+  },
+  "keywords": [
+    "bb",
+    "cross-references"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/types/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./bb": {
+      "types": "./dist/types/bb.d.ts",
+      "import": "./dist/bb.js"
+    },
+    "./react": {
+      "types": "./dist/types/react.d.ts",
+      "import": "./dist/react.js"
+    },
+    "./testing": {
+      "types": "./dist/types/testing.d.ts",
+      "import": "./dist/testing.js"
+    },
+    "./styles.css": "./dist/references.css"
+  },
+  "files": [
+    "dist/",
+    "README.md",
+    "CONTRACT.md",
+    "LICENSE"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "dependencies": {
+    "zod": "4.3.6",
+    "@noble/hashes": "1.8.0"
+  },
+  "peerDependencies": {
+    "@get-bb/plugin-sdk": ">=0.5.29 <0.6",
+    "react": "^19.2.1",
+    "react-dom": "^19.2.1"
+  },
+  "peerDependenciesMeta": {
+    "@get-bb/plugin-sdk": {
+      "optional": true
+    },
+    "react": {
+      "optional": true
+    },
+    "react-dom": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@get-bb/plugin-sdk": "0.5.29",
+    "@types/bun": "1.3.14",
+    "@types/react": "19.2.2",
+    "@types/react-dom": "19.2.2",
+    "bun": "1.3.14",
+    "react": "19.2.1",
+    "react-dom": "19.2.1",
+    "typescript": "5.9.3",
+    "jsdom": "26.1.0",
+    "@types/jsdom": "21.1.7"
+  },
+  "scripts": {
+    "build": "bun tools/build.mjs --entry \"src/index.ts\" --target browser --entry \"src/bb.ts\" --target browser --entry \"src/react.tsx\" --target browser --entry \"src/testing.ts\" --target browser --external \"zod\" --external \"@noble/hashes/*\" --external \"react\" --external \"react/*\" --external \"react-dom\" --external \"react-dom/*\" --external \"@get-bb/plugin-sdk\" --external \"@get-bb/plugin-sdk/*\" && tsc --project tsconfig.declarations.json && cp src/references.css dist/references.css",
+    "test": "bun test test",
+    "typecheck": "tsc --noEmit"
+  }
+}

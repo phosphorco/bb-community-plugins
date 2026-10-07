@@ -28,6 +28,7 @@ Shared libraries for bb integrations, published to npm:
 |---|---|
 | [`@phosphorco/bb-identity`](packages/bb-identity/) | Portable identity, provenance, and state contracts for BB integrations. |
 | [`@phosphorco/bb-provider-settings`](packages/bb-provider-settings/) | Explicit owner-bound provider role settings. |
+| [`@phosphorco/bb-cross-references`](packages/bb-cross-references/) | Reference contracts, explicit clients, and a reusable linked-reference editor. |
 
 Plugins in this repository depend on their exact released versions; npm
 workspaces link them to the local `packages/` sources during development.

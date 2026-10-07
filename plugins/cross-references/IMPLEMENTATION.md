@@ -174,8 +174,10 @@ Cross References registers the typed methods below with bb.rpc.register. The
 host validates RPC input and output and serves methods under
 /api/v1/plugins/<id>/rpc/<method>
 ([backend-contract.ts](../../../fork/build/bb/packages/plugin-sdk/src/backend-contract.ts#L211-L223)).
-These are private deployment protocol methods, not a promise of a general
-public provider API.
+These v1 methods are exported by `@phosphorco/bb-cross-references@0.1.0`.
+`crossReferences.describe` adds capability negotiation without changing their
+wire meanings. General provider definitions and graph traversal remain deferred.
+See [the public package contract](../../packages/bb-cross-references/CONTRACT.md).
 
 applyProjection input is:
 

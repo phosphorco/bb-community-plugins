@@ -1,0 +1,66 @@
+
+.bb-reference-links__references { display: grid; gap: 10px; margin-top: 10px; padding: 12px; border: 1px solid var(--border); border-radius: 9px; background: var(--card); color: var(--card-foreground); }
+
+.bb-reference-links__references > header { display: flex; align-items: start; justify-content: space-between; gap: 12px; }
+
+.bb-reference-links__references h2 { font-size: 12px; font-weight: 650; }
+
+.bb-reference-links__references header p, .bb-reference-links__reference-help, .bb-reference-links__reference-status, .bb-reference-links__reference-empty, .bb-reference-links__reference-error { color: var(--muted-foreground); font-size: 10px; }
+
+.bb-reference-links__references header p { margin-top: 3px; max-width: 620px; }
+
+.bb-reference-links__reference-count { min-width: 1.75rem; padding: 3px 6px; border-radius: 999px; color: var(--primary-foreground); background: var(--primary); font-size: 10px; font-variant-numeric: tabular-nums; text-align: center; }
+
+.bb-reference-links__reference-status { margin: 0; }
+
+.bb-reference-links__reference-status--pending { color: var(--primary); }
+
+.bb-reference-links__reference-status--degraded, .bb-reference-links__reference-status--blocked, .bb-reference-links__reference-error { color: var(--destructive); }
+
+.bb-reference-links__reference-empty { margin: 0; padding: 8px; border-radius: 6px; background: color-mix(in srgb, var(--muted) 36%, transparent); }
+
+.bb-reference-links__reference-list, .bb-reference-links__reference-search-results { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
+
+.bb-reference-links__reference-list li, .bb-reference-links__reference-search-results li { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-width: 0; padding: 7px 8px; border-radius: 6px; background: color-mix(in srgb, var(--muted) 36%, transparent); }
+
+.bb-reference-links__reference-list li > span, .bb-reference-links__reference-search-results li > span { display: grid; min-width: 0; gap: 2px; }
+
+.bb-reference-links__reference-list small, .bb-reference-links__reference-search-results small { overflow: hidden; color: var(--muted-foreground); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+
+.bb-reference-links__reference-link { min-width: 0; overflow: hidden; color: var(--primary); font-size: 12px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+
+.bb-reference-links__reference-picker { display: grid; gap: 4px; padding-top: 2px; }
+
+.bb-reference-links__reference-picker > label { color: var(--foreground); font-size: 11px; }
+
+.bb-reference-links__reference-picker input { width: 100%; min-height: 32px; padding: 0 9px; border: 1px solid var(--input); border-radius: 7px; color: var(--foreground); background: var(--background); font: inherit; }
+
+.bb-reference-links__reference-picker input:focus-visible, .bb-reference-links__reference-list button:focus-visible, .bb-reference-links__reference-search-results button:focus-visible, .bb-reference-links__reference-external button:focus-visible, .bb-reference-links__reference-retry:focus-visible, .bb-reference-links__reference-link:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+
+.bb-reference-links__reference-help { margin: 0; }
+
+.bb-reference-links__reference-error { margin: 0; overflow-wrap: anywhere; }
+
+.bb-reference-links__reference-search-results { max-height: 230px; overflow-y: auto; overscroll-behavior: contain; }
+
+.bb-reference-links__reference-search-results strong { min-width: 0; overflow: hidden; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+
+.bb-reference-links__reference-list button, .bb-reference-links__reference-search-results button, .bb-reference-links__reference-external button, .bb-reference-links__reference-retry { flex: 0 0 auto; min-height: 28px; padding: 4px 8px; border: 1px solid var(--border); border-radius: 6px; color: var(--foreground); background: var(--background); font: inherit; font-size: 10px; cursor: pointer; }
+
+.bb-reference-links__reference-search-results button:not(:disabled):hover, .bb-reference-links__reference-list button:not(:disabled):hover, .bb-reference-links__reference-external button:not(:disabled):hover, .bb-reference-links__reference-retry:not(:disabled):hover { background: var(--accent); color: var(--accent-foreground); }
+
+.bb-reference-links__reference-list button:disabled, .bb-reference-links__reference-search-results button:disabled, .bb-reference-links__reference-external button:disabled, .bb-reference-links__reference-retry:disabled { cursor: default; opacity: .58; }
+
+.bb-reference-links__reference-add { color: var(--primary); }
+
+.bb-reference-links__reference-remove { color: var(--destructive) !important; }
+
+.bb-reference-links__reference-external { display: grid; gap: 6px; padding: 8px; border-radius: 6px; background: color-mix(in srgb, var(--muted) 36%, transparent); }
+
+.bb-reference-links__reference-external > span { display: grid; min-width: 0; gap: 2px; }
+
+.bb-reference-links__reference-external strong, .bb-reference-links__reference-external > label { font-size: 11px; }
+
+.bb-reference-links__reference-external small { overflow: hidden; color: var(--muted-foreground); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+
+.bb-reference-links__reference-external > div { display: flex; align-items: center; gap: 6px; }

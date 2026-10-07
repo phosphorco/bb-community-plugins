@@ -1,0 +1,663 @@
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type RefObject } from "react";
+
+import type { Resource, AttachmentSnapshot } from "./index.js";
+import { hasSensitiveUrlParameter, MAX_REFERENCE_URL_BYTES, referenceLabelError, utf8ByteLength } from "./index.js";
+
+export type ReferencesApi = {
+  get(): Promise<AttachmentSnapshot>;
+  replace(revision: number, targets: Resource[]): Promise<AttachmentSnapshot & {outcome?: "applied" | "cas-mismatch"}>;
+  search(query: string): Promise<{threads: PickerThread[]}>;
+  thread(threadId: string): Promise<PickerThread>;
+};
+export type LinkedReferencesProps = {
+  /** Stable logical storage owner. Change this key when switching owners. */
+  ownerKey: string;
+  api: ReferencesApi;
+  connection?: string;
+  refreshToken?: number | string;
+  navigateThread(threadId: string): void;
+  origin?: string;
+  title?: string;
+  description?: string;
+  maxTargets?: number;
+};
+export type PickerThread = {
+  id: string;
+  projectId: string;
+  title: string;
+  detail?: string;
+  archived?: boolean;
+};
+
+const MAX_SEARCH_RESULTS = 24;
+const MAX_REFERENCE_INPUT_LENGTH = 2_048;
+
+function targetThread(target: Resource): { projectId: string; threadId: string } | null {
+  if (target.provider !== "bb" || Object.keys(target.keys).length !== 2) return null;
+  const projectId = target.keys.project;
+  const threadId = target.keys.thread;
+  return typeof projectId === "string" && typeof threadId === "string"
+    ? { projectId, threadId }
+    : null;
+}
+
+function targetUrl(target: Resource): string | null {
+  return target.provider === "url" && Object.keys(target.keys).length === 1
+    && typeof target.keys.href === "string" && target.presentation.url === target.keys.href
+    ? target.keys.href
+    : null;
+}
+
+function threadResource(thread: PickerThread): Resource {
+  return {
+    provider: "bb",
+    keys: { project: thread.projectId, thread: thread.id },
+    presentation: {
+      label: thread.title,
+      detail: `Project ${thread.projectId}`,
+    },
+  };
+}
+
+function resourceKey(resource: Resource): string {
+  return JSON.stringify([resource.provider, Object.entries(resource.keys).sort(([left], [right]) => left.localeCompare(right))]);
+}
+
+type ReferenceInput =
+  | { kind: "empty" }
+  | { kind: "query"; query: string }
+  | { kind: "thread-url"; input: string; projectId: string | null; threadId: string }
+  | { kind: "external-url"; href: string; suggestedLabel: string }
+  | { kind: "invalid"; input: string; message: string };
+
+function referenceInput(value: string, origin: string): ReferenceInput {
+  const input = value.trim();
+  if (input.length === 0) return { kind: "empty" };
+  if (!/^https?:\/\//iu.test(input)) return { kind: "query", query: input };
+  let url: URL;
+  try {
+    url = new URL(input);
+  } catch {
+    return { kind: "invalid", input, message: "Enter a valid HTTP or HTTPS URL." };
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:") {
+    return { kind: "invalid", input, message: "Only HTTP and HTTPS links can be attached." };
+  }
+  if (url.username !== "" || url.password !== "" || hasSensitiveUrlParameter(url)) {
+    return { kind: "invalid", input, message: "Links containing credentials or sensitive parameters cannot be attached." };
+  }
+  if (utf8ByteLength(url.href) > MAX_REFERENCE_URL_BYTES) {
+    return { kind: "invalid", input, message: `Links are limited to ${MAX_REFERENCE_URL_BYTES} UTF-8 bytes after URL encoding.` };
+  }
+  if (url.origin === origin) {
+    const projectRoute = url.pathname.match(/^\/projects\/([A-Za-z0-9_-]{1,128})\/threads\/([A-Za-z0-9_-]{1,128})\/?$/u);
+    if (projectRoute != null) {
+      return { kind: "thread-url", input, projectId: projectRoute[1]!, threadId: projectRoute[2]! };
+    }
+    const personalRoute = url.pathname.match(/^\/threads\/([A-Za-z0-9_-]{1,128})\/?$/u);
+    if (personalRoute != null) return { kind: "thread-url", input, projectId: null, threadId: personalRoute[1]! };
+  }
+  return {
+    kind: "external-url",
+    href: url.href,
+    suggestedLabel: url.hostname.replace(/^www\./u, "") || "External link",
+  };
+}
+
+type ThreadSearchState =
+  | { status: "idle"; input: string }
+  | { status: "waiting"; input: string }
+  | { status: "searching"; input: string }
+  | { status: "ready"; input: string; threads: PickerThread[] }
+  | { status: "external"; input: string; href: string; suggestedLabel: string; resolutionError?: string; canRetry?: boolean }
+  | { status: "error"; input: string; message: string };
+
+function useThreadSearch(query: string, retry: number, api: ReferencesApi, connection: string, origin: string): ThreadSearchState {
+  const apiRef = useRef(api);
+  apiRef.current = api;
+  const input = query.trim();
+  const [state, setState] = useState<ThreadSearchState>({ status: "idle", input: "" });
+
+  useEffect(() => {
+    const parsed = referenceInput(input, origin);
+    if (parsed.kind === "empty" || (parsed.kind === "query" && parsed.query.length < 2)) {
+      setState({ status: "idle", input });
+      return;
+    }
+    if (parsed.kind === "invalid") {
+      setState({ status: "error", input, message: parsed.message });
+      return;
+    }
+    if (parsed.kind === "external-url") {
+      setState({ status: "external", input, href: parsed.href, suggestedLabel: parsed.suggestedLabel });
+      return;
+    }
+    if (parsed.kind === "query" && parsed.query.length > 256) {
+      setState({ status: "error", input, message: "Thread searches are limited to 256 characters." });
+      return;
+    }
+    if (connection !== "connected") {
+      setState({ status: "waiting", input });
+      return;
+    }
+
+    let active = true;
+    setState({ status: "searching", input });
+    const timer = window.setTimeout(() => {
+      if (parsed.kind === "thread-url") {
+        const href = new URL(parsed.input).href;
+        void apiRef.current.thread(parsed.threadId).then((thread) => {
+          if (!active) return;
+          if (parsed.projectId == null || thread.projectId === parsed.projectId) {
+            setState({ status: "ready", input, threads: [thread] });
+          } else {
+            setState({ status: "external", input, href, suggestedLabel: "BB thread link" });
+          }
+        }, () => {
+          if (active) setState({
+            status: "external",
+            input,
+            href,
+            suggestedLabel: "BB thread link",
+            resolutionError: "Could not resolve this BB thread. Retry the lookup or save the URL as an external reference.",
+            canRetry: true,
+          });
+        });
+        return;
+      }
+      void apiRef.current.search(parsed.query).then((response) => {
+        if (active) setState({ status: "ready", input, threads: response.threads.slice(0, MAX_SEARCH_RESULTS) });
+      }, (cause) => {
+        if (active) setState({
+          status: "error",
+          input,
+          message: cause instanceof Error ? cause.message : "Could not search BB threads.",
+        });
+      });
+    }, 180);
+    return () => {
+      active = false;
+      window.clearTimeout(timer);
+    };
+  }, [connection, input, retry, origin, api]);
+
+  return state.input === input ? state : { status: "searching", input };
+}
+
+type ReadControl = {
+  generation: number;
+  inFlight: boolean;
+  pending: boolean;
+};
+
+function useAttachments(api: ReferencesApi, connection: string, refreshToken: number | string) {
+  const apiRef = useRef(api);
+  apiRef.current = api;
+  const [snapshot, setSnapshot] = useState<AttachmentSnapshot | null>(null);
+  const snapshotRef = useRef<AttachmentSnapshot | null>(null);
+  snapshotRef.current = snapshot;
+  const [loading, setLoading] = useState(true);
+  const [readError, setReadError] = useState<string | null>(null);
+  const [mutationError, setMutationError] = useState<string | null>(null);
+  const [stale, setStale] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const mounted = useRef(true);
+  const mutationInFlight = useRef(false);
+  const readControl = useRef<ReadControl>({ generation: 0, inFlight: false, pending: false });
+
+  const applySnapshot = useCallback((next: AttachmentSnapshot) => {
+    snapshotRef.current = next;
+    setSnapshot(next);
+  }, []);
+
+  const restartReads = useCallback(() => {
+    readControl.current = {
+      generation: readControl.current.generation + 1,
+      inFlight: false,
+      pending: false,
+    };
+  }, []);
+
+  const refresh = useCallback(async () => {
+    const control = readControl.current;
+    control.pending = true;
+    if (!mounted.current || mutationInFlight.current || control.inFlight) return;
+    control.inFlight = true;
+    try {
+      while (mounted.current && !mutationInFlight.current && readControl.current === control && control.pending) {
+        control.pending = false;
+        try {
+          const next = await apiRef.current.get();
+          if (mounted.current && readControl.current === control && !mutationInFlight.current) {
+            applySnapshot(next);
+            setReadError(null);
+            setStale(false);
+            setLoading(false);
+          }
+        } catch (cause) {
+          if (mounted.current && readControl.current === control && !mutationInFlight.current) {
+            setReadError(cause instanceof Error ? cause.message : "Could not read saved references.");
+            setLoading(false);
+          }
+        }
+      }
+    } finally {
+      if (readControl.current === control) control.inFlight = false;
+    }
+  }, [applySnapshot]);
+
+  useEffect(() => {
+    mounted.current = true;
+    restartReads();
+    setLoading(snapshotRef.current == null);
+    void refresh();
+    return () => {
+      mounted.current = false;
+      restartReads();
+    };
+  }, [refresh, restartReads]);
+
+  const previousToken = useRef(refreshToken);
+  useEffect(() => { if (previousToken.current !== refreshToken) { previousToken.current = refreshToken; void refresh(); } }, [refresh, refreshToken]);
+  const previousConnection = useRef(connection);
+  useEffect(() => {
+    if (connection === "reconnecting") {
+      setStale(true);
+      restartReads();
+      previousConnection.current = connection;
+      return;
+    }
+    if (connection === "connected" && previousConnection.current !== "connected") {
+      restartReads();
+      void refresh();
+    }
+    previousConnection.current = connection;
+  }, [connection, refresh, restartReads]);
+
+  const mutate = useCallback(async (transform: (targets: readonly Resource[]) => Resource[] | null): Promise<boolean> => {
+    if (mutationInFlight.current) return false;
+    const current = snapshotRef.current;
+    if (current == null) return false;
+    const targets = transform(current.targets);
+    if (targets == null) return true;
+    mutationInFlight.current = true;
+    setSaving(true);
+    setMutationError(null);
+    restartReads();
+    try {
+      const result = await apiRef.current.replace(current.revision, targets);
+      if (!mounted.current) return false;
+      applySnapshot(result);
+      if (result.outcome === "cas-mismatch") {
+        setMutationError("These saved links changed in another window. The latest list is shown below.");
+        return false;
+      }
+      return true;
+    } catch (cause) {
+      if (mounted.current) {
+        setMutationError(cause instanceof Error ? cause.message : "Could not save this thread link.");
+      }
+      return false;
+    } finally {
+      mutationInFlight.current = false;
+      if (mounted.current) setSaving(false);
+      void refresh();
+    }
+  }, [applySnapshot, refresh, restartReads]);
+
+  const add = useCallback((thread: PickerThread) => mutate((targets) => {
+    const target = threadResource(thread);
+    const key = resourceKey(target);
+    return targets.some((candidate) => resourceKey(candidate) === key) ? null : [...targets, target];
+  }), [mutate]);
+
+  const addResource = useCallback((target: Resource) => mutate((targets) => {
+    const key = resourceKey(target);
+    return targets.some((candidate) => resourceKey(candidate) === key) ? null : [...targets, target];
+  }), [mutate]);
+
+  const remove = useCallback((target: Resource) => mutate((targets) => {
+    const key = resourceKey(target);
+    return targets.filter((candidate) => resourceKey(candidate) !== key);
+  }), [mutate]);
+
+  return { snapshot, loading, readError, mutationError, stale, saving, refresh, add, addResource, remove };
+}
+
+const PERSONAL_PROJECT_ID = "proj_personal";
+
+function threadHref(projectId: string, threadId: string): string {
+  const encodedProjectId = encodeURIComponent(projectId);
+  const encodedThreadId = encodeURIComponent(threadId);
+  return projectId === PERSONAL_PROJECT_ID
+    ? `/threads/${encodedThreadId}`
+    : `/projects/${encodedProjectId}/threads/${encodedThreadId}`;
+}
+
+function ThreadLink({ projectId, threadId, label, navigateThread }: { projectId: string; threadId: string; label: string; navigateThread(threadId: string): void }) {
+  return (
+    <a
+      className="bb-reference-links__reference-link"
+      href={threadHref(projectId, threadId)}
+      onClick={(event) => {
+        if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+        event.preventDefault();
+        navigateThread(threadId);
+      }}
+    >
+      {label}
+    </a>
+  );
+}
+
+function ReferenceLink({ target, navigateThread }: { target: Resource; navigateThread(threadId: string): void }) {
+  const thread = targetThread(target);
+  if (thread != null) {
+    return <ThreadLink projectId={thread.projectId} threadId={thread.threadId} label={target.presentation.label} navigateThread={navigateThread} />;
+  }
+  const href = targetUrl(target);
+  if (href == null) return <span className="bb-reference-links__reference-link">{target.presentation.label}</span>;
+  return (
+    <a
+      className="bb-reference-links__reference-link"
+      href={href}
+    >
+      {target.presentation.label}
+    </a>
+  );
+}
+
+function ThreadPicker({
+  api, connection, origin,
+  attached,
+  disabled,
+  onAdd,
+  onAddResource,
+  searchInputRef,
+}: {
+  api: ReferencesApi; connection: string; origin: string;
+  attached: ReadonlySet<string>;
+  disabled: boolean;
+  onAdd: (thread: PickerThread) => Promise<boolean>;
+  onAddResource: (resource: Resource) => Promise<boolean>;
+  searchInputRef: RefObject<HTMLInputElement | null>;
+}) {
+  const apiRef = useRef(api);
+  apiRef.current = api;
+  const searchId = `bb-reference-thread-search-${useId().replaceAll(":", "")}`;
+  const nameId = `${searchId}-external-name`;
+  const [query, setQuery] = useState("");
+  const queryRef = useRef(query);
+  queryRef.current = query;
+  const [searchRetry, setSearchRetry] = useState(0);
+  const search = useThreadSearch(query, searchRetry, api, connection, origin);
+  const [externalName, setExternalName] = useState("");
+  const [externalNameError, setExternalNameError] = useState<string | null>(null);
+  const [selectingId, setSelectingId] = useState<string | null>(null);
+  const [selectionError, setSelectionError] = useState<string | null>(null);
+  const selectionSequence = useRef(0);
+  const [returnFocus, setReturnFocus] = useState<{trigger: Element | null} | null>(null);
+  useEffect(() => {
+    if (!returnFocus || disabled || selectingId !== null || query !== "") return;
+    if (document.activeElement === document.body || document.activeElement === returnFocus.trigger) searchInputRef.current?.focus();
+    setReturnFocus(null);
+  }, [returnFocus, disabled, selectingId, query, searchInputRef]);
+
+  useEffect(() => {
+    return () => { selectionSequence.current += 1; };
+  }, []);
+
+  useEffect(() => {
+    if (search.status === "external") {
+      setExternalName(search.suggestedLabel);
+      setExternalNameError(null);
+    }
+  }, [search.status === "external" ? search.href : null]);
+
+  const select = async (thread: PickerThread, restoreKeyboardFocus: boolean) => {
+    const sequence = ++selectionSequence.current;
+    const selectedQuery = queryRef.current;
+    const trigger = document.activeElement;
+    setSelectingId(thread.id);
+    setSelectionError(null);
+    try {
+      const fresh = await apiRef.current.thread(thread.id);
+      if (sequence !== selectionSequence.current) return;
+      if (await onAdd(fresh) && queryRef.current === selectedQuery) {
+        setQuery("");
+        if (restoreKeyboardFocus) setReturnFocus({trigger});
+      }
+    } catch (cause) {
+      if (sequence === selectionSequence.current) {
+        setSelectionError(cause instanceof Error ? cause.message : "Could not attach this thread.");
+      }
+    } finally {
+      if (sequence === selectionSequence.current) setSelectingId(null);
+    }
+  };
+
+  const attachExternal = async (restoreKeyboardFocus: boolean) => {
+    if (search.status !== "external") return;
+    const label = externalName.trim();
+    const labelError = referenceLabelError(label);
+    if (labelError != null) {
+      setExternalNameError(labelError);
+      return;
+    }
+    const sequence = ++selectionSequence.current;
+    const selectedQuery = queryRef.current;
+    const trigger = document.activeElement;
+    setSelectingId(search.href);
+    setSelectionError(null);
+    const resource: Resource = {
+      provider: "url",
+      keys: { href: search.href },
+      presentation: { label, detail: new URL(search.href).hostname, url: search.href },
+    };
+    try {
+      if (await onAddResource(resource) && sequence === selectionSequence.current && queryRef.current === selectedQuery) {
+        setQuery("");
+        if (restoreKeyboardFocus) setReturnFocus({trigger});
+      }
+    } finally {
+      if (sequence === selectionSequence.current) setSelectingId(null);
+    }
+  };
+
+  const results = search.status === "ready" ? search.threads : [];
+  const externalAttached = search.status === "external" && attached.has(resourceKey({
+    provider: "url",
+    keys: { href: search.href },
+    presentation: { label: externalName || search.suggestedLabel, url: search.href },
+  }));
+  const statusText = search.status === "searching"
+    ? "Searching threads…"
+    : search.status === "waiting"
+      ? "Search will resume when the connection returns."
+      : search.status === "ready" && search.threads.length === 0
+        ? "No matching threads."
+        : search.status === "ready"
+          ? `${search.threads.length} matching thread${search.threads.length === 1 ? "" : "s"}.`
+          : "";
+
+  return (
+    <div className="bb-reference-links__reference-picker">
+      <label htmlFor={searchId}>Add a thread or link</label>
+      <input
+        ref={searchInputRef}
+        id={searchId}
+        type="search"
+        value={query}
+        disabled={disabled}
+        maxLength={MAX_REFERENCE_INPUT_LENGTH}
+        onChange={(event) => {
+          setQuery(event.target.value);
+          setSelectionError(null);
+        }}
+        placeholder="Search threads or paste a URL…"
+        aria-invalid={search.status === "error" || undefined}
+        aria-describedby={`${searchId}-help${search.status === "error" ? ` ${searchId}-error` : ""}`}
+      />
+      <p id={`${searchId}-help`} className="bb-reference-links__reference-help">
+        Search active and archived threads, or paste a link. BB thread links on this host resolve to their thread.
+      </p>
+      <p className="bb-reference-links__reference-status" role="status" aria-live="polite">{statusText}</p>
+      {search.status === "error" && <p id={`${searchId}-error`} className="bb-reference-links__reference-error" role="alert">{search.message}</p>}
+      {selectionError != null && <p className="bb-reference-links__reference-error" role="alert">{selectionError}</p>}
+      {results.length > 0 && (
+        <ul className="bb-reference-links__reference-search-results">
+          {results.map((thread) => {
+            const key = resourceKey(threadResource(thread));
+            const isAttached = attached.has(key);
+            return (
+              <li key={key}>
+                <span>
+                  <strong>{thread.title}</strong>
+                  <small id={`${searchId}-result-${thread.id}`}>{thread.archived ? "Archived" : "Active"}{thread.detail == null ? ` · Project ${thread.projectId}` : ` · ${thread.detail}`}</small>
+                </span>
+                <button
+                  type="button"
+                  className="bb-reference-links__reference-add"
+                  disabled={disabled || isAttached || selectingId !== null}
+                  onClick={(event) => void select(thread, event.detail === 0)}
+                  aria-label={isAttached ? `${thread.title} is already linked` : `Link ${thread.title}`}
+                  aria-describedby={`${searchId}-result-${thread.id}`}
+                >
+                  {isAttached ? "Linked" : selectingId === thread.id ? "Adding…" : "Link"}
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+      {search.status === "external" && (
+        <div className="bb-reference-links__reference-external">
+          <span><strong>External link</strong><small>{search.href}</small></span>
+          {search.resolutionError != null && (
+            <p className="bb-reference-links__reference-error" role="alert">
+              {search.resolutionError}
+              {search.canRetry === true && <> <button type="button" className="bb-reference-links__reference-retry" onClick={() => setSearchRetry((value) => value + 1)}>Retry thread lookup</button></>}
+            </p>
+          )}
+          <label htmlFor={nameId}>Reference name</label>
+          <div>
+            <input
+              id={nameId}
+              type="text"
+              value={externalName}
+              disabled={disabled || selectingId !== null}
+              aria-invalid={externalNameError != null || undefined}
+              aria-describedby={externalNameError == null ? undefined : `${nameId}-error`}
+              onChange={(event) => {
+                setExternalName(event.target.value);
+                setExternalNameError(null);
+              }}
+            />
+            <button
+              type="button"
+              className="bb-reference-links__reference-add"
+              disabled={disabled || selectingId !== null || externalAttached}
+              onClick={(event) => void attachExternal(event.detail === 0)}
+              aria-label={externalAttached ? `${externalName || search.suggestedLabel} is already linked` : `Link ${externalName || search.suggestedLabel}`}
+            >
+              {externalAttached ? "Linked" : selectingId === search.href ? "Adding…" : "Link"}
+            </button>
+          </div>
+          {externalNameError != null && <p id={`${nameId}-error`} className="bb-reference-links__reference-error" role="alert">{externalNameError}</p>}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function attachmentStatusText(snapshot: AttachmentSnapshot): string {
+  switch (snapshot.status.state) {
+    case "synced": return "Saved locally and shared with Cross References.";
+    case "pending": return "Saved locally. Sharing with Cross References will finish shortly.";
+    case "degraded": return "Saved locally. Cross References is unavailable; sharing will retry when it returns.";
+    case "blocked": return "Saved locally, but Cross References could not accept the latest update.";
+  }
+}
+
+function LinkedReferencesEditor({ api, connection = "connected", refreshToken = 0, navigateThread, origin = window.location.origin, title = "Linked references", description, maxTargets = 256 }: LinkedReferencesProps) {
+  const { snapshot, loading, readError, mutationError, stale, saving, refresh, add, addResource, remove } = useAttachments(api, connection, refreshToken);
+  const sectionRef = useRef<HTMLElement>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  const [removalFocus, setRemovalFocus] = useState<{ index: number; button: HTMLButtonElement } | null>(null);
+  const targets = snapshot?.targets ?? [];
+  const attached = useMemo(() => new Set(targets.map(resourceKey)), [snapshot?.targets]);
+
+  useEffect(() => {
+    if (removalFocus == null) return;
+    if (document.activeElement !== document.body && document.activeElement !== removalFocus.button) {
+      setRemovalFocus(null);
+      return;
+    }
+    const remaining = [...(sectionRef.current?.querySelectorAll<HTMLButtonElement>(".bb-reference-links__reference-remove") ?? [])];
+    remaining[Math.min(removalFocus.index, remaining.length - 1)]?.focus();
+    if (remaining.length === 0) searchInputRef.current?.focus();
+    setRemovalFocus(null);
+  }, [removalFocus, targets.length]);
+
+  const titleId = useId();
+  return (
+    <section ref={sectionRef} className="bb-reference-links__references" aria-labelledby={titleId}>
+      <header>
+        <div>
+          <h2 id={titleId}>{title}</h2>
+          {description && <p>{description}</p>}
+        </div>
+        <button type="button" className="bb-reference-links__reference-retry" disabled={saving} onClick={() => void refresh()}>Refresh links</button>
+        <span className="bb-reference-links__reference-count" aria-label={`${targets.length} linked reference${targets.length === 1 ? "" : "s"}`}>{targets.length}</span>
+      </header>
+      {loading && snapshot == null && <p className="bb-reference-links__reference-status" role="status">Loading saved references…</p>}
+      {snapshot != null && <p className={`bb-reference-links__reference-status bb-reference-links__reference-status--${snapshot.status.state}`} role="status" title={snapshot.status.error ?? undefined}>{attachmentStatusText(snapshot)}</p>}
+      {stale && <p className="bb-reference-links__reference-status" role="status">The connection is recovering; this list may be briefly out of date.</p>}
+      {readError != null && (
+        <p className="bb-reference-links__reference-error" role="alert">
+          {readError} <button type="button" className="bb-reference-links__reference-retry" disabled={saving} onClick={() => void refresh()}>Try again</button>
+        </p>
+      )}
+      {mutationError != null && <p className="bb-reference-links__reference-error" role="alert">{mutationError}</p>}
+      {targets.length === 0 && snapshot != null && <p className="bb-reference-links__reference-empty">No references linked yet.</p>}
+      {targets.length > 0 && (
+        <ul className="bb-reference-links__reference-list">
+          {targets.map((target) => {
+            return (
+              <li key={resourceKey(target)}>
+                <span>
+                  <ReferenceLink target={target} navigateThread={navigateThread} />
+                  <small>{target.presentation.detail ?? (targetThread(target) == null ? target.presentation.url : `Project ${targetThread(target)!.projectId}`)}</small>
+                </span>
+                <button
+                  type="button"
+                  className="bb-reference-links__reference-remove"
+                  disabled={saving}
+                  onClick={(event) => {
+                    const restoreKeyboardFocus = event.detail === 0;
+                    const button = event.currentTarget;
+                    const buttons = [...(sectionRef.current?.querySelectorAll<HTMLButtonElement>(".bb-reference-links__reference-remove") ?? [])];
+                    const index = buttons.indexOf(button);
+                    void remove(target).then((removed) => {
+                      if (!removed || !restoreKeyboardFocus) return;
+                      setRemovalFocus({ index, button });
+                    });
+                  }}
+                  aria-label={`Remove ${target.presentation.label}`}
+                >
+                  Remove
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+      <ThreadPicker api={api} connection={connection} origin={origin} attached={attached} disabled={saving || snapshot == null || targets.length >= maxTargets} onAdd={add} onAddResource={addResource} searchInputRef={searchInputRef} />
+    </section>
+  );
+}
+
+/** Owner changes dispose reads, mutations and picker state as one lifetime. */
+export function LinkedReferences(props: LinkedReferencesProps) {
+  return <LinkedReferencesEditor key={props.ownerKey} {...props} />;
+}

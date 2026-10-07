@@ -322,6 +322,46 @@ test("keeps linked references fleet-scoped while preserving add, native navigati
   slot.lifecycle.unmount();
 });
 
+test("preserves the latest attachment snapshot and revision after a CAS conflict", async () => {
+  const app = await loadPluginApp(() => import("../app.tsx"));
+  const original = {
+    provider: "bb", keys: { project: "proj_original", thread: "thr_original" },
+    presentation: { label: "Original repair" },
+  };
+  const latest = {
+    provider: "bb", keys: { project: "proj_latest", thread: "thr_latest" },
+    presentation: { label: "Latest repair" },
+  };
+  let snapshot = { ...attachmentSnapshot, sourceRevision: 3, targets: [original] };
+  const replacements: unknown[] = [];
+  const slot = renderSlot(app.navPanels[0]!, { subPath: "" }, {
+    rpc: {
+      ...fleetRpc(() => overview(), (request) => timeline(request)),
+      getAttachments: () => snapshot,
+      replaceAttachments: (input: unknown) => {
+        replacements.push(input);
+        snapshot = replacements.length === 1
+          ? { ...attachmentSnapshot, sourceRevision: 4, targets: [latest] }
+          : { ...attachmentSnapshot, sourceRevision: 5, targets: [] };
+        return { ...snapshot, outcome: replacements.length === 1 ? "cas-mismatch" : "applied" };
+      },
+    },
+  } as any);
+
+  fireEvent.click(await slot.findByRole("button", { name: "Remove Original repair" }));
+  expect(await slot.findByText("These saved links changed in another window. The latest list is shown below.")).toBeTruthy();
+  expect(await slot.findByRole("link", { name: "Latest repair" })).toBeTruthy();
+  expect(slot.queryByRole("link", { name: "Original repair" })).toBeNull();
+  expect(replacements).toEqual([{ expectedSourceRevision: 3, targets: [] }]);
+  fireEvent.click(slot.getByRole("button", { name: "Remove Latest repair" }));
+  await slot.findByText("No references linked yet.");
+  expect(replacements).toEqual([
+    { expectedSourceRevision: 3, targets: [] },
+    { expectedSourceRevision: 4, targets: [] },
+  ]);
+  slot.lifecycle.unmount();
+});
+
 test("resolves a same-host BB thread URL without sending it through text search", async () => {
   const app = await loadPluginApp(() => import("../app.tsx"));
   const thread = { id: "thr_qpij5ir9qw", projectId: "proj_p9meq6nys2", title: "URL-selected repair", detail: "Resolved by ID", archived: false };

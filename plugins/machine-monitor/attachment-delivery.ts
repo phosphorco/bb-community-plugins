@@ -1,14 +1,13 @@
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
+import { createCrossReferencesClient, type CrossReferencesClient } from "@phosphorco/bb-cross-references/bb";
 
 import {
   canonicalizeResource,
   CROSS_REFERENCES_PLUGIN_ID,
-  getProjectionResponseSchema,
   isMachineMonitorAttachmentTarget,
   machineMonitorResource,
   MACHINE_MONITOR_PRODUCER_ID,
   projectionPayloadDigest,
-  projectionResponseSchema,
   type AttachmentError,
   type ProjectionResponse,
 } from "./attachment-contract.ts";
@@ -25,39 +24,6 @@ type SdkErrorShape = {
 
 function errorShape(value: unknown): SdkErrorShape {
   return typeof value === "object" && value !== null ? value as SdkErrorShape : {};
-}
-
-function abortError(): Error {
-  const error = new Error("Machine Monitor reference delivery aborted.");
-  error.name = "AbortError";
-  return error;
-}
-
-/** The installed SDK has no PluginRpcArgs.signal, so make the service wait abort-aware locally. */
-function awaitWithAbort<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
-  if (signal.aborted) return Promise.reject(abortError());
-  return new Promise<T>((resolve, reject) => {
-    let settled = false;
-    const cleanup = () => signal.removeEventListener("abort", onAbort);
-    const onAbort = () => {
-      if (settled) return;
-      settled = true;
-      cleanup();
-      reject(abortError());
-    };
-    signal.addEventListener("abort", onAbort, { once: true });
-    promise.then((value) => {
-      if (settled) return;
-      settled = true;
-      cleanup();
-      resolve(value);
-    }, (cause) => {
-      if (settled) return;
-      settled = true;
-      cleanup();
-      reject(cause);
-    });
-  });
 }
 
 function isValidMachineMonitorProjection(projection: {
@@ -95,7 +61,7 @@ export function classifyCrossReferencesError(cause: unknown): AttachmentError {
 
   if (name === "AbortError" || name === "BbRequestAbortedError") return { kind: "aborted", code, status, message };
   if (name === "BbRequestTimeoutError" || code === "timeout" || code === "request_timeout") return { kind: "transient", code, status, message };
-  if (code === "unknown_method") return { kind: "incompatible", code, status, message };
+  if (code === "unknown_method" || code === "incompatible_protocol") return { kind: "incompatible", code, status, message };
   if (code === "plugin_not_found" || code === "plugin_missing" || code === "missing_plugin") return { kind: "absent", code, status, message };
   if (name === "ZodError" || name === "BbRpcValidationError" || code === "invalid_json" || code === "invalid_input" || code === "invalid_output" || code === "non_json_result") return { kind: "blocked", code, status, message };
   if (code === "handler_error") return { kind: status != null && status >= 500 ? "transient" : "blocked", code, status, message };
@@ -137,11 +103,11 @@ export type ReferenceDeliveryResult = "ignored" | "acknowledged" | "rebased" | "
 
 export class MachineMonitorReferenceDelivery {
   private readonly waiters = new Set<() => void>();
-  private readonly bb: BbPluginApi;
+  private readonly client: CrossReferencesClient;
   private readonly store: MachineMonitorReferenceStore;
 
   constructor(bb: BbPluginApi, store: MachineMonitorReferenceStore) {
-    this.bb = bb;
+    this.client = createCrossReferencesClient(bb.sdk, CROSS_REFERENCES_PLUGIN_ID);
     this.store = store;
   }
 
@@ -149,27 +115,19 @@ export class MachineMonitorReferenceDelivery {
     for (const waiter of [...this.waiters]) waiter();
   }
 
-  private async callProjection(command: ClaimedProjection["command"]): Promise<ProjectionResponse> {
-    return await this.bb.sdk.plugins.callRpc({
-      pluginId: CROSS_REFERENCES_PLUGIN_ID,
-      method: "applyProjection",
-      input: command,
-      outputSchema: projectionResponseSchema,
-    });
+  private async callProjection(command: ClaimedProjection["command"], signal: AbortSignal): Promise<ProjectionResponse> {
+    await this.client.describe(signal);
+    return await this.client.applyProjection(command, signal);
   }
 
   private async reconcile(signal: AbortSignal): Promise<void> {
     if (signal.aborted) return;
     try {
-      const response = await awaitWithAbort(this.bb.sdk.plugins.callRpc({
-        pluginId: CROSS_REFERENCES_PLUGIN_ID,
-        method: "getProjection",
-        input: {
-          producerPluginId: MACHINE_MONITOR_PRODUCER_ID,
-          source: { provider: "bb", keys: machineMonitorResource().keys },
-        },
-        outputSchema: getProjectionResponseSchema,
-      }), signal);
+      await this.client.describe(signal);
+      const response = await this.client.getProjection({
+        producerPluginId: MACHINE_MONITOR_PRODUCER_ID,
+        source: { provider: "bb", keys: machineMonitorResource().keys },
+      }, signal);
       if (signal.aborted) return;
       const projection = response.projection;
       if (projection != null && !isValidMachineMonitorProjection(projection)) {
@@ -193,9 +151,8 @@ export class MachineMonitorReferenceDelivery {
 
   private async deliverOnce(claimed: ClaimedProjection, signal: AbortSignal): Promise<ReferenceDeliveryResult> {
     try {
-      const response = await awaitWithAbort(this.callProjection(claimed.command), signal);
-      // callRpc has no signal in the installed SDK contract. The response may
-      // still arrive after service shutdown; it must not acknowledge anything.
+      const response = await this.callProjection(claimed.command, signal);
+      // An aborted service never acknowledges a late transport response.
       if (signal.aborted) return "ignored";
       return this.store.recordResponse(claimed, response);
     } catch (cause) {

@@ -224,6 +224,7 @@ test("classifies structured Cross References failures and keeps idle service qui
       plugins: {
         callRpc: async (args: { method: string }) => {
           calls.push(args.method);
+          if (args.method === "crossReferences.describe") return { protocol: "cross-references", versions: [1] };
           return { projection: null };
         },
       },
@@ -233,9 +234,9 @@ test("classifies structured Cross References failures and keeps idle service qui
   const controller = new AbortController();
   const running = delivery.start(controller.signal);
   await new Promise<void>((resolve) => setImmediate(resolve));
-  assert.deepEqual(calls, ["getProjection"]);
+  assert.deepEqual(calls, ["crossReferences.describe", "getProjection"]);
   await new Promise<void>((resolve) => setImmediate(resolve));
-  assert.deepEqual(calls, ["getProjection"], "a clean source must not poll while idle");
+  assert.deepEqual(calls, ["crossReferences.describe", "getProjection"], "a clean source must not poll while idle");
   controller.abort();
   await running;
 
@@ -270,6 +271,7 @@ test("does not acknowledge a projection response that arrives after service abor
     sdk: {
       plugins: {
         callRpc: async (args: { method: string }) => {
+          if (args.method === "crossReferences.describe") return { protocol: "cross-references", versions: [1] };
           if (args.method === "getProjection") return { projection: null };
           return await new Promise((resolve) => { releaseApply = resolve; });
         },
@@ -327,6 +329,7 @@ test("a replacement service reclaims an unexpired in-flight lease", async (t) =>
       plugins: {
         callRpc: async (args: { method: string; input?: { payloadDigest?: string } }) => {
           calls.push(args.method);
+          if (args.method === "crossReferences.describe") return { protocol: "cross-references", versions: [1] };
           if (args.method === "getProjection") return { projection: null };
           return { outcome: "applied", currentRevision: 1, currentDigest: args.input?.payloadDigest ?? oldGeneration.payloadDigest };
         },
@@ -337,7 +340,7 @@ test("a replacement service reclaims an unexpired in-flight lease", async (t) =>
   const running = new MachineMonitorReferenceDelivery(bb, store).start(controller.signal);
   while (!calls.includes("applyProjection")) await new Promise<void>((resolve) => setImmediate(resolve));
   assert.equal(store.snapshot(1).status.state, "synced");
-  assert.deepEqual(calls, ["getProjection", "applyProjection"]);
+  assert.deepEqual(calls, ["crossReferences.describe", "getProjection", "crossReferences.describe", "applyProjection"]);
   controller.abort();
   await running;
 });
@@ -373,7 +376,8 @@ test("blocks semantically invalid receiver data and mismatched success acknowled
   const bb = {
     sdk: {
       plugins: {
-        callRpc: async () => ({ projection: invalidProjection }),
+        callRpc: async (args: { method: string }) => args.method === "crossReferences.describe"
+          ? { protocol: "cross-references", versions: [1] } : { projection: invalidProjection },
       },
     },
   } as any;
@@ -384,4 +388,37 @@ test("blocks semantically invalid receiver data and mismatched success acknowled
   await running;
   assert.equal(store.snapshot(1).status.state, "blocked");
   assert.equal(store.snapshot(1).status.errorKind, "blocked");
+});
+
+test("shared client negotiates legacy v1 and preserves local targets when versions are incompatible", async (t) => {
+  for (const legacy of [true, false]) {
+    const { db, store } = makeStore();
+    t.after(() => db.close());
+    store.replaceAttachments({ expectedSourceRevision: 0, targets: [thread("thr_negotiate01")] }, 0);
+    const calls: string[] = [];
+    const bb = { sdk: { plugins: { callRpc: async (args: { method: string; input?: { payloadDigest?: string } }) => {
+      calls.push(args.method);
+      if (args.method === "crossReferences.describe") {
+        if (legacy) throw { status: 404, code: "unknown_method" };
+        return { protocol: "cross-references", versions: [2] };
+      }
+      if (args.method === "getProjection") return { projection: null };
+      return { outcome: "applied", currentRevision: 1, currentDigest: args.input!.payloadDigest };
+    } } } } as any;
+    const controller = new AbortController();
+    const running = new MachineMonitorReferenceDelivery(bb, store).start(controller.signal);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    controller.abort();
+    await running;
+    if (legacy) {
+      assert.deepEqual(calls, ["crossReferences.describe", "getProjection", "crossReferences.describe", "applyProjection"]);
+      assert.equal(store.snapshot(0).status.state, "synced");
+    } else {
+      assert.equal(calls.every(method => method === "crossReferences.describe"), true);
+      assert.equal(store.snapshot(0).status.state, "blocked");
+      assert.equal(store.snapshot(0).status.errorKind, "incompatible");
+      assert.equal(store.snapshot(0).status.lastAckedRevision, 0);
+      assert.equal(store.snapshot(0).targets[0]?.keys.thread, "thr_negotiate01");
+    }
+  }
 });

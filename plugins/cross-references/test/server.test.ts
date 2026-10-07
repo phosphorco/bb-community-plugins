@@ -8,6 +8,7 @@ import {
   projectionPayloadDigest,
   type Resource,
 } from "../canonical.ts";
+import { runCrossReferencesConformance } from "@phosphorco/bb-cross-references/testing";
 import { rpcContract } from "../rpc-contract.ts";
 import crossReferencesPlugin from "../server.ts";
 
@@ -85,7 +86,7 @@ test("registers the typed RPCs, verifies FK-backed storage, and publishes commit
   const parsed = await rpcContract.applyProjection.input["~standard"].validate(input);
   assert.equal("issues" in parsed, false);
 
-  assert.deepEqual(Object.keys(handlers ?? {}), ["applyProjection", "getProjection", "listBacklinks", "listForwardReferences", "checkForwardReferences"]);
+  assert.deepEqual(Object.keys(handlers ?? {}), ["crossReferences.describe", "applyProjection", "getProjection", "listBacklinks", "listForwardReferences", "checkForwardReferences"]);
   assert.equal((await handlers!.applyProjection(input) as { outcome: string }).outcome, "applied");
   assert.equal(signals.length, 1);
   assert.equal(signals[0]?.channel, "cross-references-changed");
@@ -119,4 +120,21 @@ test("registers the typed RPCs, verifies FK-backed storage, and publishes commit
     () => handlers!.applyProjection({ ...input, targets: Array.from({ length: 257 }, () => target) }),
     /targets/i,
   );
+
+  const conformance = await runCrossReferencesConformance({
+    sdk: { plugins: { callRpc: async ({ method, input, outputSchema }: any) => {
+      const methodContract = (rpcContract as any)[method];
+      if (!methodContract || !handlers?.[method]) throw Object.assign(new Error("Unknown method"), { code: "unknown_method" });
+      const parsedInput = await methodContract.input["~standard"].validate(input);
+      if ("issues" in parsedInput) throw new Error("Invalid input");
+      const result = await handlers[method]!(parsedInput.value);
+      const parsedOutput = await methodContract.output["~standard"].validate(result);
+      if ("issues" in parsedOutput) throw new Error("Invalid output");
+      return outputSchema.parse(parsedOutput.value);
+    } } } as any,
+    command: input,
+  });
+  assert.equal(conformance.level, "source-conformance");
+  assert.ok(conformance.checks.includes("backlinks-acceptance"));
+
 });

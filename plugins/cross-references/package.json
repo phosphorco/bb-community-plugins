@@ -61,7 +61,8 @@
   ],
   "dependencies": {
     "marked": "^18.0.5",
-    "zod": "4.3.6"
+    "zod": "4.3.6",
+    "@phosphorco/bb-cross-references": "0.1.0"
   },
   "devDependencies": {
     "@get-bb/plugin-sdk": "0.4.47",

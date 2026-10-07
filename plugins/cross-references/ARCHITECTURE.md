@@ -93,7 +93,8 @@ The `defineCrossLinks` examples in this section are a future authoring API.
 They are not a registry, a prerequisite for persistence, or a first-slice
 export. The first slice publishes only the BB conventions needed by its
 Machine Monitor/thread integration, and accepts already-materialized resource
-objects at its private RPC boundary.
+objects at its RPC boundary. The reusable v1 codecs and client now ship in
+`@phosphorco/bb-cross-references`; `defineCrossLinks` remains deferred.
 
 The project may publish common definitions because importing them is a
 convenient way for packages to stay aligned, not because those exports confer
@@ -245,11 +246,11 @@ Known consumers may refresh presentation from their own APIs. The index must
 remain usable when they cannot. Renderers validate supported URL schemes and
 use BB's semantic navigation components where available.
 
-The first public component layer is future work. Candidate components include
-`CrossReferenceList`, `CrossReferenceDropdown`, `CrossReferencePicker`, and
-`CrossReferenceCount`; none is a first-slice promise. Components may receive
-any definitions their owner wants to recognize; there is no runtime React
-registry and no plugin may inject UI into another plugin's tree.
+`@phosphorco/bb-cross-references/react` supplies `LinkedReferences`, the shared
+thread/URL attachment editor used by Machine Monitor and Prompt Rules. It takes
+an explicit owner key, injected local APIs and navigation. General graph lists,
+dropdowns and counts remain future work. There is no runtime React registry and
+no plugin injects UI into another plugin's tree.
 
 The shared component layer owns bounded search and parsing interactions,
 keyboard behavior, focus restoration, accessible naming, empty and degraded
@@ -419,7 +420,7 @@ the BB spine proves the model.
 - cross-BB-instance federation;
 - private-resource authorization without request-bound identity;
 - a universal resource browser;
-- a generic shared component package; and
+- general graph list/dropdown/count components beyond the shipped attachment editor; and
 - automatic cleanup driven only by BB lifecycle events.
 
 The package should grow from demonstrated integrations. Its lasting primitive

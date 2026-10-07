@@ -1,3 +1,4 @@
+import { CROSS_REFERENCES_PROTOCOL } from "@phosphorco/bb-cross-references";
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 
 import { AssistantLinkCollector } from "./assistant-link-collector.ts";
@@ -24,6 +25,7 @@ export default function crossReferencesPlugin(bb: BbPluginApi): void {
   bb.background.service("cross-references-assistant-links", { start: (signal) => collector.start(signal) });
 
   bb.rpc.register(rpcContract, {
+    "crossReferences.describe": () => ({ protocol: CROSS_REFERENCES_PROTOCOL, versions: [1] }),
     applyProjection: (input) => {
       const result = store.applyProjection(input);
       if (result.changed && result.signal !== null) {

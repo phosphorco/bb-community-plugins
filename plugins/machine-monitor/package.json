@@ -70,6 +70,7 @@
     "test/"
   ],
   "dependencies": {
+    "@phosphorco/bb-cross-references": "0.1.0",
     "echarts": "6.1.0",
     "zod": "4.3.6"
   },

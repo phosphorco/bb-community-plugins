@@ -1,20 +1,20 @@
-import { createHash, randomUUID } from "node:crypto";
-
 import { z } from "zod";
 
 import {
-  hasSensitiveUrlParameter,
-  MAX_REFERENCE_LABEL_BYTES,
-  MAX_REFERENCE_URL_BYTES,
-  utf8ByteLength,
-} from "./reference-validation.ts";
+  canonicalizeResource as canonicalizeSharedResource,
+  serializeResource, sha256Hex, projectionPayloadJson, projectionPayloadDigest,
+  machineMonitorResource, threadResource, urlResource,
+  isExactBbThreadResource, isUrlResource,
+  type Presentation, type ResourceIdentity, type Resource, type CanonicalResource,
+} from "@phosphorco/bb-cross-references";
+export {
+  serializeResource, sha256Hex, projectionPayloadJson, projectionPayloadDigest,
+  machineMonitorResource, threadResource, urlResource,
+  isExactBbThreadResource, isUrlResource,
+  type Presentation, type ResourceIdentity, type Resource, type CanonicalResource,
+};
+import { MAX_REFERENCE_LABEL_BYTES, MAX_REFERENCE_URL_BYTES } from "./reference-validation.ts";
 
-/**
- * This is the deliberately small client-side copy of the frozen Cross
- * References v1 wire contract.  Machine Monitor treats Cross References as an
- * optional peer, so importing its package (or its database) here would make
- * local attachments unavailable when that peer is not installed.
- */
 export const CROSS_REFERENCES_PLUGIN_ID = "cross-references";
 export const CROSS_REFERENCES_PROTOCOL_VERSION = 1 as const;
 export const MACHINE_MONITOR_PRODUCER_ID = "machine-monitor";
@@ -33,30 +33,7 @@ const namePattern = /^[a-z][a-z0-9._-]{0,63}$/;
 const idPattern = /^[A-Za-z0-9_-]{1,128}$/;
 const digestPattern = /^[0-9a-f]{64}$/;
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
-const controlPattern = /\p{Cc}/u;
 const safeRevision = (schema: z.ZodNumber) => schema.refine(Number.isSafeInteger, { message: "must be a safe integer" });
-
-export type Presentation = {
-  label: string;
-  detail?: string;
-  url?: string;
-};
-
-export type ResourceIdentity = {
-  provider: string;
-  keys: Record<string, string>;
-};
-
-export type Resource = ResourceIdentity & {
-  presentation: Presentation;
-};
-
-export type CanonicalResource = Resource & {
-  canonicalKeysJson: string;
-  canonicalIdentityJson: string;
-  identityDigest: string;
-  presentationJson: string;
-};
 
 export type ProjectionCommand = {
   protocolVersion: 1;
@@ -128,243 +105,21 @@ function fail(message: string): never {
   throw new AttachmentValidationError(message);
 }
 
-function byteLength(value: string): number {
-  return utf8ByteLength(value);
-}
-
-function assertPlainObject(value: unknown, label: string): asserts value is Record<string, unknown> {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) fail(`${label} must be an object.`);
-  if (Object.getPrototypeOf(value) !== Object.prototype && Object.getPrototypeOf(value) !== null) fail(`${label} must be a plain object.`);
-  if (Reflect.ownKeys(value).some((key) => typeof key !== "string")) fail(`${label} must not contain symbol keys.`);
-}
-
-function assertNoUnknownKeys(value: Record<string, unknown>, allowed: readonly string[], label: string): void {
-  const allowedSet = new Set(allowed);
-  for (const key of Object.keys(value)) if (!allowedSet.has(key)) fail(`${label} contains unknown field ${key}.`);
-}
-
-function assertWellFormedUnicode(value: string, label: string): void {
-  for (let index = 0; index < value.length; index += 1) {
-    const codeUnit = value.charCodeAt(index);
-    if (codeUnit >= 0xd800 && codeUnit <= 0xdbff) {
-      const next = value.charCodeAt(index + 1);
-      if (next < 0xdc00 || next > 0xdfff) fail(`${label} contains malformed Unicode.`);
-      index += 1;
-    } else if (codeUnit >= 0xdc00 && codeUnit <= 0xdfff) {
-      fail(`${label} contains malformed Unicode.`);
-    }
-  }
-}
-
-function safeText(value: string, label: string, maxBytes: number, nonblank = false): string {
-  assertWellFormedUnicode(value, label);
-  if (controlPattern.test(value)) fail(`${label} contains a Unicode control character.`);
-  if (nonblank && value.trim().length === 0) fail(`${label} must not be blank.`);
-  if (byteLength(value) > maxBytes) fail(`${label} exceeds its ${maxBytes}-byte limit.`);
-  return value;
-}
-
-function validateName(value: unknown, label: string): string {
-  if (typeof value !== "string" || !namePattern.test(value)) fail(`${label} has an invalid name.`);
-  return value;
-}
-
-function validateId(value: unknown, label: string): string {
-  if (typeof value !== "string" || !idPattern.test(value)) fail(`${label} has an invalid BB id.`);
-  return value;
-}
-
-function validateBbIdentity(provider: string, keys: Record<string, string>): void {
-  if (provider !== "bb") return;
-  const names = Object.keys(keys);
-  if (names.length === 1 && names[0] === "project") {
-    validateId(keys.project, "projectId");
-    return;
-  }
-  if (names.length === 2 && names[0] === "project" && names[1] === "thread") {
-    validateId(keys.project, "projectId");
-    validateId(keys.thread, "threadId");
-    return;
-  }
-  if (names.length === 2 && names[0] === "page" && names[1] === "plugin"
-    && keys.page === "machine-monitor" && keys.plugin === "machine-monitor") {
-    return;
-  }
-  fail("provider bb must use a v1 project, thread, or Machine Monitor identity.");
-}
-
-function validateUrlIdentity(provider: string, keys: Record<string, string>): void {
-  if (provider !== "url") return;
-  const names = Object.keys(keys);
-  if (names.length !== 1 || names[0] !== "href") fail("provider url must use exactly the href key.");
-  const href = keys.href!;
-  let parsed: URL;
-  try {
-    parsed = new URL(href);
-  } catch {
-    fail("url href must be a valid HTTP(S) URL.");
-  }
-  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") fail("url href must use HTTP(S).");
-  if (parsed.username !== "" || parsed.password !== "") fail("url href must not contain credentials.");
-  if (hasSensitiveUrlParameter(parsed)) {
-    fail("url href must not contain credential-shaped query or fragment parameters.");
-  }
-  if (parsed.href !== href) fail("url href must use canonical URL serialization.");
-}
-
-function canonicalizeKeys(value: unknown): { keys: Record<string, string>; canonicalKeysJson: string } {
-  assertPlainObject(value, "resource.keys");
-  const names = Object.keys(value);
-  if (names.length < 1 || names.length > 32) fail("resource.keys must contain between 1 and 32 entries.");
-  let materialBytes = 0;
-  const entries = names.map((key) => {
-    validateName(key, "resource key");
-    const raw = value[key];
-    if (typeof raw !== "string") fail(`resource key ${key} must have a string value.`);
-    const normalized = safeText(raw.normalize("NFC"), `resource key ${key}`, MAX_KEY_VALUE_BYTES, true);
-    materialBytes += byteLength(key) + byteLength(normalized);
-    return [key, normalized] as const;
-  });
-  if (materialBytes > MAX_KEY_VALUE_MATERIAL_BYTES) fail("resource key/value material is too large.");
-  entries.sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0);
-  const keys = Object.fromEntries(entries) as Record<string, string>;
-  return { keys, canonicalKeysJson: JSON.stringify(keys) };
-}
-
-function canonicalizePresentation(value: unknown): { presentation: Presentation; presentationJson: string } {
-  assertPlainObject(value, "resource.presentation");
-  assertNoUnknownKeys(value, ["label", "detail", "url"], "resource.presentation");
-  if (typeof value.label !== "string") fail("resource.presentation.label must be a string.");
-  const presentation: Presentation = {
-    label: safeText(value.label, "resource.presentation.label", MAX_PRESENTATION_LABEL_BYTES, true),
-  };
-  if (value.detail !== undefined) {
-    if (typeof value.detail !== "string") fail("resource.presentation.detail must be a string.");
-    presentation.detail = safeText(value.detail, "resource.presentation.detail", MAX_PRESENTATION_DETAIL_BYTES, true);
-  }
-  if (value.url !== undefined) {
-    if (typeof value.url !== "string") fail("resource.presentation.url must be a string.");
-    const url = safeText(value.url, "resource.presentation.url", MAX_PRESENTATION_URL_BYTES, true);
-    if (url.startsWith("/") && !url.startsWith("//") && !url.includes("\\")) {
-      presentation.url = url;
-    } else if (url.startsWith("http://") || url.startsWith("https://")) {
-      try {
-        const parsed = new URL(url);
-        if (parsed.protocol !== "http:" && parsed.protocol !== "https:") fail("resource.presentation.url must use http(s).");
-        presentation.url = url;
-      } catch {
-        fail("resource.presentation.url must be a valid http(s) URL.");
-      }
-    } else {
-      fail("resource.presentation.url must be a same-origin route or http(s) URL.");
-    }
-  }
-  const presentationJson = JSON.stringify(presentation);
-  if (byteLength(presentationJson) > MAX_PRESENTATION_BYTES) fail("resource.presentation is too large.");
-  return { presentation, presentationJson };
-}
-
+/** Preserve Machine Monitor's local error type while using the shared v1 codec. */
 export function canonicalizeResource(value: Resource): CanonicalResource {
-  assertPlainObject(value, "resource");
-  assertNoUnknownKeys(value, ["provider", "keys", "presentation"], "resource");
-  const provider = validateName(value.provider, "resource.provider");
-  const identity = canonicalizeKeys(value.keys);
-  validateBbIdentity(provider, identity.keys);
-  validateUrlIdentity(provider, identity.keys);
-  const identityObject = { provider, keys: identity.keys };
-  const canonicalIdentityJson = JSON.stringify(identityObject);
-  if (byteLength(canonicalIdentityJson) > MAX_CANONICAL_IDENTITY_BYTES) fail("resource identity is too large.");
-  const presentation = canonicalizePresentation(value.presentation);
-  if (provider === "url" && presentation.presentation.url !== identity.keys.href) {
-    fail("provider url presentation.url must equal its canonical href identity.");
+  try { return canonicalizeSharedResource(value); }
+  catch (cause) {
+    const message = cause instanceof Error ? cause.message : String(cause);
+    fail(message.replace(/must match \^\[A-Za-z0-9_\-\]\{1,128\}\$\./, "has an invalid BB id."));
   }
-  return {
-    provider,
-    keys: identity.keys,
-    canonicalKeysJson: identity.canonicalKeysJson,
-    canonicalIdentityJson,
-    identityDigest: sha256Hex(canonicalIdentityJson),
-    presentation: presentation.presentation,
-    presentationJson: presentation.presentationJson,
-  };
-}
-
-export function serializeResource(resource: CanonicalResource): Resource {
-  return { provider: resource.provider, keys: resource.keys, presentation: resource.presentation };
-}
-
-export function sha256Hex(value: string): string {
-  return createHash("sha256").update(value, "utf8").digest("hex");
-}
-
-export function projectionPayloadJson(
-  producerPluginId: string,
-  source: CanonicalResource,
-  tombstone: boolean,
-  targets: readonly CanonicalResource[],
-): string {
-  const json = JSON.stringify({
-    protocolVersion: CROSS_REFERENCES_PROTOCOL_VERSION,
-    producerPluginId,
-    source: serializeResource(source),
-    tombstone,
-    targets: targets.map(serializeResource),
-  });
-  if (byteLength(json) > MAX_PROJECTION_PAYLOAD_BYTES) fail("projection payload is too large.");
-  return json;
-}
-
-export function projectionPayloadDigest(
-  producerPluginId: string,
-  source: CanonicalResource,
-  tombstone: boolean,
-  targets: readonly CanonicalResource[],
-): string {
-  return sha256Hex(projectionPayloadJson(producerPluginId, source, tombstone, targets));
-}
-
-export function machineMonitorResource(): Resource {
-  return {
-    provider: "bb",
-    keys: { page: "machine-monitor", plugin: "machine-monitor" },
-    presentation: { label: "Machine Monitor", url: MACHINE_MONITOR_ROUTE },
-  };
-}
-
-export function isExactBbThreadResource(resource: CanonicalResource): boolean {
-  const keys = Object.keys(resource.keys);
-  return resource.provider === "bb" && keys.length === 2 && keys[0] === "project" && keys[1] === "thread"
-    && idPattern.test(resource.keys.project!) && idPattern.test(resource.keys.thread!);
-}
-
-export function isUrlResource(resource: CanonicalResource): boolean {
-  return resource.provider === "url" && Object.keys(resource.keys).length === 1
-    && resource.keys.href != null && resource.presentation.url === resource.keys.href;
 }
 
 export function isMachineMonitorAttachmentTarget(resource: CanonicalResource): boolean {
   return isExactBbThreadResource(resource) || isUrlResource(resource);
 }
 
-export function threadResource(projectId: string, threadId: string, presentation: Presentation): Resource {
-  return {
-    provider: "bb",
-    keys: { project: validateId(projectId, "projectId"), thread: validateId(threadId, "threadId") },
-    presentation,
-  };
-}
-
-export function urlResource(href: string, presentation: Omit<Presentation, "url">): Resource {
-  const canonicalHref = new URL(href).href;
-  return {
-    provider: "url",
-    keys: { href: canonicalHref },
-    presentation: { ...presentation, url: canonicalHref },
-  };
-}
-
 export function newMutationId(): string {
-  return randomUUID();
+  return globalThis.crypto.randomUUID();
 }
 
 export function createProjectionCommand(

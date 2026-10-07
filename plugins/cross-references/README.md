@@ -9,6 +9,14 @@ reference supplies that useful context at both ends.
 It is not a replacement for a URL inspector or a collection of bookmarks.
 It is the shared navigation layer built from observed and authored references.
 
+## Shared package
+
+`@phosphorco/bb-cross-references@0.1.0` provides the canonical resource/projection
+contract, explicit SDK client, conformance kit, and `LinkedReferences` React
+editor. This plugin owns the graph service and persistence; Machine Monitor and
+Prompt Rules own their local attachments and delivery. See the
+[package contract](../../packages/bb-cross-references/CONTRACT.md).
+
 ## Product doctrine
 
 ### Make the surrounding context visible
