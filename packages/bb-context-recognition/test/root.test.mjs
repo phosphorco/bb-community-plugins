@@ -5,7 +5,7 @@ const input=(text='Plan: plans/x.plan.pkl')=>({version:1,text,format:'markdown',
 const candidate=(id='x',span={start:0,end:1},extra={})=>({span,match:'x',source:{provider:'plan-graph',id},confidence:'high',provenance:{basis:'explicit',explanation:'Exact mention.'},...extra});
 const tag=(pluginId,id,extra={})=>({pluginId,origin:'contributed',specificity:'typed',providers:['plan-graph'],candidate:candidate(id),...extra});
 test('published limits/methods/wire constants are exact and frozen',()=>{
- assert.deepEqual(c.LIMITS,{plugins:32,concurrency:4,describeMs:500,discoveryMs:3000,linkifyMs:500,linkifyStageMs:1500,resolveMs:1500,resolveStageMs:4000,overallMs:6000,textChars:65536,windows:16,excludedRanges:512,links:64,remotes:8,candidatesPerCall:64,identitiesPerResolve:32,responseBytes:65536,explanationChars:200,excerptChars:1024,reasonCount:8,metaEntries:8,providersPerClaim:16,kindsPerProvider:16});
+ assert.deepEqual(c.LIMITS,{plugins:32,concurrency:4,describeMs:500,discoveryMs:3000,linkifyMs:500,linkifyStageMs:1500,resolveMs:1500,resolveStageMs:4000,overallMs:6000,textChars:65536,windows:16,excludedRanges:512,links:64,remotes:8,candidatesPerCall:64,identitiesPerResolve:32,responseBytes:65536,explanationChars:200,excerptChars:1024,presentationDataBytes:4096,presentationDepth:8,presentationRpcMs:5000,reasonCount:8,metaEntries:8,providersPerClaim:16,kindsPerProvider:16});
  assert.deepEqual(c.METHODS,{describe:'contextRecognitionDescribe',linkify:'contextRecognitionV1Linkify',resolve:'contextRecognitionV1Resolve'});
  assert.deepEqual(c.WIRE_VERSIONS,[1]); assert.ok(Object.isFrozen(c.LIMITS));assert.ok(Object.isFrozen(c.METHODS));assert.ok(Object.isFrozen(c.WIRE_VERSIONS));
 });

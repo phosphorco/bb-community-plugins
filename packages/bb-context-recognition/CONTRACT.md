@@ -1,6 +1,6 @@
 # @phosphorco/bb-context-recognition — v1 contract
 
-Status: **v1 contract, revision 4; package 0.3.0 published.** Thread Brief
+Status: **v1 contract, revision 5; package 0.4.0 implementation, publication pending.** Thread Brief
 (consumer), GitHub Review and Plan Graph (suppliers) use 0.3.0. Package source
 checks do not establish host or live composition proof; adopters prove that
 separately.
@@ -12,7 +12,7 @@ resolving, resolve identities it already has, or mix built-in and contributed
 handlers in either stage. Thread Brief is the first consumer; chat messages,
 Cross References or any other plugin surface can consume it the same way.
 
-It is not a registry, a store, a cache, a renderer, a permission system, a
+The recognition stages are not a store, a supplier-data cache, a permission system, a
 search index or a rule engine. It never reads the machine, the network or a
 git repository on anyone's behalf. It supersedes
 `@phosphorco/bb-brief-references` (§12).
@@ -50,12 +50,15 @@ Rules that follow from the table:
 |---|---|---|
 | `.` (root) | `zod` only | DTO schemas and types, `LIMITS`, `METHODS`, `WIRE_VERSIONS`, `RESERVED_PROVIDER_PREFIX`, `identityKey`, `canonicalJson`, `checkCandidate`, `arbitrate`, `nearestSpan`, `negotiateVersion` |
 | `./bb` | none at runtime; takes injected `bb` / `sdk` (`@get-bb/plugin-sdk` is an optional peer, types only) | `registerRecognitionSupplier`, `createSupplierClient`, `enumerateRecognitionSuppliers`, `classifyRecognitionError`, `linkifyAll`, `resolveAll` |
+| `./presentation` | none (React and SDK types only) | Content-script generation registry in a shared native realm |
+| `./react` | root, `./bb`, `./presentation`, React optional peer | Hosted boundary, Suspense and owner-bound client |
+| `./testing/react` | React, React DOM, jsdom, SDK testing, Bun scan | Mounted source conformance and hosted import scan |
 | `./testing` | root and `./bb` as externals, SDK testing peer | Conformance kit, version and arbitration fixtures; DOM-free |
 
-There is no `/react` entry in v1. Consumers render cards with their own
-components (rule 4: data crosses plugins, components do not).
+Consumers render cards with their own components. Package 0.4.0 adds the
+optional frontend presentation lease in §16; executable code never crosses RPC.
 
-Package version (`0.3.0`) and wire version (`1`) are separate numbers (§10).
+Package version (`0.4.0`) and wire version (`1`) are separate numbers (§10).
 
 ## 3. Identities, spans and shared types
 
@@ -762,3 +765,38 @@ emitted-entry tests and a disposable consumer that installs the npm tarball and
 SDK 0.5.29 and imports all three entries. The 500/2000 eligible-plugin benchmark
 reports sample timing and callback/row counts; it is not a universal CPU bound
 or live SDK compatibility proof.
+
+## 16. Hosted presentations (0.4.0, wire v1 additive output)
+
+The accepted [presentation registry contract](design/presentation-registry.md)
+defines this optional frontend lease, including Owner decisions in §13. The
+consumer still owns the surface and must keep the fallback card. A presentation
+reference is allowed only on a ready, card-detail resolution with its card,
+and contains a versioned schema id plus bounded JSON. The root data value has
+depth zero; every child adds one. Limits are 4096 canonical UTF-8 JSON bytes,
+depth eight, and a 5000 ms local deadline per hosted owner RPC. Existing total
+responseBytes admission still applies. Label-detail calls reject presentations.
+
+Components register only from their real content-script context. The frozen
+Symbol.for realm holds native maps/events plus immutable generation/token
+entries, never package operation functions. Registration replacement, stale
+disposal and signal abort obey compare-and-delete semantics. The consumer
+server's route stamp and its current ready supplier set determine which owner
+may render. The package supplies a React boundary and owner-bound client; the
+supplier owns its decoder, lazy component and GET-like methods.
+
+Slot hooks, DOM scanning and cross-plugin mounting are excluded. Hosted SDK
+app imports use the explicit allowlist in `/testing/react`; owner navigation
+comes from props. Registration's method allowlist guards accidental writes and
+is not a security boundary for trusted plugins. No realtime or polling is
+provided. Revision, explicit refresh and visibility-driven supplier refetch
+own freshness.
+
+Non-React consumers retain data-card behavior and need no DOM peer. Older 0.3
+wire decoders strip the optional field. Package copies with the compatible v1
+realm interoperate; a breaking registry meaning requires another realm slot.
+Mounted conformance exercises real handlers and content-script registration
+under a test SDK facade. The bundle scan fails closed on unapproved SDK app
+imports and DOM scanning; its conservative lexical checks are source proof,
+not arbitrary-code isolation. Real two-plugin CSS, reload, disable and routing
+proof remains an adopter/live obligation.

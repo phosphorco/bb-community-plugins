@@ -4,6 +4,7 @@ export const LIMITS = Object.freeze({ plugins:32, concurrency:4, describeMs:500,
   linkifyMs:500, linkifyStageMs:1500, resolveMs:1500, resolveStageMs:4000, overallMs:6000,
   textChars:65536, windows:16, excludedRanges:512, links:64, remotes:8, candidatesPerCall:64,
   identitiesPerResolve:32, responseBytes:65536, explanationChars:200, excerptChars:1024,
+  presentationDataBytes:4096, presentationDepth:8, presentationRpcMs:5000,
   reasonCount:8, metaEntries:8, providersPerClaim:16, kindsPerProvider:16 } as const);
 export const METHODS = Object.freeze({describe:'contextRecognitionDescribe',linkify:'contextRecognitionV1Linkify',resolve:'contextRecognitionV1Resolve'} as const);
 export const WIRE_VERSIONS = Object.freeze([1] as const);
@@ -62,7 +63,25 @@ export const CandidateV1Schema = z.object({span:SpanSchema,match:z.string().min(
  provenance:z.object({basis:z.enum(['explicit','text-url','existing-link','git-remote','context']),explanation:z.string().min(1).max(LIMITS.explanationChars),evidence:z.object({span:SpanSchema.optional(),link:z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional(),remote:identifier().optional()}).optional()})});
 export const LinkifyOutputV1Schema = z.object({candidates:z.array(CandidateV1Schema).max(LIMITS.candidatesPerCall)});
 export const CardV1Schema = z.object({title:z.string().min(1).max(256),subtitle:z.string().max(512).optional(),status:z.string().max(256).optional(),tone:z.enum(['neutral','info','success','warning','danger','muted']).optional(),meta:z.array(z.object({label:z.string().max(256),value:z.string().max(512)})).max(LIMITS.metaEntries).optional(),updatedAt:z.iso.datetime({offset:true}).max(128).optional(),excerptMarkdown:z.string().max(LIMITS.excerptChars).optional()});
-export const ResolutionV1Schema = z.object({source:SourceIdentitySchema,state:z.enum(['ready','unrecognized','unavailable']),kind:KindSchema.optional(),revision:z.string().max(256).optional(),label:z.string().max(256).optional(),href:SafeHrefSchema.optional(),fileTarget:FileTargetSchema.optional(),card:CardV1Schema.optional(),maxAgeSeconds:z.number().min(0).max(3600).optional(),reasons:z.array(ReasonSchema).max(LIMITS.reasonCount)}).refine(v=>v.card===undefined||v.state==='ready','Only ready resolutions may contain cards.');
+/** Versioned, bounded reference to a frontend presentation; no executable wire data. */
+export const PresentationSchemaIdSchema = z.string().max(100).regex(/^[a-z][a-z0-9-]{0,31}(\.[a-z][a-z0-9-]{0,31}){0,3}\/[a-z][a-z0-9-]{0,31}@[1-9][0-9]{0,2}$/);
+export type PresentationSchemaId = string;
+export type PresentationRefV1 = {schema: PresentationSchemaId; data: JsonValue};
+function presentationData(value: unknown): value is JsonValue {
+ try {
+  const stack: [unknown, number][] = [[value, 0]];
+  while (stack.length) {
+   const [item, depth] = stack.pop()!;
+   if (depth > LIMITS.presentationDepth) return false;
+   if (item && typeof item === 'object') {
+    for (const child of Object.values(item)) stack.push([child, depth + 1]);
+   }
+  }
+  return new TextEncoder().encode(canonicalJson(value)).byteLength <= LIMITS.presentationDataBytes;
+ } catch { return false; }
+}
+export const PresentationRefV1Schema = z.object({schema: PresentationSchemaIdSchema, data: z.custom<JsonValue>(presentationData, 'Expected bounded JSON presentation data.')});
+export const ResolutionV1Schema = z.object({source:SourceIdentitySchema,state:z.enum(['ready','unrecognized','unavailable']),kind:KindSchema.optional(),revision:z.string().max(256).optional(),label:z.string().max(256).optional(),href:SafeHrefSchema.optional(),fileTarget:FileTargetSchema.optional(),card:CardV1Schema.optional(),presentation:PresentationRefV1Schema.optional(),maxAgeSeconds:z.number().min(0).max(3600).optional(),reasons:z.array(ReasonSchema).max(LIMITS.reasonCount)}).refine(v=>v.card===undefined||v.state==='ready','Only ready resolutions may contain cards.').refine(v=>!v.presentation||(v.state==='ready'&&!!v.card),'Presentations require a ready resolution with its fallback card.');
 export const ResolveInputV1Schema = z.strictObject({version:z.literal(1),context:ResolveContextV1Schema,sources:z.array(InputSourceIdentitySchema).min(1).max(LIMITS.identitiesPerResolve),detail:z.enum(['label','card'])}).refine(v=>new Set(v.sources.map(identityKey)).size===v.sources.length,'Duplicate source identity.');
 export const ResolveOutputV1Schema = z.object({resolutions:z.array(ResolutionV1Schema).max(LIMITS.identitiesPerResolve)});
 export type SourceIdentity=z.infer<typeof SourceIdentitySchema>;

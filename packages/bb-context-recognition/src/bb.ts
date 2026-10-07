@@ -141,7 +141,7 @@ function correlateResolve(output: ResolveOutputV1, input: ResolveInputV1): Resol
   const seen = new Set<string>();
   for (const resolution of output.resolutions) {
     const key = identityKey(resolution.source);
-    if (!requested.has(key) || seen.has(key) || (input.detail === 'label' && resolution.card !== undefined)) throw failure('incompatible');
+    if (!requested.has(key) || seen.has(key) || (input.detail === 'label' && (resolution.card !== undefined || resolution.presentation !== undefined))) throw failure('incompatible');
     seen.add(key);
   }
   return output;

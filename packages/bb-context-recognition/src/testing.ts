@@ -253,3 +253,21 @@ export async function runSupplierConformance(options: SupplierConformanceOptions
   }
   return report();
 }
+
+/** Isolates only the presentation realm; never changes the production registry slot. */
+export function createIsolatedPresentationRealm(): {restore():void} {
+ const key=Symbol.for('phosphor.bb-context-recognition.presentations');
+ const scope=globalThis as Record<symbol,unknown>;
+ const descriptor=Object.getOwnPropertyDescriptor(scope,key);
+ Object.defineProperty(scope,key,{configurable:true,writable:true,value:{}});
+ let restored=false;
+ return {restore(){if(restored)return;restored=true;if(descriptor)Object.defineProperty(scope,key,descriptor);else delete scope[key];}};
+}
+export interface PresentationFixture {name:string;value:unknown;valid:boolean}
+export const presentationFixtures:readonly PresentationFixture[]=Object.freeze([
+ {name:'versioned plan',value:{schema:'plan-graph/plan@1',data:{id:'env_example:plans/x.plan.pkl'}},valid:true},
+ {name:'no major zero',value:{schema:'plan-graph/plan@0',data:{}},valid:false},
+ {name:'no uppercase namespace',value:{schema:'Plan-graph/plan@1',data:{}},valid:false},
+ {name:'no slash path nesting',value:{schema:'plan-graph/nested/plan@1',data:{}},valid:false},
+ {name:'utf8 bytes bounded',value:{schema:'plan-graph/plan@1',data:'界'.repeat(1366)},valid:false},
+]);

@@ -19,12 +19,16 @@ try {
   const consumer = join(scratch, 'consumer');
   mkdirSync(consumer);
   writeFileSync(join(consumer, 'package.json'), JSON.stringify({ name: 'packed-recognition-consumer', version: '1.0.0', private: true, type: 'module' }));
-  run('npm', ['install', '--ignore-scripts', '--no-audit', '--no-fund', join(scratch, packed.filename), '@get-bb/plugin-sdk@0.5.29', 'better-sqlite3@12.10.0', 'cron-parser@5.5.0', 'hono@4.11.9'], consumer);
+  run('npm', ['install', '--ignore-scripts', '--no-audit', '--no-fund', join(scratch, packed.filename), '@get-bb/plugin-sdk@0.5.29', 'better-sqlite3@12.10.0', 'cron-parser@5.5.0', 'hono@4.11.9', 'react@19.2.1', 'react-dom@19.2.1', 'jsdom@27.4.0', '@testing-library/react@16.3.2'], consumer);
   writeFileSync(join(consumer, 'probe.mjs'), `
 import assert from 'node:assert/strict';
 import * as root from '@phosphorco/bb-context-recognition';
 import * as bb from '@phosphorco/bb-context-recognition/bb';
 import * as kit from '@phosphorco/bb-context-recognition/testing';
+import * as registry from '@phosphorco/bb-context-recognition/presentation';
+import * as react from '@phosphorco/bb-context-recognition/react';
+import * as mounted from '@phosphorco/bb-context-recognition/testing/react';
+assert.equal(typeof registry.registerPresentation,'function');assert.equal(typeof react.PresentationHost,'function');assert.equal(typeof mounted.runPresentationConformance,'function');
 assert.equal(root.METHODS.describe, 'contextRecognitionDescribe');
 assert.equal(typeof bb.enumerateRecognitionSuppliers, 'function');
 assert.equal(typeof kit.runSupplierConformance, 'function');
@@ -32,10 +36,10 @@ const report = await kit.runSupplierConformance({ pluginId: 'packed-supplier', r
   bb.registerRecognitionSupplier(host, { revision: 'packed/1', linkify: { providers: [{ provider: 'packed', kinds: ['item'] }], handler: () => ({ candidates: [] }) } });
 } });
 assert.equal(report.passed, true, JSON.stringify(report));
-console.log('Packed consumer imports all three entries and runs source conformance; SDK 0.5.29.');
+console.log('Packed consumer imports all six entries and runs source conformance; SDK 0.5.29.');
 `);
   const output = run(process.execPath, ['probe.mjs'], consumer).trim();
-  console.log(JSON.stringify({ proof: 'packed-consumer-source', version: manifest.version, sdk: '0.5.29', entries: ['.', './bb', './testing'], sdkTestingPeers: ['better-sqlite3@12.10.0', 'cron-parser@5.5.0', 'hono@4.11.9'], nativeDatabaseTested: false, output }));
+  console.log(JSON.stringify({ proof: 'packed-consumer-source', version: manifest.version, sdk: '0.5.29', entries: ['.', './bb', './testing', './presentation', './react', './testing/react'], sdkTestingPeers: ['better-sqlite3@12.10.0', 'cron-parser@5.5.0', 'hono@4.11.9', '@testing-library/react@16.3.2'], nativeDatabaseTested: false, output }));
 } finally {
   rmSync(scratch, { recursive: true, force: true });
 }
