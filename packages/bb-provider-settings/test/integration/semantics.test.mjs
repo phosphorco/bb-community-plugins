@@ -99,6 +99,12 @@ test('v2-only roles are not interpreted as V1; malformed envelope still rejected
   assert.deepEqual(fn({protocol:'bb-provider-settings',versions:[2],roles:{future:true}},[1]),{kind:'incompatible',reason:'version',versions:[2]});
   for(const versions of [[],[0],[1.5],Array(17).fill(1)])assert.equal(fn({protocol:'bb-provider-settings',versions,roles:[]},[1]).reason,'schema');
 });
+test('version-only owner envelope reports its versions without roles',async()=>{
+  // Zod 4.4+ no longer treats a missing z.unknown() key as optional.
+  const fn=required(await loadPublic(),'negotiateVersion');
+  assert.deepEqual(fn({protocol:'bb-provider-settings',versions:[2]},[1]),{kind:'incompatible',reason:'version',versions:[2]});
+  assert.equal(fn({protocol:'bb-provider-settings',versions:[1]},[1]).reason,'schema');
+});
 for(const c of nativeErrors)test(`native error taxonomy ${c.expected}/${c.status??c.name}`,async()=>{
   const fn=required(await loadPublic(),'classifyOwnerError');
   const {expected,...error}=c;assert.equal(fn(error),expected);

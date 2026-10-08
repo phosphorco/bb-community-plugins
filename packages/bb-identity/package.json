@@ -1,6 +1,6 @@
 {
   "name": "@phosphorco/bb-identity",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "type": "module",
   "license": "MIT",
   "description": "Portable identity, provenance, and state contracts for BB integrations.",
@@ -79,7 +79,7 @@
     "zod": "4.3.6"
   },
   "peerDependencies": {
-    "@get-bb/plugin-sdk": "^0.4.15 || ^0.5.9",
+    "@get-bb/plugin-sdk": "^0.4.15 || ^0.5.9 || ^0.6.29",
     "react": "^19.0.0"
   },
   "peerDependenciesMeta": {

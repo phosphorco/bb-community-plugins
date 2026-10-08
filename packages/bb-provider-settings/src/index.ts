@@ -26,7 +26,7 @@ export const roleDescriptorV1Schema = z.object({ id: z.string().regex(/^[a-z][a-
         c.addIssue({ code: 'custom', message: 'Fields need cascade' });
 });
 export type RoleDescriptorV1 = z.infer<typeof roleDescriptorV1Schema>;
-export const describeEnvelopeSchema = z.object({ protocol: z.literal('bb-provider-settings'), versions: z.array(z.number().int().min(1).max(1000)).min(1).max(16), roles: z.unknown() }).passthrough();
+export const describeEnvelopeSchema = z.object({ protocol: z.literal('bb-provider-settings'), versions: z.array(z.number().int().min(1).max(1000)).min(1).max(16), roles: z.unknown().optional() }).passthrough();
 export type DescribeEnvelope = z.infer<typeof describeEnvelopeSchema>;
 export const readInputSchema = z.object({ version: z.literal(1), role: nonblank }).strict();
 export const validateInputSchema = readInputSchema.extend({ choice: roleChoiceSchema, sampleRoute: routeSchema.optional() }).strict();

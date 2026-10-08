@@ -9,8 +9,10 @@ function sdkSchema<T>(schema: z.ZodType<T>): StandardSchemaV1<T> {
                 return r.success ? { value: r.data } : { issues: r.error.issues.map(i => ({ message: i.message, path: i.path })) };
             } } };
 }
-export type CatalogSdk = Pick<BbPluginApi['sdk'], 'providers'> | Pick<PluginBrowserBbSdk, 'providers'>;
-export type OwnerSdk = Pick<BbPluginApi['sdk'], 'plugins'> | Pick<PluginBrowserBbSdk, 'plugins'>;
+// Only the methods the directory calls, so callers may pass a narrowed SDK
+// and later SDK releases may add methods to these areas.
+export type CatalogSdk = { readonly providers: Pick<BbPluginApi['sdk']['providers'], 'list' | 'models'> } | { readonly providers: Pick<PluginBrowserBbSdk['providers'], 'list' | 'models'> };
+export type OwnerSdk = { readonly plugins: Pick<BbPluginApi['sdk']['plugins'], 'list' | 'callRpc'> } | { readonly plugins: Pick<PluginBrowserBbSdk['plugins'], 'list' | 'callRpc'> };
 export interface OwnerRolePort {
     descriptor: RoleDescriptorV1;
     policy: ValidationPolicy;

@@ -1,6 +1,6 @@
 {
   "name": "@phosphorco/bb-provider-settings",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "type": "module",
   "license": "MIT",
   "description": "Explicit owner-bound provider role settings.",
@@ -54,7 +54,7 @@
     "zod": "^4.3.6"
   },
   "peerDependencies": {
-    "@get-bb/plugin-sdk": ">=0.5.29 <0.6",
+    "@get-bb/plugin-sdk": ">=0.5.29 <0.6 || ^0.6.29",
     "jsdom": "^27.0.0",
     "react": "^19.2.1",
     "react-dom": "^19.2.1"
