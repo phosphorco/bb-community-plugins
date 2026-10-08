@@ -1,8 +1,0 @@
-{
-  "observedAt": "2026-10-06T21:39:58.449Z",
-  "oldGeneration": "f0709f3fcdad4a94bf0b8108f7b39771",
-  "noOrphanAfterOldImport": true,
-  "newGeneration": "39c8db2081904d0dbcb154db1da62e92",
-  "oneListenerAfterReload": true,
-  "browser": "153.0.8010.12"
-}

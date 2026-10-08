@@ -1,5 +1,0 @@
-# Preserve immutable artifact bytes, including patch context and tool output.
-evidence/copy/adaptation.diff -whitespace
-evidence/floating/tests.txt -whitespace
-evidence/floating/typecheck.txt -whitespace
-evidence/review/PERSPECTIVES.md -whitespace

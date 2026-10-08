@@ -1,9 +1,0 @@
-{
-  "initialScratch": "/tmp/bb-guide-compat-thr_4zxh9sadbe-bDhSyI",
-  "initialScratchRemoved": true,
-  "initialScratchRemovalExitStatus": 0,
-  "recheckScratch": "owned run-probe.sh mktemp directories",
-  "recheckCleanup": "EXIT trap retires exact directory including node_modules, toolchains, npm cache",
-  "sharedCachesTouched": false,
-  "installedTreesRetained": false
-}
