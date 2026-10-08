@@ -29,3 +29,17 @@ not part of a routine build check.
 Before handoff run `npm run test`, `npm run typecheck`, and `npm run build`.
 Never commit generated `dist/` output. Preserve Agentation's upstream
 attribution and complete plugin-scoped third-party notices.
+
+## Recoverable errors
+
+Plugin error UI must describe the current failure. Automatically clear an error
+when a successful read, authoritative snapshot, or confirmed operation resolves
+that same failure, including recovery with unchanged content. Do not require
+manual dismissal or a page reload. Keep the last good content during outages.
+Starting a retry or reconnecting alone is not proof of recovery; unrelated
+success must not clear a failed write or an unknown operation outcome.
+
+Use existing subscriptions and reconnect signals to observe recovery. Where a
+read needs retries, share them within the mounted resource, bound their rate,
+pause while hidden, and cancel on teardown. Do not automatically replay writes.
+Cover failure → automatic recovery and stale-response/teardown behavior in tests.
