@@ -1,0 +1,64 @@
+{
+  "name": "@phosphorco/bb-plugin-figma",
+  "version": "0.1.0",
+  "type": "module",
+  "license": "MIT",
+  "description": "Shared Figma connections, cached figmog reads and the official Figma MCP toolset in BB.",
+  "author": "Phosphor",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/phosphorco/bb-community-plugins.git",
+    "directory": "plugins/figma"
+  },
+  "engines": {
+    "bb": ">=0.44.0 <1.0.0",
+    "bbPluginSdk": "^0.5.29"
+  },
+  "bb": {
+    "name": "Figma",
+    "description": "Read designs locally with figmog and use the official Figma tools to edit them.",
+    "branding": {
+      "icon": "PenTool"
+    },
+    "server": "./server.ts",
+    "app": "./app.tsx",
+    "skills": [
+      "./skills/figma"
+    ]
+  },
+  "files": [
+    "dist/",
+    "README.md",
+    "LICENSE",
+    "skills/",
+    "*.ts",
+    "*.tsx",
+    "*.css",
+    "mcp/",
+    "mirror/"
+  ],
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.32.1",
+    "zod": "4.3.6"
+  },
+  "devDependencies": {
+    "@get-bb/plugin-sdk": "0.5.29",
+    "@types/better-sqlite3": "^7.6.12",
+    "@types/node": "^22",
+    "@types/react": "19.2.2",
+    "@types/react-dom": "19.2.2",
+    "react": "19.2.1",
+    "react-dom": "19.2.1",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.1",
+    "jsdom": "^26.1.0",
+    "@testing-library/react": "^16.3.2",
+    "@testing-library/dom": "^10.4.0",
+    "better-sqlite3": "^12.0.0"
+  },
+  "scripts": {
+    "build": "\"${BB_CLI:-bb}\" plugin build .",
+    "test": "node --test --experimental-strip-types test/*.test.ts && vitest run test/*.test.tsx",
+    "typecheck": "tsc --noEmit"
+  }
+}

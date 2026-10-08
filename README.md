@@ -8,6 +8,7 @@
 
 | Plugin | Purpose |
 |---|---|
+| [Figma](plugins/figma/) | Manage shared Figma connections, cached figmog reads and the official MCP tools for design edits. |
 | [Compact display](plugins/compact-display/) | Reduce prompt editor height and spacing with the plugin enable switch. |
 | [Message Timings Nerd](plugins/message-timings-nerd/) | Send times, agent turnaround, and waits between replies. |
 | [Cross References](plugins/cross-references/) | Connect and discover related resources through authority-free multipart identities. |

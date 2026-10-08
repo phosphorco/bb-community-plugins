@@ -1,0 +1,441 @@
+{
+  "tools": [
+    {
+      "description": "File name, version, last modified time, and node count \u2014 reads the local mirror (no Figma API cost).",
+      "inputSchema": {
+        "properties": {
+          "file": {
+            "description": "Figma file URL or key; omit for the default mirrored file.",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "name": "figmog_status"
+    },
+    {
+      "description": "List the file's pages (CANVAS nodes), in document order \u2014 reads the local mirror (no Figma API cost).",
+      "inputSchema": {
+        "properties": {
+          "file": {
+            "description": "Figma file URL or key; omit for the default mirrored file.",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "name": "figmog_pages"
+    },
+    {
+      "description": "Subtree outline (id, name, type, children) rooted at a node, defaulting to the whole document \u2014 reads the local mirror (no Figma API cost).",
+      "inputSchema": {
+        "properties": {
+          "depth": {
+            "description": "Max depth to descend; omitted means unlimited.",
+            "type": "integer"
+          },
+          "file": {
+            "description": "Figma file URL or key; omit for the default mirrored file.",
+            "type": "string"
+          },
+          "id": {
+            "description": "Root node id; defaults to the DOCUMENT node.",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "name": "figmog_tree"
+    },
+    {
+      "description": "Full raw JSON of one node by id, optionally with a one-level children summary and/or a resolved_variables annotation \u2014 reads the local mirror (no Figma API cost).",
+      "inputSchema": {
+        "properties": {
+          "children": {
+            "description": "Inline a one-level children summary.",
+            "type": "boolean"
+          },
+          "file": {
+            "description": "Figma file URL or key; omit for the default mirrored file.",
+            "type": "string"
+          },
+          "id": {
+            "description": "Node id (12:34 or 12-34 form).",
+            "type": "string"
+          },
+          "resolve_vars": {
+            "description": "Annotate boundVariables binding sites with variable names/values under a resolved_variables key.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "type": "object"
+      },
+      "name": "figmog_node"
+    },
+    {
+      "description": "Full raw JSON of a node and its descendants, nested under `children` in child-index order \u2014 reads the local mirror (no Figma API cost). Use `depth` and `fields` to keep the response small; an unbounded dump of a large subtree can be huge.",
+      "inputSchema": {
+        "properties": {
+          "depth": {
+            "description": "Max depth to descend; omitted means unlimited.",
+            "type": "integer"
+          },
+          "fields": {
+            "description": "Project every node to these raw fields (id/name/type/children always survive). Recommended for large subtrees.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "file": {
+            "description": "Figma file URL or key; omit for the default mirrored file.",
+            "type": "string"
+          },
+          "id": {
+            "description": "Root node id (12:34 or 12-34 form).",
+            "type": "string"
+          },
+          "resolve_vars": {
+            "description": "Annotate boundVariables binding sites with variable names/values under a resolved_variables key.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "type": "object"
+      },
+      "name": "figmog_subtree"
+    },
+    {
+      "description": "Nodes by Figma node type, optionally scoped to one page and/or a subtree \u2014 reads the local mirror (no Figma API cost).",
+      "inputSchema": {
+        "properties": {
+          "file": {
+            "description": "Figma file URL or key; omit for the default mirrored file.",
+            "type": "string"
+          },
+          "page": {
+            "description": "Page (CANVAS) node id to scope to.",
+            "type": "string"
+          },
+          "type": {
+            "description": "Figma node type, e.g. FRAME.",
+            "type": "string"
+          },
+          "under": {
+            "description": "Scope to the subtree rooted at this node id (inclusive).",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type"
+        ],
+        "type": "object"
+      },
+      "name": "figmog_find"
+    },
+    {
+      "description": "BM25 search over layer names and text content, optionally scoped to a subtree \u2014 reads the local mirror (no Figma API cost).",
+      "inputSchema": {
+        "properties": {
+          "file": {
+            "description": "Figma file URL or key; omit for the default mirrored file.",
+            "type": "string"
+          },
+          "limit": {
+            "description": "Max hits (default 10).",
+            "type": "integer"
+          },
+          "query": {
+            "type": "string"
+          },
+          "under": {
+            "description": "Scope to the subtree rooted at this node id (inclusive).",
+            "type": "string"
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "type": "object"
+      },
+      "name": "figmog_search"
+    },
+    {
+      "description": "Instances of a component, resolved by node id, global key, or component/component-set name \u2014 reads the local mirror (no Figma API cost).",
+      "inputSchema": {
+        "properties": {
+          "file": {
+            "description": "Figma file URL or key; omit for the default mirrored file.",
+            "type": "string"
+          },
+          "target": {
+            "description": "Node id, key, or name of a component or component set.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "target"
+        ],
+        "type": "object"
+      },
+      "name": "figmog_instances"
+    },
+    {
+      "description": "Design-system inventory: component sets with their variant axes, plus standalone components \u2014 reads the local mirror (no Figma API cost).",
+      "inputSchema": {
+        "properties": {
+          "file": {
+            "description": "Figma file URL or key; omit for the default mirrored file.",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "name": "figmog_components"
+    },
+    {
+      "description": "Styles with usage counts; `values` derives each style's definition from a consumer node \u2014 reads the local mirror (no Figma API cost).",
+      "inputSchema": {
+        "properties": {
+          "file": {
+            "description": "Figma file URL or key; omit for the default mirrored file.",
+            "type": "string"
+          },
+          "resolve_vars": {
+            "description": "With values, annotate the definition's variable bindings under a resolved_variables key.",
+            "type": "boolean"
+          },
+          "type": {
+            "description": "Style type filter, e.g. FILL, TEXT.",
+            "type": "string"
+          },
+          "values": {
+            "description": "Derive each style's definition from a consumer node.",
+            "type": "boolean"
+          }
+        },
+        "type": "object"
+      },
+      "name": "figmog_styles"
+    },
+    {
+      "description": "Nodes using a style id or bound to a variable id \u2014 reads the local mirror (no Figma API cost).",
+      "inputSchema": {
+        "properties": {
+          "file": {
+            "description": "Figma file URL or key; omit for the default mirrored file.",
+            "type": "string"
+          },
+          "id": {
+            "description": "A style id or variable id.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "type": "object"
+      },
+      "name": "figmog_uses"
+    },
+    {
+      "description": "Variables: the authoritative record if imported via figmog import-variables, else inferred from bindings \u2014 reads the local mirror (no Figma API cost).",
+      "inputSchema": {
+        "properties": {
+          "file": {
+            "description": "Figma file URL or key; omit for the default mirrored file.",
+            "type": "string"
+          },
+          "id": {
+            "description": "Variable id filter; omitted means all variables.",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "name": "figmog_vars"
+    },
+    {
+      "description": "Forces one pull from Figma and returns the sync churn (+added ~changed -removed) \u2014 fetches from Figma (spends Tier-1 rate budget).",
+      "inputSchema": {
+        "properties": {
+          "file": {
+            "description": "Figma file URL or key; omit for the default mirrored file.",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "name": "figmog_sync"
+    },
+    {
+      "description": "Node counts by type and by page, component/set/style/variable totals, text-node count, max tree depth \u2014 reads the local mirror (no Figma API cost).",
+      "inputSchema": {
+        "properties": {
+          "file": {
+            "description": "Figma file URL or key; omit for the default mirrored file.",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "name": "figmog_stats"
+    },
+    {
+      "description": "Ancestor chain from the document root to a node, as [{id, name, type}] \u2014 reads the local mirror (no Figma API cost).",
+      "inputSchema": {
+        "properties": {
+          "file": {
+            "description": "Figma file URL or key; omit for the default mirrored file.",
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "type": "object"
+      },
+      "name": "figmog_path"
+    },
+    {
+      "description": "Every TEXT node's (id, characters, page_id), optionally scoped to one page and/or a subtree, sorted by id \u2014 reads the local mirror (no Figma API cost).",
+      "inputSchema": {
+        "properties": {
+          "file": {
+            "description": "Figma file URL or key; omit for the default mirrored file.",
+            "type": "string"
+          },
+          "page": {
+            "type": "string"
+          },
+          "under": {
+            "description": "Scope to the subtree rooted at this node id (inclusive).",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "name": "figmog_text"
+    },
+    {
+      "description": "Nodes whose raw JSON matches an RFC 6901 pointer, optionally filtered by value and/or scoped to a page/subtree \u2014 reads the local mirror (no Figma API cost).",
+      "inputSchema": {
+        "properties": {
+          "equals": {
+            "description": "JSON value to match; omitted means \"pointer exists\"."
+          },
+          "file": {
+            "description": "Figma file URL or key; omit for the default mirrored file.",
+            "type": "string"
+          },
+          "page": {
+            "type": "string"
+          },
+          "pointer": {
+            "description": "RFC 6901 pointer into the node's raw JSON, e.g. /layoutMode.",
+            "type": "string"
+          },
+          "under": {
+            "description": "Scope to the subtree rooted at this node id (inclusive).",
+            "type": "string"
+          }
+        },
+        "required": [
+          "pointer"
+        ],
+        "type": "object"
+      },
+      "name": "figmog_where"
+    },
+    {
+      "description": "Download node renders and/or fill images (v0.0.2 spec \u00a75), cached by file version \u2014 spends Figma API budget (the images endpoints are the most rate-limited; never called automatically). Returns a JSON manifest plus, per item up to 1MB encoded: an image content block (base64) for raster formats, or the raw SVG markup as a text block for format=svg; larger items point at the CLI's `figmog images --out` instead.",
+      "inputSchema": {
+        "properties": {
+          "file": {
+            "description": "Figma file URL or key; omit for the default mirrored file.",
+            "type": "string"
+          },
+          "format": {
+            "description": "Render format: png or svg (default png).",
+            "type": "string"
+          },
+          "ids": {
+            "description": "Node ids (or Figma URLs carrying node-id=) to render, and/or to scan for fill imageRefs.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "scale": {
+            "description": "Render scale (default 1).",
+            "type": "number"
+          }
+        },
+        "required": [
+          "ids"
+        ],
+        "type": "object"
+      },
+      "name": "figmog_images"
+    },
+    {
+      "description": "Nodes whose absolute bounds contain a point, sorted by area ascending (deepest/smallest first) \u2014 reads the local mirror (no Figma API cost).",
+      "inputSchema": {
+        "properties": {
+          "file": {
+            "description": "Figma file URL or key; omit for the default mirrored file.",
+            "type": "string"
+          },
+          "x": {
+            "type": "number"
+          },
+          "y": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "x",
+          "y"
+        ],
+        "type": "object"
+      },
+      "name": "figmog_at"
+    },
+    {
+      "description": "Mirror a Figma file now (spends one Tier-1 pull) \u2014 creates the mirror if it's new, or re-syncs it if already mirrored. Returns the sync churn and node count.",
+      "inputSchema": {
+        "properties": {
+          "file": {
+            "description": "Figma file URL or key to mirror.",
+            "type": "string"
+          },
+          "geometry": {
+            "description": "Request vector path data (fillGeometry/strokeGeometry) on this pull. Sticky (spec \u00a74): once set, every later pull of this mirror keeps requesting it until a `pull --fresh`. Omitted preserves whatever this mirror already has stored; default false for a brand-new mirror.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "file"
+        ],
+        "type": "object"
+      },
+      "name": "figmog_open"
+    },
+    {
+      "description": "List every mirrored file: key, name, version, node count, last synced time, and which one is the default \u2014 reads local state only (no Figma API cost).",
+      "inputSchema": {
+        "properties": {},
+        "type": "object"
+      },
+      "name": "figmog_files"
+    }
+  ]
+}
