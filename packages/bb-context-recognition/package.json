@@ -1,6 +1,6 @@
 {
   "name": "@phosphorco/bb-context-recognition",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "type": "module",
   "license": "MIT",
   "description": "Bounded contextual recognition and hosted supplier presentations.",
@@ -62,7 +62,7 @@
     "zod": "^4.3.6"
   },
   "peerDependencies": {
-    "@get-bb/plugin-sdk": ">=0.5.29 <0.6",
+    "@get-bb/plugin-sdk": "^0.5.29 || ^0.6.29",
     "react": "^19",
     "react-dom": "^19",
     "jsdom": "^27.0.0"

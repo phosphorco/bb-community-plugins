@@ -58,7 +58,7 @@ Rules that follow from the table:
 Consumers render cards with their own components. Package 0.4.0 adds the
 optional frontend presentation lease in §16; executable code never crosses RPC.
 
-Package version (`0.4.0`) and wire version (`1`) are separate numbers (§10).
+Package version (`0.4.1`) and wire version (`1`) are separate numbers (§10).
 
 ## 3. Identities, spans and shared types
 
@@ -800,3 +800,18 @@ under a test SDK facade. The bundle scan fails closed on unapproved SDK app
 imports and DOM scanning; its conservative lexical checks are source proof,
 not arbitrary-code isolation. Real two-plugin CSS, reload, disable and routing
 proof remains an adopter/live obligation.
+
+### 16.1 Recovery of hosted renderer failures (0.4.1)
+
+The consumer may supply `retryKey` to remount a failed boundary without changing
+the authoritative source revision. A rejected lazy load is retried on a new
+consumer attempt; successful component loads remain shared. `onReady` acknowledges
+the subtree after Suspense and commit effects. Boundary failure or teardown
+cancels a pending acknowledgement, so the consumer clears only its matching
+diagnostic and recovery work. Neither signal changes the wire
+protocol or registry meaning. The consumer owns retry rate, visibility pauses,
+teardown and error presentation; the package creates no retry timers.
+
+The 0.4.1 optional SDK peer range includes `^0.5.29 || ^0.6.29`. Packed source
+probes cover registry SDK 0.5.29 and the selected 0.6.29 fork artifact when supplied;
+this does not establish all future SDK versions or live host behavior.

@@ -56,6 +56,19 @@ probe uses RPC registration only, so it does not open or test a native database.
 
 The hosted scan bundles the complete supplier entry graph with Bun and keeps SDK/React external. Bun is needed by the testing scan, not by production registry or host code. Native realm copies, local owner aborts, fallback isolation and source hook checks do not establish real BB stylesheet/loading behavior.
 
+0.4.1 adds optional consumer retry keys and commit confirmation for hosted
+renderer recovery. Rejected lazy imports can reload on the next consumer attempt;
+successful imports remain shared. Consumers still own retries and visibility
+lifetimes; the package adds no timers or background work.
+
 SDK 0.5.29 `/testing/app` additionally requires its optional
 `@testing-library/react@16.3.2` peer; the packed probe provisions it only in
 scratch along with React/React DOM and jsdom.
+
+The packed probe additionally compiles actual SDK client assignments and mounts
+failure → same-revision recovery from the installed tarball. It always tests
+SDK 0.5.29. With the canonical selected 0.6.29 artifact present (or an explicit
+`BB_CONTEXT_RECOGNITION_SDK` path), it repeats the probe for that SDK; the receipt
+records the matrix actually exercised. SDK 0.6.29 is not available on npm, and
+the current CI artifact receipt predates it, so CI currently exercises 0.5.29.
+Local selected-artifact proof supports the widened `^0.5.29 || ^0.6.29` peer range.

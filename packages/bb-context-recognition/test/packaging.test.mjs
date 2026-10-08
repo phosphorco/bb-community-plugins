@@ -8,7 +8,7 @@ import * as kit from '@phosphorco/bb-context-recognition/testing';
 const text=name=>readFileSync(new URL('../'+name,import.meta.url),'utf8');
 function imports(source){return [...source.matchAll(/\b(?:from\s*|import\s*)["']([^"']+)["']/g)].map(m=>m[1]);}
 test('all entries self-resolve with matching emitted declarations; optional entry peers and no eager DOM dependencies',()=>{
- const manifest=JSON.parse(text('package.json'));assert.equal(manifest.name,'@phosphorco/bb-context-recognition');assert.equal(manifest.version,'0.4.0');
+ const manifest=JSON.parse(text('package.json'));assert.equal(manifest.name,'@phosphorco/bb-context-recognition');assert.equal(manifest.version,'0.4.1');
  assert.deepEqual(Object.keys(manifest.exports),['.','./bb','./testing','./presentation','./react','./testing/react']);
  for(const entry of Object.values(manifest.exports))for(const path of [entry.import,entry.types])assert.ok(existsSync(new URL('../'+path,import.meta.url)),path);
  assert.equal(manifest.devDependencies.bun,'1.3.14');assert.equal(manifest.devDependencies['@get-bb/plugin-sdk'],'0.5.29');assert.equal(manifest.peerDependenciesMeta['@get-bb/plugin-sdk'].optional,true);
@@ -32,9 +32,9 @@ test('packed consumer installs npm tarball and imports all six entries', { timeo
  assert.ifError(result.error);
  assert.equal(result.status,0,`${result.stdout}\n${result.stderr}`);
  const receipt=JSON.parse(result.stdout.trim());
- assert.equal(receipt.version,'0.4.0');
+ assert.equal(receipt.version,'0.4.1');
  assert.deepEqual(receipt.entries,['.','./bb','./testing','./presentation','./react','./testing/react']);
- assert.equal(receipt.sdk,'0.5.29');
+ assert.deepEqual(receipt.sdks.map(p=>p.sdk),receipt.selectedSdkAvailable?['0.5.29','0.6.29']:['0.5.29']);assert.ok(receipt.sdks.every(p=>p.types));
 });
 
 test("presentation registry emitted entry has no runtime dependencies",()=>{assert.deepEqual(imports(text("dist/presentation.js")),[]);});

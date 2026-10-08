@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {mkdtemp,writeFile,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
-import React,{act,useEffect,useState,StrictMode} from 'react';
+import React,{act,useEffect,useLayoutEffect,useState,StrictMode} from 'react';
 import {createRoot} from 'react-dom/client';
 import {JSDOM} from 'jsdom';
 import {z} from 'zod';
@@ -63,6 +63,70 @@ test('PresentationHost StrictMode owner reads survive remount and unmount cancel
   const props={...hostProps,sdk:{plugins:{callRpc:async a=>{calls.push(a);return {};}}}};
   await act(async()=>m.root.render(React.createElement(StrictMode,null,React.createElement(PresentationHost,props))));await act(async()=>new Promise(r=>setTimeout(r,20)));assert.match(m.dom.window.document.body.textContent,/owner ready/);
   await act(async()=>m.root.render(null));assert.ok(calls.every(a=>a.signal.aborted));
+ }finally{await m.dispose();realm.restore();}
+});
+test('consumer retry remounts a failed renderer at the same revision and reports readiness only after commit',async()=>{
+ const realm=createIsolatedPresentationRealm(),m=await mount();let broken=true,ready=0;
+ try{
+  registerPresentation(ctx(),{...registration,load:async()=>()=>{if(broken)throw new Error('Temporary renderer fault');return React.createElement('p',null,'Recovered graph');}});
+  const render=async retryKey=>{await act(async()=>m.root.render(React.createElement(PresentationHost,{...hostProps,revision:'unchanged',retryKey,onReady:()=>{ready++;}})));await act(async()=>new Promise(r=>setTimeout(r,10)));};
+  await render(0);assert.match(m.dom.window.document.body.textContent,/Plan view failed/);assert.equal(ready,0);
+  broken=false;await render(1);assert.match(m.dom.window.document.body.textContent,/Recovered graph/);assert.doesNotMatch(m.dom.window.document.body.textContent,/Plan view failed/);assert.equal(ready,1);
+ }finally{await m.dispose();realm.restore();}
+});
+test('consumer retry can reload a rejected lazy import while Suspense does not report recovery',async()=>{
+ const realm=createIsolatedPresentationRealm(),m=await mount();let loads=0,complete,ready=0;
+ try{
+  registerPresentation(ctx(),{...registration,load:()=>{loads++;if(loads===1)return Promise.reject(new Error('Disconnected chunk load'));return new Promise(r=>complete=r);}});
+  const props={...hostProps,onReady:()=>{ready++;}};
+  await act(async()=>m.root.render(React.createElement(PresentationHost,{...props,retryKey:0})));await act(async()=>new Promise(r=>setTimeout(r,10)));
+  assert.match(m.dom.window.document.body.textContent,/Plan view failed/);assert.equal(ready,0);
+  await act(async()=>m.root.render(React.createElement(PresentationHost,{...props,retryKey:1})));
+  assert.equal(loads,2);assert.equal(ready,0);assert.match(m.dom.window.document.body.textContent,/Card fallback/);
+  await act(async()=>complete(()=>React.createElement('p',null,'Recovered lazy graph')));
+  assert.match(m.dom.window.document.body.textContent,/Recovered lazy graph/);assert.equal(ready,1);
+ }finally{await m.dispose();realm.restore();}
+});
+test('consumer retry reloads a synchronously throwing loader',async()=>{
+ const realm=createIsolatedPresentationRealm(),m=await mount();let loads=0,broken=true;
+ try{
+  registerPresentation(ctx(),{...registration,load:()=>{loads++;if(broken)throw new Error('Temporary loader failure');return Promise.resolve(()=>React.createElement('p',null,'Recovered sync loader'));}});
+  await act(async()=>m.root.render(React.createElement(PresentationHost,{...hostProps,retryKey:0})));
+  assert.match(m.dom.window.document.body.textContent,/Plan view failed/);
+  const before=loads;broken=false;
+  await act(async()=>m.root.render(React.createElement(PresentationHost,{...hostProps,retryKey:1})));
+  assert.ok(loads>before);assert.match(m.dom.window.document.body.textContent,/Recovered sync loader/);
+ }finally{await m.dispose();realm.restore();}
+});
+for(const [name,effect] of [['layout',useLayoutEffect],['passive',useEffect]])test(`${name} effect failures do not acknowledge recovery`,async()=>{
+ const realm=createIsolatedPresentationRealm(),m=await mount();let broken=true,ready=0;const diagnostics=[];
+ try{
+  registerPresentation(ctx(),{...registration,load:async()=>function View(){effect(()=>{if(broken)throw new Error('Temporary effect failure');},[]);return React.createElement('p',null,'Effect graph');}});
+  const props={...hostProps,onReady:()=>ready++,onDiagnostic:d=>diagnostics.push(d)};
+  await act(async()=>m.root.render(React.createElement(PresentationHost,{...props,retryKey:0})));
+  assert.equal(ready,0);assert.ok(diagnostics.length);assert.match(m.dom.window.document.body.textContent,/Plan view failed/);
+  broken=false;await act(async()=>m.root.render(React.createElement(PresentationHost,{...props,retryKey:1})));
+  assert.equal(ready,1);assert.match(m.dom.window.document.body.textContent,/Effect graph/);
+ }finally{await m.dispose();realm.restore();}
+});
+test('staggered hosts retry rejected shared imports with independent attempt counters',async()=>{
+ const realm=createIsolatedPresentationRealm(),m=await mount();let loads=0;
+ try{
+  registerPresentation(ctx(),{...registration,load:()=>++loads<3?Promise.reject(new Error('Temporary chunk failure')):Promise.resolve(()=>React.createElement('p',null,'Shared recovered graph'))});
+  const host=(key,retryKey)=>React.createElement(PresentationHost,{...hostProps,key,retryKey});
+  await act(async()=>m.root.render(host('a',0)));assert.equal(loads,1);
+  await act(async()=>m.root.render(React.createElement(React.Fragment,null,host('a',0),host('b',1))));assert.equal(loads,2);
+  await act(async()=>m.root.render(React.createElement(React.Fragment,null,host('a',1),host('b',1))));assert.equal(loads,3);assert.match(m.dom.window.document.body.textContent,/Shared recovered graph/);
+  await act(async()=>m.root.render(React.createElement(React.Fragment,null,host('a',1),host('b',2))));assert.equal(loads,3);assert.doesNotMatch(m.dom.window.document.body.textContent,/Plan view failed/);
+ }finally{await m.dispose();realm.restore();}
+});
+test('an import completing after unmount cannot acknowledge recovery',async()=>{
+ const realm=createIsolatedPresentationRealm(),m=await mount();let complete,ready=0;
+ try{
+  registerPresentation(ctx(),{...registration,load:()=>new Promise(r=>complete=r)});
+  await act(async()=>m.root.render(React.createElement(PresentationHost,{...hostProps,onReady:()=>ready++})));
+  await act(async()=>m.root.render(null));await act(async()=>complete(()=>React.createElement('p',null,'Late graph')));
+  assert.equal(ready,0);assert.equal(m.dom.window.document.body.textContent,'');
  }finally{await m.dispose();realm.restore();}
 });
 function server(bb){

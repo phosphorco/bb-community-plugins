@@ -207,9 +207,11 @@ Steps, all inside the consumer's tree:
    miss, plugin not in `readyPlugins`, or `decode` → `null`/throw ⇒ `fallback`.
 2. Lazily resolve `entry.load()` once per `token` (memoized `React.lazy`), under
    `<Suspense fallback={fallback}>`: first paint is the data card, as today.
-3. Wrap in an **error boundary** keyed by `token + revision`; on error render
+3. Wrap in an **error boundary** keyed by `token + revision + retryKey`; on error render
    `fallback` plus a muted "Plan view failed" note and report once through
-   `onDiagnostic`. A hosted crash never reaches the consumer's `PluginSlotBoundary`.
+   `onDiagnostic`. The consumer advances `retryKey` for a bounded recovery attempt;
+   `onReady` confirms a committed supplier subtree after Suspense. Failed lazy
+   imports may reload on a new attempt; successful loads remain shared. A hosted crash never reaches the consumer's `PluginSlotBoundary`.
 4. Render `<div data-bb-plugin-root="" data-bb-plugin={entry.pluginId} className="contents">`
    around the component so the owner's scoped utilities apply (§6.2).
 5. Owner client and navigator are memoized per entry; unmount aborts in-flight
