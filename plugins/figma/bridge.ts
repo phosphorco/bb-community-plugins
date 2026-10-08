@@ -395,7 +395,7 @@ export function createBridge(options: BridgeOptions): Bridge {
   };
   options.bb.agents.registerTool({
     name: "figma_discover", description: "Discover the complete current authenticated Figma or figmog MCP tool catalog, with schemas and capabilities.",
-    parameters: z.object({ source: sourceSchema }).strict(),
+    parameters: z.object({ source: sourceSchema.default("official") }).strict(),
     execute: async ({ source }, ctx) => {
       const signal = signalFor(source, ctx.signal);
       const peer = await acquire(source, signal);
@@ -418,12 +418,12 @@ export function createBridge(options: BridgeOptions): Bridge {
   });
   options.bb.agents.registerTool({
     name: "figma_call", description: "Call any current upstream Figma/figmog tool by its original name and arguments. Use figma_discover for its full schema.",
-    parameters: z.object({ source: sourceSchema, name: z.string().min(1), arguments: objectSchema.default({}) }).strict(),
+    parameters: z.object({ source: sourceSchema.default("official"), name: z.string().min(1), arguments: objectSchema.default({}) }).strict(),
     execute: ({ source, name, arguments: args }, ctx) => call(source, { name, arguments: args }, ctx),
   });
   options.bb.agents.registerTool({
     name: "figma_mcp", description: "Use advertised MCP tools, resources/templates/read/subscriptions, prompts, completion, logging and task methods. Pass the original method and parameters; unsupported server-driven features are not auto-approved.",
-    parameters: z.object({ source: sourceSchema, method: z.string().min(1), params: objectSchema.default({}) }).strict(),
+    parameters: z.object({ source: sourceSchema.default("official"), method: z.string().min(1), params: objectSchema.default({}) }).strict(),
     execute: async ({ source, method, params }, ctx) => {
       if (method === "tools/call") return call(source, params, ctx);
       const signal = signalFor(source, ctx.signal);

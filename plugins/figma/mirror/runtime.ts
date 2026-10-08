@@ -112,7 +112,9 @@ export function createMirrorManager(options: MirrorOptions): MirrorManager {
   const load = async () => {
     if (loaded) return;
     await mkdir(directory, { recursive: true, mode: 0o700 }); await chmod(directory, 0o700);
-    const digest = createHash("sha256").update("bb-figma-mirror-token\0").update(config.token).digest("hex");
+    const hash = createHash("sha256").update("bb-figma-mirror-token\0").update(config.token);
+    if (config.cacheGeneration) hash.update("\0").update(config.cacheGeneration);
+    const digest = hash.digest("hex");
     generationDir = join(directory, `generation-${digest}`);
     await mkdir(generationDir, { recursive: true, mode: 0o700 }); await chmod(generationDir, 0o700);
     state = blank();
@@ -335,10 +337,10 @@ export function createMirrorManager(options: MirrorOptions): MirrorManager {
     configure: (next) => {
       if (disposed) return Promise.reject(new Error("Figmog manager is disposed."));
       const captured = { ...next };
-      if (captured.binaryPath === desiredConfig.binaryPath && captured.token === desiredConfig.token && (captured.intervalSeconds ?? 10) === (desiredConfig.intervalSeconds ?? 10)) return Promise.resolve();
+      if (captured.binaryPath === desiredConfig.binaryPath && captured.token === desiredConfig.token && captured.cacheGeneration === desiredConfig.cacheGeneration && (captured.intervalSeconds ?? 10) === (desiredConfig.intervalSeconds ?? 10)) return Promise.resolve();
       desiredConfig = captured;
       return transition(async () => {
-        if (captured.token === config.token) {
+        if (captured.token === config.token && captured.cacheGeneration === config.cacheGeneration) {
           // Replacing a binary cannot release writes still running upstream.
           config = captured;
         } else {

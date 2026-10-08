@@ -1,4 +1,7 @@
-import { dirname, isAbsolute, join } from "node:path";
+import { delimiter, dirname, isAbsolute, join } from "node:path";
+import { randomUUID } from "node:crypto";
+import { constants } from "node:fs";
+import { access, stat } from "node:fs/promises";
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 
@@ -11,6 +14,8 @@ import { createMirrorManager } from "./mirror/runtime.ts";
 
 const configurationSchema = z.object({
   binaryPath: z.string().min(1).default("figmog"),
+  mirrorEnabled: z.boolean().default(false),
+  cacheGeneration: z.string().default(""),
   readToken: z.string().default(""),
   clientId: z.string().default(""),
   clientSecret: z.string().default(""),
@@ -26,6 +31,19 @@ export interface FigmaDependencies {
   remote?: (options: RemoteOptions) => RemoteManager;
   mirror?: (options: MirrorOptions) => MirrorManager;
   bridge?: (options: BridgeOptions) => Bridge;
+  resolveBinary?: (path: string) => Promise<string | null>;
+}
+
+async function resolveFigmog(path: string): Promise<string | null> {
+  const candidates = isAbsolute(path) ? [path] : path === "figmog"
+    ? (process.env.PATH ?? "").split(delimiter).filter(isAbsolute).slice(0, 64).map(directory => join(directory, "figmog")) : [];
+  for (const candidate of candidates) {
+    try {
+      await access(candidate, constants.X_OK);
+      if ((await stat(candidate)).isFile()) return candidate;
+    } catch { /* Optional dependency: continue checking the host's PATH. */ }
+  }
+  return null;
 }
 
 function configuredRedirect(value: string, pluginId: string): string {
@@ -88,12 +106,24 @@ export function createFigmaPlugin(dependencies: FigmaDependencies = {}) {
       config: async () => ({ clientId: config.clientId, clientSecret: config.clientSecret, redirectUri: config.redirectUri }),
       onChange: change,
     });
+    const resolveBinary = dependencies.resolveBinary ?? resolveFigmog;
+    const initialBinary = await resolveBinary(config.binaryPath);
+    const mirrorConfig = (path: string) => ({
+      binaryPath: config.mirrorEnabled ? path : "", token: config.readToken, cacheGeneration: config.cacheGeneration,
+    });
     const mirror = (dependencies.mirror ?? createMirrorManager)({
       directory: join(directory, "mirrors"),
-      config: { binaryPath: config.binaryPath, token: config.readToken },
+      config: mirrorConfig(initialBinary ?? config.binaryPath),
       onChange: change,
     });
+    const requireMirror = async () => {
+      if (!config.mirrorEnabled) throw new Error("Optional figmog cache is off. Use figma_discover with source=official for direct Figma reads and writes.");
+      const path = await resolveBinary(config.binaryPath);
+      if (!path) throw new Error("Optional figmog is not installed on the BB host. Use source=official, or install figmog and enable the cache in Figma settings.");
+      await mirror.configure(mirrorConfig(path));
+    };
     const refreshMirror = async (file: string | undefined, acceptUnverified: boolean, signal?: AbortSignal): Promise<JsonObject> => {
+      await requireMirror();
       const result = await mirror.refresh(file, signal, acceptUnverified);
       if (acceptUnverified) bb.log.info("Explicit Figma cache recovery completed; prior edit visibility remains unverified.");
       return result;
@@ -103,15 +133,19 @@ export function createFigmaPlugin(dependencies: FigmaDependencies = {}) {
     let bridge: Bridge;
     bridge = (dependencies.bridge ?? createBridge)({
       bb,
-      getPeer: (source, signal) => source === "official" ? remote.peer(signal) : mirror.peer(signal),
+      getPeer: async (source, signal) => {
+        if (source === "official") return remote.peer(signal);
+        await requireMirror();
+        return mirror.peer(signal);
+      },
       beforeOfficialWrite: async (args) => {
         // Keep the marker durable before dispatch; never replay a write after response loss.
-        if (!config.readToken) return;
+        if (!config.mirrorEnabled || !config.readToken) return;
         const ticket = await mirror.beginWrite(fileFromArguments(args));
         return (outcome: "completed" | "uncertain") => mirror.endWrite(ticket, outcome);
       },
       refreshMirror,
-      initialInventory: { official: cachedTools(previous?.official), mirror: cachedTools(previous?.mirror) },
+      initialInventory: { official: cachedTools(previous?.official), mirror: config.mirrorEnabled && initialBinary && config.readToken ? cachedTools(previous?.mirror) : [] },
       onCatalogChange: () => {
         if (!bridge || disposed) return;
         const value = { official: bridge.inventory("official"), mirror: bridge.inventory("mirror") };
@@ -121,23 +155,36 @@ export function createFigmaPlugin(dependencies: FigmaDependencies = {}) {
       },
     });
 
-    const snapshot = (): SettingsSnapshot => ({
+    const snapshot = async (): Promise<SettingsSnapshot> => {
+      const captured = config;
+      const binaryAvailable = !!await resolveBinary(captured.binaryPath);
+      const mirrorUsable = captured.mirrorEnabled && binaryAvailable && !!captured.readToken;
+      const mirrorDetail = !captured.mirrorEnabled ? "Optional figmog cache is off. Use the official Figma MCP connection for reads and writes."
+        : !binaryAvailable ? "figmog was not found on the BB host. Direct Figma MCP remains available when authorized. Install figmog only if you want the optional cache."
+        : !captured.readToken ? "Add a read token to use the optional figmog cache. Official Figma MCP uses its separate authorization." : null;
+      return {
       scope: "shared",
-      config: { binaryPath: config.binaryPath, tokenConfigured: !!config.readToken, clientId: config.clientId, clientSecretConfigured: !!config.clientSecret, redirectUri: config.redirectUri },
+      config: { binaryPath: captured.binaryPath, mirrorEnabled: captured.mirrorEnabled, binaryAvailable, tokenConfigured: !!captured.readToken, clientId: captured.clientId, clientSecretConfigured: !!captured.clientSecret, redirectUri: captured.redirectUri },
       official: configurationProblem ? { phase: "error", detail: configurationProblem, connectedAt: null, serverVersion: null } : remote.status(),
-      mirror: mirror.status(),
-      tools: { official: bridge.inventory("official"), mirror: bridge.inventory("mirror") },
+      mirror: mirrorUsable ? mirror.status() : { phase: "unconfigured", detail: mirrorDetail, connectedAt: null, serverVersion: null },
+      tools: { official: bridge.inventory("official"), mirror: mirrorUsable ? bridge.inventory("mirror") : [] },
       aliasesNeedReload: bridge.aliasesNeedReload(),
-    });
+      };
+    };
     const update = async (input: Partial<Configuration>): Promise<SettingsSnapshot> => {
       const next = configurationSchema.parse({ ...config, ...input });
+      const mirrorChanged = next.mirrorEnabled !== config.mirrorEnabled || next.binaryPath !== config.binaryPath || next.readToken !== config.readToken;
+      // A paused cache missed official edits. Re-enabling starts a fresh cache;
+      // old bytes remain isolated, never silently served as current content.
+      if (next.mirrorEnabled !== config.mirrorEnabled) next.cacheGeneration = randomUUID();
       next.redirectUri = configuredRedirect(next.redirectUri, bb.pluginId);
       const officialChanged = next.clientId !== config.clientId || next.clientSecret !== config.clientSecret || next.redirectUri !== config.redirectUri;
       if (officialChanged) await remote.disconnect();
       await configStore.write(next);
       config = next;
       configurationProblem = null;
-      await mirror.configure({ binaryPath: config.binaryPath, token: config.readToken });
+      await mirror.configure(mirrorConfig((await resolveBinary(config.binaryPath)) ?? config.binaryPath));
+      if (mirrorChanged) bridge.clear("mirror");
       change();
       return snapshot();
     };
@@ -151,12 +198,13 @@ export function createFigmaPlugin(dependencies: FigmaDependencies = {}) {
       }),
       disconnect: ({ source }) => serialize(async () => {
         if (source === "official") await remote.disconnect();
-        else await update({ readToken: "" });
+        else await update({ readToken: "", mirrorEnabled: false });
         bridge.clear?.(source);
         change();
         return snapshot();
       }),
       testConnection: ({ source, file }) => serialize(async () => {
+        if (source === "mirror") await requireMirror();
         await bridge.refresh(source);
         if (source === "mirror" && file) {
           const result = await (await mirror.peer()).request("tools/call", { name: "figmog_open", arguments: { file } });
@@ -166,6 +214,7 @@ export function createFigmaPlugin(dependencies: FigmaDependencies = {}) {
         return snapshot();
       }),
       refreshTools: ({ source }) => serialize(async () => {
+        if (source === "mirror") await requireMirror();
         await bridge.refresh(source);
         change();
         return snapshot();
@@ -200,7 +249,7 @@ export function createFigmaPlugin(dependencies: FigmaDependencies = {}) {
       }
     }, { auth: "none" });
 
-    bb.agents.contributeInstructions(() => "Use figmog_* for cached Figma reads. Use the official connection's discovered figma_* tools, especially use_figma through figma_call, for writes. figma_discover returns the actual available upstream schemas; figma_mcp provides resources, prompts and other advertised MCP operations. Read upstream skills/resources required by a tool. Connections are shared by this BB deployment. A successful write can take time to appear in the mirror; respect refresh-pending errors. After an uncertain write, inspect the actual canvas before retrying. Never guess that a disconnected tool or a cached schema is available.");
+    bb.agents.contributeInstructions(() => `Use the official Figma MCP connection for reads and writes: start with figma_discover source=official. Figmog is an optional cache, ${config.mirrorEnabled ? "enabled by the operator; use its discovered tools for repeated reads only when available" : "currently disabled"}. If figmog is missing or unavailable, discover the official tools and use their actual schemas; do not translate figmog arguments blindly or require an installation. Direct MCP still requires its own authorization. figma_mcp provides resources, prompts and other advertised MCP operations. Read upstream skills/resources required by a tool. Connections are shared by this BB deployment. Respect refresh-pending errors; after an uncertain write, inspect the official canvas before retrying. Never guess that a disconnected tool or cached schema is available.`);
     bb.onDispose(async () => {
       disposed = true;
       await Promise.allSettled([remote.close(), mirror.close(), bridge.close()]);

@@ -44,8 +44,12 @@ test("settings to OAuth to official write to fresh local read through the actual
       case "initialize": result = { protocolVersion: request.params.protocolVersion, capabilities: { tools: {}, resources: {}, prompts: {} }, serverInfo: { name: "fixture", version: "1" } }; break;
       case "tools/list":
         toolLists++;
-        result = { tools: [{ name: "use_figma", description: "Synthetic test write; not an asserted upstream schema.", inputSchema: { type: "object", properties: { fileKey: { type: "string" } }, required: ["fileKey"] }, annotations: { readOnlyHint: false } }] }; break;
+        result = { tools: [
+          { name: "use_figma", description: "Synthetic test write; not an asserted upstream schema.", inputSchema: { type: "object", properties: { fileKey: { type: "string" } }, required: ["fileKey"] }, annotations: { readOnlyHint: false } },
+          { name: "get_design_context", description: "Synthetic official read.", inputSchema: { type: "object" }, annotations: { readOnlyHint: true } },
+        ] }; break;
       case "tools/call":
+        if (request.params.name === "get_design_context") { result = { content: [{ type: "text", text: "official design context" }] }; break; }
         writes++;
         { const pending = pendingWrites.shift(); if (pending) { pending.entered(); await pending.gate; } }
         if (unauthorized) return new Response("fixture-private-error", { status: 401 });
@@ -60,12 +64,15 @@ test("settings to OAuth to official write to fresh local read through the actual
     await createFigmaPlugin({ directory: join(directory, "private"), remote: options => createRemoteManager({ ...options, fetch: remoteFetch }) })(bb);
     const rpc = (method: string, input: unknown = null) => harness.behavior.callRpc(method, input);
     const call = (source: string, name: string, args: JsonObject) => harness.callAgentTool("figma_call", { source, name, arguments: args });
-    await rpc("configure", { binaryPath: binary, readToken: "fixture-read", clientId: "fixture-client", clientSecret: "fixture-secret", redirectUri: "https://bb.example/api/v1/plugins/figma/http/oauth/callback" });
+    await rpc("configure", { binaryPath: join(directory, "missing-executable"), readToken: "fixture-read", clientId: "fixture-client", clientSecret: "fixture-secret", redirectUri: "https://bb.example/api/v1/plugins/figma/http/oauth/callback" });
     const auth = await rpc("connectOfficial") as { authorizationUrl: string };
     const state = new URL(auth.authorizationUrl).searchParams.get("state")!;
     const callback = await harness.behavior.fetchHttp("GET", `/oauth/callback?code=fixture-code&state=${encodeURIComponent(state)}&iss=${encodeURIComponent(issuer)}`);
     assert.equal(callback.status, 200);
-    await rpc("configure", { binaryPath: join(directory, "missing-executable") });
+    assert.match(JSON.stringify(await harness.callAgentTool("figma_call", { name: "get_design_context" })), /official design context/);
+    assert.equal((await rpc("status") as SettingsSnapshot).config.mirrorEnabled, false);
+    await assert.rejects(readFile(join(directory, "events.jsonl")), { code: "ENOENT" }, "official-only reads do not start figmog");
+    await rpc("configure", { mirrorEnabled: true });
     await call("official", "use_figma", { fileKey: "NEW" });
     assert.equal(writes, 1, "official writes work with a configured token and missing local executable");
     await assert.rejects(readFile(join(directory, "events.jsonl")), { code: "ENOENT" }, "unmirrored write preparation does not start figmog");

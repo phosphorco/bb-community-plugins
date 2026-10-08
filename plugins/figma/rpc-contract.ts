@@ -10,7 +10,7 @@ const connection = z.object({
 });
 export const snapshotSchema = z.object({
   scope: z.literal("shared"),
-  config: z.object({ binaryPath: z.string(), tokenConfigured: z.boolean(), clientId: z.string(), clientSecretConfigured: z.boolean(), redirectUri: z.string() }),
+  config: z.object({ binaryPath: z.string(), mirrorEnabled: z.boolean(), binaryAvailable: z.boolean(), tokenConfigured: z.boolean(), clientId: z.string(), clientSecretConfigured: z.boolean(), redirectUri: z.string() }),
   official: connection, mirror: connection,
   tools: z.object({ official: z.array(tool), mirror: z.array(tool) }), aliasesNeedReload: z.boolean(),
 });
@@ -19,6 +19,7 @@ export const rpcContract = defineRpcContract({
   configure: {
     input: z.object({
       binaryPath: z.string().min(1).max(4096).optional(),
+      mirrorEnabled: z.boolean().optional(),
       readToken: z.string().max(16384).optional(),
       clientId: z.string().max(4096).optional(),
       clientSecret: z.string().max(16384).optional(),

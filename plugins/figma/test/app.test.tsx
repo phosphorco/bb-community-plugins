@@ -8,7 +8,7 @@ import type { rpcContract } from "../rpc-contract.ts";
 
 const connection = { phase: "disconnected" as const, detail: null, connectedAt: null, serverVersion: null };
 function snapshot(): SettingsSnapshot {
-  return { scope: "shared", config: { binaryPath: "figmog", tokenConfigured: true, clientId: "public-client", clientSecretConfigured: true, redirectUri: "https://bb.example/callback" }, official: { ...connection }, mirror: { ...connection }, tools: { official: [], mirror: [] }, aliasesNeedReload: false };
+  return { scope: "shared", config: { binaryPath: "figmog", mirrorEnabled: true, binaryAvailable: true, tokenConfigured: true, clientId: "public-client", clientSecretConfigured: true, redirectUri: "https://bb.example/callback" }, official: { ...connection }, mirror: { ...connection }, tools: { official: [], mirror: [] }, aliasesNeedReload: false };
 }
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -33,6 +33,25 @@ beforeEach(() => {
   vi.stubGlobal("sessionStorage", browser.sessionStorage);
 });
 afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+
+test("missing optional figmog offers installation help while official Connect stays usable", async () => {
+  let current = snapshot();
+  current.config = { ...current.config, mirrorEnabled: false, binaryAvailable: false };
+  const configure = vi.fn((input: { mirrorEnabled?: boolean }) => {
+    current = { ...current, config: { ...current.config, ...input } };
+    return current;
+  });
+  const slot = await mount({ status: () => current, configure });
+  const toggle = await slot.findByRole("checkbox", { name: "Use figmog for cached reads" });
+  expect((toggle as HTMLInputElement).checked).toBe(false);
+  expect(slot.getByRole("link", { name: "Optional figmog installation instructions" }).getAttribute("href")).toContain("sanctuarycomputer/figmog");
+  expect((slot.getByRole("button", { name: "Connect Figma" }) as HTMLButtonElement).disabled).toBe(false);
+  expect((slot.getByRole("button", { name: "Refresh read tools" }) as HTMLButtonElement).disabled).toBe(true);
+  expect(slot.queryByRole("button", { name: "Sync read cache" })).toBeNull();
+  fireEvent.click(toggle);
+  fireEvent.click(slot.getByRole("button", { name: "Save settings" }));
+  await waitFor(() => expect(configure).toHaveBeenCalledWith({ mirrorEnabled: true }));
+});
 
 test("native settings page has labelled write-only secrets, shared scope and empty inventory", async () => {
   const slot = await mount();

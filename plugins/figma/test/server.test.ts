@@ -25,6 +25,7 @@ async function fixture() {
   };
   await createFigmaPlugin({
     directory,
+    resolveBinary: async path => path.includes("missing") ? null : "/opt/figmog",
     remote: (options) => {
       remoteOptions = options;
       return {
@@ -131,6 +132,7 @@ test("rejects unsafe callback configuration and treats failed file mirroring as 
   try {
     await assert.rejects(f.rpc("configure", { redirectUri: "http://public.example/steal" }), /callback URL/);
     await assert.rejects(f.rpc("configure", { unexpectedSecret: "sentinel" }), /validation failed/);
+    await f.rpc("configure", { mirrorEnabled: true, readToken: "fixture-token" });
     f.failTool();
     await assert.rejects(f.rpc("testConnection", { source: "mirror", file: "FixtureFile" }), /could not mirror/);
     await f.rpc("configure", { readToken: "fixture-token" });
@@ -152,5 +154,32 @@ test("OAuth denial consumes state and successful authorization survives catalog 
     const authorized = await f.harness.behavior.fetchHttp("GET", "/oauth/callback?code=fixture-code&state=fixture-state");
     assert.equal(authorized.status, 200);
     assert.match(await authorized.text(), /authorization completed, but its tool catalog/);
+  } finally { await f.close(); }
+});
+
+test("figmog is opt-in; a saved token never makes disabled-cache calls prerequisites", async () => {
+  const f = await fixture();
+  try {
+    const saved = await f.rpc("configure", { readToken: "retained-token", binaryPath: "/missing/figmog" }) as SettingsSnapshot;
+    assert.equal(saved.config.mirrorEnabled, false);
+    assert.equal(saved.config.binaryAvailable, false);
+    assert.equal(saved.config.tokenConfigured, true);
+    assert.deepEqual(saved.tools.mirror, []);
+    assert.match(saved.mirror.detail!, /cache is off/);
+    await assert.rejects(f.bridgeOptions().getPeer("mirror"), /source=official/);
+    await f.bridgeOptions().getPeer("official");
+    assert.equal(await f.bridgeOptions().beforeOfficialWrite({ fileKey: "A" }), undefined);
+    assert.ok(!f.events.some(event => event.startsWith("dirty:")));
+    const enabled = await f.rpc("configure", { mirrorEnabled: true }) as SettingsSnapshot;
+    assert.match(enabled.mirror.detail!, /not found/);
+    await assert.rejects(f.rpc("refreshTools", { source: "mirror" }), /not installed/);
+    const firstGeneration = f.mirrorOptions().config.cacheGeneration;
+    await f.rpc("configure", { mirrorEnabled: false });
+    assert.equal(f.mirrorOptions().config.binaryPath, "", "disabling stops the optional process");
+    await f.rpc("configure", { mirrorEnabled: true, binaryPath: "/opt/figmog" });
+    assert.notEqual(f.mirrorOptions().config.cacheGeneration, firstGeneration, "reenabling cannot reuse a cache that missed writes");
+    assert.equal(f.mirrorOptions().config.token, "retained-token");
+    await f.bridgeOptions().getPeer("mirror");
+    assert.equal((await f.rpc("status") as SettingsSnapshot).config.binaryAvailable, true);
   } finally { await f.close(); }
 });

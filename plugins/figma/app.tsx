@@ -17,7 +17,7 @@ export function FigmaSettings() {
   const [authorizationUrl, setAuthorizationUrl] = useState<string | null>(null);
   const [readToken, setReadToken] = useState("");
   const [clientSecret, setClientSecret] = useState("");
-  const [draft, setDraft] = useState<{ binaryPath?: string; clientId?: string; redirectUri?: string }>({});
+  const [draft, setDraft] = useState<{ binaryPath?: string; mirrorEnabled?: boolean; clientId?: string; redirectUri?: string }>({});
   const [file, setFile] = useState("");
   const [acceptUnverified, setAcceptUnverified] = useState(false);
   const mounted = useRef(false);
@@ -154,8 +154,11 @@ export function FigmaSettings() {
     queued.current = true;
   });
 
+  const cacheEnabled = draft.mirrorEnabled ?? snapshot?.config.mirrorEnabled ?? false;
+  const cacheReady = !!(snapshot?.config.mirrorEnabled && snapshot.config.binaryAvailable && snapshot.config.tokenConfigured);
   return <div className="figma-settings" aria-busy={loading || busy !== null}>
     <p className="figma-muted">Connections are shared across this BB deployment. Saving or disconnecting affects everyone using these Figma tools.</p>
+    <p>The official Figma MCP connection provides reads and writes. No local figmog installation is required for it; Figma authorization is still required.</p>
     {loading && <p role="status">Loading Figma settings…</p>}
     {error && <div role="alert"><p>{error}</p><button type="button" disabled={busy !== null} onClick={() => void refresh()}>Retry status</button></div>}
     {actionError && <p role="alert">{actionError}</p>}
@@ -164,15 +167,21 @@ export function FigmaSettings() {
     {snapshot && <>
       <form onSubmit={(event) => { event.preventDefault(); void save(); }}>
         <fieldset disabled={busy !== null}>
-          <legend>Read connection</legend>
+          <legend>Optional figmog cache</legend>
+          <label className="figma-checkbox" htmlFor={`${id}-cache-enabled`}>
+            <input id={`${id}-cache-enabled`} type="checkbox" checked={cacheEnabled} onChange={(event) => setDraft(current => ({ ...current, mirrorEnabled: event.target.checked }))} />
+            Use figmog for cached reads
+          </label>
+          <p className="figma-muted">{snapshot.config.binaryAvailable ? "figmog is available on the BB host." : "figmog was not found on the BB host. You can continue with official Figma MCP."} Re-enabling the cache starts a fresh mirror. Your saved read token is retained when the cache is turned off.</p>
+          {!snapshot.config.binaryAvailable && <p><a href="https://github.com/sanctuarycomputer/figmog#install" target="_blank" rel="noopener noreferrer">Optional figmog installation instructions</a>. Automatic installation is not available yet. Install it on the BB host, then refresh status.</p>}
           <label htmlFor={`${id}-token`}>Replace Figma read token</label>
-          <input id={`${id}-token`} type="password" autoComplete="new-password" maxLength={16384} value={readToken} onChange={(e) => setReadToken(e.target.value)} aria-describedby={`${id}-token-help`} />
+          <input id={`${id}-token`} type="password" disabled={!cacheEnabled} autoComplete="new-password" maxLength={16384} value={readToken} onChange={(e) => setReadToken(e.target.value)} aria-describedby={`${id}-token-help`} />
           <p id={`${id}-token-help`} className="figma-muted">{snapshot.config.tokenConfigured ? "A token is configured." : "No token is configured."} Leave blank to keep the current token. Disconnect read removes it.</p>
           <details>
             <summary>Advanced configuration</summary>
             <label htmlFor={`${id}-binary`}>figmog executable path</label>
             <input id={`${id}-binary`} maxLength={4096} value={draft.binaryPath ?? snapshot.config.binaryPath} onChange={(e) => setDraft((current) => ({ ...current, binaryPath: e.target.value }))} />
-            <p className="figma-muted">Install figmog on the BB host and provide its executable path.</p>
+            <p className="figma-muted">For the optional cache, use “figmog” to detect it on the BB host's PATH, or enter its absolute executable path. No installation on your browser's computer is needed.</p>
             <p className="figma-muted">Official Figma access requires your own registered OAuth client and Figma admission. Configure its client ID, secret and registered callback URL before connecting. A saved configuration does not prove access.</p>
             <label htmlFor={`${id}-client`}>Figma OAuth client ID</label>
             <input id={`${id}-client`} maxLength={4096} value={draft.clientId ?? snapshot.config.clientId} onChange={(e) => setDraft((current) => ({ ...current, clientId: e.target.value }))} />
@@ -193,12 +202,13 @@ export function FigmaSettings() {
       <label htmlFor={`${id}-file`}>Figma file URL for connection test</label>
       <input id={`${id}-file`} type="url" value={file} disabled={busy !== null} onChange={(e) => { setFile(e.target.value); setAcceptUnverified(false); setSyncDisclosure(null); }} placeholder="https://www.figma.com/design/…" />
       <p className="figma-muted">Provide a file URL to check read access. Testing does not edit your file.</p>
-      <label className="figma-checkbox" htmlFor={`${id}-accept-unverified`}>
+      {cacheReady && <><label className="figma-checkbox" htmlFor={`${id}-accept-unverified`}>
         <input id={`${id}-accept-unverified`} type="checkbox" checked={acceptUnverified} disabled={busy !== null} onChange={(e) => setAcceptUnverified(e.target.checked)} aria-describedby={`${id}-sync-help`} />
         Accept refreshed cache without verifying the prior edit
       </label>
       <button type="button" disabled={busy !== null || !file.trim()} onClick={() => void syncReadCache()}>Sync read cache</button>
       <p id={`${id}-sync-help`} className="figma-muted">Leave this unchecked to require verification of a pending edit. Accepting an unverified refresh makes the read cache usable again, but does not prove that the earlier edit is visible.</p>
+      </>}
       {syncDisclosure && <div role="status">
         <p>Read cache sync response for {syncDisclosure.file}</p>
         <p>A cache pull alone does not verify that a prior edit is visible.</p>
@@ -206,17 +216,17 @@ export function FigmaSettings() {
           ? <p>{syncDisclosure.freshness}</p>
           : <p>No freshness disclosure was returned. Prior edit visibility is unverified.</p>}
       </div>}
-      {(["mirror", "official"] as const).map((source) => {
+      {(["official", "mirror"] as const).map((source) => {
         const title = source === "mirror" ? "Read" : "Figma";
         const connection = snapshot[source];
         return <section key={source} aria-labelledby={`${id}-${source}`}>
-          <h3 id={`${id}-${source}`}>{source === "mirror" ? "Read connection" : "Official Figma connection"}</h3>
+          <h3 id={`${id}-${source}`}>{source === "mirror" ? "Optional cache connection" : "Official Figma connection"}</h3>
           <p>Status: {connection.phase}{connection.serverVersion ? ` · Server ${connection.serverVersion}` : ""}</p>
           {connection.detail && <p className="figma-muted">{connection.detail}</p>}
           {source === "official" && <p className="figma-muted">After a BB restart, Test Figma resumes saved authorization; Connect Figma starts a new sign-in.</p>}
           <div className="figma-actions">
-            <button type="button" disabled={busy !== null || (source === "mirror" && !file.trim())} onClick={() => void sourceAction("testConnection", source, `Test ${title.toLowerCase()}`)}>Test {title.toLowerCase()}</button>
-            <button type="button" disabled={busy !== null} onClick={() => void sourceAction("refreshTools", source, `Refresh ${title.toLowerCase()} tools`)}>Refresh {title.toLowerCase()} tools</button>
+            <button type="button" disabled={busy !== null || (source === "mirror" && (!cacheReady || !file.trim()))} onClick={() => void sourceAction("testConnection", source, `Test ${title.toLowerCase()}`)}>Test {title.toLowerCase()}</button>
+            <button type="button" disabled={busy !== null || (source === "mirror" && !cacheReady)} onClick={() => void sourceAction("refreshTools", source, `Refresh ${title.toLowerCase()} tools`)}>Refresh {title.toLowerCase()} tools</button>
             <button type="button" disabled={busy !== null} onClick={() => void sourceAction("disconnect", source, `Disconnect ${title.toLowerCase()}`)}>Disconnect {title.toLowerCase()}</button>
           </div>
           <details><summary>Available tools ({snapshot.tools[source].length})</summary>

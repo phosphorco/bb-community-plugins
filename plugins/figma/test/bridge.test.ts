@@ -45,6 +45,18 @@ function text(result: unknown): string {
   return (result.content as { type: string; text?: string }[]).filter(part => part.type === "text").map(part => part.text).join("\n");
 }
 
+test("generic tools default to official MCP without acquiring the optional mirror", async () => {
+  const peer = new Peer();
+  const sources: string[] = [];
+  const f = fixture({ getPeer: async source => { sources.push(source); return peer; } });
+  try {
+    await f.call("figma_discover", {});
+    await f.call("figma_call", { name: "get_design", arguments: {} });
+    await f.call("figma_mcp", { method: "ping" });
+    assert.deepEqual(sources, ["official", "official", "official"]);
+  } finally { await f.bridge.close(); await f.harness.dispose(); }
+});
+
 test("constructor uses cached descriptors without acquiring a peer; discover is live and all-page", async () => {
   let acquired = 0;
   const peer = new Peer();

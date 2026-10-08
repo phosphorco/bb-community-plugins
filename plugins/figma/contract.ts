@@ -51,6 +51,7 @@ export interface RemoteOptions {
 export interface MirrorConfig {
   binaryPath: string;
   token: string;
+  cacheGeneration?: string;
   intervalSeconds?: number;
 }
 export interface MirrorManager {
@@ -75,6 +76,8 @@ export interface SettingsSnapshot {
   scope: "shared";
   config: {
     binaryPath: string;
+    mirrorEnabled: boolean;
+    binaryAvailable: boolean;
     tokenConfigured: boolean;
     clientId: string;
     clientSecretConfigured: boolean;

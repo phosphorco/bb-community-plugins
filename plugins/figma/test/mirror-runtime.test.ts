@@ -26,6 +26,22 @@ const data = (result: JsonObject) => JSON.parse((result.content as { text: strin
 
 async function read(manager: MirrorManager, file: string) { return data(await call(await manager.peer(), "figmog_node", { file, id: "1:1" })); }
 
+test("optional-cache generations isolate stale bytes and preserve writes still in flight", async () => {
+  const f = await fixture();
+  try {
+    await read(f.manager, "A");
+    const ticket = await f.manager.beginWrite("A");
+    await f.manager.configure({ ...f.config, binaryPath: "", cacheGeneration: "disabled" });
+    await f.manager.configure({ ...f.config, cacheGeneration: "enabled-again" });
+    await assert.rejects(read(f.manager, "A"), /write is in flight/);
+    await f.manager.endWrite(ticket, "completed");
+    await f.manager.refresh(undefined, undefined, true);
+    const files = data(await call(await f.manager.peer(), "figmog_files"));
+    assert.deepEqual(files, [], "old mirrors are not reopened in the new cache generation");
+    assert.equal((await readdir(f.directory)).length, 3);
+  } finally { await f.cleanup(); }
+});
+
 test("shared SDK process preserves full result envelopes and drains secret diagnostics", async () => {
   const f = await fixture();
   try {

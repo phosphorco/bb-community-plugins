@@ -1,6 +1,6 @@
 # Figma for BB
 
-One settings page manages a shared Figma connection for the BB deployment. Agents read cached designs with [figmog](https://github.com/sanctuarycomputer/figmog) and call the [official Figma MCP server](https://developers.figma.com/docs/figma-mcp-server/) for its available tools, including design edits.
+One settings page manages a shared connection to the [official Figma MCP server](https://developers.figma.com/docs/figma-mcp-server/) for design reads and edits. [Figmog](https://github.com/sanctuarycomputer/figmog) is an optional cache for repeated reads. Neither figmog nor a local Figma desktop installation is required for the official connection.
 
 ## Setup
 
@@ -13,7 +13,9 @@ bb plugin install /home/ubuntu/bb/community-plugins/plugins/figma --yes
 
 Open **Settings → Installed plugins → Figma**, or `/settings/plugins/figma`. Connections are shared: every agent using this deployment acts through the configured Figma accounts.
 
-For cached reads, independently install an upstream figmog executable and set its path and a Figma personal access token. Supply a file URL and use **Test read** to check actual file access. Merely starting figmog does not validate a token. The current inspected release is v0.0.2; its Linux binary needs glibc 2.39 or later. The plugin does not bundle or automatically download figmog.
+The optional cache is **off by default**, including existing configurations without an explicit preference. To use it, enable **Use figmog for cached reads**, supply a read token, and save. Settings detects an executable on the BB host's PATH when the path is `figmog`, or checks your configured absolute path. Missing installations show an upstream installation link; agents use the official connection instead. No installation is required on each user's computer. Automatic installation is deferred; the plugin does not bundle or download figmog. The current inspected release is v0.0.2; its Linux binary needs glibc 2.39 or later.
+
+Supply a file URL and use **Test read** to check actual cache access. Merely starting figmog does not validate a token. Turning the cache off retains the saved token and stops its process. Re-enabling uses a fresh cache so data that missed edits while disabled is not reused; old cache generations remain isolated on disk. **Disconnect read** also removes the saved token.
 
 For official tools, configure BB's own Figma MCP client ID, client secret and registered callback URL, then **Connect Figma** and follow the authorization link. The callback is:
 
@@ -29,7 +31,7 @@ Connections open lazily after a BB restart. **Test Figma** or the next agent cal
 
 ## Tools
 
-`figma_discover` returns live upstream descriptors, including their exact schemas and annotations. `figma_call` invokes an original tool on a selected connection. `figma_mcp` accesses supporting advertised MCP operations, including resources/templates/read, prompts and completion/task methods when available. `figma_sync` refreshes a mirrored file; its explicit `acceptUnverified` option allows recovery from a pending/no-op/uncertain write after inspection, without claiming that edit is visible.
+`figma_discover` returns live upstream descriptors, including their exact schemas and annotations. `figma_call` invokes an original tool on a selected connection. `figma_mcp` accesses supporting advertised MCP operations, including resources/templates/read, prompts and completion/task methods when available. These three tools default to the official connection; select `source: "mirror"` only for an enabled, available cache. Agents choose the corresponding official read tool if the optional cache is unavailable; the plugin does not rewrite incompatible tool schemas or replay calls. `figma_sync` refreshes a mirrored file; its explicit `acceptUnverified` option allows recovery from a pending/no-op/uncertain write after inspection, without claiming that edit is visible.
 
 All discovered tools can receive native aliases: mirror tools keep their `figmog_*` names; official tools use `figma_*`, including `figma_use_figma`. Name collisions, recursive schemas and changed schemas retain the generic call path. BB applies native tool changes when a provider session is next constructed. Reload the plugin and start a new provider session when settings says shortcuts need refreshing; the generic tools do not require that refresh.
 
