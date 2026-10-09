@@ -74,7 +74,9 @@ export function FigmaSettings() {
     setFeedback(null);
     try { await action(); }
     catch {
-      if (mounted.current && generation.current === epoch) setActionError(`${label} failed. Retry this action; refreshing status does not repeat it.`);
+      if (mounted.current && generation.current === epoch) setActionError(label === "Connect Figma"
+        ? "Connect Figma failed. Check the official connection status below for the reason. Refreshing status does not retry registration."
+        : `${label} failed. Retry this action; refreshing status does not repeat it.`);
     } finally {
       mutation.current = false;
       if (mounted.current && generation.current === epoch) {
@@ -145,7 +147,9 @@ export function FigmaSettings() {
   const connect = () => run("Connect Figma", async () => {
     const epoch = generation.current;
     setAuthorizationUrl(null);
-    const result = await rpc.call("connectOfficial", null);
+    let result: { authorizationUrl: string };
+    try { result = await rpc.call("connectOfficial", null); }
+    finally { queued.current = true; }
     const url = new URL(result.authorizationUrl);
     if (url.protocol !== "https:") throw new Error("Invalid authorization URL");
     if (!mounted.current || generation.current !== epoch) return;
@@ -153,12 +157,22 @@ export function FigmaSettings() {
     setFeedback("Open the authorization link to finish connecting, then return here.");
     queued.current = true;
   });
+  const automaticRegistration = () => run("Use automatic registration", async () => {
+    const epoch = generation.current;
+    const next = await rpc.call("configure", { clientId: "", clientSecret: "" });
+    if (!mounted.current || generation.current !== epoch) return;
+    accept(next, epoch);
+    setDraft(({ clientId: _clientId, ...rest }) => rest);
+    setClientSecret(""); setAuthorizationUrl(null);
+    setFeedback("Client override removed. Connect Figma will register BB if needed, then request authorization.");
+  });
 
   const cacheEnabled = draft.mirrorEnabled ?? snapshot?.config.mirrorEnabled ?? false;
   const cacheReady = !!(snapshot?.config.mirrorEnabled && snapshot.config.binaryAvailable && snapshot.config.tokenConfigured);
   return <div className="figma-settings" aria-busy={loading || busy !== null}>
     <p className="figma-muted">Connections are shared across this BB deployment. Saving or disconnecting affects everyone using these Figma tools.</p>
     <p>The official Figma MCP connection provides reads and writes. No local figmog installation is required for it; Figma authorization is still required.</p>
+    <p>Connect Figma registers BB when needed and provides a sign-in link. Figma must accept the client registration before sign-in can begin.</p>
     {loading && <p role="status">Loading Figma settings…</p>}
     {error && <div role="alert"><p>{error}</p><button type="button" disabled={busy !== null} onClick={() => void refresh()}>Retry status</button></div>}
     {actionError && <p role="alert">{actionError}</p>}
@@ -182,13 +196,17 @@ export function FigmaSettings() {
             <label htmlFor={`${id}-binary`}>figmog executable path</label>
             <input id={`${id}-binary`} maxLength={4096} value={draft.binaryPath ?? snapshot.config.binaryPath} onChange={(e) => setDraft((current) => ({ ...current, binaryPath: e.target.value }))} />
             <p className="figma-muted">For the optional cache, use “figmog” to detect it on the BB host's PATH, or enter its absolute executable path. No installation on your browser's computer is needed.</p>
-            <p className="figma-muted">Official Figma access requires your own registered OAuth client and Figma admission. Configure its client ID, secret and registered callback URL before connecting. A saved configuration does not prove access.</p>
+            <p className="figma-muted">Optional client override: enter both an ID and secret supplied for your own Figma MCP client. Otherwise Connect Figma requests registration automatically. Issued credentials are kept privately on the BB server.</p>
             <label htmlFor={`${id}-client`}>Figma OAuth client ID</label>
             <input id={`${id}-client`} maxLength={4096} value={draft.clientId ?? snapshot.config.clientId} onChange={(e) => setDraft((current) => ({ ...current, clientId: e.target.value }))} />
             <label htmlFor={`${id}-secret`}>Replace Figma OAuth client secret</label>
             <input id={`${id}-secret`} type="password" autoComplete="new-password" maxLength={16384} value={clientSecret} onChange={(e) => setClientSecret(e.target.value)} aria-describedby={`${id}-secret-help`} />
-            <p id={`${id}-secret-help`} className="figma-muted">{snapshot.config.clientSecretConfigured ? "A client secret is configured." : "No client secret is configured."} Leave blank to keep it. Disconnect Figma removes the authorization session; the saved client configuration is retained.</p>
-            <label htmlFor={`${id}-redirect`}>Registered OAuth redirect URL</label>
+            <p id={`${id}-secret-help`} className="figma-muted">{snapshot.config.clientSecretConfigured ? "A client override secret is configured." : "No client override secret is configured."} Leave blank to keep it. Disconnect Figma removes the authorization session; the saved client override is retained.</p>
+            {(snapshot.config.clientId || snapshot.config.clientSecretConfigured) && <>
+              <button type="button" onClick={() => void automaticRegistration()}>Use automatic registration</button>
+              <p className="figma-muted">Removes the saved client override and disconnects official Figma. Your read token is retained.</p>
+            </>}
+            <label htmlFor={`${id}-redirect`}>OAuth callback URL</label>
             <input id={`${id}-redirect`} type="url" maxLength={8192} value={draft.redirectUri ?? snapshot.config.redirectUri} onChange={(e) => setDraft((current) => ({ ...current, redirectUri: e.target.value }))} />
           </details>
           <button type="submit" className="figma-primary" disabled={Object.keys(draft).length === 0 && !readToken && !clientSecret}>Save settings</button>

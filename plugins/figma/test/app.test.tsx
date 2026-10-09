@@ -113,6 +113,38 @@ test("Connect gives an explicit link and refreshes on OAuth return without openi
   await waitFor(() => expect(status.mock.calls.length).toBe(count + 1));
 });
 
+test("automatic registration needs no manual credentials and displays a sanitized rejection without replay", async () => {
+  let current = snapshot();
+  current.config = { ...current.config, clientId: "", clientSecretConfigured: false };
+  const connectOfficial = vi.fn(async () => {
+    current = { ...current, official: { ...connection, phase: "error", detail: "Figma rejected BB client registration (HTTP 403). Request admission or configure your own registered client." } };
+    throw new Error("untrusted upstream body with secret");
+  });
+  const slot = await mount({ status: () => current, connectOfficial });
+  const button = await slot.findByRole("button", { name: "Connect Figma" });
+  expect((button as HTMLButtonElement).disabled).toBe(false);
+  expect(slot.queryByRole("button", { name: "Use automatic registration" })).toBeNull();
+  fireEvent.click(button);
+  await slot.findByText(/Figma rejected BB client registration \(HTTP 403\)/);
+  expect(slot.getByRole("alert").textContent).not.toContain("untrusted upstream");
+  expect(slot.queryByRole("link", { name: "Authorize Figma in a new tab" })).toBeNull();
+  fireEvent.click(slot.getByRole("button", { name: "Refresh status" }));
+  await slot.findByText("Status: error");
+  expect(connectOfficial).toHaveBeenCalledTimes(1);
+});
+
+test("removing the manual client override keeps the read token and does not start registration", async () => {
+  const next = snapshot(); next.config = { ...next.config, clientId: "", clientSecretConfigured: false };
+  const configure = vi.fn(() => next);
+  const connectOfficial = vi.fn();
+  const slot = await mount({ configure, connectOfficial });
+  fireEvent.click(await slot.findByRole("button", { name: "Use automatic registration", hidden: true }));
+  await waitFor(() => expect(configure).toHaveBeenCalledWith({ clientId: "", clientSecret: "" }));
+  await slot.findByText(/Client override removed/);
+  expect(slot.getByText("A token is configured. Leave blank to keep the current token. Disconnect read removes it.")).toBeTruthy();
+  expect(connectOfficial).not.toHaveBeenCalled();
+});
+
 test("late status cannot overwrite disconnect and refresh coalesces invalidations", async () => {
   const old = deferred<SettingsSnapshot>();
   let reads = 0;

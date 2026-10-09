@@ -29,6 +29,7 @@
   "files": [
     "dist/",
     "README.md",
+    "THIRD_PARTY_NOTICES.md",
     "LICENSE",
     "skills/",
     "*.ts",

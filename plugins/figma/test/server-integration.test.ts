@@ -17,7 +17,7 @@ function deferred() {
 // Actual composition: BB public SDK host, server, private stores, bridge, SDK
 // HTTP/OAuth transport, SDK stdio transport and mirror manager. Only vendor
 // endpoints are synthetic. No user credentials, Figma file or network needed.
-test("settings to OAuth to official write to fresh local read through the actual adapters", async () => {
+test("settings to client registration to OAuth to official write to fresh local read through the actual adapters", async () => {
   const directory = await mkdtemp(join(tmpdir(), "figma-composition-"));
   const binary = join(directory, "figmog");
   const child = await readFile(new URL("./mirror-child.mjs", import.meta.url), "utf8");
@@ -27,13 +27,20 @@ test("settings to OAuth to official write to fresh local read through the actual
   const control = (version: string) => writeFile(join(directory, "control.json"), JSON.stringify({ expectedToken: "fixture-read", versions: { A: version }, tools: registry.tools }));
   await control("100");
   const endpoint = "https://mcp.figma.com/mcp", issuer = "https://api.figma.com";
-  let writes = 0, toolLists = 0, unauthorized = false;
+  let writes = 0, toolLists = 0, registrations = 0, unauthorized = false;
   const pendingWrites: { entered: () => void; gate: Promise<void> }[] = [];
   const json = (value: unknown) => new Response(JSON.stringify(value), { headers: { "Content-Type": "application/json" } });
   const remoteFetch: typeof fetch = async (input, init) => {
     const url = String(input);
     if (url.includes("oauth-protected-resource")) return json({ resource: endpoint, authorization_servers: [issuer], scopes_supported: ["mcp:connect"] });
-    if (url.includes("oauth-authorization-server")) return json({ issuer, authorization_endpoint: "https://www.figma.com/oauth/mcp", token_endpoint: `${issuer}/v1/oauth/token`, response_types_supported: ["code"], code_challenge_methods_supported: ["S256"], token_endpoint_auth_methods_supported: ["client_secret_basic"], authorization_response_iss_parameter_supported: true });
+    if (url.includes("oauth-authorization-server")) return json({ issuer, authorization_endpoint: "https://www.figma.com/oauth/mcp", token_endpoint: `${issuer}/v1/oauth/token`, registration_endpoint: `${issuer}/v1/oauth/mcp/register`, response_types_supported: ["code"], code_challenge_methods_supported: ["S256"], token_endpoint_auth_methods_supported: ["client_secret_basic"], authorization_response_iss_parameter_supported: true });
+    if (url.endsWith("/oauth/mcp/register")) {
+      registrations++;
+      const metadata = JSON.parse(String(init?.body));
+      assert.equal(metadata.client_name, "BB");
+      assert.deepEqual(metadata.redirect_uris, ["https://bb.example/api/v1/plugins/figma/http/oauth/callback"]);
+      return json({ ...metadata, client_id: "fixture-client", client_secret: "fixture-secret" });
+    }
     if (url.endsWith("/oauth/token")) return json({ access_token: "fixture-access", refresh_token: "fixture-refresh", token_type: "Bearer", expires_in: 3600 });
     assert.equal(url, endpoint);
     if (init?.method !== "POST") return new Response(null, { status: 405 });
@@ -64,8 +71,10 @@ test("settings to OAuth to official write to fresh local read through the actual
     await createFigmaPlugin({ directory: join(directory, "private"), remote: options => createRemoteManager({ ...options, fetch: remoteFetch }) })(bb);
     const rpc = (method: string, input: unknown = null) => harness.behavior.callRpc(method, input);
     const call = (source: string, name: string, args: JsonObject) => harness.callAgentTool("figma_call", { source, name, arguments: args });
-    await rpc("configure", { binaryPath: join(directory, "missing-executable"), readToken: "fixture-read", clientId: "fixture-client", clientSecret: "fixture-secret", redirectUri: "https://bb.example/api/v1/plugins/figma/http/oauth/callback" });
+    await rpc("configure", { binaryPath: join(directory, "missing-executable"), readToken: "fixture-read", redirectUri: "https://bb.example/api/v1/plugins/figma/http/oauth/callback" });
+    assert.equal(registrations, 0);
     const auth = await rpc("connectOfficial") as { authorizationUrl: string };
+    assert.equal(registrations, 1);
     const state = new URL(auth.authorizationUrl).searchParams.get("state")!;
     const callback = await harness.behavior.fetchHttp("GET", `/oauth/callback?code=fixture-code&state=${encodeURIComponent(state)}&iss=${encodeURIComponent(issuer)}`);
     assert.equal(callback.status, 200);
@@ -115,6 +124,7 @@ test("settings to OAuth to official write to fresh local read through the actual
     await rpc("disconnect", { source: "official" });
     await assert.rejects(call("official", "use_figma", { fileKey: "A" }), /Authorize/);
     assert.equal(writes, 5);
+    assert.equal(registrations, 1, "disconnect and subsequent agent calls do not register another client");
   } finally {
     await harness.lifecycle.dispose();
     await rm(directory, { recursive: true, force: true });

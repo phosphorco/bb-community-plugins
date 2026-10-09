@@ -2,7 +2,7 @@ import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport, StreamableHTTPError } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import {
-  discoverOAuthServerInfo, exchangeAuthorization, refreshAuthorization, startAuthorization,
+  discoverOAuthServerInfo, exchangeAuthorization, refreshAuthorization, registerClient, startAuthorization,
 } from "@modelcontextprotocol/sdk/client/auth.js";
 import { OAuthMetadataSchema, OAuthTokensSchema } from "@modelcontextprotocol/sdk/shared/auth.js";
 import type { AuthorizationServerMetadata, OAuthTokens } from "@modelcontextprotocol/sdk/shared/auth.js";
@@ -13,6 +13,7 @@ import { sdkPeer, requestTimeoutMs } from "./peer.ts";
 const ENDPOINT = "https://mcp.figma.com/mcp";
 const ISSUER = "https://api.figma.com";
 const AUTHORIZATION = "https://www.figma.com/oauth/mcp";
+const REGISTRATION = "https://api.figma.com/v1/oauth/mcp/register";
 const TOKEN = "https://api.figma.com/v1/oauth/token";
 type Metadata = AuthorizationServerMetadata & { authorization_response_iss_parameter_supported?: boolean };
 const PENDING_MS = 10 * 60_000;
@@ -24,9 +25,16 @@ interface Pending {
   redirectUri: string;
   metadata: Metadata;
 }
+interface Registration {
+  client_id: string;
+  client_secret: string;
+  client_secret_expires_at?: number;
+  token_endpoint_auth_method?: "none" | "client_secret_basic" | "client_secret_post";
+}
 interface Bundle {
   version: 1;
   binding: string;
+  registration?: Registration;
   tokens?: OAuthTokens;
   expiresAt?: number;
   pending?: Pending;
@@ -55,11 +63,28 @@ function checkedMetadata(value: unknown): Metadata {
   }
   return parsed.data;
 }
+function checkedRegistration(value: unknown): Registration {
+  const r = value as Registration | null;
+  if (!r || typeof r.client_id !== "string" || !r.client_id.trim() || r.client_id.length > 4096 ||
+      typeof r.client_secret !== "string" || !r.client_secret.trim() || r.client_secret.length > 16384 ||
+      (r.client_secret_expires_at !== undefined && (!Number.isSafeInteger(r.client_secret_expires_at) || r.client_secret_expires_at < 0)) ||
+      (r.token_endpoint_auth_method !== undefined && !["none", "client_secret_basic", "client_secret_post"].includes(r.token_endpoint_auth_method))) {
+    throw failure("registration", "Figma returned incompatible client registration credentials. Disconnect and use your own preregistered client credentials.");
+  }
+  return { client_id: r.client_id, client_secret: r.client_secret,
+    ...(r.client_secret_expires_at !== undefined ? { client_secret_expires_at: r.client_secret_expires_at } : {}),
+    ...(r.token_endpoint_auth_method !== undefined ? { token_endpoint_auth_method: r.token_endpoint_auth_method } : {}) };
+}
 function decodeBundle(raw: JsonObject | null, binding: string): Bundle {
-  if (raw === null || raw.binding !== binding) return { version: 1, binding };
+  if (raw === null) return { version: 1, binding };
+  if (raw.version !== 1 || typeof raw.binding !== "string" || !/^[a-f0-9]{64}$/.test(raw.binding)) {
+    throw failure("storage", "Saved Figma authorization is invalid. Disconnect and reconnect in settings.");
+  }
+  if (raw.binding !== binding) return { version: 1, binding };
   try {
     if (raw.version !== 1) throw new Error();
     const bundle: Bundle = { version: 1, binding };
+    if (raw.registration !== undefined) bundle.registration = checkedRegistration(raw.registration);
     if (raw.tokens !== undefined) {
       bundle.tokens = OAuthTokensSchema.parse(raw.tokens);
       if ((raw.tokens as JsonObject).issuer !== ISSUER || typeof raw.expiresAt !== "number" || !Number.isFinite(raw.expiresAt)) throw new Error();
@@ -83,6 +108,25 @@ function sanitized(error: unknown, phase: string): RemoteError {
   const allowed = ["invalid_client", "unauthorized_client", "invalid_grant", "access_denied", "invalid_scope", "invalid_client_metadata"];
   if (allowed.includes(code)) return failure(code, `Figma ${phase} failed (${code}). Check authorization and client admission in settings.`);
   return failure(phase, `Figma ${phase} failed. Check the connection and reconnect in settings.`);
+}
+
+/** Read at most 4 KiB of an OAuth failure, retaining only its recognized code. */
+async function boundedOAuthCode(response: Response): Promise<string> {
+  const reader = response.body?.getReader();
+  if (!reader) return "";
+  try {
+    const chunks: Uint8Array[] = [];
+    let size = 0;
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      size += value.byteLength;
+      if (size > 4096) return "";
+      chunks.push(value);
+    }
+    const value = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+    return typeof value?.error === "string" ? value.error : "";
+  } finally { void reader.cancel().catch(() => undefined); }
 }
 
 export function createRemoteManager(options: RemoteOptions): RemoteManager {
@@ -119,7 +163,7 @@ export function createRemoteManager(options: RemoteOptions): RemoteManager {
     tail = result.catch(() => undefined);
     return result;
   };
-  const fetchFor = (epoch: number): typeof fetch => async (input, init) => {
+  const fetchFor = (epoch: number, registration = false): typeof fetch => async (input, init) => {
     check(epoch);
     const controller = new AbortController(); controllers.add(controller);
     // OAuth discovery follows server-provided URLs. Keep secrets and requests on
@@ -128,8 +172,8 @@ export function createRemoteManager(options: RemoteOptions): RemoteManager {
     if (!["https://mcp.figma.com", ISSUER].includes(url.origin) || url.username || url.password) {
       controllers.delete(controller); throw failure("endpoint", "Unexpected Figma connection endpoint.");
     }
-    if (url.pathname.includes("/register")) {
-      controllers.delete(controller); throw failure("registration", "Automatic Figma client registration is disabled.");
+    if (url.pathname.includes("/register") && !(registration && url.href === REGISTRATION && init?.method === "POST")) {
+      controllers.delete(controller); throw failure("registration", "Unexpected Figma client registration request.");
     }
     try {
       let method = "";
@@ -141,15 +185,27 @@ export function createRemoteManager(options: RemoteOptions): RemoteManager {
       if (upstream) signals.push(upstream);
       const response = await (options.fetch ?? fetch)(input, { ...init, redirect: "error", signal: AbortSignal.any(signals) });
       check(epoch);
+      if (!response.ok && (url.href === REGISTRATION || url.href === TOKEN)) {
+        if (url.href === REGISTRATION) throw failure("registration", response.status === 403
+          ? "Figma rejected BB client registration (HTTP 403). The response does not identify the rejected field. Request BB client admission or use your own preregistered client credentials."
+          : `Figma client registration failed (HTTP ${response.status}). Request BB client admission or use your own preregistered client credentials.`);
+        // Keep recognized OAuth error codes while discarding descriptions and bodies.
+        let code = "";
+        try { code = await boundedOAuthCode(response); } catch { /* Non-JSON or oversized failure. */ }
+        const safe = sanitized({ errorCode: code }, "token request");
+        throw failure(safe.reason, `${safe.message} (HTTP ${response.status}).`);
+      }
       return response;
     } finally { controllers.delete(controller); }
   };
   const readConfig = async (epoch: number): Promise<OfficialConfig> => {
     const config = await options.config(); check(epoch);
-    remember(config.clientSecret, Buffer.from(`${config.clientId}:${config.clientSecret}`).toString("base64"));
-    if (!config.clientId?.trim() || !config.clientSecret?.trim() || !config.redirectUri) {
-      setStatus("unconfigured", "Configure BB's own admitted Figma client ID, secret and callback first.");
-      throw failure("unconfigured", "Configure BB's own admitted Figma client ID, secret and callback first.");
+    remember(config.clientSecret, Buffer.from(`${config.clientId}:${config.clientSecret}`).toString("base64"),
+      Buffer.from(`${encodeURIComponent(config.clientId)}:${encodeURIComponent(config.clientSecret)}`).toString("base64"));
+    if (!!config.clientId?.trim() !== !!config.clientSecret?.trim()) {
+      const detail = "Configure both your own admitted Figma client ID and secret, or clear both to register BB.";
+      setStatus("unconfigured", detail);
+      throw failure("unconfigured", detail);
     }
     try {
       const url = new URL(config.redirectUri);
@@ -159,7 +215,9 @@ export function createRemoteManager(options: RemoteOptions): RemoteManager {
     return config;
   };
   const persist = async (epoch: number, bundle: Bundle) => {
-    check(epoch); await options.store.write(bundle as unknown as JsonObject); check(epoch);
+    check(epoch);
+    if (configBinding(await readConfig(epoch)) !== bundle.binding) throw failure("configuration", "Figma client settings changed. Start Connect again.");
+    await options.store.write(bundle as unknown as JsonObject); check(epoch);
   };
   const invalidateCatalog = () => {
     borrowed = undefined;
@@ -181,7 +239,21 @@ export function createRemoteManager(options: RemoteOptions): RemoteManager {
     }
     return checkedMetadata(found.authorizationServerMetadata);
   };
-  const clientInformation = (config: OfficialConfig) => ({ client_id: config.clientId, client_secret: config.clientSecret, issuer: ISSUER });
+  const rememberBundle = (bundle: Bundle) => {
+    const r = bundle.registration;
+    remember(r?.client_id, r?.client_secret, r ? Buffer.from(`${encodeURIComponent(r.client_id)}:${encodeURIComponent(r.client_secret)}`).toString("base64") : undefined,
+      r ? Buffer.from(`${r.client_id}:${r.client_secret}`).toString("base64") : undefined,
+      bundle.tokens?.access_token, bundle.tokens?.refresh_token, bundle.pending?.state, bundle.pending?.verifier);
+  };
+  const clientInformation = (config: OfficialConfig, bundle: Bundle) => {
+    if (config.clientId.trim() && config.clientSecret.trim()) return { client_id: config.clientId, client_secret: config.clientSecret, issuer: ISSUER };
+    const r = bundle.registration;
+    if (!r) throw failure("authorization_required", "Authorize Figma from settings to register BB.");
+    if (r.client_secret_expires_at && r.client_secret_expires_at * 1000 <= Date.now()) {
+      throw failure("registration_expired", "Saved Figma client credentials expired. Disconnect and reconnect, or supply your own preregistered client credentials.");
+    }
+    return { ...r, issuer: ISSUER };
+  };
   const saveTokens = async (epoch: number, bundle: Bundle, tokens: OAuthTokens) => {
     // Tokens with no expiry cannot be refreshed predictably. Reject explicitly.
     if (tokens.token_type.toLowerCase() !== "bearer" || !tokens.access_token || !tokens.expires_in ||
@@ -197,7 +269,7 @@ export function createRemoteManager(options: RemoteOptions): RemoteManager {
     check(epoch);
     const config = await readConfig(epoch); check(epoch);
     const bundle = decodeBundle(await options.store.read(), configBinding(config)); check(epoch);
-    remember(bundle.tokens?.access_token, bundle.tokens?.refresh_token, bundle.pending?.state, bundle.pending?.verifier);
+    rememberBundle(bundle);
     if (!bundle.tokens) {
       setStatus(bundle.pending && bundle.pending.expiresAt > Date.now() ? "authorizing" : "disconnected",
         "Authorize Figma from settings. BB client admission is required.");
@@ -206,7 +278,7 @@ export function createRemoteManager(options: RemoteOptions): RemoteManager {
     if (rejectedTokens.has(bundle.tokens.access_token) || (bundle.expiresAt ?? 0) <= Date.now() + SKEW_MS) {
       if (!bundle.tokens.refresh_token) throw failure("authorization_required", "Figma authorization expired. Reconnect in settings.");
       const metadata = await discover(epoch);
-      const tokens = await refreshAuthorization(ISSUER, { metadata, clientInformation: clientInformation(config),
+      const tokens = await refreshAuthorization(ISSUER, { metadata, clientInformation: clientInformation(config, bundle),
         refreshToken: bundle.tokens.refresh_token, resource: ENDPOINT, fetchFn: fetchFor(epoch) });
       await saveTokens(epoch, bundle, tokens);
     }
@@ -334,16 +406,31 @@ export function createRemoteManager(options: RemoteOptions): RemoteManager {
       const epoch = generation;
       return guarded(epoch, "authorization", () => serialize(epoch, async () => {
         const config = await readConfig(epoch); check(epoch);
-        await disposeConnection(); check(epoch);
+        const bundle = decodeBundle(await options.store.read(), configBinding(config)); check(epoch);
+        rememberBundle(bundle);
         const metadata = await discover(epoch);
+        if (!config.clientId.trim() && !bundle.registration) {
+          if (metadata.registration_endpoint !== REGISTRATION) throw failure("registration", "Figma client registration endpoint is incompatible.");
+          const issued = await registerClient(ISSUER, { metadata, clientMetadata: {
+            client_name: "BB", redirect_uris: [config.redirectUri],
+            grant_types: ["authorization_code", "refresh_token"], response_types: ["code"], token_endpoint_auth_method: "none",
+          }, scope: "mcp:connect", fetchFn: fetchFor(epoch, true) }).catch(error => {
+            if (error instanceof RemoteError) throw error;
+            throw failure("registration", sanitized(error, "client registration").message);
+          });
+          check(epoch);
+          bundle.registration = checkedRegistration(issued); rememberBundle(bundle);
+          clientInformation(config, bundle); // Reject expired issued credentials before persistence.
+          await persist(epoch, bundle);
+        }
         const state = randomBytes(32).toString("base64url");
         remember(state);
-        const started = await startAuthorization(ISSUER, { metadata, clientInformation: clientInformation(config),
+        const started = await startAuthorization(ISSUER, { metadata, clientInformation: clientInformation(config, bundle),
           redirectUrl: config.redirectUri, scope: "mcp:connect", state, resource: ENDPOINT });
         remember(started.codeVerifier);
-        const bundle: Bundle = { version: 1, binding: configBinding(config), pending: {
+        bundle.pending = {
           state, verifier: started.codeVerifier, redirectUri: config.redirectUri, expiresAt: Date.now() + PENDING_MS, metadata,
-        } };
+        };
         await persist(epoch, bundle); setStatus("authorizing");
         return { authorizationUrl: started.authorizationUrl.toString() };
       }));
@@ -354,7 +441,7 @@ export function createRemoteManager(options: RemoteOptions): RemoteManager {
       await guarded(epoch, "token exchange", () => serialize(epoch, async () => {
         const config = await readConfig(epoch); check(epoch);
         const bundle = decodeBundle(await options.store.read(), configBinding(config)); check(epoch);
-    remember(bundle.tokens?.access_token, bundle.tokens?.refresh_token, bundle.pending?.state, bundle.pending?.verifier);
+        rememberBundle(bundle);
         const pending = bundle.pending;
         if (!pending || !equalSecret(pending.state, input.state ?? "")) throw failure("state", "Figma authorization state is invalid or already used.");
         // Consume durably before any exchange, including denial and expired flow.
@@ -367,7 +454,7 @@ export function createRemoteManager(options: RemoteOptions): RemoteManager {
         }
         if (!input.code) throw failure("denied", "Figma authorization was denied or cancelled.");
         const tokens = await exchangeAuthorization(ISSUER, { metadata: pending.metadata,
-          clientInformation: clientInformation(config), authorizationCode: input.code, codeVerifier: pending.verifier,
+          clientInformation: clientInformation(config, bundle), authorizationCode: input.code, codeVerifier: pending.verifier,
           redirectUri: pending.redirectUri, resource: ENDPOINT, fetchFn: fetchFor(epoch) });
         await saveTokens(epoch, bundle, tokens);
         await ensure(epoch);

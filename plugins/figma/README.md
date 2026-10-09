@@ -17,17 +17,19 @@ The optional cache is **off by default**, including existing configurations with
 
 Supply a file URL and use **Test read** to check actual cache access. Merely starting figmog does not validate a token. Turning the cache off retains the saved token and stops its process. Re-enabling uses a fresh cache so data that missed edits while disabled is not reused; old cache generations remain isolated on disk. **Disconnect read** also removes the saved token.
 
-For official tools, configure BB's own Figma MCP client ID, client secret and registered callback URL, then **Connect Figma** and follow the authorization link. The callback is:
+For official tools, click **Connect Figma** and follow the authorization link. With no manual client override, Connect registers a client named **BB** once and stores the issued credentials privately for later connections. Figma must accept registration before browser sign-in can begin. The callback is:
 
 ```text
 https://YOUR-BB-HOST/api/v1/plugins/figma/http/oauth/callback
 ```
 
-The default uses BB's configured public app URL. Figma currently documents a client-admission process through its [MCP catalog](https://www.figma.com/mcp-catalog/). A REST personal access token does not replace MCP OAuth; an ordinary REST OAuth app is not proof of MCP admission. This plugin does not impersonate another client, extract agent credentials or silently register an application. For writes, Figma requires the applicable seat and edit permission for the target file. Live admission and entitlements must be tested with the actual account.
+The default uses BB's configured public app URL. If Figma supplies a pre-registered MCP client, enter both its ID and secret under **Advanced configuration** to skip automatic registration. **Use automatic registration** clears that override and disconnects the official session; it does not change your read token. Registration runs only from an explicit Connect action, never from a health check or agent call.
 
-Secrets are write-only in the UI and stored in atomic mode-0600 files in this plugin's private connection directory. Disconnecting reads removes the token and closes its process. Disconnecting official Figma removes its authorization session while retaining the operator's client registration for a later connection. Credential replacement isolates the previous mirror cache.
+Figma currently documents a client-admission process through its [MCP catalog](https://www.figma.com/mcp-catalog/). A registration HTTP 403 is shown separately from consent or token-exchange failures; a bare rejection does not identify whether the name, callback or another rule failed. No other client names or repeated registration requests are tried automatically. A REST personal access token does not replace MCP OAuth; an ordinary REST OAuth app is not proof of MCP admission. For writes, Figma requires the applicable seat and edit permission for the target file. Live admission and entitlements must be tested with the actual account.
 
-Connections open lazily after a BB restart. **Test Figma** or the next agent call resumes saved authorization; **Connect Figma** starts a new consent flow. A disconnected process status after restart does not mean the saved credentials were removed.
+Secrets are write-only in the UI and stored in atomic mode-0600 files in this plugin's private connection directory. Disconnecting reads removes the token and closes its process. Disconnecting official Figma removes its tokens, pending consent and dynamically issued registration. A manually supplied client override remains configured. Credential replacement isolates the previous mirror cache.
+
+Connections open lazily after a BB restart. **Test Figma** or the next agent call resumes saved authorization; **Connect Figma** reuses an existing registration and starts a new consent flow. A reconnect preserves the current grant until replacement authorization succeeds. A disconnected process status after restart does not mean the saved credentials were removed.
 
 ## Tools
 
@@ -45,7 +47,7 @@ One managed figmog process owns each connection's cache, shared by concurrent ag
 
 Possible official writes persist active tickets and mark mirrors pending before dispatch. Cached reads wait until active writes finish and a refresh observes a changed version. Version changes are a heuristic: they do not prove that a particular edit is visible. Concurrent or uncertain writes may require explicit recovery. After inspecting the official canvas, use `figma_sync` with `acceptUnverified: true`, or the corresponding settings checkbox, to accept a successful full pull as the new baseline. Its disclosure states that the prior edit remains unverified. A read-only `use_figma` call or a no-op can also require this recovery because arbitrary JavaScript cannot safely be classified by the adapter. A successful write remains successful even if cache bookkeeping fails. Neither the plugin nor its transport automatically replays an uncertain write.
 
-The official connection uses the upstream TypeScript MCP SDK for OAuth and Streamable HTTP. Automatic interactive OAuth and dynamic client registration are disabled; the settings page owns explicit sign-in. No model request is required to connect or inspect the tool catalog.
+The official connection uses the upstream TypeScript MCP SDK for OAuth, explicit dynamic client registration and Streamable HTTP. The settings page owns sign-in; the MCP transport cannot initiate authorization or replay a failed tool call. No model request is required to connect or inspect the tool catalog.
 
 The current write fence conservatively blocks cached reads across files while any tracked write is active. An unseen target has no cached bytes to invalidate; its first mirror pull can still observe ordinary REST lag. Mirror requests have a bounded 60-second budget, including queue time, so particularly large first pulls may time out. These limits require live validation with the intended files and account.
 
@@ -64,3 +66,5 @@ Tests cover local fixtures and injected transport/lifecycle boundaries. They do 
 ## Upstream attribution
 
 This MIT-licensed plugin calls existing external tools. Figmog is authored by Sanctuary Computer; current source declares AGPL-3.0-only and documents unresolved licensing for its embedded fold dependency. Use its separately obtained executable under its own terms. No figmog or fold binary/source is redistributed in this plugin. The runtime dependency `@modelcontextprotocol/sdk` retains its own MIT license. Figma's server, schemas and content remain provided by Figma.
+
+The explicit registration flow follows [DianP/pi-figma-remote-auth](https://github.com/DianP/pi-figma-remote-auth/tree/4e407d63fb26f378140d13e4c69da262fe3926ce) (MIT): discover endpoints, register, use PKCE/browser consent, and retain the issued secret for token exchange. BB uses its existing SDK, deployment callback and private store instead of Pi's local callback listener and adapter files. BB identifies itself as BB; the upstream project's Codex registration name is not used. See [third-party notices](THIRD_PARTY_NOTICES.md).

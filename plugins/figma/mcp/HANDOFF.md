@@ -1,3 +1,7 @@
+# Historical transport handoff — 2026-10-07
+
+The manual-registration-only statements below describe the original implementation. Explicit Pi-style dynamic registration was added on 2026-10-09; current behavior and validation are documented in the plugin README and `test/mcp-remote.test.ts`. This record is retained as historical evidence.
+
 Transport implementation ready for integration review.
 
 Paths: mcp/remote.ts, mcp/peer.ts, test/mcp-remote.test.ts.
