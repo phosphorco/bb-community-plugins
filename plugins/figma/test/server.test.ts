@@ -4,20 +4,21 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { createFakePluginHost } from "@get-bb/plugin-sdk/testing";
-import type { CodexOptions, ConnectionStatus, JsonObject, McpPeer, MirrorOptions, RemoteOptions, SettingsSnapshot } from "../contract.ts";
+import type { ConnectionStatus, JsonObject, McpPeer, MirrorOptions, RemoteOptions, SettingsSnapshot } from "../contract.ts";
 import type { BridgeOptions } from "../bridge.ts";
 import { createFigmaPlugin } from "../server.ts";
 
 const disconnected = (): ConnectionStatus => ({ phase: "disconnected", detail: null, connectedAt: null, serverVersion: null });
-async function fixture() {
+async function fixture(saved?: JsonObject) {
+  let stored: JsonObject | null = saved ?? null;
   const directory = await mkdtemp(join(tmpdir(), "figma-server-"));
   const fake = createFakePluginHost({ pluginId: "figma" });
   const events: string[] = [];
   let remoteOptions!: RemoteOptions;
-  let codexOptions!: CodexOptions;
   let mirrorOptions!: MirrorOptions;
   let bridgeOptions!: BridgeOptions;
   let throwCallback = false;
+  const callbackInputs: { code: string; state: string; issuer?: string }[] = [];
   let toolError = false;
   let catalogError = false;
   const peer: McpPeer = {
@@ -26,29 +27,17 @@ async function fixture() {
   };
   await createFigmaPlugin({
     directory,
+    ...(saved ? { configurationStore: { read: async () => stored, write: async value => { stored = structuredClone(value); } } } : {}),
     resolveBinary: async path => path.includes("missing") ? null : "/opt/figmog",
     remote: (options) => {
       remoteOptions = options;
       return {
         peer: async () => peer,
         beginAuth: async () => { events.push("begin"); return { authorizationUrl: "https://www.figma.com/oauth/mcp?state=fixture" }; },
-        finishAuth: async ({ code }) => { events.push(code ? "finish" : "denial-consumed"); if (throwCallback || !code) throw new Error("fixture-private-secret"); },
+        finishAuth: async (input) => { callbackInputs.push(input); const { code } = input; events.push(code ? "finish" : "denial-consumed"); if (throwCallback || !code) throw new Error("fixture-private-secret"); },
         status: disconnected,
         disconnect: async () => { events.push("remote-disconnect"); },
         close: async () => { events.push("remote-close"); },
-      };
-    },
-    codex: (options) => {
-      codexOptions = options;
-      return {
-        peer: async () => { events.push("codex-peer"); return peer; },
-        connect: async () => { events.push("codex-resume"); },
-        beginAuth: async () => { events.push("codex-begin"); return { authorizationUrl: "https://www.figma.com/oauth/mcp?state=fixture", callbackRequired: true }; },
-        finishAuth: async () => { throw new Error("Codex requires callback URL"); },
-        finishCallback: async () => { events.push("codex-finish"); },
-        status: disconnected,
-        disconnect: async () => { events.push("codex-disconnect"); },
-        close: async () => { events.push("codex-close"); },
       };
     },
     mirror: (options) => {
@@ -76,9 +65,8 @@ async function fixture() {
     },
   })(fake.bb);
   return {
-    ...fake, events, directory,
+    ...fake, events, directory, callbackInputs, saved: () => stored,
     remoteOptions: () => remoteOptions,
-    codexOptions: () => codexOptions,
     mirrorOptions: () => mirrorOptions,
     bridgeOptions: () => bridgeOptions,
     failCallback: () => { throwCallback = true; },
@@ -199,46 +187,42 @@ test("figmog is opt-in; a saved token never makes disabled-cache calls prerequis
   } finally { await f.close(); }
 });
 
-test("genuine Codex route reuses authorization, retains the read token and detaches durably", async () => {
-  const f = await fixture();
+
+test("retired Codex route migrates without losing read token or cache preferences", async () => {
+  const f = await fixture({ officialMode: "codex", codexBinaryPath: "/opt/codex", codexServerName: "figma_bb_diagnostic", codexEnabled: false,
+    readToken: "retained-private-token", mirrorEnabled: false, binaryPath: "/opt/figmog", cacheGeneration: "retained-cache",
+    redirectUri: "https://bb.example/api/v1/plugins/figma/http/oauth/callback" });
   try {
-    await f.rpc("configure", { readToken: "fixture-private-read", clientId: "own-direct-client", clientSecret: "fixture-private-direct" });
-    const before = f.events.filter(event => event === "remote-disconnect").length;
-    const next = await f.rpc("configure", { officialMode: "codex", codexBinaryPath: "/opt/native/codex", codexServerName: "figma_bb_diagnostic" }) as SettingsSnapshot;
-    assert.equal(next.config.tokenConfigured, true);
-    assert.equal(next.config.officialMode, "codex");
-    assert.equal(f.events.filter(event => event === "remote-disconnect").length, before, "route change closes transports without deleting direct-client credentials");
-    assert.deepEqual(await f.codexOptions().config(), { binaryPath: "/opt/native/codex", serverName: "figma_bb_diagnostic" });
-    await f.bridgeOptions().getPeer("official");
-    assert.ok(f.events.includes("codex-peer"));
-    await f.rpc("testConnection", { source: "official" });
-    assert.ok(f.events.includes("codex-resume"));
-    assert.ok(!f.events.includes("codex-begin"), "Test resumes without interactive sign-in");
-    const auth = await f.rpc("connectOfficial") as { callbackRequired?: boolean };
-    assert.equal(auth.callbackRequired, true);
-    await f.rpc("finishCodexAuth", { callbackUrl: ' "127.0.0.1:33418/callback?code=fixture-private-code&state=fixture-private-state" ' });
-    assert.ok(f.events.includes("codex-finish"));
-    const detached = await f.rpc("disconnect", { source: "official" }) as SettingsSnapshot;
-    assert.equal(detached.config.codexEnabled, false);
-    assert.match(detached.official.detail!, /retains the shared Figma authorization/);
-    await assert.rejects(f.bridgeOptions().getPeer("official"), /disconnected from BB/);
-    await f.rpc("refreshTools", { source: "official" }); // The injected bridge itself is inert.
-    assert.equal((await f.rpc("status") as SettingsSnapshot).config.codexEnabled, false, "status and catalog refresh cannot implicitly reenable a disconnected handoff");
-    const resumed = await f.rpc("testConnection", { source: "official" }) as SettingsSnapshot;
-    assert.equal(resumed.config.codexEnabled, true);
-    const visible = JSON.stringify([resumed, f.harness.inspection.logEntries, f.harness.inspection.realtimeSignals]);
-    assert.doesNotMatch(visible, /fixture-private-read|fixture-private-direct|fixture-private-code|fixture-private-state/);
+    const status = await f.rpc("status") as SettingsSnapshot;
+    assert.equal(status.config.tokenConfigured, true);
+    assert.equal(status.config.mirrorEnabled, false);
+    assert.equal(status.config.redirectUri, "http://127.0.0.1:38559/callback");
+    assert.equal(status.official.phase, "disconnected");
+    assert.equal(f.mirrorOptions().config.token, "retained-private-token");
+    assert.equal(f.mirrorOptions().config.cacheGeneration, "retained-cache");
+    assert.ok(!Object.keys(f.saved()!).some(key => /codex|officialMode/.test(key)));
+    assert.doesNotMatch(JSON.stringify(status), /retained-private-token|codex|officialMode/);
+    await f.rpc("connectOfficial");
+    assert.deepEqual(f.events.filter(event => event === "begin"), ["begin"]);
+    await assert.rejects(f.rpc("finishCodexAuth", { callbackUrl: "http://localhost/callback" }));
   } finally { await f.close(); }
 });
 
-test("Codex callbacks cannot finish a direct connection and direct HTTP callbacks cannot act on Codex", async () => {
+
+test("direct OAuth accepts a visible copied loopback address and rejects mismatched or duplicate callback fields", async () => {
   const f = await fixture();
   try {
-    await assert.rejects(f.rpc("finishCodexAuth", { callbackUrl: "http://127.0.0.1:33418/callback?code=fixture&state=fixture" }), /Select Via Codex/);
-    await f.rpc("configure", { officialMode: "codex", codexBinaryPath: "/opt/native/codex" });
-    const result = await f.harness.behavior.fetchHttp("GET", "/oauth/callback?code=fixture&state=fixture");
-    assert.equal(result.status, 400);
-    assert.ok(!f.events.includes("finish"));
-    await assert.rejects(f.rpc("configure", { codexServerName: "figma.invalid.name" }), /validation failed/);
+    await f.rpc("configure", { redirectUri: "http://127.0.0.1:38559/callback" });
+    for (const address of ["http://localhost:38559/callback?code=x&state=s", "127.0.0.1:38558/callback?code=x&state=s",
+      "127.0.0.1:38559/other?code=x&state=s", "127.0.0.1:38559/callback?code=x&state=s&state=s",
+      "127.0.0.1:38559/callback?code=x&code=y&state=s", "127.0.0.1:38559/callback?code=x&state=s&iss=x&iss=y", "not a URL"]) {
+      await assert.rejects(f.rpc("finishAuthorization", { callbackUrl: address }));
+    }
+    assert.equal(f.callbackInputs.length, 0, "invalid copied addresses never consume pending OAuth state");
+    await f.rpc("finishAuthorization", { callbackUrl: '  "127.0.0.1:38559/callback?code=fixture-\ncode&iss=https%3A%2F%2Fapi.figma.com&state=fixture-state"  ' });
+    assert.deepEqual(f.callbackInputs, [{ code: "fixture-code", state: "fixture-state", issuer: "https://api.figma.com" }]);
+    assert.ok(f.events.includes("clear:official"));
+    const publicBytes = JSON.stringify(await f.rpc("status"));
+    assert.doesNotMatch(publicBytes, /fixture-code|fixture-state/);
   } finally { await f.close(); }
 });

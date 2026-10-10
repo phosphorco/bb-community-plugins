@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "type": "module",
   "license": "MIT",
-  "description": "Shared Figma connections, cached figmog reads and the official Figma MCP toolset in BB.",
+  "description": "Direct Figma MCP access and shared OAuth settings, with an optional figmog cache.",
   "author": "Phosphor",
   "repository": {
     "type": "git",
@@ -16,7 +16,7 @@
   },
   "bb": {
     "name": "Figma",
-    "description": "Read designs locally with figmog and use the official Figma tools to edit them.",
+    "description": "Use official Figma tools for reads and edits with one shared sign-in.",
     "branding": {
       "icon": "PenTool"
     },

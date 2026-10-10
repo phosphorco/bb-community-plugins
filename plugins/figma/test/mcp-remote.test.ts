@@ -75,10 +75,10 @@ function deferred<T>() {
 
 test("missing configuration and authorization never start OAuth or DCR during health", async () => {
   const f = fixture(), m = f.manager();
-  await assert.rejects(m.peer(), /Authorize Figma/);
+  await assert.rejects(m.peer(), /Connect Figma|Authorize Figma/);
   assert.equal(f.requests.length, 0); assert.equal(m.status().phase, "disconnected"); await m.close();
   const absent = createRemoteManager({ store: f.store, config: async () => ({ ...config, clientSecret: "" }), fetch: f.fakeFetch });
-  await assert.rejects(absent.peer(), /own admitted Figma client/);
+  await assert.rejects(absent.peer(), /both the Figma client/);
   assert.equal(absent.status().phase, "unconfigured"); assert.equal(f.requests.length, 0); await absent.close();
 });
 
@@ -96,6 +96,9 @@ test("SDK OAuth PKCE survives restart, consumes state once and uses own secret-b
   const exchange = f.requests.find(x => x.url === metadata.token_endpoint)!;
   assert.equal((exchange.body as URLSearchParams).get("code_verifier"), pending.verifier);
   assert.equal((exchange.body as URLSearchParams).get("redirect_uri"), config.redirectUri);
+  const initialize = f.requests.find(x => (x.body as JsonObject)?.method === "initialize")!;
+  assert.deepEqual(((initialize.body as JsonObject).params as JsonObject).clientInfo,
+    { name: "codex-mcp-client", title: "Codex", version: "0.160.1" });
   await assert.rejects(next.finishAuth({ code: "fixture-code", state: url.searchParams.get("state")!, issuer }), /already used/);
   assert.equal(f.requests.filter(x => x.url === metadata.token_endpoint).length, 1); await next.close();
 });
@@ -246,7 +249,7 @@ test("cancelled calls reject without dispatch and abort in-flight SDK requests",
 test("config rotation cannot use saved pending state or tokens for another client", async () => {
   const f = fixture(), m = await authenticate(f); await m.close();
   const other = createRemoteManager({ store: f.store, config: async () => ({ ...config, clientSecret: "rotated-own-secret" }), fetch: f.fakeFetch });
-  const count = f.requests.length; await assert.rejects(other.peer(), /Authorize Figma/);
+  const count = f.requests.length; await assert.rejects(other.peer(), /Connect Figma|Authorize Figma/);
   assert.equal(f.requests.length, count); await other.close();
 });
 
@@ -372,15 +375,15 @@ test("one timed-out or failed POST keeps concurrent writes alive and neither cal
 const automaticConfig = { ...config, clientId: "", clientSecret: "" };
 const registrations = (f: ReturnType<typeof fixture>) => f.requests.filter(x => x.url === metadata.registration_endpoint);
 
-test("explicit Connect registers fixed BB metadata once and uses issued secret for exchange and refresh despite echoed none", async () => {
+test("explicit Connect registers Codex-compatible metadata once and uses issued secret for exchange and refresh despite echoed none", async () => {
   const f = fixture(automaticConfig), m = f.manager();
-  assert.equal(m.status().phase, "disconnected"); await assert.rejects(m.peer(), /Authorize Figma/);
+  assert.equal(m.status().phase, "disconnected"); await assert.rejects(m.peer(), /Connect Figma|Authorize Figma/);
   assert.equal(f.requests.length, 0);
   const url = new URL((await m.beginAuth()).authorizationUrl);
   assert.equal(url.searchParams.get("client_id"), "bb-issued-client");
   assert.equal(url.searchParams.get("scope"), "mcp:connect"); assert.equal(url.searchParams.get("resource"), endpoint);
   assert.equal(registrations(f).length, 1); assert.equal(registrations(f)[0].method, "POST");
-  assert.deepEqual(registrations(f)[0].body, { client_name: "BB", redirect_uris: [config.redirectUri],
+  assert.deepEqual(registrations(f)[0].body, { client_name: "Codex", redirect_uris: [config.redirectUri],
     grant_types: ["authorization_code", "refresh_token"], response_types: ["code"], token_endpoint_auth_method: "none", scope: "mcp:connect" });
   await m.finishAuth({ code: "fixture-code", state: url.searchParams.get("state")!, issuer });
   const firstPeer = await m.peer(); assert.equal(await m.peer(), firstPeer);
@@ -402,7 +405,7 @@ test("plain-text registration rejection is bounded, sends once, and leaves no co
     await assert.rejects(m.beginAuth(), error => {
       assert.ok(error instanceof RemoteError); assert.equal(error.reason, "registration");
       assert.match(error.message, new RegExp(`HTTP ${status}`)); assert.match(error.message, /preregistered client credentials/);
-      if (status === 403) assert.match(error.message, /rejected BB client registration.*does not identify the rejected field/);
+      if (status === 403) assert.match(error.message, /rejected Codex-compatible client registration.*does not identify the rejected field/);
       assert.ok(!error.message.includes("private-body")); assert.ok(!error.message.includes("fixture-issued-secret")); return true;
     });
     assert.equal(registrations(f).length, 1); assert.equal(f.store.value, null);
@@ -490,7 +493,7 @@ test("saved registration cannot authorize callbacks or grants after config rotat
   f.setConfig({ ...automaticConfig, redirectUri: "https://bb.example/rotated" });
   const count = f.requests.length;
   await assert.rejects(m.finishAuth({ code: "fixture-code", state: url.searchParams.get("state")!, issuer }), /state is invalid/);
-  await assert.rejects(m.peer(), /Authorize Figma/); assert.equal(f.requests.length, count); await m.close();
+  await assert.rejects(m.peer(), /Connect Figma|Authorize Figma/); assert.equal(f.requests.length, count); await m.close();
 });
 
 
@@ -541,4 +544,46 @@ test("oversized OAuth error bodies are cancelled and never expose raw descriptio
     assert.ok(error instanceof RemoteError); assert.match(error.message, /HTTP 401/); assert.ok(!error.message.includes("private-secret")); return true;
   });
   assert.ok(cancelled); assert.ok(pulls <= 2); assert.equal(f.store.value!.pending, undefined); await m.close();
+});
+
+
+test("automatic compatibility profile does not reuse a prior BB registration or grant", async () => {
+  const f = fixture(automaticConfig), m = f.manager();
+  f.store.value = { version: 1,
+    binding: createHash("sha256").update(JSON.stringify(["", "", automaticConfig.redirectUri])).digest("hex"),
+    registration: { client_id: "old-bb-client", client_secret: "old-private-secret" },
+    tokens: { access_token: "old-bb-access", refresh_token: "old-bb-refresh", token_type: "Bearer", expires_in: 3600, issuer },
+    expiresAt: Date.now() + 3600_000 };
+  await assert.rejects(m.peer(), /Connect Figma/);
+  assert.equal(f.requests.length, 0);
+  await m.beginAuth();
+  assert.equal(registrations(f).length, 1);
+  assert.equal((registrations(f)[0].body as JsonObject).client_name, "Codex");
+  assert.ok(!JSON.stringify(f.requests).includes("old-private-secret"));
+  assert.equal(f.store.value.tokens, undefined);
+  await m.close();
+});
+
+test("issued secret remains in token auth when metadata also advertises none", async () => {
+  const f = fixture(automaticConfig);
+  f.setMetadata({ ...metadata, token_endpoint_auth_methods_supported: ["none", "client_secret_basic"] });
+  const m = await authenticate(f);
+  f.store.value!.expiresAt = 0;
+  await m.peer();
+  const exchanges = f.requests.filter(x => x.url === metadata.token_endpoint);
+  assert.equal(exchanges.length, 2);
+  for (const request of exchanges) assert.equal(request.headers.get("authorization"), `Basic ${Buffer.from("bb-issued-client:fixture-issued-secret").toString("base64")}`);
+  await m.close();
+});
+
+
+test("registration surfaces invalid_redirect_uri without leaking response descriptions", async () => {
+  const f = fixture(automaticConfig), m = f.manager();
+  f.setRegistrationHook(async () => f.json({ error: "invalid_redirect_uri", error_description: "private-body fixture-issued-secret" }, 400));
+  await assert.rejects(m.beginAuth(), error => {
+    assert.ok(error instanceof RemoteError); assert.equal(error.reason, "registration");
+    assert.match(error.message, /HTTP 400, invalid_redirect_uri/); assert.match(error.message, /loopback callback/);
+    assert.doesNotMatch(error.message, /private-body|fixture-issued-secret/); return true;
+  });
+  assert.equal(registrations(f).length, 1); await m.close();
 });

@@ -10,7 +10,7 @@ const connection = z.object({
 });
 export const snapshotSchema = z.object({
   scope: z.literal("shared"),
-  config: z.object({ officialMode: z.enum(["direct", "codex"]), codexBinaryPath: z.string(), codexServerName: z.string(), codexEnabled: z.boolean(), binaryPath: z.string(), mirrorEnabled: z.boolean(), binaryAvailable: z.boolean(), tokenConfigured: z.boolean(), clientId: z.string(), clientSecretConfigured: z.boolean(), redirectUri: z.string() }),
+  config: z.object({ binaryPath: z.string(), mirrorEnabled: z.boolean(), binaryAvailable: z.boolean(), tokenConfigured: z.boolean(), clientId: z.string(), clientSecretConfigured: z.boolean(), redirectUri: z.string() }),
   official: connection, mirror: connection,
   tools: z.object({ official: z.array(tool), mirror: z.array(tool) }), aliasesNeedReload: z.boolean(),
 });
@@ -18,9 +18,6 @@ export const rpcContract = defineRpcContract({
   status: { input: z.null(), output: snapshotSchema },
   configure: {
     input: z.object({
-      officialMode: z.enum(["direct", "codex"]).optional(),
-      codexBinaryPath: z.string().min(1).max(4096).optional(),
-      codexServerName: z.string().regex(/^[a-zA-Z0-9_-]+$/).min(1).max(128).optional(),
       binaryPath: z.string().min(1).max(4096).optional(),
       mirrorEnabled: z.boolean().optional(),
       readToken: z.string().max(16384).optional(),
@@ -29,8 +26,8 @@ export const rpcContract = defineRpcContract({
       redirectUri: z.string().max(8192).optional(),
     }).strict(), output: snapshotSchema,
   },
-  connectOfficial: { input: z.null(), output: z.object({ authorizationUrl: z.string(), callbackRequired: z.boolean().optional() }) },
-  finishCodexAuth: { input: z.object({ callbackUrl: z.string().min(1).max(65536) }).strict(), output: snapshotSchema },
+  connectOfficial: { input: z.null(), output: z.object({ authorizationUrl: z.string() }) },
+  finishAuthorization: { input: z.object({ callbackUrl: z.string().min(1).max(65536) }).strict(), output: snapshotSchema },
   disconnect: { input: z.object({ source }).strict(), output: snapshotSchema },
   testConnection: { input: z.object({ source, file: z.string().optional() }).strict(), output: snapshotSchema },
   refreshTools: { input: z.object({ source }).strict(), output: snapshotSchema },

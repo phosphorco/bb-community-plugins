@@ -14,52 +14,6 @@ function deferred() {
   return { promise, resolve };
 }
 
-test("genuine Codex handoff composes the real stdio adapter, BB bridge and private settings across reload", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "figma-codex-composition-"));
-  const binary = join(directory, "codex-native-fixture");
-  const child = await readFile(new URL("./codex-child.mjs", import.meta.url), "utf8");
-  await writeFile(binary, child);
-  await chmod(binary, 0o700);
-  const make = async () => {
-    const fake = createFakePluginHost({ pluginId: "figma" });
-    await createFigmaPlugin({ directory, resolveBinary: async () => null })(fake.bb);
-    return fake;
-  };
-  let current = await make();
-  const rpc = (method: string, input: unknown = null) => current.harness.behavior.callRpc(method, input);
-  try {
-    await rpc("configure", { officialMode: "codex", codexBinaryPath: binary, codexServerName: "figma", readToken: "fixture-private-retained-read" });
-    const connected = await rpc("testConnection", { source: "official" }) as SettingsSnapshot;
-    assert.equal(connected.official.phase, "connected");
-    assert.equal(connected.config.tokenConfigured, true);
-    assert.equal(connected.config.mirrorEnabled, false);
-    const inventory = await current.harness.callAgentTool("figma_discover", { source: "official" });
-    assert.match(JSON.stringify(inventory), /whoami/);
-    const result = await current.harness.callAgentTool("figma_call", { name: "whoami", arguments: {} });
-    assert.match(JSON.stringify(result), /retained/);
-    assert.ok(typeof result !== "string" && result.content.some(item => item.type === "image"));
-    await assert.rejects(current.harness.callAgentTool("figma_mcp", { method: "prompts/list" }), /advertise|unsupported|unavailable/i);
-    const resources = await current.harness.callAgentTool("figma_mcp", { method: "resources/read", params: { uri: "figma://test" } });
-    assert.match(JSON.stringify(resources), /retained/);
-    await rpc("disconnect", { source: "official" });
-    await current.harness.lifecycle.dispose();
-    current = await make();
-    const detached = await rpc("status") as SettingsSnapshot;
-    assert.equal(detached.config.codexEnabled, false);
-    assert.equal(detached.config.tokenConfigured, true);
-    await assert.rejects(current.harness.callAgentTool("figma_discover", { source: "official" }), /disconnected from BB/);
-    await rpc("testConnection", { source: "official" });
-    assert.equal((await rpc("status") as SettingsSnapshot).official.phase, "connected");
-    const audit = (await readFile(join(directory, "codex", "codex-audit.jsonl"), "utf8")).trim().split("\n").map(line => JSON.parse(line));
-    assert.equal(audit.some(item => item.login || String(item.method).startsWith("turn/")), false, "catalog/test/call/reload reuse the grant without OAuth or model turns");
-    assert.equal(audit.filter(item => item.method === "mcpServer/tool/call").length, 3, "two connection whoami tests and one agent call, each once");
-    assert.doesNotMatch(JSON.stringify([await rpc("status"), current.harness.inspection.logEntries]), /fixture-private-retained-read/);
-  } finally {
-    await current.harness.lifecycle.dispose();
-    await rm(directory, { recursive: true, force: true });
-  }
-});
-
 // Actual composition: BB public SDK host, server, private stores, bridge, SDK
 // HTTP/OAuth transport, SDK stdio transport and mirror manager. Only vendor
 // endpoints are synthetic. No user credentials, Figma file or network needed.
@@ -83,7 +37,7 @@ test("settings to client registration to OAuth to official write to fresh local 
     if (url.endsWith("/oauth/mcp/register")) {
       registrations++;
       const metadata = JSON.parse(String(init?.body));
-      assert.equal(metadata.client_name, "BB");
+      assert.equal(metadata.client_name, "Codex");
       assert.deepEqual(metadata.redirect_uris, ["https://bb.example/api/v1/plugins/figma/http/oauth/callback"]);
       return json({ ...metadata, client_id: "fixture-client", client_secret: "fixture-secret" });
     }
@@ -168,7 +122,7 @@ test("settings to client registration to OAuth to official write to fresh local 
     const snapshot = await rpc("status") as SettingsSnapshot;
     assert.doesNotMatch(JSON.stringify(snapshot), /fixture-read|fixture-secret|fixture-access|fixture-refresh|fixture-private-error/);
     await rpc("disconnect", { source: "official" });
-    await assert.rejects(call("official", "use_figma", { fileKey: "A" }), /Authorize/);
+    await assert.rejects(call("official", "use_figma", { fileKey: "A" }), /Connect Figma/);
     assert.equal(writes, 5);
     assert.equal(registrations, 1, "disconnect and subsequent agent calls do not register another client");
   } finally {
