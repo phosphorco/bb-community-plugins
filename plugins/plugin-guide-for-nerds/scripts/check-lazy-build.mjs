@@ -9,7 +9,14 @@ const dist = resolve(process.argv[2] ?? join(root, 'dist'));
 const meta = JSON.parse(readFileSync(join(dist, 'app.meta.json'), 'utf8'));
 assert.equal(meta.pluginId, 'plugin-guide-for-nerds');
 assert.equal(meta.artifactFormatVersion, 2, 'Lazy proof requires generation-serving format 2');
-assert.equal(meta.sdkVersion, '0.5.29');
+// The public development target stays pinned. An explicitly selected newer
+// host compiler must name its exact SDK/BB pair rather than bypass this gate.
+const expectedSdk = process.env.BB_GUIDE_EXPECTED_BUILD_SDK ?? '0.5.29';
+assert.equal(meta.sdkVersion, expectedSdk);
+assert.equal(meta.builtWith.pluginSdkVersion, expectedSdk);
+if (process.env.BB_GUIDE_EXPECTED_BUILD_BB) {
+  assert.equal(meta.builtWith.bbVersion, process.env.BB_GUIDE_EXPECTED_BUILD_BB);
+}
 assert.match(meta.appArtifact.generation, /^[a-f0-9]{32}$/);
 const generation = meta.appArtifact.generation;
 const prefix = `/api/v1/plugins/plugin-guide-for-nerds/assets/g/${generation}/`;

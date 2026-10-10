@@ -272,7 +272,7 @@ export function FloatingGuide({ loadContent, toggleEvent, title, initialSelectio
         }}
         onPointerMove={moveGesture} onPointerUp={endGesture} onPointerCancel={endGesture}
         onLostPointerCapture={endGesture}
-        style={{ display: 'flex', gap: 8, alignItems: 'center', padding: '8px 10px',
+        style={{ display: 'flex', gap: 6, alignItems: 'center', padding: '4px 8px',
           borderBottom: '1px solid var(--border)', touchAction: 'none', cursor: 'move', userSelect: 'none', minWidth: 0 }}>
         <span id={labelId} style={{ flex: 1, minWidth: 0, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{title}</span>
         <button type="button" aria-label="Move guide" aria-describedby={helpId} title="Drag to move, or use arrow keys"
@@ -284,7 +284,7 @@ export function FloatingGuide({ loadContent, toggleEvent, title, initialSelectio
           className="nerd-guide-chrome-button" style={chromeButton} onClick={close}><span aria-hidden="true">×</span></button>
       </div>
       <div ref={bodyRef} data-guide-stage-viewport="" className="nerd-guide-scroll"
-        style={{ minHeight: 0, minWidth: 0, overflow: 'auto', overscrollBehavior: 'contain', scrollBehavior: 'auto', containerType: 'size', padding: '12px 12px 44px' }}>
+        style={{ minHeight: 0, minWidth: 0, overflow: 'auto', overscrollBehavior: 'contain', scrollBehavior: 'auto', containerType: 'size', padding: '8px 8px 44px' }}>
         <span id={helpId} style={{ position: 'absolute', width: 1, height: 1, padding: 0, margin: -1,
           overflow: 'hidden', clipPath: 'inset(50%)', whiteSpace: 'nowrap' }}>
           Drag the move or resize control, or focus it and use arrow keys. Hold Shift for smaller steps.

@@ -94,7 +94,7 @@ describe("guide fixture boundaries", () => {
   });
 
   it("scales every spatial fixture together and reflows only the capability grid", () => {
-    const markup = renderToStaticMarkup(createElement(ProductMap));
+    const markup = SURFACE_GROUPS.map(group => renderToStaticMarkup(createElement(ProductMap, { initialSlideId:group.id }))).join('');
 
     expect(
       markup.match(/data-guide-responsive-strategy="scale-together"/g),

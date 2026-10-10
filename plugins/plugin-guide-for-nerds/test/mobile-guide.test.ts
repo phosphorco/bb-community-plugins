@@ -48,7 +48,7 @@ it.each([
         }
       });
       expect(current().getAttribute("data-map-section"), trigger).toBe(mobileSlideId);
-      expect(current().querySelector(`[data-guide-badge="${surfaceId}"]`)?.textContent).toBe(number);
+      expect(current().querySelector(`[data-guide-badge="${surfaceId}"]`)?.querySelector("[data-guide-number]")?.textContent).toBe(number);
       expect(container.querySelector('[role="dialog"] h3')!.textContent).toBe(title);
       expect(container.querySelectorAll('[role="dialog"] [aria-label="Annotation navigation"] button:not(:disabled)').length > 0).toBe(hasNeighbors);
       expect(navigate).toHaveBeenLastCalledWith(mobileSlideId);
@@ -137,7 +137,7 @@ it("pages mobile panes without using annotation selection as navigation", () => 
     act(() => next.click());
     expect(visiblePage()).toBe("Side panel");
     expect(current().querySelector('[data-guide-mobile-scene="panel"]')).not.toBeNull();
-    expect([...current().querySelectorAll("[data-guide-badge]")].map((badge) => badge.textContent)).toEqual(["1", "2", "3", "4"]);
+    expect([...current().querySelectorAll("[data-guide-badge]")].map((badge) => badge.querySelector("[data-guide-number]")?.textContent)).toEqual(["1", "2", "3", "4"]);
     openAnnotation("code-renderers");
     for (const [id, number, title] of [
       ["code-renderers", "1", "Code & diff renderers"],
@@ -146,7 +146,7 @@ it("pages mobile panes without using annotation selection as navigation", () => 
       ["file-opener", "4", "File viewers & editors"],
     ]) {
       expect(current().querySelector(`[data-guide-tab-body="${id}"]`), title).not.toBeNull();
-      expect(current().querySelector(`[data-guide-badge="${id}"]`)?.textContent).toBe(number);
+      expect(current().querySelector(`[data-guide-badge="${id}"]`)?.querySelector("[data-guide-number]")?.textContent).toBe(number);
       expect(visiblePage()).toBe("Side panel");
       if (id !== "file-opener") nextAnnotation();
     }

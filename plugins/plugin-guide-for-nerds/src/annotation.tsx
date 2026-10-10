@@ -4,7 +4,7 @@ import { cn } from "@/lib/utils";
 
 export function annotationChipClass(active: boolean, className?: string) {
   return cn(
-    "flex size-5 shrink-0 items-center justify-center rounded-full font-mono text-xs font-semibold leading-none transition-colors",
+    "flex size-5 shrink-0 items-center justify-center rounded-full font-mono text-xs font-semibold leading-none ",
     "scale-[var(--guide-chip-scale,1)]",
     active
       ? "bg-file-accent text-background"

@@ -13,6 +13,7 @@ import { Icon, type IconName } from "@/components/ui/icon";
 import { Switch } from "@/components/ui/switch";
 
 import { cn } from "@/lib/utils";
+import { surfaceLabel } from './surface-labels';
 import { restoreGuideLayerFocus } from "../lib/guide-interaction";
 import {
   annotationChipClass,
@@ -90,12 +91,11 @@ function PlacedChip({
     <span
       aria-hidden
       data-guide-badge={id}
-      className={annotationChipClass(
-        active,
-        cn("absolute z-50 ring-2 ring-card", CHIP_PLACEMENT_CLASS[chip]),
-      )}
+      data-label-side="left"
+      className={cn("nerd-guide-badge absolute z-50", CHIP_PLACEMENT_CLASS[chip])}
     >
-      {numberOf(id)}
+      <span data-guide-number="" className={annotationChipClass(active, "ring-2 ring-card")}>{numberOf(id)}</span>
+      <span data-guide-label="" className="nerd-guide-tag">{surfaceLabel(id)}</span>
     </span>
   );
 }
@@ -137,7 +137,7 @@ function Mark({
       onClick={(event) => selectAnnotation(event, id, onSelect, onActivate)}
       {...hover}
       className={cn(
-        "relative rounded-md ring-1 ring-inset transition-all",
+        "relative rounded-md ring-1 ring-inset ",
         FOCUS_RING_CLASS,
         outlined
           ? "bg-surface-selected ring-surface-selected-border"
@@ -172,7 +172,7 @@ function CommandPaletteActionMark({ onRun }: { onRun: () => void }) {
       {...hover}
       data-guide-fixture="command-palette-action"
       className={cn(
-        "flex w-full cursor-pointer items-center gap-1.5 rounded bg-state-hover px-2 py-1.5 text-left text-foreground ring-1 ring-inset transition-all",
+        "flex w-full cursor-pointer items-center gap-1.5 rounded bg-state-hover px-2 py-1.5 text-left text-foreground ring-1 ring-inset ",
         outlined ? "ring-surface-selected-border" : "ring-transparent",
       )}
     >
@@ -217,7 +217,7 @@ function RegionMark({
         }
         {...hover}
         className={cn(
-          "absolute inset-0 z-[1] rounded-md ring-1 ring-inset transition-all",
+          "absolute inset-0 z-[1] rounded-md ring-1 ring-inset ",
           FOCUS_RING_CLASS,
           outlined
             ? "bg-surface-selected/30 ring-surface-selected-border"
@@ -400,19 +400,23 @@ function MeasuredBadge({
       data-guide-badge={id}
       data-guide-badge-placement={at}
       data-guide-badge-align={align}
+      data-label-row={(numberOf(id) ?? 0) % 2 === 0 ? 'above' : 'below'}
+      data-label-side={at === 'end' ? 'left' : 'right'}
       href={`#surface-${id}`}
       aria-label={`${label} — jump to details`}
       onClick={(event) => selectAnnotation(event, id, onSelect, onActivate)}
       {...hover}
-      className={cn("pointer-events-auto absolute z-50", FOCUS_RING_CLASS)}
+      className={cn("nerd-guide-badge pointer-events-auto absolute z-50", FOCUS_RING_CLASS)}
       style={position ?? { visibility: "hidden" }}
     >
       <span
         aria-hidden
+        data-guide-number=""
         className={annotationChipClass(active, "ring-2 ring-card")}
       >
         {numberOf(id)}
       </span>
+      <span aria-hidden data-guide-label="" className="nerd-guide-tag">{surfaceLabel(id)}</span>
     </a>
   );
 }
@@ -1238,7 +1242,7 @@ function AppShellWireframeBody({
                   <span
                     data-guide-fixture="message-action-hover-row"
                     className={cn(
-                      "inline-flex items-center gap-2 transition-opacity",
+                      "inline-flex items-center gap-2 ",
                       messageActionRowVisible ? "opacity-100" : "opacity-0",
                     )}
                   >

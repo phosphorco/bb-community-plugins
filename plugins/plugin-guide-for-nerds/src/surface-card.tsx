@@ -112,18 +112,9 @@ export function SurfaceCard({
   );
 
   useEffect(() => {
-    if (probe || sessionSignal?.aborted) return;
-    const timer = window.setTimeout(() => {
-      if (!sessionSignal?.aborted && copyLifetime.current.live) {
-        cardRef.current?.scrollIntoView?.({ block: "nearest", behavior: "smooth" });
-      }
-    }, 350);
-    const cancel = () => window.clearTimeout(timer);
-    sessionSignal?.addEventListener("abort", cancel, { once: true });
-    return () => {
-      cancel();
-      sessionSignal?.removeEventListener("abort", cancel);
-    };
+    if (!probe && !sessionSignal?.aborted) {
+      cardRef.current?.scrollIntoView?.({ block: "nearest", behavior: "instant" });
+    }
   }, [probe, sessionSignal]);
 
   return (
@@ -141,7 +132,7 @@ export function SurfaceCard({
         onDismiss();
       }}
       aria-label={probe ? undefined : surface.title}
-      className="w-full rounded-lg border border-border bg-popover p-3.5 shadow-lg [overflow-wrap:anywhere]"
+      className="w-full rounded-lg border border-border bg-popover p-2.5 shadow-lg [overflow-wrap:anywhere]"
     >
       <div className="flex items-start gap-2">
         {number === null ? (
@@ -158,7 +149,7 @@ export function SurfaceCard({
         )}
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
-            <h3 className="text-base font-medium text-foreground">
+            <h3 className="text-sm font-medium text-foreground">
               {surface.title}
             </h3>
             {surface.experimental ? <ExperimentalBadge /> : null}
@@ -192,7 +183,7 @@ export function SurfaceCard({
                     disabled={!target}
                     aria-label={label}
                     title={label}
-                    className={`inline-flex size-9 @2xl/guide:size-7 shrink-0 cursor-pointer items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-state-hover hover:text-foreground disabled:cursor-default disabled:opacity-35 disabled:hover:bg-transparent disabled:hover:text-muted-foreground ${FOCUS_RING_CLASS}`}
+                    className={`inline-flex size-9 @2xl/guide:size-7 shrink-0 cursor-pointer items-center justify-center rounded-md text-muted-foreground hover:bg-state-hover hover:text-foreground disabled:cursor-default disabled:opacity-35 disabled:hover:bg-transparent disabled:hover:text-muted-foreground ${FOCUS_RING_CLASS}`}
                   >
                     <Icon name={arrowIcon} className="size-3.5" />
                   </button>
@@ -205,7 +196,7 @@ export function SurfaceCard({
             onClick={onDismiss}
             aria-label="Close"
             title="Close annotation"
-            className={`inline-flex size-9 @2xl/guide:size-7 shrink-0 cursor-pointer items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-state-hover hover:text-foreground ${FOCUS_RING_CLASS}`}
+            className={`inline-flex size-9 @2xl/guide:size-7 shrink-0 cursor-pointer items-center justify-center rounded-md text-muted-foreground hover:bg-state-hover hover:text-foreground ${FOCUS_RING_CLASS}`}
           >
             <Icon name="X" className="size-3.5" />
           </button>
@@ -252,7 +243,7 @@ export function SurfaceCard({
                       href={href}
                       title={plugin}
                       className={mobile
-                        ? `flex min-h-9 items-center justify-center gap-1.5 rounded-md bg-surface-recessed px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-state-hover hover:text-foreground ${FOCUS_RING_CLASS}`
+                        ? `flex min-h-9 items-center justify-center gap-1.5 rounded-md bg-surface-recessed px-2 py-1 text-xs text-muted-foreground hover:bg-state-hover hover:text-foreground ${FOCUS_RING_CLASS}`
                         : "flex items-center gap-1 whitespace-nowrap text-xs text-muted-foreground underline decoration-border underline-offset-2 hover:text-foreground hover:decoration-foreground"}
                     >
                       {body}
@@ -275,7 +266,7 @@ export function SurfaceCard({
               disabled={copyState === "copying"}
               aria-label={copyState === "failed" ? "Copy failed. Retry copy for agent" : "Copy for agent"}
               title={copyState === "failed" ? "Copy failed. Retry copy for agent" : "Copy for agent"}
-              className={`ml-auto inline-flex shrink-0 cursor-pointer items-center rounded-md text-muted-foreground transition-colors hover:bg-state-hover hover:text-foreground disabled:cursor-wait disabled:opacity-60 ${mobile ? "size-9 @2xl/guide:size-7 justify-center" : "h-7 gap-1.5 whitespace-nowrap px-2 text-xs font-medium"} ${FOCUS_RING_CLASS}`}
+              className={`ml-auto inline-flex shrink-0 cursor-pointer items-center rounded-md text-muted-foreground hover:bg-state-hover hover:text-foreground disabled:cursor-wait disabled:opacity-60 ${mobile ? "size-9 @2xl/guide:size-7 justify-center" : "h-7 gap-1.5 whitespace-nowrap px-2 text-xs font-medium"} ${FOCUS_RING_CLASS}`}
             >
               <Icon
                 name={copyState === "copied" ? "Check" : copyState === "failed" ? "AlertCircle" : "Copy"}

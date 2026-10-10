@@ -84,6 +84,7 @@
     "test:overlay": "vitest run --config vitest.config.ts test/overlay",
     "test:first-slice": "vitest run --config vitest.config.ts app.test.tsx test/plugin-app-layout.test.ts test/first-slice",
     "scaffold:surface-entry": "node scripts/scaffold-surface-entry.mjs",
-    "check:lazy-build": "node scripts/check-lazy-build.mjs"
+    "check:lazy-build": "node scripts/check-lazy-build.mjs",
+    "test:navigation": "vitest run --config vitest.config.ts test/navigation.test.tsx test/annotation-scope.test.ts test/mobile-guide.test.ts"
   }
 }

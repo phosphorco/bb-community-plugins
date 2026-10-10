@@ -67,19 +67,19 @@ describe("usedByScrollStep", () => {
 describe("scrollUsedBy", () => {
   it("scrolls the viewport one page in the pressed direction", () => {
     const scrollBy = vi.fn();
-    scrollUsedBy({ clientWidth: 240, scrollBy }, 1, { reducedMotion: false });
-    expect(scrollBy).toHaveBeenCalledWith({ left: 208, behavior: "smooth" });
+    scrollUsedBy({ clientWidth: 240, scrollBy }, 1);
+    expect(scrollBy).toHaveBeenCalledWith({ left: 208, behavior: "instant" });
 
-    scrollUsedBy({ clientWidth: 240, scrollBy }, -1, { reducedMotion: false });
+    scrollUsedBy({ clientWidth: 240, scrollBy }, -1);
     expect(scrollBy).toHaveBeenLastCalledWith({
       left: -208,
-      behavior: "smooth",
+      behavior: "instant",
     });
   });
 
   it("jumps instead of animating when motion is reduced", () => {
     const scrollBy = vi.fn();
-    scrollUsedBy({ clientWidth: 240, scrollBy }, 1, { reducedMotion: true });
-    expect(scrollBy).toHaveBeenCalledWith({ left: 208, behavior: "auto" });
+    scrollUsedBy({ clientWidth: 240, scrollBy }, 1);
+    expect(scrollBy).toHaveBeenCalledWith({ left: 208, behavior: "instant" });
   });
 });

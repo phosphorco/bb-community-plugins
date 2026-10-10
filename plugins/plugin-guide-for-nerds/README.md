@@ -32,9 +32,10 @@ Tests and typechecks use public SDK packages, local vendored registry source,
 and local paths. See THIRD_PARTY_NOTICES.md for complete provenance and notices.
 
 The initial slice preserves all seven desktop guide pages and their cards,
-plugin examples and rich Copy for agent references. Theme/Native UI catalogs,
-instant page switching and the measured performance pass are the next planned
-increments; the copied page transitions remain for this first slice.
+plugin examples and rich Copy for agent references. Theme/Native UI catalogs and
+the measured performance pass are planned increments. Surface markers now
+show short names continuously; page changes, card layout and scrolling are instant.
+Only the active map mounts its fixtures.
 
 The selected lazy build keeps the frame in the initial JavaScript closure and
 loads guide content on first open. CSS is currently eager. Failed content-entry
@@ -42,3 +43,8 @@ requests retry with a fresh query on the same plugin generation; the build check
 rejects an unsupported compiled factory or deferred static dependency graph.
 This recovery relies on the exact verified format-2 builder shape and is scoped
 to the guide entry, not arbitrary nested module failures.
+
+When checking artifacts from a newer explicitly selected host compiler, name its
+exact pair with `BB_GUIDE_EXPECTED_BUILD_BB` and `BB_GUIDE_EXPECTED_BUILD_SDK`.
+For the current local BB 0.45.0 / SDK 0.6.29 builder, set those exact values.
+The public development build/type target remains BB 0.44.0 / SDK 0.5.29.

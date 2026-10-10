@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useRef, useState, type ReactNode } from "react";
 import { Icon } from "@/components/ui/icon";
 
 import { cn } from "@/lib/utils";
@@ -24,27 +24,11 @@ export interface UsedByScrollTarget {
 export function scrollUsedBy(
   viewport: UsedByScrollTarget,
   direction: -1 | 1,
-  { reducedMotion }: { reducedMotion: boolean },
 ): void {
   viewport.scrollBy({
     left: direction * usedByScrollStep(viewport.clientWidth),
-    behavior: reducedMotion ? "auto" : "smooth",
+    behavior: "instant",
   });
-}
-
-function useReducedMotion(): boolean {
-  const [reduced, setReduced] = useState(false);
-  useEffect(() => {
-    const query = window.matchMedia?.("(prefers-reduced-motion: reduce)");
-    if (!query) {
-      return;
-    }
-    const sync = () => setReduced(query.matches);
-    sync();
-    query.addEventListener("change", sync);
-    return () => query.removeEventListener("change", sync);
-  }, []);
-  return reduced;
 }
 
 function Caret({
@@ -65,7 +49,7 @@ function Caret({
       disabled={!shown}
       onClick={onClick}
       className={cn(
-        "inline-flex size-4 shrink-0 cursor-pointer items-center justify-center rounded text-subtle-foreground transition-colors hover:bg-state-hover hover:text-foreground",
+        "inline-flex size-4 shrink-0 cursor-pointer items-center justify-center rounded text-subtle-foreground hover:bg-state-hover hover:text-foreground",
         !shown && "invisible",
       )}
     >
@@ -86,12 +70,11 @@ export function UsedByList({
 }) {
   const viewportRef = useRef<HTMLDivElement>(null);
   const scroll = useScrollEdges(viewportRef);
-  const reducedMotion = useReducedMotion();
 
   const page = (direction: -1 | 1) => {
     const viewport = viewportRef.current;
     if (viewport) {
-      scrollUsedBy(viewport, direction, { reducedMotion });
+      scrollUsedBy(viewport, direction);
     }
   };
 

@@ -166,7 +166,7 @@ function PlatformCard({ surface }: { surface: PluginSurface }) {
       onMouseEnter={() => setActiveId(surface.id)}
       onMouseLeave={() => setActiveId(null)}
       className={cn(
-        "flex h-full items-center gap-3 rounded-lg border px-4 py-4 transition-colors",
+        "flex h-full items-center gap-3 rounded-lg border px-4 py-4 ",
         FOCUS_RING_CLASS,
         selected
           ? "border-border bg-surface-selected"
@@ -383,12 +383,12 @@ function SpatialFixture({
       ref={frameRef}
       data-guide-responsive-strategy="scale-together"
       data-guide-scale={geometry.scale.toFixed(4)}
-      className="w-full overflow-x-clip transition-[height] duration-300 ease-out"
-      style={{ height: geometry.height ?? undefined }}
+      className="w-full overflow-x-clip "
+      style={{ height: geometry.height ?? undefined, marginTop: 16 }}
     >
       <div
         ref={fixtureRef}
-        className="mx-auto w-full origin-top transition-transform duration-300 ease-out"
+        className="mx-auto w-full origin-top "
         style={
           {
             minWidth: band?.min,
@@ -551,7 +551,7 @@ function PanButton({
       disabled={disabled}
       aria-label={`${direction === "previous" ? "Previous" : "Next"} surface`}
       className={cn(
-        "inline-flex size-10 @2xl/guide:size-7 shrink-0 cursor-pointer items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-state-hover hover:text-foreground disabled:cursor-default disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-muted-foreground",
+        "inline-flex size-10 @2xl/guide:size-7 shrink-0 cursor-pointer items-center justify-center rounded-md text-muted-foreground hover:bg-state-hover hover:text-foreground disabled:cursor-default disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-muted-foreground",
         FOCUS_RING_CLASS,
       )}
     >
@@ -560,66 +560,6 @@ function PanButton({
         className="size-4"
       />
     </button>
-  );
-}
-
-function useStageHeight(
-  index: number,
-  slideRefs: React.RefObject<Array<HTMLDivElement | null>>,
-): { height: number | null; animate: boolean } {
-  const [height, setHeight] = useState<number | null>(null);
-  const [animate, setAnimate] = useState(false);
-  const mountedRef = useRef(false);
-  useEffect(() => {
-    if (!mountedRef.current) {
-      mountedRef.current = true;
-      return;
-    }
-    setAnimate(true);
-    const timer = window.setTimeout(() => setAnimate(false), 350);
-    return () => window.clearTimeout(timer);
-  }, [index]);
-  useEffect(() => {
-    const slide = slideRefs.current[index];
-    if (!slide) {
-      return;
-    }
-    const measure = () => setHeight(slide.getBoundingClientRect().height);
-    measure();
-    const observer = new ResizeObserver(measure);
-    observer.observe(slide);
-    return () => observer.disconnect();
-  }, [index, slideRefs]);
-  return { height, animate };
-}
-
-function MobileCardFlow({ children }: { children: ReactNode }) {
-  const frameRef = useRef<HTMLDivElement>(null);
-  const contentRef = useRef<HTMLDivElement>(null);
-
-  useBrowserLayoutEffect(() => {
-    const frame = frameRef.current;
-    const content = contentRef.current;
-    if (!frame || !content) return;
-    const measure = () => {
-      frame.style.height = `${content.getBoundingClientRect().height}px`;
-    };
-    measure();
-    const observer = new ResizeObserver(measure);
-    observer.observe(content);
-    return () => observer.disconnect();
-  }, []);
-
-  return (
-    <div
-      ref={frameRef}
-      className="overflow-y-clip transition-[height] duration-300 ease-out motion-reduce:transition-none"
-      style={{ height: 0 }}
-    >
-      <div ref={contentRef} className="flow-root">
-        {children}
-      </div>
-    </div>
   );
 }
 
@@ -639,7 +579,6 @@ export function ProductMap({
   sessionSignal?: AbortSignal;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const slideRefs = useRef<Array<HTMLDivElement | null>>([]);
   const pageListRef = useRef<HTMLDivElement>(null);
   const pageButtonRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const touchStart = useRef<{ x: number; y: number } | null>(null);
@@ -694,13 +633,12 @@ export function ProductMap({
   const index = Math.max(0, slides.findIndex((slide) =>
     slide.id === slideId || (!mobile && slide.id === selectedSlide?.groupId),
   ));
-  const stage = useStageHeight(index, slideRefs);
 
   useBrowserLayoutEffect(() => {
     const previous = pendingPageFocus.current;
     pendingPageFocus.current = null;
     if (previous && (document.activeElement === previous || document.activeElement === document.body) &&
-        previous.closest('[hidden], [inert]')) {
+        (previous.closest('[hidden], [inert]') || !previous.isConnected)) {
       pageButtonRefs.current[index]?.focus({ preventScroll: true });
     }
   }, [index]);
@@ -843,13 +781,13 @@ export function ProductMap({
             aria-roledescription="carousel"
             aria-label="bb surfaces a plugin can extend"
             onKeyDown={onKeyDown}
-            className="mt-2"
+            className="mt-1"
           >
-            <div className="mb-3 border-b border-border-hairline pb-3">
-              <h2 className="text-base font-semibold">
+            <div className="mb-2 border-b border-border-hairline pb-2">
+              <h2 className="text-sm font-semibold">
                 <SlideTitle title={slides[index].title} />
               </h2>
-              <p className="mt-1 max-w-2xl text-sm leading-relaxed text-subtle-foreground/75">
+              <p className="mt-0.5 max-w-2xl text-xs leading-relaxed text-subtle-foreground/75">
                 {slides[index].blurb}
               </p>
             </div>
@@ -934,7 +872,7 @@ export function ProductMap({
                             slideIndex === index ? "true" : undefined
                           }
                           className={cn(
-                            "cursor-pointer whitespace-nowrap rounded-md px-2.5 py-2.5 text-sm @2xl/guide:py-1 @2xl/guide:text-xs transition-colors",
+                            "cursor-pointer whitespace-nowrap rounded-md px-2 py-2 text-xs @2xl/guide:py-1 @2xl/guide:text-xs ",
                             viewportMobile && "block w-full truncate",
                             FOCUS_RING_CLASS,
                             slideIndex === index
@@ -989,44 +927,17 @@ export function ProductMap({
                 ))}
               </div>
             </div>
-            <div
-              className={cn(
-                "overflow-x-clip",
-                stage.animate && "transition-[height] duration-300 ease-out",
-              )}
-              style={{
-                ...(stage.height === null
-                  ? undefined
-                  : { height: stage.height }),
-                clipPath: "inset(0 0 -24rem 0)",
-              }}
-            >
-              <div
-                className="flex transition-transform duration-300 ease-out"
-                style={{ transform: `translateX(-${index * 100}%)` }}
-              >
-                {slides.map((entry, slideIndex) => (
-                  <div
-                    key={entry.id}
-                    data-map-section={entry.id}
-                    ref={(element) => {
-                      slideRefs.current[slideIndex] = element;
-                    }}
-                    inert={slideIndex !== index}
-                    style={
-                      slideIndex === index || stage.height === null
-                        ? undefined
-                        : { maxHeight: stage.height, overflow: "hidden" }
-                    }
-                    className="min-w-0 w-full shrink-0 self-start px-1 pt-2"
-                  >
-                    <Slide group={entry} mobile={mobile} viewportMobile={viewportMobile} />
-                  </div>
-                ))}
-              </div>
+            <div className="overflow-x-clip">
+              {slides.map((entry, slideIndex) => (
+                <div key={entry.id} data-map-section={entry.id}
+                  hidden={slideIndex !== index} inert={slideIndex !== index}
+                  className="min-w-0 w-full shrink-0 self-start px-1 pt-2">
+                  {slideIndex === index ? <Slide group={entry} mobile={mobile} viewportMobile={viewportMobile} /> : null}
+                </div>
+              ))}
             </div>
 
-            {viewportMobile ? <MobileCardFlow>{cardNode}</MobileCardFlow> : cardNode}
+            {cardNode}
           </section>
         </div>
       </div>

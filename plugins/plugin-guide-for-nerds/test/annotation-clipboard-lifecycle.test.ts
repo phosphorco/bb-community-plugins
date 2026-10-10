@@ -34,11 +34,11 @@ describe("card clipboard lifetime", () => {
     await act(async () => request.resolve(true));
     expect(vi.getTimerCount()).toBe(0); expect(view.container.textContent).not.toContain("Copied");
   });
-  it("clears existing feedback and scroll timers on session abort", async () => {
+  it("clears feedback on session abort without creating a delayed scroll timer", async () => {
     const session = new AbortController();
     const view = render(createElement(SurfaceCard, cardProps(session.signal, async () => true)));
     await act(async () => fireEvent.click(view.getByRole("button", { name: "Copy for agent" })));
-    expect(view.container.textContent).toContain("Copied"); expect(vi.getTimerCount()).toBe(2);
+    expect(view.container.textContent).toContain("Copied"); expect(vi.getTimerCount()).toBe(1);
     act(() => session.abort()); expect(vi.getTimerCount()).toBe(0);
   });
   it("shows current rejection as failure, retries, and replaces rather than accumulates feedback timers", async () => {

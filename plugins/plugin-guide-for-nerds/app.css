@@ -1,5 +1,5 @@
 [data-bb-plugin="plugin-guide-for-nerds"].nerd-guide-frame {
-  --guide-stage-gap: 12px;
+  --guide-stage-gap: 8px;
   isolation: isolate;
 }
 [data-bb-plugin="plugin-guide-for-nerds"] .nerd-guide-chrome-button:focus-visible {
@@ -11,4 +11,50 @@
 }
 [data-bb-plugin="plugin-guide-for-nerds"] [data-guide-stage-viewport] {
   scrollbar-gutter: stable;
+}
+[data-bb-plugin="plugin-guide-for-nerds"].nerd-guide-frame *,
+[data-bb-plugin="plugin-guide-for-nerds"].nerd-guide-frame *::before,
+[data-bb-plugin="plugin-guide-for-nerds"].nerd-guide-frame *::after {
+  transition: none !important;
+  animation: none !important;
+  scroll-behavior: auto !important;
+}
+[data-bb-plugin="plugin-guide-for-nerds"] .nerd-guide-badge {
+  width: 20px;
+  height: 20px;
+}
+[data-bb-plugin="plugin-guide-for-nerds"] .nerd-guide-tag {
+  position: absolute;
+  left: calc(10px + 10px * var(--guide-chip-scale, 1) + 3px);
+  top: 50%;
+  transform: translateY(-50%);
+  scale: var(--guide-chip-scale, 1);
+  transform-origin: left center;
+  padding: 2px 4px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--popover);
+  color: var(--foreground);
+  font: 500 11px/1.2 var(--font-sans, sans-serif);
+  white-space: nowrap;
+}
+[data-bb-plugin="plugin-guide-for-nerds"] [data-label-side="left"] .nerd-guide-tag {
+  left: auto;
+  right: calc(10px + 10px * var(--guide-chip-scale, 1) + 3px);
+  transform-origin: right center;
+}
+[data-bb-plugin="plugin-guide-for-nerds"] [data-guide-badge-placement="lane"] .nerd-guide-tag,
+[data-bb-plugin="plugin-guide-for-nerds"] [data-guide-badge-placement="above"] .nerd-guide-tag {
+  left: 50%;
+  right: auto;
+  top: auto;
+  bottom: calc(10px + 10px * var(--guide-chip-scale, 1) + 3px);
+  transform: translateX(-50%);
+  transform-origin: center bottom;
+}
+[data-bb-plugin="plugin-guide-for-nerds"] [data-label-row="below"][data-guide-badge-placement="lane"] .nerd-guide-tag,
+[data-bb-plugin="plugin-guide-for-nerds"] [data-label-row="below"][data-guide-badge-placement="above"] .nerd-guide-tag {
+  top: calc(10px + 10px * var(--guide-chip-scale, 1) + 3px);
+  bottom: auto;
+  transform-origin: center top;
 }
