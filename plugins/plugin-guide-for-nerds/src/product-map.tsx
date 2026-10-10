@@ -1,6 +1,7 @@
 import {
   Fragment,
   useEffect,
+  useId,
   useMemo,
   useRef,
   useState,
@@ -17,7 +18,7 @@ import { cn } from "@/lib/utils";
 import { guideEditableTarget, guideInnerLayer } from "../lib/guide-interaction";
 import { SurfaceCard, useSurfaceCard } from "./surface-card";
 import { surfaceIcon } from "./plugin-icons";
-import { surfaceLabel, surfaceLocation, surfaceReferenceNote } from "./surface-labels";
+import { surfaceLabel, surfaceLocation, surfacePrimaryApi, surfaceReferenceNote } from "./surface-labels";
 import {
   fixtureResponsiveStrategy,
   GROUP_BY_SURFACE_ID,
@@ -493,6 +494,7 @@ export function ProductMap({
   onCopyForAgent?: (surface: PluginSurface) => Promise<boolean>;
   sessionSignal?: AbortSignal;
 }) {
+  const descriptionPrefix = useId();
   const containerRef = useRef<HTMLDivElement>(null);
   const pageListRef = useRef<HTMLDivElement>(null);
   const pageButtonRefs = useRef<Array<HTMLButtonElement | null>>([]);
@@ -503,6 +505,8 @@ export function ProductMap({
   const referenceOpener = useRef<string | null>(null);
   const referenceColumnRef = useRef<HTMLElement | null>(null);
   const referenceScroll = useRef(0);
+  const guideScroll = useRef<{ element: HTMLElement; top: number; left: number } | null>(null);
+  const pendingScrollReturn = useRef(false);
   const pendingReferenceFocus = useRef<string | null>(null);
   const pendingInspectorFocus = useRef(false);
   const [hoverId, setHoverId] = useState<string | null>(null);
@@ -532,20 +536,36 @@ export function ProductMap({
   }, []);
   const selectSurface = (id: string) => {
     setFocusId(null);
+    const active = document.activeElement;
+    const outsideInspector = !(active instanceof Element && active.closest('[data-guide-card]'));
     if (!card.openId) referenceScroll.current = referenceColumnRef.current?.scrollTop ?? 0;
+    if (!card.openId || outsideInspector) {
+      const viewport = containerRef.current?.closest<HTMLElement>('[data-guide-stage-viewport]');
+      guideScroll.current = viewport ? { element: viewport, top: viewport.scrollTop, left: viewport.scrollLeft } : null;
+      pendingInspectorFocus.current = true;
+    }
     card.open(id);
   };
   const closeSurface = () => {
     const active = document.activeElement;
-    if (referenceOpener.current && active instanceof Element && active.closest('[data-guide-card]')) {
-      pendingReferenceFocus.current = referenceOpener.current;
-    }
+    const owned = active instanceof Element && !!active.closest('[data-guide-card]');
+    pendingScrollReturn.current = owned;
+    if (referenceOpener.current && owned) pendingReferenceFocus.current = referenceOpener.current;
     referenceOpener.current = null;
     card.close();
     setHoverId(null);
   };
   useBrowserLayoutEffect(() => {
     if (referenceColumnRef.current) referenceColumnRef.current.scrollTop = card.openId ? 0 : referenceScroll.current;
+    if (!card.openId && pendingScrollReturn.current) {
+      pendingScrollReturn.current = false;
+      const saved = guideScroll.current;
+      if (saved?.element.isConnected) {
+        saved.element.scrollTop = saved.top;
+        saved.element.scrollLeft = saved.left;
+      }
+      guideScroll.current = null;
+    }
     if (card.openId && pendingInspectorFocus.current) {
       pendingInspectorFocus.current = false;
       containerRef.current?.querySelector<HTMLButtonElement>('[data-guide-card] button[aria-label="Close"]')?.focus({ preventScroll: true });
@@ -619,6 +639,10 @@ export function ProductMap({
       return;
     }
     referenceOpener.current = null;
+    referenceScroll.current = 0;
+    guideScroll.current = null;
+    pendingScrollReturn.current = false;
+    pendingReferenceFocus.current = null;
     card.close();
     setHoverId(null);
     setFocusId(null);
@@ -659,7 +683,10 @@ export function ProductMap({
       setFocusedId: setFocusId,
       expandedId: card.openId,
       numberOf: (id: string) => numbers.get(id) ?? null,
-      onSelect: selectSurface,
+      onSelect: (id: string) => {
+        referenceOpener.current = null;
+        selectSurface(id);
+      },
       pluginPageHref,
       renderPluginIcon,
       currentGroupId: slides[index].groupId,
@@ -848,6 +875,7 @@ export function ProductMap({
                 aria-label="Preview layout"
                 className="flex shrink-0 items-center gap-0.5 border-l border-border-hairline pl-2"
               >
+                <span data-guide-current-page aria-hidden="true" className="text-xs font-medium">{slides[index].title}</span>
                 {(["mobile", "desktop"] as const).map((mode) => (
                   <button
                     key={mode}
@@ -902,6 +930,7 @@ export function ProductMap({
                       return <li key={surface.id}>
                         <button type="button" data-guide-reference={surface.id} data-active={active || undefined}
                           aria-label={`${number === null ? '' : `${number}. `}${surfaceLabel(surface.id)}`}
+                          aria-describedby={`${descriptionPrefix}-${surface.id}-description`}
                           onMouseEnter={() => setHoverId(surface.id)} onMouseLeave={() => setHoverId(null)}
                           onFocus={() => setFocusId(surface.id)} onBlur={() => setFocusId(null)}
                           onClick={() => {
@@ -913,8 +942,11 @@ export function ProductMap({
                           {number !== null ? <span aria-hidden data-guide-reference-number className={annotationChipClass(active, undefined, number)}>{number}</span> : null}
                           <span className="min-w-0">
                             <span className="block text-xs font-medium">{surfaceLabel(surface.id)}</span>
-                            <span className="mt-0.5 block text-xs leading-relaxed text-muted-foreground">{surfaceLocation(surface.id)}</span>
-                            <code className="mt-1 block break-all text-[10px] text-muted-foreground">{surface.apiSymbols[0]}</code>
+                            <span id={`${descriptionPrefix}-${surface.id}-description`} className="block">
+                              {surface.experimental ? <ExperimentalBadge /> : null}
+                              <span className="mt-0.5 block text-xs leading-relaxed text-muted-foreground">{surfaceLocation(surface.id)}</span>
+                              <code className="mt-1 block break-all text-[10px] text-muted-foreground">{surfacePrimaryApi(surface.id)}</code>
+                            </span>
                           </span>
                         </button>
                       </li>;

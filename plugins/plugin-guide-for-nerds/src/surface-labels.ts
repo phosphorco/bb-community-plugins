@@ -20,7 +20,7 @@ const locations: Readonly<Record<string, string>> = {
   'command-palette-actions': 'An action in BB’s command palette, opened with Cmd/Ctrl+K.',
   'composer-banners': 'A banner directly above the prompt editor in the composer.',
   'composer-state': 'The prompt draft and its state in the composer.',
-  'mention-provider': 'The suggestions shown when typing @ in the prompt editor.',
+  'mention-provider': 'Suggestions after a configured trigger in the prompt editor; @ by default.',
   'composer-rich-text': 'Highlighted or decorated text inside the prompt editor.',
   'composer-plus-menu': 'An item in the + menu at the bottom-left of the composer.',
   'provider-picker': 'The model/provider picker along the bottom of the composer.',
@@ -40,8 +40,13 @@ export function surfaceLocation(id: string): string {
   return locations[id] ?? `On ${GROUP_BY_SURFACE_ID.get(id)?.title ?? 'the BB plugin backend'}.`;
 }
 
+export function surfacePrimaryApi(id: string): string {
+  const surface = SURFACES_BY_ID.get(id);
+  return surface?.primaryApi ?? surface?.apiSymbols[0] ?? '';
+}
+
 export function surfaceReferenceNote(id: string): string {
   const surface = SURFACES_BY_ID.get(id);
   if (!surface) return surfaceLocation(id);
-  return `In BB, I mean “${surface.title}” (${id}). ${surfaceLocation(id)} Start with the public Plugin SDK’s ${surface.apiSymbols[0]} API and the Plugin Guide reference for this surface.`;
+  return `In BB, I mean “${surface.title}” (${id}). ${surfaceLocation(id)} Start with the public Plugin SDK’s ${surfacePrimaryApi(id)} API and the Plugin Guide reference for this surface.`;
 }

@@ -43,7 +43,10 @@ export function useScrollEdges(
   });
   const sync = useCallback(() => {
     const element = ref.current;
-    if (element) setState(scrollEdgeState(element));
+    if (element) {
+      const next = scrollEdgeState(element);
+      setState(current => current.canScrollLeft === next.canScrollLeft && current.canScrollRight === next.canScrollRight ? current : next);
+    }
   }, [ref]);
   useEffect(() => {
     const element = ref.current;

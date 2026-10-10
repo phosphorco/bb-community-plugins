@@ -4,6 +4,7 @@ export interface PluginSurface {
   summary: string;
   bullets: string[];
   tagline?: string;
+  primaryApi?: string;
   apiSymbols: string[];
   firstParty?: string[];
   experimental?: boolean;
@@ -520,6 +521,7 @@ export const SURFACE_GROUPS: SurfaceGroup[] = [
       {
         id: "provider-picker",
         title: "Agent providers",
+        primaryApi: "PluginProviderDeclaration",
         summary:
           "Adds an agent to bb's model picker and runs the threads started with it. With this, a plugin can:",
         bullets: [

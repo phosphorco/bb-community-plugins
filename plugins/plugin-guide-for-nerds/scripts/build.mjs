@@ -9,6 +9,9 @@ const explicitCli = process.env.BB_GUIDE_FORK_CLI;
 if (lazy && (!explicitCli || !isAbsolute(explicitCli))) {
   throw new Error("Lazy builds require absolute BB_GUIDE_FORK_CLI for a proven generation-serving builder/host pair. Public BB 0.44 produces one app bundle.");
 }
+if (lazy && (!process.env.BB_GUIDE_EXPECTED_BUILD_BB || !process.env.BB_GUIDE_EXPECTED_BUILD_SDK)) {
+  throw new Error("Lazy builds require the exact BB_GUIDE_EXPECTED_BUILD_BB and BB_GUIDE_EXPECTED_BUILD_SDK compiler pair.");
+}
 const env = { ...process.env };
 delete env.BB_CLI;
 // Public 0.44 discovers SDK value exports relative to its compiler, so a
@@ -36,7 +39,10 @@ process.exitCode = await withBuildLifecycle(async lifecycle => {
     executable = join(scratch, "compiler", "bb");
   }
   lifecycle.throwIfCancelled();
-  return await lifecycle.run(executable, ["plugin", "build", "."], { stdio: "inherit", env });
+  const code = await lifecycle.run(executable, ["plugin", "build", "."], { stdio: "inherit", env });
+  if (code !== 0 || !lazy) return code;
+  lifecycle.throwIfCancelled();
+  return await lifecycle.run(process.execPath, [join(import.meta.dirname, 'check-lazy-build.mjs')], { stdio: "inherit", env });
 }, async () => {
   if (scratch) await rm(scratch, { recursive: true, force: true });
 });

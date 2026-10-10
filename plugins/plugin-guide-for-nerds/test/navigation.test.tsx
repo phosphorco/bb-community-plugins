@@ -60,6 +60,68 @@ describe('compact instant reference', () => {
     act(() => row().blur());
     expect(marker.querySelector('[data-guide-number]')?.className).not.toContain('nerd-guide-number-active');
   });
+  it('hands map-origin focus to details and returns focus, linked state and owned scroll', () => {
+    const view = render(createElement('div', { 'data-guide-stage-viewport': true }, createElement(ProductMap)));
+    const viewport = view.container.querySelector<HTMLElement>('[data-guide-stage-viewport]')!;
+    const marker = view.container.querySelector<HTMLAnchorElement>('a[href="#surface-sidebar-navigation"]')!;
+    act(() => marker.focus());
+    viewport.scrollTop = 140;
+    fireEvent.click(marker);
+    expect(document.activeElement?.getAttribute('aria-label')).toBe('Close');
+    viewport.scrollTop = 500;
+    fireEvent.keyDown(document.activeElement!, { key: 'Escape' });
+    expect(document.activeElement).toBe(marker);
+    expect(viewport.scrollTop).toBe(140);
+    expect(view.container.querySelector<HTMLElement>('[data-guide-reference="sidebar-navigation"]')?.dataset.active).toBe('true');
+  });
+  it('hands focus back to details when selecting a different map marker while details are open', () => {
+    const view = render(createElement(ProductMap));
+    const first = view.container.querySelector<HTMLAnchorElement>('a[href="#surface-sidebar-navigation"]')!;
+    const second = view.container.querySelector<HTMLAnchorElement>('a[href="#surface-nav-panel"]')!;
+    act(() => first.focus());
+    fireEvent.click(first);
+    act(() => second.focus());
+    fireEvent.click(second);
+    expect(document.activeElement?.getAttribute('aria-label')).toBe('Close');
+    fireEvent.keyDown(document.activeElement!, { key:'Escape' });
+    expect(document.activeElement).toBe(second);
+    expect(view.container.querySelector<HTMLElement>('[data-guide-reference="nav-panel"]')?.dataset.active).toBe('true');
+  });
+  it('restores a low reference row and outer viewport scroll after details close', () => {
+    const view = render(createElement('div', { 'data-guide-stage-viewport': true }, createElement(ProductMap)));
+    const viewport = view.container.querySelector<HTMLElement>('[data-guide-stage-viewport]')!;
+    const column = view.container.querySelector<HTMLElement>('[data-guide-reference-column]')!;
+    const row = () => view.container.querySelector<HTMLButtonElement>('[data-guide-reference="content-scripts"]')!;
+    act(() => row().focus());
+    viewport.scrollTop = 800;
+    column.scrollTop = 350;
+    fireEvent.click(row());
+    viewport.scrollTop = 100;
+    fireEvent.keyDown(document.activeElement!, { key:'Escape' });
+    expect(document.activeElement).toBe(row());
+    expect(viewport.scrollTop).toBe(800);
+    expect(column.scrollTop).toBe(350);
+  });
+  it('exposes status and location/API descriptions and uses the primary provider declaration', () => {
+    const view = render(createElement(ProductMap));
+    const experimental = view.container.querySelector('[data-guide-reference="sidebar-navigation"]')!;
+    expect(experimental.textContent).toContain('experimental');
+    const ordinary = view.container.querySelector('[data-guide-reference="nav-panel"]')!;
+    expect(ordinary.textContent).not.toContain('experimental');
+    const ids = experimental.getAttribute('aria-describedby')!.split(' ');
+    expect(ids.map(id => document.getElementById(id)?.textContent).join(' ')).toContain('ExperimentalSidebarNavigationRegistration');
+    fireEvent.click(view.getByRole('button',{name:'The composer'}));
+    const provider = view.container.querySelector('[data-guide-reference="provider-picker"]')!;
+    expect(provider.querySelector('code')?.textContent).toBe('PluginProviderDeclaration');
+    fireEvent.click(provider);
+    expect(view.container.querySelector('[data-guide-reference-note]')?.textContent).toContain('PluginProviderDeclaration');
+    fireEvent.keyDown(document.activeElement!,{key:'Escape'});
+    const mention = view.container.querySelector('[data-guide-reference="mention-provider"]')!;
+    expect(mention.textContent).toContain('configured trigger');
+    expect(mention.textContent).toContain('@ by default');
+    fireEvent.click(mention);
+    expect(view.container.querySelector('[data-guide-reference-note]')?.textContent).toContain('configured trigger');
+  });
   it('replaces pages synchronously without a transition timer or inactive fixtures', () => {
     vi.useFakeTimers();
     const view=render(createElement(ProductMap));

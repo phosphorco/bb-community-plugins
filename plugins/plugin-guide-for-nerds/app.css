@@ -88,3 +88,27 @@
 [data-bb-plugin="plugin-guide-for-nerds"] [data-guide-navigation-toolbar] {
   padding-right: 100px;
 }
+
+[data-bb-plugin="plugin-guide-for-nerds"] [data-guide-current-page] {
+  display: none;
+}
+@container guide (max-width: 600px) {
+  [data-bb-plugin="plugin-guide-for-nerds"] [data-guide-navigation-toolbar] {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    padding-right: 0;
+  }
+  [data-bb-plugin="plugin-guide-for-nerds"] [data-guide-navigation-toolbar] > :first-child {
+    padding-right: 100px;
+  }
+  [data-bb-plugin="plugin-guide-for-nerds"] [data-guide-display-mode] {
+    border-left: 0;
+    padding-left: 0;
+  }
+  [data-bb-plugin="plugin-guide-for-nerds"] [data-guide-current-page] {
+    display: block;
+    flex: 1;
+    min-width: 0;
+    padding-right: 8px;
+  }
+}

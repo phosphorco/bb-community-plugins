@@ -14,9 +14,8 @@ assert.equal(meta.artifactFormatVersion, 2, 'Lazy proof requires generation-serv
 const expectedSdk = process.env.BB_GUIDE_EXPECTED_BUILD_SDK ?? '0.5.29';
 assert.equal(meta.sdkVersion, expectedSdk);
 assert.equal(meta.builtWith.pluginSdkVersion, expectedSdk);
-if (process.env.BB_GUIDE_EXPECTED_BUILD_BB) {
-  assert.equal(meta.builtWith.bbVersion, process.env.BB_GUIDE_EXPECTED_BUILD_BB);
-}
+const expectedBb = process.env.BB_GUIDE_EXPECTED_BUILD_BB ?? '0.44.0';
+assert.equal(meta.builtWith.bbVersion, expectedBb);
 assert.match(meta.appArtifact.generation, /^[a-f0-9]{32}$/);
 const generation = meta.appArtifact.generation;
 const prefix = `/api/v1/plugins/plugin-guide-for-nerds/assets/g/${generation}/`;

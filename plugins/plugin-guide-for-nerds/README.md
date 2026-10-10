@@ -20,7 +20,10 @@ BB Git installs build through their
 host compiler after `npm install --omit=dev`, without requiring this development
 CLI or prepare scripts. Required artwork/utility packages are production dependencies.
 
-`npm run build:lazy` requires an explicit absolute `BB_GUIDE_FORK_CLI`. Deferred
+`npm run build:lazy` requires an explicit absolute `BB_GUIDE_FORK_CLI` and the
+exact `BB_GUIDE_EXPECTED_BUILD_BB` / `BB_GUIDE_EXPECTED_BUILD_SDK` compiler pair.
+It succeeds only after manifest hashes, lazy import closure and retry-factory
+validation pass. Deferred
 network delivery requires a proven builder **and** generation-serving host, such
 as the existing Phosphor patch-0028 composition. A version range alone does not
 express that capability. No upstream split-chunk support is claimed. On this
@@ -53,5 +56,11 @@ to the guide entry, not arbitrary nested module failures.
 
 When checking artifacts from a newer explicitly selected host compiler, name its
 exact pair with `BB_GUIDE_EXPECTED_BUILD_BB` and `BB_GUIDE_EXPECTED_BUILD_SDK`.
-For the current local BB 0.45.0 / SDK 0.6.29 builder, set those exact values.
+For the current local BB 0.45.0 / SDK 0.6.29 builder:
+
+```sh
+BB_GUIDE_FORK_CLI=/home/ubuntu/bb/fork/build/bb/packages/bb-app/host-daemon/dist/bb \
+BB_GUIDE_EXPECTED_BUILD_BB=0.45.0 BB_GUIDE_EXPECTED_BUILD_SDK=0.6.29 npm run build:lazy
+```
+
 The public development build/type target remains BB 0.44.0 / SDK 0.5.29.
