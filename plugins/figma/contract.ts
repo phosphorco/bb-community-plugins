@@ -36,7 +36,7 @@ export interface OfficialConfig {
 }
 export interface RemoteManager {
   peer(signal?: AbortSignal): Promise<McpPeer>;
-  beginAuth(): Promise<{ authorizationUrl: string }>;
+  beginAuth(): Promise<{ authorizationUrl: string; callbackRequired?: boolean }>;
   finishAuth(input: { code: string; state: string; issuer?: string }): Promise<void>;
   status(): ConnectionStatus;
   disconnect(): Promise<void>;
@@ -47,6 +47,21 @@ export interface RemoteOptions {
   config: () => Promise<OfficialConfig>;
   onChange?: () => void;
   fetch?: typeof fetch;
+}
+/** Genuine Codex owns registration, authorization and credentials. BB never reads tokens. */
+export interface CodexConfig {
+  binaryPath: string;
+  serverName: string;
+}
+export interface CodexManager extends RemoteManager {
+  /** Resume the existing Codex grant without registration or browser sign-in. */
+  connect(): Promise<void>;
+  finishCallback(callbackUrl: string): Promise<void>;
+}
+export interface CodexOptions {
+  directory: string;
+  config: () => Promise<CodexConfig>;
+  onChange?: () => void;
 }
 export interface MirrorConfig {
   binaryPath: string;
@@ -75,6 +90,10 @@ export interface MirrorOptions {
 export interface SettingsSnapshot {
   scope: "shared";
   config: {
+    officialMode: "direct" | "codex";
+    codexBinaryPath: string;
+    codexServerName: string;
+    codexEnabled: boolean;
     binaryPath: string;
     mirrorEnabled: boolean;
     binaryAvailable: boolean;

@@ -8,7 +8,7 @@ import type { rpcContract } from "../rpc-contract.ts";
 
 const connection = { phase: "disconnected" as const, detail: null, connectedAt: null, serverVersion: null };
 function snapshot(): SettingsSnapshot {
-  return { scope: "shared", config: { binaryPath: "figmog", mirrorEnabled: true, binaryAvailable: true, tokenConfigured: true, clientId: "public-client", clientSecretConfigured: true, redirectUri: "https://bb.example/callback" }, official: { ...connection }, mirror: { ...connection }, tools: { official: [], mirror: [] }, aliasesNeedReload: false };
+  return { scope: "shared", config: { officialMode: "direct", codexBinaryPath: "/usr/local/bin/codex", codexServerName: "figma_bb_diagnostic", codexEnabled: false, binaryPath: "figmog", mirrorEnabled: true, binaryAvailable: true, tokenConfigured: true, clientId: "public-client", clientSecretConfigured: true, redirectUri: "https://bb.example/callback" }, official: { ...connection }, mirror: { ...connection }, tools: { official: [], mirror: [] }, aliasesNeedReload: false };
 }
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -22,7 +22,7 @@ async function mount(overrides: Partial<PluginRpcTestHandlers<typeof rpcContract
   const rpc: PluginRpcTestHandlers<typeof rpcContract> = {
     status: () => snapshot(), configure: () => snapshot(),
     connectOfficial: () => ({ authorizationUrl: "https://www.figma.com/oauth?state=test" }),
-    disconnect: () => snapshot(), testConnection: () => snapshot(), refreshTools: () => snapshot(), syncMirror: () => ({}), ...overrides,
+    finishCodexAuth: () => snapshot(), disconnect: () => snapshot(), testConnection: () => snapshot(), refreshTools: () => snapshot(), syncMirror: () => ({}), ...overrides,
   };
   return renderSlot(app.settingsSections[0]!, {}, { rpc });
 }
@@ -275,4 +275,169 @@ test("file-test error snapshots retain their failure after status refresh", asyn
   expect((await slot.findByRole("alert")).textContent).toContain("File permission denied");
   await slot.behavior.emitRealtime("figma", {});
   expect(slot.getByRole("alert").textContent).toContain("Test read did not verify access");
+});
+
+function codexSnapshot(): SettingsSnapshot {
+  const next = snapshot();
+  next.config = { ...next.config, officialMode: "codex", codexEnabled: true, mirrorEnabled: false };
+  return next;
+}
+
+test("connection mode and advanced Codex settings persist without starting registration", async () => {
+  let current = snapshot();
+  const configure = vi.fn((input) => {
+    current = { ...current, config: { ...current.config, ...input } };
+    return current;
+  });
+  const connectOfficial = vi.fn();
+  const testConnection = vi.fn(() => current);
+  const slot = await mount({ status: () => current, configure, connectOfficial, testConnection });
+  fireEvent.click(await slot.findByRole("radio", { name: "Via Codex" }));
+  expect(slot.queryByLabelText("Figma OAuth client ID")).toBeNull();
+  expect(slot.queryByRole("button", { name: "Use automatic registration", hidden: true })).toBeNull();
+  expect((slot.getByRole("button", { name: "Connect Figma" }) as HTMLButtonElement).disabled).toBe(true);
+  fireEvent.change(slot.getByLabelText("Codex executable absolute path"), { target: { value: "/opt/codex/bin/codex" } });
+  fireEvent.change(slot.getByLabelText("Codex MCP server name"), { target: { value: "custom_figma" } });
+  fireEvent.click(slot.getByRole("button", { name: "Save settings" }));
+  await slot.findByText(/Settings saved/);
+  expect(configure).toHaveBeenCalledWith({ officialMode: "codex", codexBinaryPath: "/opt/codex/bin/codex", codexServerName: "custom_figma" });
+  expect((slot.getByRole("radio", { name: "Via Codex" }) as HTMLInputElement).checked).toBe(true);
+  expect(slot.getByText(/Prompts, completion, tasks and subscriptions are unavailable/)).toBeTruthy();
+  fireEvent.click(slot.getByRole("button", { name: "Test figma" }));
+  await waitFor(() => expect(testConnection).toHaveBeenCalledWith({ source: "official" }));
+  expect(connectOfficial).not.toHaveBeenCalled();
+});
+
+test("Codex callback is visible, permits correction after failure, and clears on acceptance", async () => {
+  let current = codexSnapshot();
+  const callback = ' "localhost:1234/callback?code=private-code&state=private-state" ';
+  const finishCodexAuth = vi.fn().mockImplementationOnce(async () => {
+    current = { ...current, official: { ...connection, phase: "error", detail: "Callback address was not accepted. Paste the full browser address and retry." } };
+    throw new Error(callback);
+  }).mockImplementationOnce(() => {
+    current = { ...current, official: { ...connection, phase: "connected" } };
+    return current;
+  });
+  const slot = await mount({ status: () => current, finishCodexAuth, connectOfficial: () => {
+    current = { ...current, official: { ...connection, phase: "authorizing" } };
+    return { authorizationUrl: "https://www.figma.com/oauth", callbackRequired: true };
+  } });
+  fireEvent.click(await slot.findByRole("button", { name: "Connect Figma" }));
+  const input = await slot.findByLabelText("Figma callback URL") as HTMLInputElement;
+  expect(input.type).toBe("text");
+  expect(input.autocomplete).toBe("off");
+  expect(slot.getByText(/This failure to load is expected/)).toBeTruthy();
+  fireEvent.change(input, { target: { value: callback } });
+  fireEvent.click(slot.getByRole("button", { name: "Finish sign-in" }));
+  await slot.findByText(/Callback address was not accepted/);
+  expect(slot.getByRole("alert").textContent).not.toContain("private-code");
+  expect(slot.container.textContent).not.toContain("private-state");
+  expect(input.value).toBe(callback);
+  expect(finishCodexAuth).toHaveBeenCalledWith({ callbackUrl: callback });
+  fireEvent.change(input, { target: { value: "http://localhost:1234/callback?code=corrected&state=unchanged" } });
+  fireEvent.click(slot.getByRole("button", { name: "Finish sign-in" }));
+  await slot.findByText(/Figma sign-in completed/);
+  expect(slot.queryByLabelText("Figma callback URL")).toBeNull();
+  expect(input.value).toBe("");
+  expect(slot.queryByRole("alert")).toBeNull();
+  expect(window.localStorage.length).toBe(0); expect(window.sessionStorage.length).toBe(0);
+});
+
+for (const cancellation of ["disconnect", "cancel", "mode", "save"] as const) {
+  test(`Codex callback clears on ${cancellation} and stale status cannot restore it`, async () => {
+    let current = codexSnapshot();
+    let pendingRead: ReturnType<typeof deferred<SettingsSnapshot>> | null = null;
+    const disconnect = vi.fn(() => {
+      current = { ...current, config: { ...current.config, codexEnabled: false }, official: { ...connection } };
+      return current;
+    });
+    const finishCodexAuth = vi.fn();
+    const configure = vi.fn((input) => {
+      current = { ...current, config: { ...current.config, ...input }, official: { ...connection } };
+      return current;
+    });
+    const slot = await mount({ status: () => pendingRead?.promise ?? current, disconnect, finishCodexAuth, configure,
+      connectOfficial: () => {
+        current = { ...current, official: { ...connection, phase: "authorizing" } };
+        return { authorizationUrl: "https://www.figma.com/oauth", callbackRequired: true };
+      } });
+    fireEvent.click(await slot.findByRole("button", { name: "Connect Figma" }));
+    const input = await slot.findByLabelText("Figma callback URL") as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "http://localhost/callback?code=sensitive&state=sensitive" } });
+    const stale = current;
+    if (cancellation !== "mode") {
+      pendingRead = deferred<SettingsSnapshot>();
+      fireEvent(window, new Event("focus"));
+    }
+    if (cancellation === "mode") fireEvent.click(slot.getByRole("radio", { name: "Direct independent BB client (advanced)" }));
+    else if (cancellation === "save") {
+      fireEvent.click(slot.getByRole("checkbox", { name: "Use figmog for cached reads" }));
+      fireEvent.click(slot.getByRole("button", { name: "Save settings" }));
+      await slot.findByText(/Settings saved/);
+    } else {
+      fireEvent.click(slot.getByRole("button", { name: cancellation === "cancel" ? "Cancel sign-in" : "Disconnect figma" }));
+      await slot.findByText(/completed. Connection status/);
+      expect(disconnect).toHaveBeenCalledWith({ source: "official" });
+    }
+    if (pendingRead) {
+      const old = pendingRead;
+      pendingRead = null;
+      await act(async () => old.resolve(stale));
+    }
+    expect(slot.queryByLabelText("Figma callback URL")).toBeNull();
+    expect(slot.queryByRole("link", { name: "Authorize Figma in a new tab" })).toBeNull();
+    expect(input.value).toBe("");
+    expect(finishCodexAuth).not.toHaveBeenCalled();
+  });
+}
+
+test("unmount clears callback input and ignores a late sign-in result", async () => {
+  let current = codexSnapshot();
+  const finish = deferred<SettingsSnapshot>();
+  const status = vi.fn(() => current);
+  const slot = await mount({ status, finishCodexAuth: () => finish.promise, connectOfficial: () => {
+    current = { ...current, official: { ...connection, phase: "authorizing" } };
+    return { authorizationUrl: "https://www.figma.com/oauth", callbackRequired: true };
+  } });
+  fireEvent.click(await slot.findByRole("button", { name: "Connect Figma" }));
+  const input = await slot.findByLabelText("Figma callback URL") as HTMLInputElement;
+  fireEvent.change(input, { target: { value: "http://localhost/callback?code=sensitive&state=sensitive" } });
+  fireEvent.click(slot.getByRole("button", { name: "Finish sign-in" }));
+  slot.unmount();
+  expect(input.value).toBe("");
+  const reads = status.mock.calls.length;
+  current = { ...current, official: { ...connection, phase: "connected" } };
+  await act(async () => finish.resolve(current));
+  fireEvent(window, new Event("focus"));
+  expect(status).toHaveBeenCalledTimes(reads);
+  expect(document.querySelector(".figma-settings")).toBeNull();
+});
+
+
+test("callback entry is not shown unless the Codex connect response requires it", async () => {
+  let current = codexSnapshot();
+  const slot = await mount({ status: () => current, connectOfficial: () => {
+    current = { ...current, official: { ...connection, phase: "authorizing" } };
+    return { authorizationUrl: "https://www.figma.com/oauth" };
+  } });
+  fireEvent.click(await slot.findByRole("button", { name: "Connect Figma" }));
+  await slot.findByRole("link", { name: "Authorize Figma in a new tab" });
+  expect(slot.queryByLabelText("Figma callback URL")).toBeNull();
+  expect(slot.queryByRole("button", { name: "Finish sign-in" })).toBeNull();
+});
+
+test("an authoritative route change clears a pending Codex callback even while authorizing", async () => {
+  let current = codexSnapshot();
+  const slot = await mount({ status: () => current, connectOfficial: () => {
+    current = { ...current, official: { ...connection, phase: "authorizing" } };
+    return { authorizationUrl: "https://www.figma.com/oauth", callbackRequired: true };
+  } });
+  fireEvent.click(await slot.findByRole("button", { name: "Connect Figma" }));
+  const input = await slot.findByLabelText("Figma callback URL") as HTMLInputElement;
+  fireEvent.change(input, { target: { value: "http://localhost/callback?code=sensitive&state=sensitive" } });
+  current = { ...current, config: { ...current.config, officialMode: "direct" } };
+  await slot.behavior.emitRealtime("figma", {});
+  await waitFor(() => expect(slot.queryByRole("link", { name: "Authorize Figma in a new tab" })).toBeNull());
+  expect(input.value).toBe("");
+  expect(slot.queryByLabelText("Figma callback URL")).toBeNull();
 });
