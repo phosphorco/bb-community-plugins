@@ -68,10 +68,17 @@ function copiedCallback(value: string, redirectUri: string): { code: string; sta
   let url: URL, expected: URL;
   try { url = new URL(address); expected = new URL(redirectUri); }
   catch { throw new Error("Paste the full Figma callback address from your browser."); }
-  if (url.origin !== expected.origin || url.pathname !== expected.pathname || url.username || url.password || url.hash ||
-      url.searchParams.getAll("state").length !== 1 || url.searchParams.getAll("code").length > 1 ||
-      url.searchParams.getAll("iss").length > 1 || url.searchParams.getAll("error").length > 1) {
+  if (url.origin !== expected.origin || url.pathname !== expected.pathname || url.username || url.password || url.hash) {
     throw new Error("Figma callback does not match this connection. Paste the address from its current sign-in.");
+  }
+  return callbackResult(url);
+}
+
+/** Both entry points reject ambiguous callbacks before consuming OAuth state. */
+function callbackResult(url: URL): { code: string; state: string; issuer?: string } {
+  if (url.href.length > 65536 || url.searchParams.getAll("state").length !== 1 || url.searchParams.getAll("code").length > 1 ||
+      url.searchParams.getAll("iss").length > 1 || url.searchParams.getAll("error").length > 1) {
+    throw new Error("Figma callback has invalid or repeated fields. Paste the complete address from the current sign-in.");
   }
   const state = url.searchParams.get("state"), code = url.searchParams.get("code"), denied = url.searchParams.has("error");
   if (!state || (!code && !denied) || (code && denied)) throw new Error("Figma callback is missing the authorization result.");
@@ -137,6 +144,9 @@ export function createFigmaPlugin(dependencies: FigmaDependencies = {}) {
       config: async () => ({ clientId: config.clientId, clientSecret: config.clientSecret, redirectUri: config.redirectUri }),
       onChange: change,
     });
+    // Restore private consent/grant presence without OAuth, discovery or MCP I/O.
+    // A corrupt store remains visible in status instead of preventing activation.
+    await remote.restoreStatus?.().catch(() => undefined);
     const resolveBinary = dependencies.resolveBinary ?? resolveFigmog;
     const initialBinary = await resolveBinary(config.binaryPath);
     const mirrorConfig = (path: string) => ({
@@ -210,10 +220,13 @@ export function createFigmaPlugin(dependencies: FigmaDependencies = {}) {
       if (next.mirrorEnabled !== config.mirrorEnabled) next.cacheGeneration = randomUUID();
       next.redirectUri = configuredRedirect(next.redirectUri, bb.pluginId);
       const officialChanged = next.clientId !== config.clientId || next.clientSecret !== config.clientSecret || next.redirectUri !== config.redirectUri;
-      if (officialChanged) await remote.disconnect();
       await configStore.write(next);
       config = next;
       configurationProblem = null;
+      if (officialChanged) {
+        try { await remote.disconnect(); }
+        finally { bridge.clear("official"); }
+      }
       await mirror.configure(mirrorConfig((await resolveBinary(config.binaryPath)) ?? config.binaryPath));
       if (mirrorChanged) bridge.clear("mirror");
       change();
@@ -273,14 +286,13 @@ export function createFigmaPlugin(dependencies: FigmaDependencies = {}) {
       context.header("Referrer-Policy", "no-referrer");
       context.header("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'");
       const url = new URL(context.req.url);
-      const code = url.searchParams.get("code");
-      const state = url.searchParams.get("state");
-      const denied = url.searchParams.has("error");
-      if (!state || (!code && !denied)) return context.text("Figma sign-in did not complete. Return to BB settings and connect again.", 400);
+      let input: ReturnType<typeof callbackResult>;
+      try { input = callbackResult(url); }
+      catch { return context.text("Figma sign-in did not complete. Return to BB settings and connect again.", 400); }
       try {
         const discovered = await serialize(async () => {
           // A matched denial consumes its pending state just like an exchange.
-          await remote.finishAuth({ code: denied ? "" : code!, state, issuer: url.searchParams.get("iss") ?? undefined });
+          await remote.finishAuth(input);
           try { await bridge.refresh("official"); return true; }
           catch { return false; }
         });
@@ -296,7 +308,8 @@ export function createFigmaPlugin(dependencies: FigmaDependencies = {}) {
     bb.agents.contributeInstructions(() => `Use the official Figma MCP connection for reads and writes: start with figma_discover source=official. Figmog is an optional cache, ${config.mirrorEnabled ? "enabled by the operator; use its discovered tools for repeated reads only when available" : "currently disabled"}. If figmog is missing or unavailable, discover the official tools and use their actual schemas; do not translate figmog arguments blindly or require an installation. BB owns the direct OAuth and MCP connection; no local Codex executable is required. figma_mcp provides resources, prompts and other advertised MCP operations. Read upstream skills/resources required by a tool. Connections are shared by this BB deployment; agents act as the authorizing Figma user. Respect refresh-pending errors; after an uncertain write, inspect the official canvas before retrying. Never guess that a disconnected tool or cached schema is available.`);
     bb.onDispose(async () => {
       disposed = true;
-      await Promise.allSettled([remote.close(), mirror.close(), bridge.close()]);
+      await bridge.close();
+      await Promise.allSettled([remote.close(), mirror.close()]);
       await Promise.allSettled([mutationTail, catalogTail]);
     });
   };

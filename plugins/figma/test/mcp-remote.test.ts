@@ -103,6 +103,57 @@ test("SDK OAuth PKCE survives restart, consumes state once and uses own secret-b
   assert.equal(f.requests.filter(x => x.url === metadata.token_endpoint).length, 1); await next.close();
 });
 
+test("restoring status resumes pending consent and identifies saved grants without any network", async () => {
+  const f = fixture(), first = f.manager();
+  const url = new URL((await first.beginAuth()).authorizationUrl);
+  await first.close();
+  const next = f.manager(), count = f.requests.length;
+  await next.restoreStatus!();
+  assert.equal(next.status().phase, "authorizing");
+  assert.equal(f.requests.length, count);
+  await next.finishAuth({ code: "fixture-code", state: url.searchParams.get("state")!, issuer });
+  await next.close();
+  const saved = f.manager(), before = f.requests.length;
+  await saved.restoreStatus!();
+  assert.equal(saved.status().phase, "disconnected");
+  assert.match(saved.status().detail!, /Saved Figma authorization is available.*Test Figma/);
+  assert.equal(f.requests.length, before);
+  await saved.close();
+});
+
+test("expired pending consent is actionable and corruption is visible during status restoration", async () => {
+  const f = fixture(), first = f.manager(); await first.beginAuth(); await first.close();
+  (f.store.value!.pending as JsonObject).expiresAt = Date.now() - 1;
+  const expired = f.manager(), count = f.requests.length; await expired.restoreStatus!();
+  assert.match(expired.status().detail!, /expired.*Start Connect again/);
+  assert.equal(f.requests.length, count); await expired.close();
+  f.store.value = { version: 0 };
+  const corrupt = f.manager(); await assert.rejects(corrupt.restoreStatus!(), /Saved Figma authorization is invalid/);
+  assert.equal(corrupt.status().phase, "error"); assert.equal(f.requests.length, count); await corrupt.close();
+});
+
+test("a rejected refresh grant is retired durably without repeated exchanges or registration", async () => {
+  const f = fixture(), m = await authenticate(f); f.store.value!.expiresAt = Date.now() - 1;
+  f.setTokenHook(async () => f.json({ error: "invalid_grant", error_description: "private" }, 400));
+  await assert.rejects(m.peer(), /revoked.*Connect Figma again/);
+  assert.equal(f.store.value!.tokens, undefined);
+  const count = f.requests.length;
+  await assert.rejects(m.peer(), /Connect Figma/); assert.equal(f.requests.length, count);
+  await m.close();
+  const next = f.manager(); await assert.rejects(next.peer(), /Connect Figma/);
+  assert.equal(f.requests.length, count); await next.close();
+});
+
+test("exchange success plus initialize failure retains authorization and names Test Figma recovery", async () => {
+  const f = fixture(), m = f.manager(), url = new URL((await m.beginAuth()).authorizationUrl);
+  f.setRpcHook(async rpc => { if (rpc.method === "initialize") throw new Error("outage with private text"); return undefined; });
+  await assert.rejects(m.finishAuth({ code: "fixture-code", state: url.searchParams.get("state")!, issuer }), /authorization was saved.*Test Figma.*do not paste/);
+  assert.ok(f.store.value!.tokens); assert.equal(f.store.value!.pending, undefined);
+  assert.doesNotMatch(m.status().detail!, /private text/);
+  f.setRpcHook(undefined); await m.peer(); assert.equal(m.status().phase, "connected");
+  assert.equal(f.requests.filter(x => x.url === metadata.token_endpoint).length, 1); await m.close();
+});
+
 test("state, issuer, callback configuration, expiry and denial bind before exchange", async () => {
   for (const kind of ["state", "issuer", "missing-issuer", "redirect", "expiry", "denied"] as const) {
     const f = fixture(), m = f.manager(), url = new URL((await m.beginAuth()).authorizationUrl), state = url.searchParams.get("state")!;
@@ -370,6 +421,63 @@ test("one timed-out or failed POST keeps concurrent writes alive and neither cal
     assert.equal(f.requests.filter(x => (x.body as JsonObject)?.method === "initialize").length, 1);
     await m.close(); timeoutMock.mock.restore();
   }
+});
+
+test("internal and custom tool errors disclose an unknown outcome without marking transport unhealthy", async () => {
+  const f = fixture(), m = await authenticate(f), peer = await m.peer();
+  try {
+    for (const code of [-32603, -32042]) {
+      f.setRpcHook(async rpc => rpc.method === "tools/call"
+        ? f.json({ jsonrpc: "2.0", id: rpc.id, error: { code, message: "operation failed fixture-access" } }) : undefined);
+      await assert.rejects(peer.request("tools/call", { name: "use_figma", arguments: {} }), error => {
+        assert.ok(error instanceof RemoteError);
+        assert.equal(error.reason, "outcome_unknown"); assert.equal(error.code, code);
+        assert.match(error.message, /outcome is unknown.*Inspect the canvas before retrying/);
+        assert.doesNotMatch(error.message, /fixture-access/); return true;
+      });
+      assert.equal(m.status().phase, "connected");
+    }
+    assert.equal(f.requests.filter(x => (x.body as JsonObject)?.method === "tools/call").length, 2);
+  } finally { await m.close(); }
+});
+
+test("closing a borrowed lease cannot erase an already dispatched tool result", async () => {
+  const f = fixture(), m = await authenticate(f), peer = await m.peer();
+  const entered = deferred<void>(), release = deferred<void>();
+  const result = { content: [{ type: "text", text: "created" }], structuredContent: { nodeId: "1:2" }, _meta: { retained: true } };
+  f.setRpcHook(async rpc => {
+    if (rpc.method !== "tools/call") return undefined;
+    entered.resolve(); await release.promise;
+    return f.json({ jsonrpc: "2.0", id: rpc.id, result });
+  });
+  try {
+    const call = peer.request("tools/call", { name: "use_figma", arguments: {} });
+    await entered.promise; await peer.close(); release.resolve();
+    assert.deepEqual(await call, result);
+    assert.notEqual(await m.peer(), peer);
+    assert.equal(f.requests.filter(x => (x.body as JsonObject)?.method === "tools/call").length, 1);
+  } finally { release.resolve(); await m.close(); }
+});
+
+test("token renewal drains an old transport without interrupting its held write", async () => {
+  const f = fixture(), m = await authenticate(f), old = await m.peer();
+  const entered = deferred<void>(), release = deferred<void>();
+  const result = { content: [{ type: "text", text: "old write committed" }] };
+  f.setRpcHook(async rpc => {
+    if (rpc.method !== "tools/call") return undefined;
+    entered.resolve(); await release.promise;
+    return f.json({ jsonrpc: "2.0", id: rpc.id, result });
+  });
+  try {
+    const call = old.request("tools/call", { name: "use_figma", arguments: {} });
+    await entered.promise; f.store.value!.expiresAt = Date.now() - 1;
+    f.setTokenHook(async () => f.json({ access_token: "fixture-renewed", refresh_token: "fixture-new-refresh", token_type: "Bearer", expires_in: 3600 }));
+    const next = await m.peer(); assert.notEqual(next, old);
+    await assert.rejects(old.request("tools/list"), /transport changed/i);
+    release.resolve(); assert.deepEqual(await call, result);
+    assert.equal((await next.request("tools/list")).method, "tools/list");
+    assert.equal(f.requests.filter(x => (x.body as JsonObject)?.method === "tools/call").length, 1);
+  } finally { release.resolve(); await m.close(); }
 });
 
 const automaticConfig = { ...config, clientId: "", clientSecret: "" };

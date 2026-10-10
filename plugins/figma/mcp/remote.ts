@@ -139,6 +139,9 @@ export function createRemoteManager(options: RemoteOptions): RemoteManager {
   let connection: McpPeer | undefined;
   let connectionToken: string | undefined;
   let borrowed: { peer: McpPeer; connection: McpPeer; epoch: number } | undefined;
+  const active = new Map<McpPeer, number>();
+  const retired = new Set<McpPeer>();
+  const closing = new Set<Promise<void>>();
   const controllers = new Set<AbortController>();
   const catalogListeners = new Set<() => void>();
   const knownSecrets = new Set<string>();
@@ -233,10 +236,17 @@ export function createRemoteManager(options: RemoteOptions): RemoteManager {
     for (const listener of catalogListeners) { try { listener(); } catch { /* Isolate subscribers. */ } }
     catalogListeners.clear();
   };
-  const disposeConnection = async () => {
+  const closePeer = (peer: McpPeer) => {
+    const promise = peer.close().catch(() => undefined);
+    closing.add(promise);
+    void promise.finally(() => closing.delete(promise));
+    return promise;
+  };
+  const disposeConnection = async (drain = false) => {
     if (connection) invalidateCatalog();
     const previous = connection; connection = undefined; connectionToken = undefined;
-    await previous?.close().catch(() => undefined);
+    if (previous && drain && (active.get(previous) ?? 0) > 0) retired.add(previous);
+    else if (previous) await closePeer(previous);
   };
   const discover = async (epoch: number) => {
     const found = await discoverOAuthServerInfo(ENDPOINT, {
@@ -287,14 +297,29 @@ export function createRemoteManager(options: RemoteOptions): RemoteManager {
     if (rejectedTokens.has(bundle.tokens.access_token) || (bundle.expiresAt ?? 0) <= Date.now() + SKEW_MS) {
       if (!bundle.tokens.refresh_token) throw failure("authorization_required", "Figma authorization expired. Reconnect in settings.");
       const metadata = await discover(epoch);
-      const tokens = await refreshAuthorization(ISSUER, { metadata, clientInformation: clientInformation(config, bundle),
-        refreshToken: bundle.tokens.refresh_token, resource: ENDPOINT, fetchFn: fetchFor(epoch) });
+      let tokens: OAuthTokens;
+      try {
+        tokens = await refreshAuthorization(ISSUER, { metadata, clientInformation: clientInformation(config, bundle),
+          refreshToken: bundle.tokens.refresh_token, resource: ENDPOINT, fetchFn: fetchFor(epoch) });
+      } catch (error) {
+        if (error instanceof RemoteError && error.reason === "invalid_grant") {
+          // A rejected refresh grant cannot recover through repeated agent calls.
+          // Preserve registration/pending consent and retire only the dead grant.
+          delete bundle.tokens; delete bundle.expiresAt; await persist(epoch, bundle);
+          invalidateCatalog();
+          setStatus(bundle.pending && bundle.pending.expiresAt > Date.now() ? "authorizing" : "disconnected", "Figma authorization expired or was revoked. Connect Figma again; agent calls will not retry this rejected grant.");
+          throw failure("authorization_required", "Figma authorization expired or was revoked. Connect Figma again.");
+        }
+        throw error;
+      }
       await saveTokens(epoch, bundle, tokens);
     }
     check(epoch);
     const token = bundle.tokens!.access_token;
     if (connection && connectionToken === token) return connection;
-    await disposeConnection(); check(epoch); setStatus("connecting");
+    // Renewal retires the old catalog immediately, but existing requests retain
+    // their transport until they settle under their own bounded deadlines.
+    await disposeConnection(true); check(epoch); setStatus("connecting");
     const client = new Client(CLIENT_INFO, { capabilities: {}, enforceStrictCapabilities: true });
     const peer = sdkPeer(client);
     peer.onCatalogChanged?.(() => {
@@ -326,6 +351,17 @@ export function createRemoteManager(options: RemoteOptions): RemoteManager {
     }
   };
   return {
+    async restoreStatus() {
+      const epoch = generation;
+      await guarded(epoch, "saved authorization", () => serialize(epoch, async () => {
+        const config = await readConfig(epoch);
+        const bundle = decodeBundle(await options.store.read(), configBinding(config)); check(epoch);
+        rememberBundle(bundle);
+        if (bundle.pending && bundle.pending.expiresAt > Date.now()) setStatus("authorizing", "A saved Figma sign-in is pending. Paste its callback URL or start Connect again.");
+        else if (bundle.tokens) setStatus("disconnected", "Saved Figma authorization is available. Test Figma or an agent call resumes it without a new sign-in.");
+        else setStatus("disconnected", bundle.pending ? "The saved Figma sign-in expired. Start Connect again." : null);
+      }));
+    },
     status: () => ({ ...current }),
     async peer(signal) {
       const epoch = generation;
@@ -365,11 +401,17 @@ export function createRemoteManager(options: RemoteOptions): RemoteManager {
           checkLease();
           const dispatchedToken = connectionToken;
           let result: JsonObject;
+          active.set(live, (active.get(live) ?? 0) + 1);
           try { result = await live.request(method, params, requestSignal); }
           catch (error) {
             // A JSON-RPC error is an upstream response, not a failed connection.
             // Preserve its bounded actionable message, never raw data/credentials.
             if (error instanceof McpError && error.code !== ErrorCode.RequestTimeout && error.code !== ErrorCode.ConnectionClosed) {
+              // Internal/custom server failures can occur after a tool ran. Only
+              // JSON-RPC's framing/method/argument errors establish rejection.
+              if (method === "tools/call" && ![ErrorCode.InvalidRequest, ErrorCode.MethodNotFound, ErrorCode.InvalidParams].includes(error.code)) {
+                throw new RemoteError("outcome_unknown", `Figma tool outcome is unknown (JSON-RPC ${error.code}). Inspect the canvas before retrying. This call was not replayed. ${redact(error.message)}`, error.code);
+              }
               throw new RemoteError("protocol", redact(error.message), error.code);
             }
             if (error instanceof Error && /^(Server does not support|The MCP server does not advertise)/.test(error.message)) {
@@ -402,9 +444,17 @@ export function createRemoteManager(options: RemoteOptions): RemoteManager {
               }
             }
             throw safe;
+          } finally {
+            const remaining = (active.get(live) ?? 1) - 1;
+            if (remaining) active.set(live, remaining);
+            else {
+              active.delete(live);
+              if (retired.delete(live)) void closePeer(live);
+            }
           }
-          checkLease();
-          if (current.phase === "error") setStatus("connected");
+          // Once received, an upstream result remains authoritative even if a
+          // borrowed lease was closed or replaced while the request ran.
+          if (!closed && epoch === generation && connection === live && current.phase === "error") setStatus("connected");
           return result;
         },
       };
@@ -455,18 +505,25 @@ export function createRemoteManager(options: RemoteOptions): RemoteManager {
         if (!pending || !equalSecret(pending.state, input.state ?? "")) throw failure("state", "Figma authorization state is invalid or already used.");
         // Consume durably before any exchange, including denial and expired flow.
         delete bundle.pending; await persist(epoch, bundle);
-        if (pending.expiresAt <= Date.now()) throw failure("expired", "Figma authorization expired. Start Connect again.");
-        if (pending.redirectUri !== config.redirectUri ||
-            (input.issuer !== undefined && input.issuer !== ISSUER) ||
-            (pending.metadata.authorization_response_iss_parameter_supported === true && input.issuer !== ISSUER)) {
-          throw failure("issuer", "Figma authorization issuer or callback does not match.");
+        try {
+          if (pending.expiresAt <= Date.now()) throw failure("expired", "Figma authorization expired.");
+          if (pending.redirectUri !== config.redirectUri ||
+              (input.issuer !== undefined && input.issuer !== ISSUER) ||
+              (pending.metadata.authorization_response_iss_parameter_supported === true && input.issuer !== ISSUER)) {
+            throw failure("issuer", "Figma authorization issuer or callback does not match.");
+          }
+          if (!input.code) throw failure("denied", "Figma authorization was denied or cancelled.");
+          const tokens = await exchangeAuthorization(ISSUER, { metadata: pending.metadata,
+            clientInformation: clientInformation(config, bundle), authorizationCode: input.code, codeVerifier: pending.verifier,
+            redirectUri: pending.redirectUri, resource: ENDPOINT, fetchFn: fetchFor(epoch) });
+          await saveTokens(epoch, bundle, tokens);
+          try { await ensure(epoch); }
+          catch { check(epoch); throw failure("authorization_saved", "Figma authorization was saved, but the MCP connection could not open. Use Test Figma to resume; do not paste this callback again."); }
+        } catch (error) {
+          const safe = sanitized(error, "token exchange");
+          if (safe.reason === "authorization_saved") throw safe;
+          throw failure(safe.reason, `${safe.message} This callback has been consumed. Start Connect Figma again for a new sign-in.`);
         }
-        if (!input.code) throw failure("denied", "Figma authorization was denied or cancelled.");
-        const tokens = await exchangeAuthorization(ISSUER, { metadata: pending.metadata,
-          clientInformation: clientInformation(config, bundle), authorizationCode: input.code, codeVerifier: pending.verifier,
-          redirectUri: pending.redirectUri, resource: ENDPOINT, fetchFn: fetchFor(epoch) });
-        await saveTokens(epoch, bundle, tokens);
-        await ensure(epoch);
       }));
     },
     async disconnect() {
@@ -475,15 +532,18 @@ export function createRemoteManager(options: RemoteOptions): RemoteManager {
       catalogListeners.clear();
       for (const controller of controllers) controller.abort();
       const closing = disposeConnection(); setStatus("disconnected");
+      const retiredClosing = [...retired].map(closePeer); retired.clear();
       const result = tail.then(async () => { await options.store.write(null); });
       tail = result.catch(() => undefined);
-      await Promise.all([closing, result]);
+      await Promise.all([closing, result, ...retiredClosing]);
     },
     async close() {
       closed = true; generation++;
       catalogListeners.clear();
       for (const controller of controllers) controller.abort();
-      await disposeConnection(); await tail;
+      await disposeConnection();
+      await Promise.allSettled([...retired].map(closePeer)); retired.clear();
+      await tail; await Promise.allSettled([...closing]);
       setStatus("disconnected");
       // Shutdown preserves durable tokens and pending consent for restart.
     },

@@ -21,13 +21,14 @@ async function fixture(saved?: JsonObject) {
   const callbackInputs: { code: string; state: string; issuer?: string }[] = [];
   let toolError = false;
   let catalogError = false;
+  let saveError = false;
   const peer: McpPeer = {
     request: async () => ({ content: [{ type: "text", text: "fixture" }], isError: toolError }),
     info: () => ({ capabilities: { tools: {} } }), close: async () => undefined,
   };
   await createFigmaPlugin({
     directory,
-    ...(saved ? { configurationStore: { read: async () => stored, write: async value => { stored = structuredClone(value); } } } : {}),
+    ...(saved ? { configurationStore: { read: async () => stored, write: async value => { if (saveError) throw new Error("Could not save settings"); stored = structuredClone(value); } } } : {}),
     resolveBinary: async path => path.includes("missing") ? null : "/opt/figmog",
     remote: (options) => {
       remoteOptions = options;
@@ -72,6 +73,7 @@ async function fixture(saved?: JsonObject) {
     failCallback: () => { throwCallback = true; },
     failTool: () => { toolError = true; },
     failCatalog: () => { catalogError = true; },
+    failSave: () => { saveError = true; },
     rpc: async (method: string, input: unknown = null) => fake.harness.behavior.callRpc(method, input),
     close: async () => { await fake.harness.lifecycle.dispose(); await rm(directory, { recursive: true, force: true }); },
   };
@@ -98,7 +100,7 @@ test("one settings API stores secrets privately and never returns or broadcasts 
   } finally { await f.close(); }
 });
 
-test("client credential changes disconnect old authorization before committing new configuration", async () => {
+test("client credential changes disconnect old authorization after committing new configuration", async () => {
   const f = await fixture();
   try {
     await Promise.all([f.rpc("configure", { clientId: "first", clientSecret: "secret-first" }), f.rpc("configure", { clientId: "second", clientSecret: "secret-second" })]);
@@ -110,6 +112,27 @@ test("client credential changes disconnect old authorization before committing n
     await f.rpc("disconnect", { source: "official" });
     assert.ok(f.events.includes("clear:official"));
     assert.equal((await f.remoteOptions().config()).clientSecret, "secret-second", "disconnect preserves own client registration for reconnection");
+  } finally { await f.close(); }
+});
+
+test("failed configuration persistence leaves the current authorization and settings intact", async () => {
+  const f = await fixture({ clientId: "old", clientSecret: "old-secret", redirectUri: "http://127.0.0.1:38559/callback" });
+  try {
+    f.failSave();
+    await assert.rejects(f.rpc("configure", { clientId: "new", clientSecret: "new-secret" }), /Could not save/);
+    assert.equal((await f.remoteOptions().config()).clientId, "old");
+    assert.equal(f.events.includes("remote-disconnect"), false);
+  } finally { await f.close(); }
+});
+
+test("HTTP callback rejects duplicates and simultaneous success/denial without consuming consent", async () => {
+  const f = await fixture();
+  try {
+    for (const query of ["code=c&state=s&state=s", "code=c&code=d&state=s", "code=c&state=s&iss=x&iss=y", "code=c&state=s&error=access_denied", "error=x&error=y&state=s"]) {
+      const response = await f.harness.behavior.fetchHttp("GET", `/oauth/callback?${query}`);
+      assert.equal(response.status, 400);
+    }
+    assert.equal(f.callbackInputs.length, 0);
   } finally { await f.close(); }
 });
 

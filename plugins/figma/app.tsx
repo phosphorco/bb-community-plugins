@@ -12,6 +12,11 @@ export function FigmaSettings() {
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const actionFailure = useRef<{ label: string; revision: number } | null>(null);
+  const reportActionError = (label: string, message: string) => {
+    actionFailure.current = { label, revision: (actionFailure.current?.revision ?? 0) + 1 };
+    setActionError(message);
+  };
   const [syncDisclosure, setSyncDisclosure] = useState<{ file: string; freshness: string | null } | null>(null);
   const [feedback, setFeedback] = useState<string | null>(null);
   const [authorizationUrl, setAuthorizationUrl] = useState<string | null>(null);
@@ -26,6 +31,10 @@ export function FigmaSettings() {
   const mutation = useRef(false);
   const reading = useRef(false);
   const queued = useRef(false);
+  const officialHeading = useRef<HTMLHeadingElement>(null);
+  useEffect(() => {
+    if (feedback?.startsWith("Figma sign-in completed")) officialHeading.current?.focus();
+  }, [feedback]);
 
   const refresh = useCallback(async () => {
     if (!mounted.current) return;
@@ -69,15 +78,22 @@ export function FigmaSettings() {
     if (mutation.current || !mounted.current) return;
     mutation.current = true;
     const epoch = ++generation.current;
+    const failureBefore = actionFailure.current;
     setBusy(label);
     setError(null);
-    setActionError(null);
     setFeedback(null);
-    try { await action(); }
+    try {
+      await action();
+      if (mounted.current && generation.current === epoch && actionFailure.current === failureBefore && failureBefore?.label === label) {
+        actionFailure.current = null; setActionError(null);
+      }
+    }
     catch {
-      if (mounted.current && generation.current === epoch) setActionError(label === "Connect Figma"
+      if (mounted.current && generation.current === epoch) reportActionError(label, label === "Connect Figma"
         ? "Connect Figma failed. Check the official connection status below for the reason. Refreshing status does not retry registration."
-        : `${label} failed. Retry this action; refreshing status does not repeat it.`);
+        : label === "Finish sign-in"
+          ? "Sign-in could not complete. Check the official connection status. Correct a malformed pasted address; start Connect Figma again if the callback was consumed. If authorization was saved, use Test Figma."
+          : `${label} failed. Retry this action; refreshing status does not repeat it.`);
     } finally {
       mutation.current = false;
       if (mounted.current && generation.current === epoch) {
@@ -117,7 +133,7 @@ export function FigmaSettings() {
       else { setReadToken(""); setSyncDisclosure(null); setAcceptUnverified(false); }
     }
     if (method === "testConnection" && next[source].phase === "error") {
-      setActionError(`${label} did not verify access.${next[source].detail ? ` ${next[source].detail}` : ""}`);
+      reportActionError(label, `${label} did not verify access.${next[source].detail ? ` ${next[source].detail}` : ""}`);
       return;
     }
     setFeedback(`${label} completed. Connection status is shown below.`);
@@ -141,7 +157,7 @@ export function FigmaSettings() {
       if (sentences.length) disclosure = sentences.join(" ");
     }
     setSyncDisclosure({ file: target, freshness: disclosure });
-    if (result.isError === true) setActionError("Sync read cache reported an error. Cache freshness has not been verified. Retry the sync.");
+    if (result.isError === true) reportActionError("Sync read cache", "Sync read cache reported an error. Cache freshness has not been verified. Retry the sync.");
     else setFeedback("Read cache sync returned. Review its freshness disclosure below.");
     queued.current = true;
   });
@@ -194,8 +210,9 @@ export function FigmaSettings() {
         <button type="button" disabled={busy !== null} onClick={() => void connect()}>Connect Figma</button>
         <button type="button" disabled={busy !== null} onClick={() => void refresh()}>Refresh status</button>
       </div>
-      {authorizationUrl && <>
-        <p><a href={authorizationUrl} target="_blank" rel="noopener noreferrer">Authorize Figma in a new tab</a></p>
+      {(authorizationUrl || snapshot.official.phase === "authorizing") && <>
+        {authorizationUrl ? <p><a href={authorizationUrl} target="_blank" rel="noopener noreferrer">Authorize Figma in a new tab</a></p>
+          : <p className="figma-muted">A Figma sign-in is pending. Paste the callback from that sign-in, or click Connect Figma to start again.</p>}
         {snapshot.config.redirectUri.startsWith("http://") && <form onSubmit={event => { event.preventDefault(); void finishAuthorization(); }}>
           <label htmlFor={`${id}-callback`}>Figma callback URL</label>
           <input id={`${id}-callback`} type="text" autoComplete="off" spellCheck={false} value={callbackUrl} disabled={busy !== null} maxLength={65536} onChange={event => setCallbackUrl(event.target.value)} aria-describedby={`${id}-callback-help`} />
@@ -236,9 +253,9 @@ export function FigmaSettings() {
           <button type="submit" className="figma-primary" disabled={Object.keys(draft).length === 0 && !readToken && !clientSecret}>Save settings</button>
         </fieldset>
       </form>
-      <label htmlFor={`${id}-file`}>Figma file URL for connection test</label>
+      <label htmlFor={`${id}-file`}>Figma file URL for cache access test</label>
       <input id={`${id}-file`} type="url" value={file} disabled={busy !== null} onChange={(e) => { setFile(e.target.value); setAcceptUnverified(false); setSyncDisclosure(null); }} placeholder="https://www.figma.com/design/…" />
-      <p className="figma-muted">Provide a file URL to check read access. Testing does not edit your file.</p>
+      <p className="figma-muted">Test read checks this file through the optional cache. Test Figma checks the official connection and account identity; it does not verify access to this file. Neither test edits your file.</p>
       {cacheReady && <><label className="figma-checkbox" htmlFor={`${id}-accept-unverified`}>
         <input id={`${id}-accept-unverified`} type="checkbox" checked={acceptUnverified} disabled={busy !== null} onChange={(e) => setAcceptUnverified(e.target.checked)} aria-describedby={`${id}-sync-help`} />
         Accept refreshed cache without verifying the prior edit
@@ -257,7 +274,7 @@ export function FigmaSettings() {
         const title = source === "mirror" ? "Read" : "Figma";
         const connection = snapshot[source];
         return <section key={source} aria-labelledby={`${id}-${source}`}>
-          <h3 id={`${id}-${source}`}>{source === "mirror" ? "Optional cache connection" : "Official Figma connection"}</h3>
+          <h3 id={`${id}-${source}`} ref={source === "official" ? officialHeading : undefined} tabIndex={source === "official" ? -1 : undefined}>{source === "mirror" ? "Optional cache connection" : "Official Figma connection"}</h3>
           <p>Status: {connection.phase}{connection.serverVersion ? ` · Server ${connection.serverVersion}` : ""}</p>
           {connection.detail && <p className="figma-muted">{connection.detail}</p>}
           {source === "official" && <p className="figma-muted">After a BB restart, Test Figma resumes saved authorization; Connect Figma starts a new sign-in.</p>}

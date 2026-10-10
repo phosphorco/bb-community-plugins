@@ -175,7 +175,7 @@ test("failed load has retry; file test and inventory refresh use only contract R
   await slot.findByRole("alert");
   fireEvent.click(slot.getByRole("button", { name: "Retry status" }));
   await slot.findByLabelText("Replace Figma read token");
-  fireEvent.change(slot.getByLabelText("Figma file URL for connection test"), { target: { value: "https://www.figma.com/design/abc" } });
+  fireEvent.change(slot.getByLabelText("Figma file URL for cache access test"), { target: { value: "https://www.figma.com/design/abc" } });
   fireEvent.click(slot.getByRole("button", { name: "Test read" }));
   await slot.findByText("File access denied");
   expect(testConnection).toHaveBeenCalledWith({ source: "mirror", file: "https://www.figma.com/design/abc" });
@@ -229,7 +229,7 @@ test("explicit cache sync uses file URL and preserves returned unverified freshn
   const accept = slot.getByRole("checkbox", { name: "Accept refreshed cache without verifying the prior edit" }) as HTMLInputElement;
   expect(accept.checked).toBe(false);
   expect(button.disabled).toBe(true);
-  fireEvent.change(slot.getByLabelText("Figma file URL for connection test"), { target: { value: "https://www.figma.com/design/abc" } });
+  fireEvent.change(slot.getByLabelText("Figma file URL for cache access test"), { target: { value: "https://www.figma.com/design/abc" } });
   button.focus(); expect(document.activeElement).toBe(button);
   fireEvent.click(button);
   const disclosure = await slot.findByText(/The read cache now has a new version baseline/);
@@ -247,7 +247,7 @@ test("explicit cache sync uses file URL and preserves returned unverified freshn
   await waitFor(() => expect(syncMirror).toHaveBeenLastCalledWith({ file: "https://www.figma.com/design/abc", acceptUnverified: true }));
   await waitFor(() => expect(accept.checked).toBe(false));
   fireEvent.click(accept);
-  fireEvent.change(slot.getByLabelText("Figma file URL for connection test"), { target: { value: "https://www.figma.com/design/other" } });
+  fireEvent.change(slot.getByLabelText("Figma file URL for cache access test"), { target: { value: "https://www.figma.com/design/other" } });
   expect(accept.checked).toBe(false);
   expect(slot.queryByText(/The read cache now has a new version baseline/)).toBeNull();
 });
@@ -256,7 +256,7 @@ test("failed file tests remain visible after queued realtime and focus refresh",
   const request = deferred<SettingsSnapshot>();
   const slot = await mount({ testConnection: () => request.promise });
   await slot.findByLabelText("Replace Figma read token");
-  fireEvent.change(slot.getByLabelText("Figma file URL for connection test"), { target: { value: "https://www.figma.com/design/abc" } });
+  fireEvent.change(slot.getByLabelText("Figma file URL for cache access test"), { target: { value: "https://www.figma.com/design/abc" } });
   fireEvent.click(slot.getByRole("button", { name: "Test read" }));
   await slot.behavior.emitRealtime("figma", {});
   await act(async () => request.reject(new Error("File access denied")));
@@ -270,7 +270,7 @@ test("file-test error snapshots retain their failure after status refresh", asyn
   const failed = snapshot(); failed.mirror = { ...connection, phase: "error", detail: "File permission denied" };
   const slot = await mount({ testConnection: () => failed });
   await slot.findByLabelText("Replace Figma read token");
-  fireEvent.change(slot.getByLabelText("Figma file URL for connection test"), { target: { value: "https://www.figma.com/design/abc" } });
+  fireEvent.change(slot.getByLabelText("Figma file URL for cache access test"), { target: { value: "https://www.figma.com/design/abc" } });
   fireEvent.click(slot.getByRole("button", { name: "Test read" }));
   expect((await slot.findByRole("alert")).textContent).toContain("File permission denied");
   await slot.behavior.emitRealtime("figma", {});
@@ -290,6 +290,21 @@ test("direct sign-in has no Codex process settings or retired callback RPC", asy
   expect(link.getAttribute("href")).toContain("https://www.figma.com/");
 });
 
+
+test("pending loopback consent can finish after settings remount without a new Connect", async () => {
+  const current = snapshot();
+  current.config.redirectUri = "http://127.0.0.1:38559/callback";
+  current.official.phase = "authorizing";
+  const done = snapshot(); done.official.phase = "connected";
+  const finish = vi.fn(() => done), connect = vi.fn();
+  const slot = await mount({ status: () => current, finishAuthorization: finish, connectOfficial: connect });
+  const input = await slot.findByLabelText("Figma callback URL");
+  expect(slot.queryByRole("link", { name: "Authorize Figma in a new tab" })).toBeNull();
+  fireEvent.change(input, { target: { value: "127.0.0.1:38559/callback?code=test&state=test" } });
+  fireEvent.click(slot.getByRole("button", { name: "Finish sign-in" }));
+  await slot.findByText(/Figma sign-in completed/);
+  expect(connect).not.toHaveBeenCalled(); expect(finish).toHaveBeenCalledTimes(1);
+});
 
 test("loopback callback stays visible and editable after failure and clears after BB-owned exchange", async () => {
   let current = snapshot();
@@ -313,4 +328,18 @@ test("loopback callback stays visible and editable after failure and clears afte
   fireEvent.click(slot.getByRole("button", { name: "Finish sign-in" }));
   await slot.findByText(/Figma sign-in completed/);
   expect(slot.queryByLabelText("Figma callback URL")).toBeNull();
+  expect(document.activeElement).toBe(slot.getByRole("heading", { name: "Official Figma connection" }));
+});
+
+test("an unrelated successful action cannot dismiss a failed file test", async () => {
+  const configure = vi.fn(() => snapshot());
+  const slot = await mount({ configure, testConnection: async () => { throw new Error("private failure"); } });
+  await slot.findByLabelText("Figma file URL for cache access test");
+  fireEvent.change(slot.getByLabelText("Figma file URL for cache access test"), { target: { value: "https://www.figma.com/design/abc" } });
+  fireEvent.click(slot.getByRole("button", { name: "Test read" }));
+  const alert = await slot.findByRole("alert"); expect(alert.textContent).toContain("Test read failed");
+  fireEvent.change(slot.getByLabelText("Figma OAuth client ID"), { target: { value: "updated" } });
+  fireEvent.click(slot.getByRole("button", { name: "Save settings" }));
+  await slot.findByText(/Settings saved/);
+  expect(slot.getByRole("alert").textContent).toContain("Test read failed");
 });

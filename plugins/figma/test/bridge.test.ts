@@ -274,10 +274,41 @@ test("unauthenticated discovery rejects rather than displaying a cached inventor
 
 test("invalid pagination never publishes a partial catalog", async () => {
   const f = fixture();
-  f.peer.handler = async () => ({ tools: [tool("get_design")], nextCursor: "loop" });
-  await assert.rejects(f.bridge.refresh("official"), /Duplicate|repeated/);
+  let page = 0;
+  f.peer.handler = async () => ({ tools: [tool(`get_design_${page++}`)], nextCursor: "loop" });
+  await assert.rejects(f.bridge.refresh("official"), /repeated/);
   assert.deepEqual(f.bridge.inventory("official"), []);
   await f.bridge.close(); await f.harness.dispose();
+});
+
+test("2020-12 prefixItems validate correctly through generic, MCP and native routes", async () => {
+  const f = fixture();
+  f.peer.tools = [tool("get_tuple", { inputSchema: { type: "object", properties: {
+    values: { type: "array", prefixItems: [{ type: "integer" }], items: false },
+  }, required: ["values"], additionalProperties: false } })];
+  try {
+    await f.call("figma_discover", {});
+    for (const route of ["figma_call", "figma_mcp", "figma_get_tuple"]) {
+      const input = (values: unknown[]) => route === "figma_mcp" ? { method: "tools/call", params: { name: "get_tuple", arguments: { values } } }
+        : route === "figma_call" ? { name: "get_tuple", arguments: { values } } : { values };
+      await f.call(route, input([1]));
+      const count = f.peer.calls.length;
+      await assert.rejects(f.call(route, input(["wrong"])), /Arguments do not match/);
+      await assert.rejects(f.call(route, input([1, 2])), /Arguments do not match/);
+      assert.equal(f.peer.calls.length, count);
+    }
+    assert.equal(f.peer.calls.filter(c => c.method === "tools/call").length, 3);
+  } finally { await f.bridge.close(); await f.harness.dispose(); }
+});
+
+test("unsupported schema dialect is visible in discovery and remains upstream-authoritative", async () => {
+  const f = fixture();
+  f.peer.tools = [tool("get_custom", { inputSchema: { $schema: "https://example.test/custom", type: "object" } })];
+  try {
+    assert.match(text(await f.call("figma_discover", {})), /Local validation unavailable/);
+    await f.call("figma_call", { name: "get_custom", arguments: { custom: true } });
+    assert.equal(f.peer.calls.at(-1)?.method, "tools/call");
+  } finally { await f.bridge.close(); await f.harness.dispose(); }
 });
 
 test("concurrent first calls share one discovery and canceled observers do not cancel another call", async () => {
@@ -435,13 +466,31 @@ test("cancellation during dispatched write retires ticket as uncertain even if p
   const call = f.harness.callAgentTool("figma_call", { source: "official", name: "create_design" }, { signal: controller.signal });
   await new Promise(resolve => setImmediate(resolve));
   controller.abort(new Error("fixture cancellation"));
-  await assert.rejects(call, /fixture cancellation/);
+  await assert.rejects(call, /outcome is unknown.*Inspect the canvas before retrying/);
   assert.deepEqual(outcomes, ["uncertain"]);
   reply.resolve({ content: [{ type: "text", text: "late upstream result" }] });
   await new Promise(resolve => setImmediate(resolve));
   assert.deepEqual(outcomes, ["uncertain"]);
   assert.equal(f.peer.calls.filter(c => c.method === "tools/call").length, 1);
   await f.bridge.close(); await f.harness.dispose();
+});
+
+test("close drains late preparation cleanup before releasing the mirror owner", async () => {
+  const prepare = deferred<void>(), cleanup = deferred<void>();
+  const entered = deferred<void>(); let finished = false;
+  const f = fixture({ beforeOfficialWrite: async () => { entered.resolve(); await prepare.promise;
+    return async outcome => { assert.equal(outcome, "uncertain"); await cleanup.promise; finished = true; }; } });
+  f.peer.tools = [tool("create_design")];
+  const call = assert.rejects(f.call("figma_call", { name: "create_design" }), /closed/);
+  await entered.promise;
+  let closed = false;
+  const closing = f.bridge.close().then(() => { closed = true; });
+  await call; assert.equal(closed, false);
+  prepare.resolve(); await new Promise(resolve => setImmediate(resolve));
+  assert.equal(closed, false); assert.equal(finished, false);
+  cleanup.resolve(); await closing; assert.equal(finished, true);
+  assert.equal(f.peer.calls.filter(c => c.method === "tools/call").length, 0);
+  await f.harness.dispose();
 });
 
 test("late ticket after cancellation during preparation is retired without dispatch", async () => {

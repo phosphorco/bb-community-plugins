@@ -35,6 +35,8 @@ export interface OfficialConfig {
   redirectUri: string;
 }
 export interface RemoteManager {
+  /** Restore only the saved authorization state; never opens a connection. */
+  restoreStatus?(): Promise<void>;
   peer(signal?: AbortSignal): Promise<McpPeer>;
   beginAuth(): Promise<{ authorizationUrl: string }>;
   finishAuth(input: { code: string; state: string; issuer?: string }): Promise<void>;

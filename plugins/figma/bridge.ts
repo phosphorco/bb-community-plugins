@@ -1,6 +1,9 @@
 import { createHash } from "node:crypto";
 import type { BbPluginApi, PluginAgentToolContext, PluginAgentToolResult, PluginAgentToolContentPart } from "@get-bb/plugin-sdk";
 import { AjvJsonSchemaValidator } from "@modelcontextprotocol/sdk/validation/ajv-provider.js";
+import Ajv from "ajv";
+import { Ajv2020 } from "ajv/dist/2020.js";
+import addFormats from "ajv-formats";
 import { z } from "zod";
 import type { JsonObject, McpPeer, McpTool, Source } from "./contract.ts";
 
@@ -148,12 +151,19 @@ interface Alias { source: Source; original: string; snapshot: string; registered
 export function createBridge(options: BridgeOptions): Bridge {
   let closed = false;
   const lifecycle = new AbortController();
+  const work = new Set<Promise<unknown>>();
+  function track<T>(promise: Promise<T>): Promise<T> {
+    work.add(promise);
+    void promise.finally(() => work.delete(promise)).catch(() => {});
+    return promise;
+  }
   const catalogs = Object.fromEntries(sources.map(source => [source, {
     tools: clone(options.initialInventory?.[source] ?? []), peer: null, dirty: true,
     revision: 0, invalidation: 0, controller: new AbortController(),
   }])) as Record<Source, Catalog>;
   const aliases = new Map<string, Alias>();
   const validators = new Map<string, ((args: unknown) => { valid: boolean; errorMessage?: string }) | null>();
+  const validationWarnings = new Map<string, string>();
   const assertLive = (signal?: AbortSignal) => {
     if (closed) throw new Error("Figma bridge is closed");
     signal?.throwIfAborted();
@@ -191,14 +201,28 @@ export function createBridge(options: BridgeOptions): Bridge {
     }
     return peer;
   }
-  function validate(args: JsonObject, tool: McpTool): void {
+  function validator(tool: McpTool) {
     const key = fingerprint(tool.inputSchema);
     if (!validators.has(key)) {
       // Separate validator instances avoid reusing a stale upstream $id across schemas.
-      try { validators.set(key, new AjvJsonSchemaValidator().getValidator(tool.inputSchema)); }
-      catch { validators.set(key, null); } // Unsupported local dialect/ref: upstream remains authoritative.
+      try {
+        const draft = tool.inputSchema.$schema;
+        if (draft !== undefined && draft !== "https://json-schema.org/draft/2020-12/schema" &&
+            draft !== "https://json-schema.org/draft/2020-12/schema#" &&
+            draft !== "http://json-schema.org/draft-07/schema#" && draft !== "https://json-schema.org/draft-07/schema#") throw new Error("unsupported dialect");
+        const options = { strict: false, validateSchema: true, allErrors: true };
+        const ajv = typeof draft === "string" && draft.includes("draft-07") ? new Ajv(options) : new Ajv2020(options);
+        addFormats(ajv);
+        validators.set(key, new AjvJsonSchemaValidator(ajv).getValidator(tool.inputSchema));
+      } catch {
+        validators.set(key, null); // Upstream remains authoritative; no false local rejection.
+        validationWarnings.set(key, "Local validation unavailable for this schema/dialect/reference. Arguments are forwarded to the upstream validator.");
+      }
     }
-    const result = validators.get(key)?.(args);
+    return validators.get(key);
+  }
+  function validate(args: JsonObject, tool: McpTool): void {
+    const result = validator(tool)?.(args);
     if (result && !result.valid) throw new Error(`Arguments do not match current schema for ${tool.name}: ${result.errorMessage}`);
   }
   async function load(source: Source, peer: McpPeer, force: boolean, callerSignal: AbortSignal): Promise<McpTool[]> {
@@ -245,7 +269,7 @@ export function createBridge(options: BridgeOptions): Bridge {
       catalog.tools = tools;
       catalog.dirty = false;
       if (changed) catalog.revision++;
-      validators.clear();
+      validators.clear(); validationWarnings.clear();
       if (changed) notify();
       return tools;
     })();
@@ -253,7 +277,10 @@ export function createBridge(options: BridgeOptions): Bridge {
     void work.finally(() => { if (catalog.pending === work) catalog.pending = undefined; }).catch(() => {});
     return wait(work, callerSignal);
   }
-  async function call(source: Source, params: JsonObject, ctx: PluginAgentToolContext, alias?: Alias): Promise<PluginAgentToolResult> {
+  function call(source: Source, params: JsonObject, ctx: PluginAgentToolContext, alias?: Alias): Promise<PluginAgentToolResult> {
+    return track(callImpl(source, params, ctx, alias));
+  }
+  async function callImpl(source: Source, params: JsonObject, ctx: PluginAgentToolContext, alias?: Alias): Promise<PluginAgentToolResult> {
     const signal = signalFor(source, ctx.signal);
     const peer = await acquire(source, signal);
     checkMethod(peer, "tools/call");
@@ -287,11 +314,12 @@ export function createBridge(options: BridgeOptions): Bridge {
       catch (error) {
         // Caller cancellation may precede durable ticket creation. Retire any late
         // ticket without dispatching a write, even after this call has returned.
-        void preparation.then(finishUncertain, () => {}).catch(() => {});
+        void track(preparation.then(finishUncertain, () => {})).catch(() => {});
         throw error;
       }
     }
     let result: JsonObject;
+    let dispatched = false;
     try {
       assertLive(signal);
       if (catalogs[source].peer !== peer) throw new Error("MCP peer changed before dispatch; rediscover and call again");
@@ -303,10 +331,13 @@ export function createBridge(options: BridgeOptions): Bridge {
       }
       assertLive(signal);
       checkMethod(peer, "tools/call");
+      dispatched = true;
       result = await wait(peer.request("tools/call", params, signal), signal); // Never retry an uncertain write.
-      assertLive(signal);
     } catch (error) {
       await finishUncertain(finisher);
+      if (dispatched && source === "official" && likelyWrite(tool) && signal.aborted) {
+        throw new Error("Figma tool outcome is unknown. Inspect the canvas before retrying. Cancellation, disconnect or reload occurred after dispatch; this call was not replayed.");
+      }
       throw error; // Cleanup failures cannot replace the original upstream/cancellation error.
     }
     const taskPending = params.task !== undefined || object(result.task);
@@ -390,6 +421,9 @@ export function createBridge(options: BridgeOptions): Bridge {
       lifecycle.abort(new Error("Figma bridge is closed"));
       for (const source of sources) catalogs[source].unsubscribe?.();
       validators.clear();
+      // Drain uncertain-ticket cleanup, including preparations that finish after
+      // cancellation, before the replacement mirror manager may load its state.
+      while (work.size) await Promise.allSettled([...work]);
       // getPeer lends sessions; remote/mirror managers own transport disposal.
     },
   };
@@ -401,12 +435,17 @@ export function createBridge(options: BridgeOptions): Bridge {
       const peer = await acquire(source, signal);
       const tools = await load(source, peer, true, signal);
       registerAliases();
+      const localValidation = tools.map(tool => {
+        validator(tool);
+        const warning = validationWarnings.get(fingerprint(tool.inputSchema));
+        return { name: tool.name, validatedLocally: warning === undefined, ...(warning ? { warning } : {}) };
+      });
       const info = peer.info();
       return adaptEnvelope({ source, info: {
         capabilities: info.capabilities,
         ...(info.serverInfo === undefined ? {} : { serverInfo: info.serverInfo }),
         ...(info.instructions === undefined ? {} : { instructions: info.instructions }),
-      }, tools, nativeAliases: [...aliases.entries()].filter(([, alias]) => alias.source === source).map(([name, alias]) => {
+      }, tools, localValidation, nativeAliases: [...aliases.entries()].filter(([, alias]) => alias.source === source).map(([name, alias]) => {
         const current = tools.find(tool => tool.name === alias.original);
         return {
           name, originalName: alias.original, registered: alias.registered,
