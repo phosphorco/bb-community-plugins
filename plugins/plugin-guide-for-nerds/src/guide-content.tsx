@@ -119,7 +119,7 @@ export default function GuideContent({
   return (
     <div
       data-guide-content
-      className="min-h-0 w-full px-3 pb-6 pt-5 sm:px-6 lg:pb-0 lg:pt-4"
+      className="min-h-0 w-full pb-2"
     >
       <ProductMap
         pluginPageHref={pluginPageHref}

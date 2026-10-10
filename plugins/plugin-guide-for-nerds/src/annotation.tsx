@@ -2,13 +2,12 @@ import { Fragment, type ReactNode } from "react";
 
 import { cn } from "@/lib/utils";
 
-export function annotationChipClass(active: boolean, className?: string) {
+export function annotationChipClass(active: boolean, className?: string, number: number | null = 1) {
   return cn(
-    "flex size-5 shrink-0 items-center justify-center rounded-full font-mono text-xs font-semibold leading-none ",
+    "nerd-guide-number flex size-5 shrink-0 items-center justify-center rounded-full font-mono text-xs font-semibold leading-none",
     "scale-[var(--guide-chip-scale,1)]",
-    active
-      ? "bg-file-accent text-background"
-      : "bg-[color-mix(in_oklch,var(--ink)_18%,var(--canvas))] text-foreground",
+    `nerd-guide-tone-${((number ?? 1) - 1) % 4}`,
+    active && "nerd-guide-number-active",
     className,
   );
 }

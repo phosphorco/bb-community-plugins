@@ -13,7 +13,6 @@ import { Icon, type IconName } from "@/components/ui/icon";
 import { Switch } from "@/components/ui/switch";
 
 import { cn } from "@/lib/utils";
-import { surfaceLabel } from './surface-labels';
 import { restoreGuideLayerFocus } from "../lib/guide-interaction";
 import {
   annotationChipClass,
@@ -26,6 +25,8 @@ import anatomy from "./anatomy-manifest.json";
 
 export interface SurfaceMapState {
   activeId: string | null;
+  focusedId?: string | null;
+  setFocusedId?: (id: string | null) => void;
   setActiveId: (id: string | null) => void;
   expandedId?: string | null;
   numberOf: (id: string) => number | null;
@@ -47,20 +48,20 @@ export function useSurfaceMap(): SurfaceMapState {
 }
 
 function useEngagement(id: string) {
-  const { activeId, expandedId } = useSurfaceMap();
+  const { activeId, focusedId, expandedId } = useSurfaceMap();
   return {
-    active: activeId === id || expandedId === id,
-    outlined: activeId !== null ? activeId === id : expandedId === id,
+    active: activeId === id || focusedId === id || expandedId === id,
+    outlined: activeId === id || focusedId === id || (activeId === null && expandedId === id),
   };
 }
 
 function useAnnotationHover(id: string) {
-  const { setActiveId } = useSurfaceMap();
+  const { setActiveId, setFocusedId } = useSurfaceMap();
   return {
     onMouseEnter: () => setActiveId(id),
     onMouseLeave: () => setActiveId(null),
-    onFocus: () => setActiveId(id),
-    onBlur: () => setActiveId(null),
+    onFocus: () => (setFocusedId ?? setActiveId)(id),
+    onBlur: () => (setFocusedId ?? setActiveId)(null),
   };
 }
 
@@ -91,11 +92,9 @@ function PlacedChip({
     <span
       aria-hidden
       data-guide-badge={id}
-      data-label-side="left"
       className={cn("nerd-guide-badge absolute z-50", CHIP_PLACEMENT_CLASS[chip])}
     >
-      <span data-guide-number="" className={annotationChipClass(active, "ring-2 ring-card")}>{numberOf(id)}</span>
-      <span data-guide-label="" className="nerd-guide-tag">{surfaceLabel(id)}</span>
+      <span data-guide-number="" className={annotationChipClass(active, "ring-2 ring-card", numberOf(id))}>{numberOf(id)}</span>
     </span>
   );
 }
@@ -400,8 +399,6 @@ function MeasuredBadge({
       data-guide-badge={id}
       data-guide-badge-placement={at}
       data-guide-badge-align={align}
-      data-label-row={(numberOf(id) ?? 0) % 2 === 0 ? 'above' : 'below'}
-      data-label-side={at === 'end' ? 'left' : 'right'}
       href={`#surface-${id}`}
       aria-label={`${label} — jump to details`}
       onClick={(event) => selectAnnotation(event, id, onSelect, onActivate)}
@@ -412,11 +409,10 @@ function MeasuredBadge({
       <span
         aria-hidden
         data-guide-number=""
-        className={annotationChipClass(active, "ring-2 ring-card")}
+        className={annotationChipClass(active, "ring-2 ring-card", numberOf(id))}
       >
         {numberOf(id)}
       </span>
-      <span aria-hidden data-guide-label="" className="nerd-guide-tag">{surfaceLabel(id)}</span>
     </a>
   );
 }

@@ -24,6 +24,7 @@ export function SurfaceCard({
   probe = false,
   mobile = false,
   sessionSignal,
+  referenceNote,
 }: {
   surface: PluginSurface;
   number: number | null;
@@ -32,6 +33,7 @@ export function SurfaceCard({
   probe?: boolean;
   mobile?: boolean;
   sessionSignal?: AbortSignal;
+  referenceNote?: string;
   navigation?: {
     previous: PluginSurface | null;
     next: PluginSurface | null;
@@ -143,7 +145,7 @@ export function SurfaceCard({
             />
           ) : null
         ) : (
-          <span aria-hidden className={annotationChipClass(true, "mt-0.5")}>
+          <span aria-hidden className={annotationChipClass(true, "mt-0.5", number)}>
             {number}
           </span>
         )}
@@ -203,6 +205,12 @@ export function SurfaceCard({
         </div>
       </div>
 
+      {referenceNote ? (
+        <div data-guide-reference-note className="mt-3 border-b border-border-hairline pb-3">
+          <p className="text-xs font-medium text-muted-foreground">Ask an AI</p>
+          <p className="mt-1 select-text text-xs leading-relaxed">{referenceNote}</p>
+        </div>
+      ) : null}
       <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
         {renderSurfaceCopy(surface.summary, resolveReference)}
       </p>

@@ -128,15 +128,15 @@ describe("guide fixture boundaries", () => {
     expect(markup).toContain("scale-[var(--guide-chip-scale,1)]");
   });
 
-  it("scrolls only the one-line page list and clips off-stage fixture overflow", () => {
+  it("keeps page tabs on one line and clips the outer canvas beyond the marker gutter", () => {
     const markup = renderToStaticMarkup(createElement(ProductMap));
 
-    expect(markup).toContain("w-full overflow-x-clip");
+    expect(markup).toMatch(/data-guide-map-canvas="true" class="[^"]*overflow-x-clip/);
     expect(markup).toContain("data-guide-navigation-toolbar");
     expect(markup).toContain("data-guide-page-list-scroll");
     expect(markup).toContain("min-w-0 overflow-x-auto");
     expect(markup).toContain("w-max flex-nowrap");
-    expect(markup).toContain("min-w-0 w-full shrink-0 self-start px-1 pt-2");
+    expect(markup).toContain("min-w-0 w-full shrink-0 self-start px-4 pt-2");
     expect(markup).not.toContain("flex flex-wrap items-center justify-center");
     expect(markup).not.toContain("min-w-full flex-nowrap");
   });

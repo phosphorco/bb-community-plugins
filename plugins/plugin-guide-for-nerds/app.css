@@ -23,38 +23,68 @@
   width: 20px;
   height: 20px;
 }
-[data-bb-plugin="plugin-guide-for-nerds"] .nerd-guide-tag {
-  position: absolute;
-  left: calc(10px + 10px * var(--guide-chip-scale, 1) + 3px);
-  top: 50%;
-  transform: translateY(-50%);
-  scale: var(--guide-chip-scale, 1);
-  transform-origin: left center;
-  padding: 2px 4px;
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  background: var(--popover);
-  color: var(--foreground);
-  font: 500 11px/1.2 var(--font-sans, sans-serif);
-  white-space: nowrap;
+[data-bb-plugin="plugin-guide-for-nerds"] .nerd-guide-number {
+  background: var(--guide-number-fill);
+  color: var(--guide-number-ink);
+  box-shadow: 0 0 0 1px var(--guide-number-edge, var(--guide-number-fill));
 }
-[data-bb-plugin="plugin-guide-for-nerds"] [data-label-side="left"] .nerd-guide-tag {
-  left: auto;
-  right: calc(10px + 10px * var(--guide-chip-scale, 1) + 3px);
-  transform-origin: right center;
+[data-bb-plugin="plugin-guide-for-nerds"] .nerd-guide-tone-0 {
+  --guide-number-fill: color-mix(in oklch, var(--file-accent) 25%, var(--background));
+  --guide-number-ink: var(--foreground);
+  --guide-number-edge: var(--file-accent);
 }
-[data-bb-plugin="plugin-guide-for-nerds"] [data-guide-badge-placement="lane"] .nerd-guide-tag,
-[data-bb-plugin="plugin-guide-for-nerds"] [data-guide-badge-placement="above"] .nerd-guide-tag {
-  left: 50%;
-  right: auto;
-  top: auto;
-  bottom: calc(10px + 10px * var(--guide-chip-scale, 1) + 3px);
-  transform: translateX(-50%);
-  transform-origin: center bottom;
+[data-bb-plugin="plugin-guide-for-nerds"] .nerd-guide-tone-1 {
+  --guide-number-fill: var(--primary);
+  --guide-number-ink: var(--primary-foreground);
 }
-[data-bb-plugin="plugin-guide-for-nerds"] [data-label-row="below"][data-guide-badge-placement="lane"] .nerd-guide-tag,
-[data-bb-plugin="plugin-guide-for-nerds"] [data-label-row="below"][data-guide-badge-placement="above"] .nerd-guide-tag {
-  top: calc(10px + 10px * var(--guide-chip-scale, 1) + 3px);
-  bottom: auto;
-  transform-origin: center top;
+[data-bb-plugin="plugin-guide-for-nerds"] .nerd-guide-tone-2 {
+  --guide-number-fill: color-mix(in oklch, var(--success) 25%, var(--background));
+  --guide-number-ink: var(--foreground);
+  --guide-number-edge: var(--success);
+}
+[data-bb-plugin="plugin-guide-for-nerds"] .nerd-guide-tone-3 {
+  --guide-number-fill: color-mix(in oklch, var(--warning) 25%, var(--background));
+  --guide-number-ink: var(--foreground);
+  --guide-number-edge: var(--warning);
+}
+[data-bb-plugin="plugin-guide-for-nerds"] .nerd-guide-number-active {
+  outline: 2px solid var(--foreground);
+  outline-offset: 2px;
+}
+[data-bb-plugin="plugin-guide-for-nerds"] .nerd-guide-reference-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 16px;
+  margin-top: 8px;
+  align-items: start;
+}
+[data-bb-plugin="plugin-guide-for-nerds"] .nerd-guide-reference-column {
+  min-width: 0;
+}
+[data-bb-plugin="plugin-guide-for-nerds"] .nerd-guide-reference-row {
+  display: flex;
+  align-items: start;
+  gap: 10px;
+  padding: 8px 6px;
+  border-radius: 6px;
+}
+[data-bb-plugin="plugin-guide-for-nerds"] .nerd-guide-reference-row:hover,
+[data-bb-plugin="plugin-guide-for-nerds"] .nerd-guide-reference-row[data-active] {
+  background: var(--state-hover);
+}
+@container guide (min-width: 760px) {
+  [data-bb-plugin="plugin-guide-for-nerds"] .nerd-guide-reference-layout {
+    grid-template-columns: minmax(0, 1fr) 300px;
+  }
+  [data-bb-plugin="plugin-guide-for-nerds"] .nerd-guide-reference-column {
+    border-left: 1px solid var(--border);
+    padding-left: 14px;
+    max-height: calc(100cqh - 64px);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    scrollbar-gutter: stable;
+  }
+}
+[data-bb-plugin="plugin-guide-for-nerds"] [data-guide-navigation-toolbar] {
+  padding-right: 100px;
 }

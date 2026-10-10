@@ -80,6 +80,6 @@ describe("content relative to the outer nonmodal frame", () => {
     fireEvent.pointerDown(button); expect(card()).not.toBeNull();
     const composer = document.createElement("textarea"); document.body.append(composer);
     fireEvent.keyDown(composer, { key: "Escape" }); fireEvent.pointerDown(composer); expect(card()).not.toBeNull(); composer.remove();
-    fireEvent.pointerDown(view.container.querySelector("[data-map-column] h2")!); expect(card()).toBeNull();
+    fireEvent.pointerDown(view.container.querySelector("[data-guide-map-canvas]")!); expect(card()).toBeNull();
   });
 });

@@ -17,6 +17,7 @@ import { cn } from "@/lib/utils";
 import { guideEditableTarget, guideInnerLayer } from "../lib/guide-interaction";
 import { SurfaceCard, useSurfaceCard } from "./surface-card";
 import { surfaceIcon } from "./plugin-icons";
+import { surfaceLabel, surfaceLocation, surfaceReferenceNote } from "./surface-labels";
 import {
   fixtureResponsiveStrategy,
   GROUP_BY_SURFACE_ID,
@@ -27,6 +28,7 @@ import {
 } from "./surfaces";
 import {
   annotationChipCounterScale,
+  annotationChipClass,
   CHIP_COUNTER_SCALE_PROPERTY,
   ExperimentalBadge,
   FOCUS_RING_CLASS,
@@ -148,8 +150,8 @@ export function annotationNeighbors(
 }
 
 function PlatformCard({ surface }: { surface: PluginSurface }) {
-  const { activeId, setActiveId, expandedId, onSelect } = useSurfaceMap();
-  const selected = activeId === surface.id || expandedId === surface.id;
+  const { activeId, focusedId, setActiveId, setFocusedId, expandedId, onSelect } = useSurfaceMap();
+  const selected = activeId === surface.id || focusedId === surface.id || expandedId === surface.id;
   const icon = surfaceIcon(surface.id);
   return (
     <a
@@ -165,6 +167,7 @@ function PlatformCard({ surface }: { surface: PluginSurface }) {
       }
       onMouseEnter={() => setActiveId(surface.id)}
       onMouseLeave={() => setActiveId(null)}
+      onFocus={() => setFocusedId?.(surface.id)} onBlur={() => setFocusedId?.(null)}
       className={cn(
         "flex h-full items-center gap-3 rounded-lg border px-4 py-4 ",
         FOCUS_RING_CLASS,
@@ -269,7 +272,6 @@ function SpatialFixture({
 }) {
   const frameRef = useRef<HTMLDivElement>(null);
   const fixtureRef = useRef<HTMLDivElement>(null);
-  const cardReserveRef = useRef(0);
   const [geometry, setGeometry] = useState({
     scale: 1,
     height: null as number | null,
@@ -286,42 +288,12 @@ function SpatialFixture({
     const measure = () => {
       const authoredWidth = fixture.scrollWidth;
       const authoredHeight = fixture.scrollHeight;
-      const flowCard = frame
-        .closest("section")
-        ?.querySelector<HTMLElement>("[data-guide-card-flow]");
-      if (flowCard) {
-        cardReserveRef.current = Math.max(
-          cardReserveRef.current,
-          flowCard.getBoundingClientRect().height +
-            parseFloat(getComputedStyle(flowCard).marginTop || "0"),
-        );
-      } else {
-        cardReserveRef.current = 0;
-      }
-      const probe = frame
-        .closest("[data-map-section]")
-        ?.querySelector<HTMLElement>("[data-guide-card-probe]");
-      let probeReserve = 0;
-      if (probe) {
-        for (const item of Array.from(probe.children)) {
-          if (!(item instanceof HTMLElement)) continue;
-          probeReserve = Math.max(
-            probeReserve,
-            item.offsetHeight +
-              parseFloat(getComputedStyle(item).marginTop || "0"),
-          );
-        }
-      }
-      const cardFootprint = flowCard
-        ? Math.max(probeReserve, cardReserveRef.current)
-        : 0;
       const availableHeight =
         viewport && frame.clientWidth >= 640
           ? viewport.clientHeight -
             (frame.getBoundingClientRect().top -
               viewport.getBoundingClientRect().top +
               viewport.scrollTop) -
-            cardFootprint -
             8
           : undefined;
       const scale = Math.min(
@@ -352,29 +324,7 @@ function SpatialFixture({
     observer.observe(frame);
     observer.observe(fixture);
     if (viewport) observer.observe(viewport);
-    const probeRoot = frame
-      .closest("[data-map-section]")
-      ?.querySelector("[data-guide-card-probe]");
-    if (probeRoot?.firstElementChild) {
-      observer.observe(probeRoot.firstElementChild);
-    }
-    const section = frame.closest("section");
-    let observedCard: Element | null = null;
-    const watchCard = () => {
-      const card = section?.querySelector("[data-guide-card-flow]") ?? null;
-      if (card === observedCard) return;
-      if (observedCard) observer.unobserve(observedCard);
-      observedCard = card;
-      if (card) observer.observe(card);
-      measure();
-    };
-    watchCard();
-    const cardObserver = section ? new MutationObserver(watchCard) : null;
-    cardObserver?.observe(section as Node, { childList: true });
-    return () => {
-      observer.disconnect();
-      cardObserver?.disconnect();
-    };
+    return () => observer.disconnect();
   }, [maxScale]);
 
   const scaled = geometry.width !== null;
@@ -383,8 +333,8 @@ function SpatialFixture({
       ref={frameRef}
       data-guide-responsive-strategy="scale-together"
       data-guide-scale={geometry.scale.toFixed(4)}
-      className="w-full overflow-x-clip "
-      style={{ height: geometry.height ?? undefined, marginTop: 16 }}
+      className="w-full"
+      style={{ height: geometry.height ?? undefined }}
     >
       <div
         ref={fixtureRef}
@@ -438,40 +388,6 @@ function SlideContent({
   }
 }
 
-const PROBE_NOOP = () => {};
-const PROBE_COPY = async () => false;
-
-function CardReserveProbe({ group }: { group: GuideSlide }) {
-  const { numberOf } = useSurfaceMap();
-  return (
-    <div
-      inert
-      aria-hidden
-      data-guide-card-probe
-      className="invisible h-0 overflow-hidden"
-    >
-      {group.surfaces.map((surface) => (
-        <div
-          key={surface.id}
-          className="mt-[clamp(8px,var(--guide-stage-gap,8px),28px)] w-full"
-        >
-          <SurfaceCard
-            probe
-            surface={surface}
-            number={numberOf(surface.id)}
-            onDismiss={PROBE_NOOP}
-            onCopyForAgent={PROBE_COPY}
-            navigation={{
-              ...annotationNeighbors(group.surfaces, surface.id),
-              onOpen: PROBE_NOOP,
-            }}
-          />
-        </div>
-      ))}
-    </div>
-  );
-}
-
 function Slide({
   group,
   mobile,
@@ -506,7 +422,6 @@ function Slide({
       >
         <SlideContent group={group} mobile={mobile} />
       </SpatialFixture>
-      <CardReserveProbe group={group} />
     </>
   );
 }
@@ -585,8 +500,13 @@ export function ProductMap({
   const suppressClickUntil = useRef(0);
   const card = useSurfaceCard(() => pageListRef.current?.querySelector<HTMLButtonElement>('[aria-current="true"]') ?? null);
   const pendingPageFocus = useRef<HTMLElement | null>(null);
+  const referenceOpener = useRef<string | null>(null);
+  const referenceColumnRef = useRef<HTMLElement | null>(null);
+  const referenceScroll = useRef(0);
+  const pendingReferenceFocus = useRef<string | null>(null);
+  const pendingInspectorFocus = useRef(false);
   const [hoverId, setHoverId] = useState<string | null>(null);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [focusId, setFocusId] = useState<string | null>(null);
   const [viewportMobile, setViewportMobile] = useState(
     () =>
       typeof window !== "undefined" &&
@@ -611,9 +531,44 @@ export function ProductMap({
     return () => query.removeEventListener("change", update);
   }, []);
   const selectSurface = (id: string) => {
-    setSelectedId(id);
+    setFocusId(null);
+    if (!card.openId) referenceScroll.current = referenceColumnRef.current?.scrollTop ?? 0;
     card.open(id);
   };
+  const closeSurface = () => {
+    const active = document.activeElement;
+    if (referenceOpener.current && active instanceof Element && active.closest('[data-guide-card]')) {
+      pendingReferenceFocus.current = referenceOpener.current;
+    }
+    referenceOpener.current = null;
+    card.close();
+    setHoverId(null);
+  };
+  useBrowserLayoutEffect(() => {
+    if (referenceColumnRef.current) referenceColumnRef.current.scrollTop = card.openId ? 0 : referenceScroll.current;
+    if (card.openId && pendingInspectorFocus.current) {
+      pendingInspectorFocus.current = false;
+      containerRef.current?.querySelector<HTMLButtonElement>('[data-guide-card] button[aria-label="Close"]')?.focus({ preventScroll: true });
+    } else if (!card.openId && pendingReferenceFocus.current) {
+      const id = pendingReferenceFocus.current;
+      pendingReferenceFocus.current = null;
+      const active = document.activeElement;
+      if (active === document.body || active === pageListRef.current?.querySelector('[aria-current="true"]')) {
+        containerRef.current?.querySelector<HTMLButtonElement>(`[data-guide-reference="${id}"]`)?.focus({ preventScroll: true });
+      }
+    }
+  }, [card.openId]);
+  useEffect(() => {
+    const engagedId = hoverId ?? focusId;
+    if (!engagedId || card.openId) return;
+    const column = referenceColumnRef.current;
+    const row = column?.querySelector<HTMLElement>(`[data-guide-reference="${engagedId}"]`);
+    if (!column || !row) return;
+    const bounds = column.getBoundingClientRect();
+    const item = row.getBoundingClientRect();
+    if (item.top < bounds.top) column.scrollTop += item.top - bounds.top;
+    else if (item.bottom > bounds.bottom) column.scrollTop += item.bottom - bounds.bottom;
+  }, [hoverId, focusId, card.openId]);
   const pageListEdges = useScrollEdges(pageListRef);
   const [slideId, setSlideId] = useState(initialSlideId ?? "app-shell");
   const previousMobile = useRef(mobile);
@@ -663,9 +618,10 @@ export function ProductMap({
     if (next === index || next < 0 || next >= slides.length) {
       return;
     }
+    referenceOpener.current = null;
     card.close();
-    setSelectedId(null);
     setHoverId(null);
+    setFocusId(null);
     setSlideId(slides[next].id);
     onSlideChange?.(slides[next].id);
   };
@@ -699,7 +655,9 @@ export function ProductMap({
     () => ({
       activeId: hoverId,
       setActiveId: setHoverId,
-      expandedId: card.openId ?? selectedId,
+      focusedId: focusId,
+      setFocusedId: setFocusId,
+      expandedId: card.openId,
       numberOf: (id: string) => numbers.get(id) ?? null,
       onSelect: selectSurface,
       pluginPageHref,
@@ -710,11 +668,11 @@ export function ProductMap({
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [
       hoverId,
+      focusId,
       card.openId,
       pluginPageHref,
       renderPluginIcon,
       index,
-      selectedId,
       mobile,
       slides,
       numbers,
@@ -723,14 +681,14 @@ export function ProductMap({
 
   const cardNode = openSurface ? (
     <div
-      data-guide-card-flow
-      className="mx-auto mt-[clamp(8px,var(--guide-stage-gap,8px),28px)] w-full"
+      className="w-full"
     >
       <SurfaceCard
         surface={openSurface}
+        referenceNote={surfaceReferenceNote(openSurface.id)}
         mobile={viewportMobile}
         number={numbers.get(openSurface.id) ?? null}
-        onDismiss={card.close}
+        onDismiss={closeSurface}
         onCopyForAgent={onCopyForAgent}
         sessionSignal={sessionSignal}
         navigation={{
@@ -757,7 +715,7 @@ export function ProductMap({
         )
       )
         return;
-      card.close();
+      closeSurface();
     };
     scope.addEventListener("pointerdown", onPointerDown);
     return () => scope.removeEventListener("pointerdown", onPointerDown);
@@ -770,7 +728,7 @@ export function ProductMap({
     if (layer && !layer.hasAttribute("data-guide-card")) return;
     event.preventDefault();
     event.stopPropagation();
-    card.close();
+    closeSurface();
   };
 
   return (
@@ -783,14 +741,6 @@ export function ProductMap({
             onKeyDown={onKeyDown}
             className="mt-1"
           >
-            <div className="mb-2 border-b border-border-hairline pb-2">
-              <h2 className="text-sm font-semibold">
-                <SlideTitle title={slides[index].title} />
-              </h2>
-              <p className="mt-0.5 max-w-2xl text-xs leading-relaxed text-subtle-foreground/75">
-                {slides[index].blurb}
-              </p>
-            </div>
             <div
               data-guide-navigation-toolbar
               className="flex w-full items-center gap-2"
@@ -927,17 +877,53 @@ export function ProductMap({
                 ))}
               </div>
             </div>
-            <div className="overflow-x-clip">
+            <div className="nerd-guide-reference-layout">
+            <div data-guide-map-canvas className="min-w-0 overflow-x-clip">
               {slides.map((entry, slideIndex) => (
                 <div key={entry.id} data-map-section={entry.id}
                   hidden={slideIndex !== index} inert={slideIndex !== index}
-                  className="min-w-0 w-full shrink-0 self-start px-1 pt-2">
+                  className="min-w-0 w-full shrink-0 self-start px-4 pt-2">
                   {slideIndex === index ? <Slide group={entry} mobile={mobile} viewportMobile={viewportMobile} /> : null}
                 </div>
               ))}
             </div>
 
-            {cardNode}
+            <aside ref={referenceColumnRef} data-guide-reference-column aria-label="Surface reference" tabIndex={0} className="nerd-guide-reference-column">
+              {cardNode ?? (
+                <>
+                  <div data-guide-screen-info className="mb-3 border-b border-border-hairline pb-3">
+                    <h2 className="text-sm font-semibold"><SlideTitle title={slides[index].title} /></h2>
+                    <p className="mt-1 text-xs leading-relaxed text-muted-foreground">{slides[index].blurb}</p>
+                  </div>
+                  <ol data-guide-reference-list className="space-y-1">
+                    {slides[index].surfaces.map(surface => {
+                      const number = numbers.get(surface.id) ?? null;
+                      const active = hoverId === surface.id || focusId === surface.id;
+                      return <li key={surface.id}>
+                        <button type="button" data-guide-reference={surface.id} data-active={active || undefined}
+                          aria-label={`${number === null ? '' : `${number}. `}${surfaceLabel(surface.id)}`}
+                          onMouseEnter={() => setHoverId(surface.id)} onMouseLeave={() => setHoverId(null)}
+                          onFocus={() => setFocusId(surface.id)} onBlur={() => setFocusId(null)}
+                          onClick={() => {
+                            referenceOpener.current = surface.id;
+                            pendingInspectorFocus.current = true;
+                            selectSurface(surface.id);
+                          }}
+                          className={`nerd-guide-reference-row w-full text-left ${FOCUS_RING_CLASS}`}>
+                          {number !== null ? <span aria-hidden data-guide-reference-number className={annotationChipClass(active, undefined, number)}>{number}</span> : null}
+                          <span className="min-w-0">
+                            <span className="block text-xs font-medium">{surfaceLabel(surface.id)}</span>
+                            <span className="mt-0.5 block text-xs leading-relaxed text-muted-foreground">{surfaceLocation(surface.id)}</span>
+                            <code className="mt-1 block break-all text-[10px] text-muted-foreground">{surface.apiSymbols[0]}</code>
+                          </span>
+                        </button>
+                      </li>;
+                    })}
+                  </ol>
+                </>
+              )}
+            </aside>
+            </div>
           </section>
         </div>
       </div>

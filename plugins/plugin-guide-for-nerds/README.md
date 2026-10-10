@@ -34,7 +34,14 @@ and local paths. See THIRD_PARTY_NOTICES.md for complete provenance and notices.
 The initial slice preserves all seven desktop guide pages and their cards,
 plugin examples and rich Copy for agent references. Theme/Native UI catalogs and
 the measured performance pass are planned increments. Surface markers now
-show short names continuously; page changes, card layout and scrolling are instant.
+use distinct theme colors matched to a numbered reference list. Full names,
+locations and API anchors are shown in the right column; hovering or focusing a
+marker highlights its row, and vice versa. Selecting either opens details and
+an AI-ready reference note in that column; Close restores the screen summary
+and list. At narrow widths the reference stacks below the map. The large visible
+window title is removed; Move and Close share the top navigation line while
+the accessible dialog name remains.
+Page changes, card layout and scrolling are instant.
 Only the active map mounts its fixtures.
 
 The selected lazy build keeps the frame in the initial JavaScript closure and

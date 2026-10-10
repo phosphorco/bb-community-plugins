@@ -262,7 +262,7 @@ export function FloatingGuide({ loadContent, toggleEvent, title, initialSelectio
         event.preventDefault(); event.stopPropagation(); close();
       }}
       style={{ position: 'fixed', left: geometry.x, top: geometry.y, width: geometry.width, height: geometry.height,
-        zIndex: 40, display: 'grid', gridTemplateRows: 'auto minmax(0, 1fr)', boxSizing: 'border-box',
+        zIndex: 40, display: 'grid', gridTemplateRows: 'minmax(0, 1fr)', boxSizing: 'border-box',
         overflow: 'hidden', border: '1px solid var(--border)', borderRadius: 10,
         background: 'var(--background)', color: 'var(--foreground)', boxShadow: '0 12px 32px rgb(0 0 0 / 0.18)' }}>
       <div className="nerd-guide-header" data-guide-drag-header=""
@@ -272,16 +272,17 @@ export function FloatingGuide({ loadContent, toggleEvent, title, initialSelectio
         }}
         onPointerMove={moveGesture} onPointerUp={endGesture} onPointerCancel={endGesture}
         onLostPointerCapture={endGesture}
-        style={{ display: 'flex', gap: 6, alignItems: 'center', padding: '4px 8px',
-          borderBottom: '1px solid var(--border)', touchAction: 'none', cursor: 'move', userSelect: 'none', minWidth: 0 }}>
-        <span id={labelId} style={{ flex: 1, minWidth: 0, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{title}</span>
+        style={{ position: 'absolute', right: 4, top: 4, zIndex: 1, display: 'flex', gap: 2, alignItems: 'center', padding: 0,
+          touchAction: 'none', cursor: 'move', userSelect: 'none', minWidth: 0 }}>
+        <span id={labelId} className="sr-only">{title}</span>
+        <span aria-hidden style={{ flex: 1 }} />
         <button type="button" aria-label="Move guide" aria-describedby={helpId} title="Drag to move, or use arrow keys"
-          className="nerd-guide-chrome-button" style={{ ...chromeButton, touchAction: 'none', cursor: 'move' }}
+          className="nerd-guide-chrome-button" style={{ ...chromeButton, border: 'none', background: 'transparent', touchAction: 'none', cursor: 'move' }}
           onPointerDown={event => startGesture(event, 'move')} onPointerMove={moveGesture}
           onPointerUp={endGesture} onPointerCancel={endGesture} onLostPointerCapture={endGesture}
           onKeyDown={event => keyboardGeometry(event, 'move')}><span aria-hidden="true">↔</span></button>
         <button ref={closeRef} type="button" aria-label="Close guide" title="Close guide"
-          className="nerd-guide-chrome-button" style={chromeButton} onClick={close}><span aria-hidden="true">×</span></button>
+          className="nerd-guide-chrome-button" style={{ ...chromeButton, border: 'none', background: 'transparent' }} onClick={close}><span aria-hidden="true">×</span></button>
       </div>
       <div ref={bodyRef} data-guide-stage-viewport="" className="nerd-guide-scroll"
         style={{ minHeight: 0, minWidth: 0, overflow: 'auto', overscrollBehavior: 'contain', scrollBehavior: 'auto', containerType: 'size', padding: '8px 8px 44px' }}>
