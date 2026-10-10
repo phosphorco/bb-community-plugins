@@ -4,12 +4,15 @@ One settings page manages a shared connection to the [official Figma MCP server]
 
 ## Setup
 
-Build and install this plugin from its canonical source directory:
+Install on the BB server through BB's normal plugin manager:
 
 ```sh
-npm run build --workspace @phosphorco/bb-plugin-figma
-bb plugin install /home/ubuntu/bb/community-plugins/plugins/figma --yes
+bb plugin install git:https://github.com/phosphorco/bb-community-plugins.git --plugin figma
 ```
+
+BB selects the `figma` entry from the repository's plugin collection, installs its runtime dependencies and builds its native server/settings surfaces. This Git installation does not require an npm release, a copy of this workspace, or machine-specific source paths. Use **Installed plugins → Figma** to manage it; the plugin is not yet published as a BB Community catalog entry.
+
+Install once per BB deployment. Agents on its enrolled machines call the server-owned plugin through BB's normal tool bridge and share that deployment's sign-in. They do not install this plugin, figmog or Codex separately, and Figma credentials never travel to those machines. An independent BB deployment installs the plugin and signs in separately; authorization is not copied between deployments.
 
 Open **Settings → Installed plugins → Figma**, or `/settings/plugins/figma`. Connections are shared: every agent using this deployment acts through the configured Figma accounts.
 
@@ -37,6 +40,18 @@ Connections open lazily after a BB restart. Settings restores pending consent an
 
 `figma_discover` returns live upstream descriptors, including their exact schemas and annotations. `figma_call` invokes an original tool on a selected connection. `figma_mcp` accesses supporting advertised MCP operations, including resources/templates/read, prompts and completion/task methods when available. These three tools default to the official connection; select `source: "mirror"` only for an enabled, available cache. Agents choose the corresponding official read tool if the optional cache is unavailable; the plugin does not rewrite incompatible tool schemas or replay calls. `figma_sync` refreshes a mirrored file; its explicit `acceptUnverified` option allows recovery from a pending/no-op/uncertain write after inspection, without claiming that edit is visible.
 
+Native activity rows use BB's standard tool presentation, with readable Figma operation labels and the plugin icon. Existing tool names remain stable: `figma_discover`, `figma_call`, `figma_mcp`, `figma_sync` and the upstream `figma_*` aliases.
+
+BB also exposes the same validated handlers through its native CLI, including on enrolled machines whose existing provider session has an older tool list:
+
+```sh
+bb figma discover --json
+bb figma call whoami --json
+bb figma mcp resources/read --arguments '{"uri":"skill://index.json"}' --json
+```
+
+Use the discovered upstream schema for arguments. For long code/JSON, pipe a local file through `--arguments-stdin`; BB reads stdin on the invoking machine before forwarding the request. `bb figma --help` documents all operations. CLI calls use the same cancellation, schema validation, result adaptation and write cleanup as agent tools, and do not retry writes. BB's CLI output limit also applies; use native agent tools for results that exceed it. No diagnostic shell script or local executable is part of this interface.
+
 All discovered tools can receive native aliases: mirror tools keep their `figmog_*` names; official tools use `figma_*`, including `figma_use_figma`. Name collisions, recursive schemas and changed schemas retain the generic call path. BB applies native tool changes when a provider session is next constructed. Reload the plugin and start a new provider session when settings says shortcuts need refreshing; the generic tools do not require that refresh.
 
 The adapter preserves text and images natively. BB's native tool surface does not accept every MCP content type, so other content, structured results and metadata are preserved as labeled JSON text. Resource URIs remain usable through resource-read operations. The plugin does not silently drop large results; bounded limits report an explicit error.
@@ -59,12 +74,19 @@ The current write fence conservatively blocks cached reads across files while an
 
 ## Development and verification
 
-Use BB 0.44 or later with Plugin SDK 0.5.29. The build honors `BB_CLI`; outside a BB thread, set it to the absolute path of the matching BB executable so the monorepo's older development CLI is not selected.
+Use BB 0.44 or later. Types are pinned to Plugin SDK 0.5.29; native loading and CLI invocation are also verified on the 0.6.29 host SDK. The manifest declares these two supported SDK ranges. The build honors `BB_CLI`; outside a BB thread, set it to the absolute path of the matching BB executable so the monorepo's older development CLI is not selected.
 
 ```sh
 npm run test --workspace @phosphorco/bb-plugin-figma
 npm run typecheck --workspace @phosphorco/bb-plugin-figma
 npm run build --workspace @phosphorco/bb-plugin-figma
+```
+
+For in-place workspace development only, build the Figma directory and install that local path:
+
+```sh
+bb plugin build ./community-plugins/plugins/figma
+bb plugin install ./community-plugins/plugins/figma
 ```
 
 Tests cover local fixtures and injected transport/lifecycle boundaries. They do not establish live Figma admission, token scopes, seat entitlement or successful design edits. The workspace execution plan and evidence ledger track that separate acceptance.

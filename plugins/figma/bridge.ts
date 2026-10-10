@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import type { BbPluginApi, PluginAgentToolContext, PluginAgentToolResult, PluginAgentToolContentPart } from "@get-bb/plugin-sdk";
+import type { BbPluginApi, PluginAgentToolContext, PluginAgentToolResult, PluginAgentToolContentPart, PluginRowPresentation } from "@get-bb/plugin-sdk";
 import { AjvJsonSchemaValidator } from "@modelcontextprotocol/sdk/validation/ajv-provider.js";
 import Ajv from "ajv";
 import { Ajv2020 } from "ajv/dist/2020.js";
@@ -18,7 +18,10 @@ export interface BridgeOptions {
   /** Cached descriptors are registration hints, not an authenticated connection. */
   initialInventory?: Partial<Record<Source, McpTool[]>>;
 }
+export type BridgeOperation = "figma_discover" | "figma_call" | "figma_mcp" | "figma_sync";
+type CallContext = Pick<PluginAgentToolContext, "signal">;
 export interface Bridge {
+  invoke(operation: BridgeOperation, input: unknown, signal?: AbortSignal): Promise<PluginAgentToolResult>;
   refresh(source: Source): Promise<McpTool[]>;
   inventory(source: Source): McpTool[];
   registerAliases(): void;
@@ -277,10 +280,10 @@ export function createBridge(options: BridgeOptions): Bridge {
     void work.finally(() => { if (catalog.pending === work) catalog.pending = undefined; }).catch(() => {});
     return wait(work, callerSignal);
   }
-  function call(source: Source, params: JsonObject, ctx: PluginAgentToolContext, alias?: Alias): Promise<PluginAgentToolResult> {
+  function call(source: Source, params: JsonObject, ctx: CallContext, alias?: Alias): Promise<PluginAgentToolResult> {
     return track(callImpl(source, params, ctx, alias));
   }
-  async function callImpl(source: Source, params: JsonObject, ctx: PluginAgentToolContext, alias?: Alias): Promise<PluginAgentToolResult> {
+  async function callImpl(source: Source, params: JsonObject, ctx: CallContext, alias?: Alias): Promise<PluginAgentToolResult> {
     const signal = signalFor(source, ctx.signal);
     const peer = await acquire(source, signal);
     checkMethod(peer, "tools/call");
@@ -370,6 +373,10 @@ export function createBridge(options: BridgeOptions): Bridge {
       try {
         options.bb.agents.registerTool({
           name, description: tool.description?.trim() || `${source} MCP tool ${tool.name}`,
+          presentation: { label: {
+            pending: `Running ${source === "official" ? "Figma" : "figmog"}: ${tool.name.replace(/_/g, " ")}`.slice(0, 80),
+            completed: `Ran ${source === "official" ? "Figma" : "figmog"}: ${tool.name.replace(/_/g, " ")}`.slice(0, 80),
+          } },
           parameters: clone(tool.inputSchema),
           execute: (args: unknown, ctx: PluginAgentToolContext) => call(source, { name: tool.name, arguments: args }, ctx, alias),
         });
@@ -381,7 +388,23 @@ export function createBridge(options: BridgeOptions): Bridge {
       }
     }
   }
+  const operations = new Map<BridgeOperation, (input: unknown, signal?: AbortSignal) => Promise<PluginAgentToolResult>>();
+  function registerStable<T extends z.ZodType>(registration: {
+    name: BridgeOperation; description: string; parameters: T; presentation: PluginRowPresentation;
+    execute(input: z.output<T>, ctx: CallContext): Promise<PluginAgentToolResult>;
+  }): void {
+    // CLI and provider calls share validation, cancellation and write cleanup.
+    const execute = (input: unknown, ctx: CallContext) => registration.execute(registration.parameters.parse(input), ctx);
+    operations.set(registration.name, (input, signal) => execute(input, { signal: signal ?? new AbortController().signal }));
+    options.bb.agents.registerTool({ ...registration, execute });
+  }
   const bridge: Bridge = {
+    invoke(operation, input, signal) {
+      assertLive(signal);
+      const execute = operations.get(operation);
+      if (!execute) throw new Error("Unknown Figma bridge operation");
+      return execute(input, signal);
+    },
     async refresh(source) {
       const signal = signalFor(source);
       const peer = await acquire(source, signal);
@@ -427,8 +450,9 @@ export function createBridge(options: BridgeOptions): Bridge {
       // getPeer lends sessions; remote/mirror managers own transport disposal.
     },
   };
-  options.bb.agents.registerTool({
+  registerStable({
     name: "figma_discover", description: "Discover the complete current authenticated Figma or figmog MCP tool catalog, with schemas and capabilities.",
+    presentation: { label: { pending: "Discovering Figma tools", completed: "Discovered Figma tools" } },
     parameters: z.object({ source: sourceSchema.default("official") }).strict(),
     execute: async ({ source }, ctx) => {
       const signal = signalFor(source, ctx.signal);
@@ -455,13 +479,15 @@ export function createBridge(options: BridgeOptions): Bridge {
       }) });
     },
   });
-  options.bb.agents.registerTool({
+  registerStable({
     name: "figma_call", description: "Call any current upstream Figma/figmog tool by its original name and arguments. Use figma_discover for its full schema.",
+    presentation: { label: { pending: "Calling a Figma tool", completed: "Called a Figma tool" } },
     parameters: z.object({ source: sourceSchema.default("official"), name: z.string().min(1), arguments: objectSchema.default({}) }).strict(),
     execute: ({ source, name, arguments: args }, ctx) => call(source, { name, arguments: args }, ctx),
   });
-  options.bb.agents.registerTool({
+  registerStable({
     name: "figma_mcp", description: "Use advertised MCP tools, resources/templates/read/subscriptions, prompts, completion, logging and task methods. Pass the original method and parameters; unsupported server-driven features are not auto-approved.",
+    presentation: { label: { pending: "Requesting Figma context", completed: "Received Figma context" } },
     parameters: z.object({ source: sourceSchema.default("official"), method: z.string().min(1), params: objectSchema.default({}) }).strict(),
     execute: async ({ source, method, params }, ctx) => {
       if (method === "tools/call") return call(source, params, ctx);
@@ -474,9 +500,10 @@ export function createBridge(options: BridgeOptions): Bridge {
       return adaptEnvelope(result);
     },
   });
-  options.bb.agents.registerTool({
+  registerStable({
     name: "figma_sync",
     description: "Refresh a figmog mirror, or omit file to refresh all known files, without retrying an official write. A changed file version is only a freshness heuristic. Set acceptUnverified=true explicitly to release pending freshness without confirming that an earlier edit is visible; the result remains unverified. Per-file recovery leaves the global unknown-target fence; omit file with acceptUnverified=true to recover it after all known files are pulled.",
+    presentation: { label: { pending: "Syncing the Figma cache", completed: "Synced the Figma cache" } },
     parameters: z.object({ file: z.string().min(1).optional(), acceptUnverified: z.boolean().default(false) }).strict(),
     execute: async ({ file, acceptUnverified }, ctx) => {
       const signal = signalFor("mirror", ctx.signal);

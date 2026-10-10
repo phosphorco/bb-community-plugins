@@ -6,6 +6,7 @@ import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 
 import type { JsonObject, McpTool, MirrorManager, MirrorOptions, RemoteManager, RemoteOptions, SecretStore, SettingsSnapshot, Source } from "./contract.ts";
+import { createFigmaCli } from "./cli.ts";
 import { rpcContract } from "./rpc-contract.ts";
 import { privateJsonStore } from "./storage.ts";
 import { createBridge, type BridgeOptions } from "./bridge.ts";
@@ -196,6 +197,8 @@ export function createFigmaPlugin(dependencies: FigmaDependencies = {}) {
       },
     });
 
+    bb.cli.register(createFigmaCli(bridge));
+
     const snapshot = async (): Promise<SettingsSnapshot> => {
       const captured = config;
       const binaryAvailable = !!await resolveBinary(captured.binaryPath);
@@ -305,7 +308,7 @@ export function createFigmaPlugin(dependencies: FigmaDependencies = {}) {
       }
     }, { auth: "none" });
 
-    bb.agents.contributeInstructions(() => `Use the official Figma MCP connection for reads and writes: start with figma_discover source=official. Figmog is an optional cache, ${config.mirrorEnabled ? "enabled by the operator; use its discovered tools for repeated reads only when available" : "currently disabled"}. If figmog is missing or unavailable, discover the official tools and use their actual schemas; do not translate figmog arguments blindly or require an installation. BB owns the direct OAuth and MCP connection; no local Codex executable is required. figma_mcp provides resources, prompts and other advertised MCP operations. Read upstream skills/resources required by a tool. Connections are shared by this BB deployment; agents act as the authorizing Figma user. Respect refresh-pending errors; after an uncertain write, inspect the official canvas before retrying. Never guess that a disconnected tool or cached schema is available.`);
+    bb.agents.contributeInstructions(() => `Use the official Figma MCP connection for reads and writes: start with figma_discover source=official. Figmog is an optional cache, ${config.mirrorEnabled ? "enabled by the operator; use its discovered tools for repeated reads only when available" : "currently disabled"}. If figmog is missing or unavailable, discover the official tools and use their actual schemas; do not translate figmog arguments blindly or require an installation. BB owns the direct OAuth and MCP connection; no local Codex executable is required. These tools run on the BB server for all enrolled machines. If this provider session predates their registration, use bb figma discover --json and bb figma call with the discovered arguments through the native CLI; do not call local scripts or copy credentials. figma_mcp provides resources, prompts and other advertised MCP operations. Read upstream skills/resources required by a tool. Connections are shared by this BB deployment; agents act as the authorizing Figma user. Respect refresh-pending errors; after an uncertain write, inspect the official canvas before retrying. Never guess that a disconnected tool or cached schema is available.`);
     bb.onDispose(async () => {
       disposed = true;
       await bridge.close();

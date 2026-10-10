@@ -8,7 +8,7 @@
 
 | Plugin | Purpose |
 |---|---|
-| [Figma](plugins/figma/) | Manage shared Figma connections, cached figmog reads and the official MCP tools for design edits. |
+| [Figma](plugins/figma/) | Use official Figma tools for reads and edits through native agent tools, `bb figma`, and shared sign-in settings. |
 | [Compact display](plugins/compact-display/) | Reduce prompt editor height and spacing with the plugin enable switch. |
 | [Message Timings Nerd](plugins/message-timings-nerd/) | Send times, agent turnaround, and waits between replies. |
 | [Cross References](plugins/cross-references/) | Connect and discover related resources through authority-free multipart identities. |
@@ -37,7 +37,13 @@ workspaces link them to the local `packages/` sources during development.
 
 ## Install directly
 
-Each plugin is published independently to npm by its prefixed release tag:
+Install Figma from this repository’s BB plugin collection on any supported BB deployment:
+
+```sh
+bb plugin install git:https://github.com/phosphorco/bb-community-plugins.git --plugin figma
+```
+
+The following plugins are published independently to npm by their prefixed release tags:
 
 ```sh
 bb plugin install npm:@phosphorco/bb-plugin-cross-references@^0.1.0

@@ -58,6 +58,7 @@ async function fixture(saved?: JsonObject) {
     bridge: (options) => {
       bridgeOptions = options;
       return {
+        invoke: async () => ({ content: [] }),
         refresh: async () => { if (catalogError) throw new Error("fixture-catalog-private"); return []; }, inventory: () => [], registerAliases: () => undefined,
         aliasesNeedReload: () => false,
         clear: (source) => { events.push(`clear:${source}`); },

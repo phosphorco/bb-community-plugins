@@ -12,7 +12,7 @@
   },
   "engines": {
     "bb": ">=0.44.0 <1.0.0",
-    "bbPluginSdk": "^0.5.29"
+    "bbPluginSdk": "^0.5.29 || ^0.6.29"
   },
   "bb": {
     "name": "Figma",
