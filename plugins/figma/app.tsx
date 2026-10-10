@@ -1,40 +1,63 @@
 import "./app.css";
 import { useCallback, useEffect, useId, useRef, useState } from "react";
+import type { FormEvent, ReactNode } from "react";
 import { definePluginApp, useRealtime, useRpc } from "@get-bb/plugin-sdk/app";
-import type { SettingsSnapshot, Source } from "./contract.ts";
+import type { ConnectionPhase, ConnectionStatus, McpTool, SettingsSnapshot, Source } from "./contract.ts";
 import type { rpcContract } from "./rpc-contract.ts";
+
+type Area = "official" | "mirror" | "advanced";
+type Draft = { binaryPath?: string; mirrorEnabled?: boolean; clientId?: string; redirectUri?: string };
+type Tone = "ok" | "pending" | "error" | "idle";
+
+const officialLabels: Record<ConnectionPhase, [string, Tone]> = {
+  connected: ["Connected", "ok"],
+  connecting: ["Connecting…", "pending"],
+  authorizing: ["Waiting for sign-in", "pending"],
+  error: ["Connection problem", "error"],
+  disconnected: ["Not connected", "idle"],
+  unconfigured: ["Not connected", "idle"],
+};
+const cacheLabels: Record<ConnectionPhase, [string, Tone]> = {
+  connected: ["Running", "ok"],
+  connecting: ["Starting…", "pending"],
+  authorizing: ["Starting…", "pending"],
+  error: ["Problem", "error"],
+  disconnected: ["Stopped", "idle"],
+  unconfigured: ["Needs a read token", "idle"],
+};
 
 export function FigmaSettings() {
   const rpc = useRpc<typeof rpcContract>();
   const id = useId();
   const [snapshot, setSnapshot] = useState<SettingsSnapshot | null>(null);
   const [loading, setLoading] = useState(true);
-  const [busy, setBusy] = useState<string | null>(null);
+  const [busy, setBusy] = useState<{ area: Area; progress: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [actionError, setActionError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<{ area: Area; message: string; coversDetail: boolean } | null>(null);
   const actionFailure = useRef<{ label: string; revision: number } | null>(null);
-  const reportActionError = (label: string, message: string) => {
+  const reportActionError = (label: string, area: Area, message: string, coversDetail = false) => {
     actionFailure.current = { label, revision: (actionFailure.current?.revision ?? 0) + 1 };
-    setActionError(message);
+    setActionError({ area, message, coversDetail });
   };
   const [syncDisclosure, setSyncDisclosure] = useState<{ file: string; freshness: string | null } | null>(null);
-  const [feedback, setFeedback] = useState<string | null>(null);
+  const [feedback, setFeedback] = useState<{ area: Area; text: string } | null>(null);
   const [authorizationUrl, setAuthorizationUrl] = useState<string | null>(null);
   const [callbackUrl, setCallbackUrl] = useState("");
   const [readToken, setReadToken] = useState("");
   const [clientSecret, setClientSecret] = useState("");
-  const [draft, setDraft] = useState<{ binaryPath?: string; mirrorEnabled?: boolean; clientId?: string; redirectUri?: string }>({});
+  const [draft, setDraft] = useState<Draft>({});
   const [file, setFile] = useState("");
   const [acceptUnverified, setAcceptUnverified] = useState(false);
+  const [signedIn, setSignedIn] = useState(0);
   const mounted = useRef(false);
   const generation = useRef(0);
   const mutation = useRef(false);
   const reading = useRef(false);
   const queued = useRef(false);
-  const officialHeading = useRef<HTMLHeadingElement>(null);
+  const officialStatus = useRef<HTMLParagraphElement>(null);
   useEffect(() => {
-    if (feedback?.startsWith("Figma sign-in completed")) officialHeading.current?.focus();
-  }, [feedback]);
+    if (signedIn) officialStatus.current?.focus();
+  }, [signedIn]);
 
   const refresh = useCallback(async () => {
     if (!mounted.current) return;
@@ -50,7 +73,7 @@ export function FigmaSettings() {
         if (["connected", "disconnected", "unconfigured"].includes(next.official.phase)) { setAuthorizationUrl(null); setCallbackUrl(""); }
       }
     } catch {
-      if (mounted.current && epoch === generation.current) setError("Could not refresh Figma status. Retry to check the connection.");
+      if (mounted.current && epoch === generation.current) setError("Couldn't check Figma status.");
     } finally {
       reading.current = false;
       if (mounted.current && epoch === generation.current) setLoading(false);
@@ -74,12 +97,12 @@ export function FigmaSettings() {
   }, [refresh]);
   useRealtime("figma", useCallback(() => { void refresh(); }, [refresh]));
 
-  const run = async (label: string, action: () => Promise<void>) => {
+  const run = async (label: string, area: Area, progress: string, failure: string, action: () => Promise<void>) => {
     if (mutation.current || !mounted.current) return;
     mutation.current = true;
     const epoch = ++generation.current;
     const failureBefore = actionFailure.current;
-    setBusy(label);
+    setBusy({ area, progress });
     setError(null);
     setFeedback(null);
     try {
@@ -89,11 +112,7 @@ export function FigmaSettings() {
       }
     }
     catch {
-      if (mounted.current && generation.current === epoch) reportActionError(label, label === "Connect Figma"
-        ? "Connect Figma failed. Check the official connection status below for the reason. Refreshing status does not retry registration."
-        : label === "Finish sign-in"
-          ? "Sign-in could not complete. Check the official connection status. Correct a malformed pasted address; start Connect Figma again if the callback was consumed. If authorization was saved, use Test Figma."
-          : `${label} failed. Retry this action; refreshing status does not repeat it.`);
+      if (mounted.current && generation.current === epoch) reportActionError(label, area, failure);
     } finally {
       mutation.current = false;
       if (mounted.current && generation.current === epoch) {
@@ -107,38 +126,54 @@ export function FigmaSettings() {
   const accept = (next: SettingsSnapshot, epoch: number) => {
     if (mounted.current && generation.current === epoch) setSnapshot(next);
   };
-  const save = () => run("Save settings", async () => {
+  const save = (area: "mirror" | "advanced") => run(`Save ${area}`, area, "Saving…", "Couldn't save. Your changes are kept; try again.", async () => {
     const epoch = generation.current;
+    const fields: (keyof Draft)[] = area === "mirror" ? ["mirrorEnabled"] : ["clientId", "redirectUri", "binaryPath"];
+    const changes = Object.fromEntries(fields.filter(key => draft[key] !== undefined).map(key => [key, draft[key]]));
     const next = await rpc.call("configure", {
-      ...draft,
-      ...(readToken === "" ? {} : { readToken }),
-      ...(clientSecret === "" ? {} : { clientSecret }),
+      ...changes,
+      ...(area === "mirror" && readToken !== "" ? { readToken } : {}),
+      ...(area === "advanced" && clientSecret !== "" ? { clientSecret } : {}),
     });
     if (!mounted.current || generation.current !== epoch) return;
     accept(next, epoch);
-    setReadToken(""); setClientSecret(""); setDraft({}); setAuthorizationUrl(null); setCallbackUrl("");
-    setSyncDisclosure(null);
-    setAcceptUnverified(false);
-    setFeedback("Settings saved. Test the read connection or connect Figma to verify access.");
+    if (area === "mirror") { setReadToken(""); setSyncDisclosure(null); setAcceptUnverified(false); }
+    else setClientSecret("");
+    setDraft(current => Object.fromEntries(Object.entries(current).filter(([key]) => !fields.includes(key as keyof Draft))));
+    setAuthorizationUrl(null); setCallbackUrl("");
+    setFeedback({ area, text: "Saved." });
   });
-  const sourceAction = (method: "disconnect" | "testConnection" | "refreshTools", source: Source, label: string) => run(label, async () => {
-    const epoch = generation.current;
-    const next = method === "testConnection"
-      ? await rpc.call(method, { source, ...(file.trim() ? { file: file.trim() } : {}) })
-      : await rpc.call(method, { source });
-    accept(next, epoch);
-    if (!mounted.current || generation.current !== epoch) return;
-    if (method === "disconnect") {
-      if (source === "official") { setAuthorizationUrl(null); setCallbackUrl(""); setClientSecret(""); }
-      else { setReadToken(""); setSyncDisclosure(null); setAcceptUnverified(false); }
-    }
-    if (method === "testConnection" && next[source].phase === "error") {
-      reportActionError(label, `${label} did not verify access.${next[source].detail ? ` ${next[source].detail}` : ""}`);
-      return;
-    }
-    setFeedback(`${label} completed. Connection status is shown below.`);
-  });
-  const syncReadCache = () => run("Sync read cache", async () => {
+  const sourceAction = (method: "disconnect" | "testConnection" | "refreshTools", source: Source) => {
+    const official = source === "official";
+    const [label, progress, failure, success] = method === "testConnection"
+      ? official
+        ? ["Test Figma", "Checking Figma…", "Couldn't reach Figma. Try again.", "Figma is working."]
+        : ["Test read", "Checking read access…", "Couldn't verify read access. Try again.", "Read access works."]
+      : method === "refreshTools"
+        ? [`Refresh ${source} tools`, "Refreshing tools…", "Couldn't refresh tools. Try again.", "Tools refreshed."]
+        : official
+          ? ["Disconnect Figma", "Disconnecting…", "Couldn't disconnect. Try again.", "Disconnected."]
+          : ["Remove read token", "Removing token…", "Couldn't remove the read token. Try again.", "Read token removed."];
+    return run(label, source, progress, failure, async () => {
+      const epoch = generation.current;
+      const next = method === "testConnection" && !official
+        ? await rpc.call(method, { source, ...(file.trim() ? { file: file.trim() } : {}) })
+        : await rpc.call(method, { source });
+      accept(next, epoch);
+      if (!mounted.current || generation.current !== epoch) return;
+      if (method === "disconnect") {
+        if (official) { setAuthorizationUrl(null); setCallbackUrl(""); setClientSecret(""); }
+        else { setReadToken(""); setSyncDisclosure(null); setAcceptUnverified(false); }
+      }
+      if (method === "testConnection" && next[source].phase === "error") {
+        const detail = next[source].detail;
+        reportActionError(label, source, `${failure.replace(" Try again.", "")}${detail ? ` ${detail}` : ""}`, true);
+        return;
+      }
+      setFeedback({ area: source, text: success });
+    });
+  };
+  const syncReadCache = () => run("Sync cache", "mirror", "Syncing…", "Sync failed. Cache freshness is unverified; try again.", async () => {
     const epoch = generation.current;
     const target = file.trim();
     setSyncDisclosure(null);
@@ -151,17 +186,16 @@ export function FigmaSettings() {
     let disclosure: string | null = null;
     if (freshness && typeof freshness === "object") {
       const sentences: string[] = [];
-      if ("state" in freshness && freshness.state === "rebaselined") sentences.push("The read cache now has a new version baseline.");
-      if ("mutationVisibilityVerified" in freshness && freshness.mutationVisibilityVerified === false) sentences.push("Visibility of the earlier edit is unverified.");
+      if ("state" in freshness && freshness.state === "rebaselined") sentences.push("The cache has a new version baseline.");
+      if ("mutationVisibilityVerified" in freshness && freshness.mutationVisibilityVerified === false) sentences.push("The earlier edit isn't verified as visible.");
       if ("detail" in freshness && typeof freshness.detail === "string") sentences.push(freshness.detail);
       if (sentences.length) disclosure = sentences.join(" ");
     }
     setSyncDisclosure({ file: target, freshness: disclosure });
-    if (result.isError === true) reportActionError("Sync read cache", "Sync read cache reported an error. Cache freshness has not been verified. Retry the sync.");
-    else setFeedback("Read cache sync returned. Review its freshness disclosure below.");
+    if (result.isError === true) reportActionError("Sync cache", "mirror", "Sync reported an error. Cache freshness is unverified; try again.");
     queued.current = true;
   });
-  const connect = () => run("Connect Figma", async () => {
+  const connect = () => run("Connect Figma", "official", "Starting sign-in…", "Couldn't start sign-in.", async () => {
     const epoch = generation.current;
     setAuthorizationUrl(null); setCallbackUrl("");
     let result: { authorizationUrl: string };
@@ -171,128 +205,199 @@ export function FigmaSettings() {
     if (url.protocol !== "https:") throw new Error("Invalid authorization URL");
     if (!mounted.current || generation.current !== epoch) return;
     setAuthorizationUrl(url.href);
-    setFeedback("Open the authorization link to finish connecting, then return here.");
     queued.current = true;
   });
-  const finishAuthorization = () => run("Finish sign-in", async () => {
-    const epoch = generation.current;
-    let next: SettingsSnapshot;
-    try { next = await rpc.call("finishAuthorization", { callbackUrl }); }
-    finally { queued.current = true; }
-    if (!mounted.current || generation.current !== epoch) return;
-    accept(next, epoch);
-    setCallbackUrl(""); setAuthorizationUrl(null);
-    setFeedback("Figma sign-in completed. BB stores and refreshes this authorization.");
-  });
-  const automaticRegistration = () => run("Use automatic registration", async () => {
+  const finishAuthorization = () => run("Finish sign-in", "official", "Finishing sign-in…",
+    "Sign-in didn't complete. Check the pasted address or start over. If Figma already approved access, use Test Figma.", async () => {
+      const epoch = generation.current;
+      let next: SettingsSnapshot;
+      try { next = await rpc.call("finishAuthorization", { callbackUrl }); }
+      finally { queued.current = true; }
+      if (!mounted.current || generation.current !== epoch) return;
+      accept(next, epoch);
+      setCallbackUrl(""); setAuthorizationUrl(null);
+      setFeedback({ area: "official", text: "Signed in to Figma." });
+      setSignedIn(count => count + 1);
+    });
+  const automaticRegistration = () => run("Use automatic registration", "advanced", "Removing client override…", "Couldn't remove the client override. Try again.", async () => {
     const epoch = generation.current;
     const next = await rpc.call("configure", { clientId: "", clientSecret: "" });
     if (!mounted.current || generation.current !== epoch) return;
     accept(next, epoch);
     setDraft(({ clientId: _clientId, ...rest }) => rest);
     setClientSecret(""); setAuthorizationUrl(null); setCallbackUrl("");
-    setFeedback("Client override removed. Connect Figma will request authorization.");
+    setFeedback({ area: "advanced", text: "Client override removed. Connect Figma to sign in again." });
   });
 
-  const cacheEnabled = draft.mirrorEnabled ?? snapshot?.config.mirrorEnabled ?? false;
-  const cacheReady = !!(snapshot?.config.mirrorEnabled && snapshot.config.binaryAvailable && snapshot.config.tokenConfigured);
-  return <div className="figma-settings" aria-busy={loading || busy !== null}>
-    <p className="figma-muted">Connections are shared across this BB deployment. Saving or disconnecting affects everyone using these Figma tools.</p>
-    <p>The official Figma MCP connection provides reads and writes. No local figmog installation is required for it; Figma authorization is still required.</p>
-    <p>Sign in once to use Figma tools across this BB deployment. BB stores the authorization and refreshes it automatically.</p>
-    {loading && <p role="status">Loading Figma settings…</p>}
-    {error && <div role="alert"><p>{error}</p><button type="button" disabled={busy !== null} onClick={() => void refresh()}>Retry status</button></div>}
-    {actionError && <p role="alert">{actionError}</p>}
-    {feedback && <p role="status">{feedback}</p>}
-    {busy && <p role="status">{busy}…</p>}
-    {snapshot && <>
-      <div className="figma-actions">
-        <button type="button" disabled={busy !== null} onClick={() => void connect()}>Connect Figma</button>
-        <button type="button" disabled={busy !== null} onClick={() => void refresh()}>Refresh status</button>
+  const isBusy = busy !== null;
+  const notices = (area: Area) => <>
+    {actionError?.area === area && <p role="alert" className="figma-error">{actionError.message}</p>}
+    {busy?.area === area ? <p role="status" className="figma-hint">{busy.progress}</p>
+      : feedback?.area === area && <p role="status" className="figma-hint">{feedback.text}</p>}
+  </>;
+  // Backend detail is shown only where it explains a problem or a recoverable state.
+  const statusDetail = (source: Source, connection: ConnectionStatus, relevant: boolean) =>
+    relevant && connection.detail && connection.phase !== "connected" && !(actionError?.area === source && actionError.coversDetail)
+      ? <p className={connection.phase === "error" ? "figma-error" : "figma-hint"}>{connection.detail}</p> : null;
+
+  if (!snapshot) return <div className="figma-settings" aria-busy={loading}>
+    {error
+      ? <div role="alert" className="figma-row"><p className="figma-error">{error}</p><button type="button" className="figma-button" onClick={() => void refresh()}>Retry</button></div>
+      : <p role="status" className="figma-hint">Loading…</p>}
+  </div>;
+
+  const { config, official, mirror } = snapshot;
+  const [officialLabel, officialTone] = officialLabels[official.phase];
+  const connected = official.phase === "connected";
+  const signingIn = authorizationUrl !== null || official.phase === "authorizing";
+  const loopback = config.redirectUri.startsWith("http://");
+  const cacheEnabled = draft.mirrorEnabled ?? config.mirrorEnabled;
+  const cacheReady = config.mirrorEnabled && config.binaryAvailable && config.tokenConfigured;
+  const [cacheLabel, cacheTone] = !config.mirrorEnabled ? ["Off", "idle" as Tone]
+    : !config.binaryAvailable ? ["figmog not found", "error" as Tone]
+      : !config.tokenConfigured ? cacheLabels.unconfigured : cacheLabels[mirror.phase];
+  const cacheDirty = draft.mirrorEnabled !== undefined || readToken !== "";
+  const advancedDirty = draft.clientId !== undefined || draft.redirectUri !== undefined || draft.binaryPath !== undefined || clientSecret !== "";
+  const hasOverride = !!(config.clientId || config.clientSecretConfigured);
+  const submit = (action: () => void) => (event: FormEvent) => { event.preventDefault(); action(); };
+
+  return <div className="figma-settings" aria-busy={loading || isBusy}>
+    {error && <div role="alert" className="figma-row"><p className="figma-error">{error}</p><button type="button" className="figma-button" disabled={isBusy} onClick={() => void refresh()}>Retry</button></div>}
+
+    <div className="figma-group">
+      <div className="figma-row">
+        <p ref={officialStatus} tabIndex={-1} className="figma-status"><Dot tone={officialTone} />{officialLabel}</p>
+        <div className="figma-actions">
+          {!connected && <button type="button" className={signingIn ? "figma-button" : "figma-button figma-button-primary"} disabled={isBusy} onClick={() => void connect()}>
+            {official.phase === "authorizing" || authorizationUrl ? "Start over" : "Connect Figma"}
+          </button>}
+          <button type="button" className="figma-button" disabled={isBusy} onClick={() => void sourceAction("testConnection", "official")}>Test Figma</button>
+          {official.phase !== "unconfigured" && official.phase !== "disconnected" &&
+            <button type="button" className="figma-button" disabled={isBusy} onClick={() => void sourceAction("disconnect", "official")}>Disconnect</button>}
+        </div>
       </div>
-      {(authorizationUrl || snapshot.official.phase === "authorizing") && <>
-        {authorizationUrl ? <p><a href={authorizationUrl} target="_blank" rel="noopener noreferrer">Authorize Figma in a new tab</a></p>
-          : <p className="figma-muted">A Figma sign-in is pending. Paste the callback from that sign-in, or click Connect Figma to start again.</p>}
-        {snapshot.config.redirectUri.startsWith("http://") && <form onSubmit={event => { event.preventDefault(); void finishAuthorization(); }}>
-          <label htmlFor={`${id}-callback`}>Figma callback URL</label>
-          <input id={`${id}-callback`} type="text" autoComplete="off" spellCheck={false} value={callbackUrl} disabled={busy !== null} maxLength={65536} onChange={event => setCallbackUrl(event.target.value)} aria-describedby={`${id}-callback-help`} />
-          <p id={`${id}-callback-help`} className="figma-muted">After approving in Figma, paste the address from your browser here, even if the localhost page cannot load. Missing http://, quotes and whitespace are corrected automatically.</p>
-          <button type="submit" disabled={busy !== null || !callbackUrl.trim()}>Finish sign-in</button>
-        </form>}
-      </>}
-      <form onSubmit={(event) => { event.preventDefault(); void save(); }}>
-        <fieldset disabled={busy !== null}>
-          <legend>Optional figmog cache</legend>
-          <label className="figma-checkbox" htmlFor={`${id}-cache-enabled`}>
-            <input id={`${id}-cache-enabled`} type="checkbox" checked={cacheEnabled} onChange={(event) => setDraft(current => ({ ...current, mirrorEnabled: event.target.checked }))} />
-            Use figmog for cached reads
-          </label>
-          <p className="figma-muted">{snapshot.config.binaryAvailable ? "figmog is available on the BB host." : "figmog was not found on the BB host. You can continue with official Figma MCP."} Re-enabling the cache starts a fresh mirror. Your saved read token is retained when the cache is turned off.</p>
-          {!snapshot.config.binaryAvailable && <p><a href="https://github.com/sanctuarycomputer/figmog#install" target="_blank" rel="noopener noreferrer">Optional figmog installation instructions</a>. Automatic installation is not available yet. Install it on the BB host, then refresh status.</p>}
-          <label htmlFor={`${id}-token`}>Replace Figma read token</label>
-          <input id={`${id}-token`} type="password" disabled={!cacheEnabled} autoComplete="new-password" maxLength={16384} value={readToken} onChange={(e) => setReadToken(e.target.value)} aria-describedby={`${id}-token-help`} />
-          <p id={`${id}-token-help`} className="figma-muted">{snapshot.config.tokenConfigured ? "A token is configured." : "No token is configured."} Leave blank to keep the current token. Disconnect read removes it.</p>
-          <details>
-            <summary>Advanced configuration</summary>
-            <label htmlFor={`${id}-binary`}>figmog executable path</label>
-            <input id={`${id}-binary`} maxLength={4096} value={draft.binaryPath ?? snapshot.config.binaryPath} onChange={(e) => setDraft((current) => ({ ...current, binaryPath: e.target.value }))} />
-            <p className="figma-muted">For the optional cache, use “figmog” to detect it on the BB host's PATH, or enter its absolute executable path. No installation on your browser's computer is needed.</p>
-            <p className="figma-muted">Optional client override: enter both an ID and secret supplied for your own Figma MCP client. Otherwise Connect Figma requests registration automatically. Issued credentials are kept privately on the BB server.</p>
-            <label htmlFor={`${id}-client`}>Figma OAuth client ID</label>
-            <input id={`${id}-client`} maxLength={4096} value={draft.clientId ?? snapshot.config.clientId} onChange={(e) => setDraft((current) => ({ ...current, clientId: e.target.value }))} />
-            <label htmlFor={`${id}-secret`}>Replace Figma OAuth client secret</label>
-            <input id={`${id}-secret`} type="password" autoComplete="new-password" maxLength={16384} value={clientSecret} onChange={(e) => setClientSecret(e.target.value)} aria-describedby={`${id}-secret-help`} />
-            <p id={`${id}-secret-help`} className="figma-muted">{snapshot.config.clientSecretConfigured ? "A client override secret is configured." : "No client override secret is configured."} Leave blank to keep it. Disconnect Figma removes the authorization session; the saved client override is retained.</p>
-            {(snapshot.config.clientId || snapshot.config.clientSecretConfigured) && <>
-              <button type="button" onClick={() => void automaticRegistration()}>Use automatic registration</button>
-              <p className="figma-muted">Removes the saved client override and disconnects official Figma. Your read token is retained.</p>
-            </>}
-            <label htmlFor={`${id}-redirect`}>OAuth callback URL</label>
-            <input id={`${id}-redirect`} type="url" maxLength={8192} value={draft.redirectUri ?? snapshot.config.redirectUri} onChange={(e) => setDraft((current) => ({ ...current, redirectUri: e.target.value }))} />
-          </details>
-          <button type="submit" className="figma-primary" disabled={Object.keys(draft).length === 0 && !readToken && !clientSecret}>Save settings</button>
-        </fieldset>
-      </form>
-      <label htmlFor={`${id}-file`}>Figma file URL for cache access test</label>
-      <input id={`${id}-file`} type="url" value={file} disabled={busy !== null} onChange={(e) => { setFile(e.target.value); setAcceptUnverified(false); setSyncDisclosure(null); }} placeholder="https://www.figma.com/design/…" />
-      <p className="figma-muted">Test read checks this file through the optional cache. Test Figma checks the official connection and account identity; it does not verify access to this file. Neither test edits your file.</p>
-      {cacheReady && <><label className="figma-checkbox" htmlFor={`${id}-accept-unverified`}>
-        <input id={`${id}-accept-unverified`} type="checkbox" checked={acceptUnverified} disabled={busy !== null} onChange={(e) => setAcceptUnverified(e.target.checked)} aria-describedby={`${id}-sync-help`} />
-        Accept refreshed cache without verifying the prior edit
-      </label>
-      <button type="button" disabled={busy !== null || !file.trim()} onClick={() => void syncReadCache()}>Sync read cache</button>
-      <p id={`${id}-sync-help`} className="figma-muted">Leave this unchecked to require verification of a pending edit. Accepting an unverified refresh makes the read cache usable again, but does not prove that the earlier edit is visible.</p>
-      </>}
-      {syncDisclosure && <div role="status">
-        <p>Read cache sync response for {syncDisclosure.file}</p>
-        <p>A cache pull alone does not verify that a prior edit is visible.</p>
-        {syncDisclosure.freshness !== null
-          ? <p>{syncDisclosure.freshness}</p>
-          : <p>No freshness disclosure was returned. Prior edit visibility is unverified.</p>}
-      </div>}
-      {(["official", "mirror"] as const).map((source) => {
-        const title = source === "mirror" ? "Read" : "Figma";
-        const connection = snapshot[source];
-        return <section key={source} aria-labelledby={`${id}-${source}`}>
-          <h3 id={`${id}-${source}`} ref={source === "official" ? officialHeading : undefined} tabIndex={source === "official" ? -1 : undefined}>{source === "mirror" ? "Optional cache connection" : "Official Figma connection"}</h3>
-          <p>Status: {connection.phase}{connection.serverVersion ? ` · Server ${connection.serverVersion}` : ""}</p>
-          {connection.detail && <p className="figma-muted">{connection.detail}</p>}
-          {source === "official" && <p className="figma-muted">After a BB restart, Test Figma resumes saved authorization; Connect Figma starts a new sign-in.</p>}
-          <div className="figma-actions">
-            <button type="button" disabled={busy !== null || (source === "mirror" && (!cacheReady || !file.trim()))} onClick={() => void sourceAction("testConnection", source, `Test ${title.toLowerCase()}`)}>Test {title.toLowerCase()}</button>
-            <button type="button" disabled={busy !== null || (source === "mirror" && !cacheReady)} onClick={() => void sourceAction("refreshTools", source, `Refresh ${title.toLowerCase()} tools`)}>Refresh {title.toLowerCase()} tools</button>
-            <button type="button" disabled={busy !== null} onClick={() => void sourceAction("disconnect", source, `Disconnect ${title.toLowerCase()}`)}>Disconnect {title.toLowerCase()}</button>
+      {statusDetail("official", official, true)}
+      {notices("official")}
+      {(authorizationUrl || (signingIn && loopback)) && <div className="figma-panel">
+        {authorizationUrl && <a className="figma-button figma-button-primary figma-link-button" href={authorizationUrl} target="_blank" rel="noopener noreferrer">Approve access in Figma<span aria-hidden="true"> ↗</span></a>}
+        {loopback ? <form className="figma-field" onSubmit={submit(() => void finishAuthorization())}>
+          <label htmlFor={`${id}-callback`}>Callback URL</label>
+          <p id={`${id}-callback-help`} className="figma-hint">{authorizationUrl
+            ? "After approving, paste the address your browser opens, even if the page doesn't load."
+            : "Paste the address from the sign-in you started."}</p>
+          <div className="figma-row figma-inline">
+            <input id={`${id}-callback`} type="text" className="figma-input" autoComplete="off" spellCheck={false} value={callbackUrl} disabled={isBusy} maxLength={65536} onChange={event => setCallbackUrl(event.target.value)} aria-describedby={`${id}-callback-help`} />
+            <button type="submit" className="figma-button" disabled={isBusy || !callbackUrl.trim()}>Finish sign-in</button>
           </div>
-          <details><summary>Available tools ({snapshot.tools[source].length})</summary>
-            {snapshot.tools[source].length === 0 ? <p className="figma-muted">No tools discovered. Connect and refresh tools to check availability.</p> : <ul>{snapshot.tools[source].map((tool) => <li key={tool.name}><code>{tool.name}</code>{tool.description && <p className="figma-muted">{tool.description}</p>}</li>)}</ul>}
-          </details>
-        </section>;
-      })}
-      {snapshot.aliasesNeedReload && <p className="figma-muted">Tool shortcuts need a plugin reload. The generic Figma tools can use the current inventory.</p>}
-    </>}
+        </form> : authorizationUrl && <p className="figma-hint">This page updates when you return.</p>}
+      </div>}
+      <Tools tools={snapshot.tools.official} disabled={isBusy} onRefresh={() => void sourceAction("refreshTools", "official")} />
+      {snapshot.aliasesNeedReload && <p className="figma-hint">Reload the Figma plugin to update tool shortcuts.</p>}
+    </div>
+
+    <details className="figma-disclosure">
+      <summary><span>Read cache</span><span className="figma-summary-status"><Dot tone={cacheTone} />{cacheLabel}</span></summary>
+      <div className="figma-disclosure-body">
+        <form className="figma-group" onSubmit={submit(() => void save("mirror"))}>
+          <fieldset className="figma-group" disabled={isBusy}>
+            <legend className="figma-sr-only">Read cache settings</legend>
+            <label className="figma-check" htmlFor={`${id}-cache-enabled`}>
+              <input id={`${id}-cache-enabled`} type="checkbox" checked={cacheEnabled} onChange={(event) => setDraft(current => ({ ...current, mirrorEnabled: event.target.checked }))} aria-describedby={`${id}-cache-help`} />
+              <span>Cache reads with figmog</span>
+            </label>
+            <p id={`${id}-cache-help`} className="figma-hint figma-indent">{config.binaryAvailable
+              ? "Speeds up repeated reads. Edits always use the Figma connection."
+              : <>figmog isn't installed on the BB host. <a href="https://github.com/sanctuarycomputer/figmog#install" target="_blank" rel="noopener noreferrer">Install figmog</a></>}</p>
+            <Field id={`${id}-token`} label="Read token" hint={config.tokenConfigured ? "Saved. Leave blank to keep it." : "A Figma personal access token with file read access."}>
+              <input id={`${id}-token`} type="password" className="figma-input" disabled={!cacheEnabled} autoComplete="new-password" maxLength={16384} value={readToken} onChange={(e) => setReadToken(e.target.value)} aria-describedby={`${id}-token-hint`} />
+            </Field>
+            <div className="figma-actions">
+              <button type="submit" className="figma-button figma-button-primary" disabled={!cacheDirty}>Save</button>
+              {(config.tokenConfigured || mirror.phase !== "unconfigured") &&
+                <button type="button" className="figma-button" onClick={() => void sourceAction("disconnect", "mirror")}>Remove read token</button>}
+            </div>
+          </fieldset>
+        </form>
+        {statusDetail("mirror", mirror, cacheReady)}
+        {notices("mirror")}
+        {cacheReady && <div className="figma-group figma-divided">
+          <Field id={`${id}-file`} label="Figma file URL">
+            <input id={`${id}-file`} type="url" className="figma-input" value={file} disabled={isBusy} onChange={(e) => { setFile(e.target.value); setAcceptUnverified(false); setSyncDisclosure(null); }} placeholder="https://www.figma.com/design/…" />
+          </Field>
+          <label className="figma-check" htmlFor={`${id}-accept-unverified`}>
+            <input id={`${id}-accept-unverified`} type="checkbox" checked={acceptUnverified} disabled={isBusy} onChange={(e) => setAcceptUnverified(e.target.checked)} aria-describedby={`${id}-sync-help`} />
+            <span>Accept the sync without verifying the earlier edit</span>
+          </label>
+          <p id={`${id}-sync-help`} className="figma-hint figma-indent">Makes a stuck cache usable again, but the earlier edit may not be visible. Check the canvas first.</p>
+          <div className="figma-actions">
+            <button type="button" className="figma-button" disabled={isBusy || !file.trim()} onClick={() => void sourceAction("testConnection", "mirror")}>Test read</button>
+            <button type="button" className="figma-button" disabled={isBusy || !file.trim()} onClick={() => void syncReadCache()}>Sync</button>
+          </div>
+          {syncDisclosure && <p role="status" className="figma-hint">
+            Synced {syncDisclosure.file}. {syncDisclosure.freshness ?? "The earlier edit isn't verified as visible."}
+          </p>}
+          <Tools tools={snapshot.tools.mirror} disabled={isBusy} onRefresh={() => void sourceAction("refreshTools", "mirror")} />
+        </div>}
+      </div>
+    </details>
+
+    <details className="figma-disclosure">
+      <summary><span>Advanced</span></summary>
+      <form className="figma-disclosure-body figma-group" onSubmit={submit(() => void save("advanced"))}>
+        <fieldset className="figma-group" disabled={isBusy}>
+          <legend className="figma-legend">OAuth client</legend>
+          <p className="figma-hint">Leave empty to register automatically when you connect.</p>
+          <Field id={`${id}-client`} label="Client ID">
+            <input id={`${id}-client`} className="figma-input" maxLength={4096} value={draft.clientId ?? config.clientId} onChange={(e) => setDraft((current) => ({ ...current, clientId: e.target.value }))} />
+          </Field>
+          <Field id={`${id}-secret`} label="Client secret" hint={config.clientSecretConfigured ? "Saved. Leave blank to keep it." : undefined}>
+            <input id={`${id}-secret`} type="password" className="figma-input" autoComplete="new-password" maxLength={16384} value={clientSecret} onChange={(e) => setClientSecret(e.target.value)} aria-describedby={config.clientSecretConfigured ? `${id}-secret-hint` : undefined} />
+          </Field>
+          <Field id={`${id}-redirect`} label="Redirect URL">
+            <input id={`${id}-redirect`} type="url" className="figma-input" maxLength={8192} value={draft.redirectUri ?? config.redirectUri} onChange={(e) => setDraft((current) => ({ ...current, redirectUri: e.target.value }))} />
+          </Field>
+          {hasOverride && <div className="figma-row figma-start">
+            <button type="button" className="figma-button" onClick={() => void automaticRegistration()} aria-describedby={`${id}-auto-help`}>Use automatic registration</button>
+            <p id={`${id}-auto-help`} className="figma-hint">Removes the override and signs Figma out.</p>
+          </div>}
+        </fieldset>
+        <fieldset className="figma-group" disabled={isBusy}>
+          <legend className="figma-legend">figmog</legend>
+          <Field id={`${id}-binary`} label="Executable path">
+            <input id={`${id}-binary`} className="figma-input" maxLength={4096} value={draft.binaryPath ?? config.binaryPath} onChange={(e) => setDraft((current) => ({ ...current, binaryPath: e.target.value }))} />
+          </Field>
+          <div className="figma-actions">
+            <button type="submit" className="figma-button figma-button-primary" disabled={!advancedDirty}>Save</button>
+          </div>
+        </fieldset>
+        {notices("advanced")}
+      </form>
+    </details>
   </div>;
 }
 
+function Dot({ tone }: { tone: Tone }) {
+  return <span className="figma-dot" data-tone={tone} aria-hidden="true" />;
+}
+
+function Field({ id, label, hint, children }: { id: string; label: string; hint?: string; children: ReactNode }) {
+  return <div className="figma-field">
+    <label htmlFor={id}>{label}</label>
+    {children}
+    {hint && <p id={`${id}-hint`} className="figma-hint">{hint}</p>}
+  </div>;
+}
+
+function Tools({ tools, disabled, onRefresh }: { tools: McpTool[]; disabled: boolean; onRefresh: () => void }) {
+  return <details className="figma-tools">
+    <summary>{tools.length === 0 ? "No tools yet" : `${tools.length} ${tools.length === 1 ? "tool" : "tools"}`}</summary>
+    <div className="figma-tools-body">
+      {tools.length > 0 && <ul>{tools.map((tool) => <li key={tool.name} title={tool.description}><code>{tool.name}</code></li>)}</ul>}
+      <button type="button" className="figma-button figma-button-small" disabled={disabled} onClick={onRefresh}>Refresh tools</button>
+    </div>
+  </details>;
+}
+
 export default definePluginApp((app) => {
-  app.slots.settingsSection({ id: "figma-connections", title: "Figma connections", description: "Manage shared read access and official Figma authorization.", component: FigmaSettings });
+  app.slots.settingsSection({ id: "figma-connections", title: "Connection", description: "One Figma sign-in, shared by everyone using this BB deployment.", component: FigmaSettings });
 });
