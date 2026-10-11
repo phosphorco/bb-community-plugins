@@ -44,6 +44,7 @@ export function createMirrorManager(options: MirrorOptions): MirrorManager {
     return { phase: "disconnected", detail: null };
   };
   const timeoutMs = Math.max(10, Math.min(options.requestTimeoutMs ?? 60_000, 300_000));
+  const fullPullTimeoutMs = Math.max(10, Math.min(options.fullPullTimeoutMs ?? options.requestTimeoutMs ?? 180_000, 300_000));
   let currentStatus: ConnectionStatus = { ...configuredStatus(), connectedAt: null, serverVersion: null };
   let raw: McpPeer | undefined;
   let facade: McpPeer | undefined;
@@ -63,7 +64,7 @@ export function createMirrorManager(options: MirrorOptions): MirrorManager {
     currentStatus = { phase, detail, connectedAt: phase === "connected" ? Date.now() : null, serverVersion: phase === "connected" ? raw?.info().serverInfo?.version ?? null : null };
     notify();
   };
-  const enqueue = <T>(action: (signal: AbortSignal) => Promise<T>, signal?: AbortSignal, fence = epoch): Promise<T> => {
+  const enqueue = <T>(action: (signal: AbortSignal) => Promise<T>, signal?: AbortSignal, fence = epoch, budget = timeoutMs): Promise<T> => {
     if (queued >= MAX_QUEUE) return Promise.reject(new Error("Figmog request queue is full."));
     if (disposed) return Promise.reject(new Error("Figmog manager is disposed."));
     queued++;
@@ -73,7 +74,7 @@ export function createMirrorManager(options: MirrorOptions): MirrorManager {
     const aborted = new Promise<never>((_, reject) => { rejectAbort = reject; });
     const onAbort = () => rejectAbort(new Error(signal?.aborted ? "Figmog request cancelled." : "Figmog request timed out."));
     combined.addEventListener("abort", onAbort, { once: true });
-    const timer = setTimeout(() => deadline.abort(), timeoutMs);
+    const timer = setTimeout(() => deadline.abort(), budget);
     if (combined.aborted) onAbort();
     const result = tail.then(async () => {
       if (combined.aborted) throw new Error("Figmog request cancelled or timed out.");
@@ -167,7 +168,7 @@ export function createMirrorManager(options: MirrorOptions): MirrorManager {
     const openingEpoch = epoch;
     const controller = new AbortController(); startup = controller;
     try {
-      const opened = await openStdioPeer({ binaryPath: config.binaryPath, cwd: generationDir!, token: config.token, intervalSeconds: Number.isFinite(interval) ? interval : 10, timeoutMs, signal: signal ? AbortSignal.any([signal, controller.signal]) : controller.signal,
+      const opened = await openStdioPeer({ binaryPath: config.binaryPath, cwd: generationDir!, token: config.token, intervalSeconds: Number.isFinite(interval) ? interval : 10, timeoutMs, fullPullTimeoutMs, signal: signal ? AbortSignal.any([signal, controller.signal]) : controller.signal,
         onFailure: () => { failed = true; const old = raw; raw = undefined; retiring = old?.close(); setStatus("error", "Figmog process stopped; reconnect to continue."); },
       });
       if (failed || openingEpoch !== epoch || signal?.aborted) { await opened.close(); throw new Error("Figmog process could not start."); }
@@ -308,7 +309,7 @@ export function createMirrorManager(options: MirrorOptions): MirrorManager {
       return enqueue((bounded) => {
         if (raw !== underlying) throw new Error("Figmog connection changed. Rediscover tools before calling this peer.");
         return guardedRequest(method, captured, bounded);
-      }, signal);
+      }, signal, epoch, method === "tools/call" && (captured?.name === "figmog_open" || captured?.name === "figmog_sync") ? fullPullTimeoutMs : timeoutMs);
     },
     info: () => underlying.info(),
     close: async () => { await manager.close(); },
@@ -427,7 +428,7 @@ export function createMirrorManager(options: MirrorOptions): MirrorManager {
       }
       delete state.active[ticket]; await save(); notify();
     }),
-    refresh: (file, signal, acceptUnverified = false) => enqueue((bounded) => refresh(file, bounded, acceptUnverified), signal),
+    refresh: (file, signal, acceptUnverified = false) => enqueue((bounded) => refresh(file, bounded, acceptUnverified), signal, epoch, fullPullTimeoutMs),
     restart: () => transition(async () => { await ensure(); }),
     close: () => transition(async () => undefined, true),
   };

@@ -7,7 +7,7 @@ import test from "node:test";
 import { createMirrorManager } from "../mirror/runtime.ts";
 import type { JsonObject, McpPeer, MirrorManager } from "../contract.ts";
 
-async function fixture(timeout = 1000) {
+async function fixture(timeout = 1000, fullPullTimeoutMs?: number) {
   const root = await mkdtemp(join(tmpdir(), "figmog-manager-"));
   const binary = join(root, "figmog");
   await copyFile(fileURLToPath(new URL("./mirror-child.mjs", import.meta.url)), binary); await chmod(binary, 0o700);
@@ -16,7 +16,7 @@ async function fixture(timeout = 1000) {
   await update({});
   const config = { binaryPath: binary, token: "fixture-one" };
   const directory = join(root, "private");
-  const manager = createMirrorManager({ directory, config, requestTimeoutMs: timeout });
+  const manager = createMirrorManager({ directory, config, requestTimeoutMs: timeout, fullPullTimeoutMs });
   const events = async (): Promise<JsonObject[]> => (await readFile(join(root, "events.jsonl"), "utf8")).trim().split('\n').map(line => JSON.parse(line));
   const cleanup = async () => { await manager.close(); await rm(root, { recursive: true, force: true }); };
   return { root, directory, binary, config, manager, update, events, cleanup };
@@ -138,6 +138,17 @@ test("timeout and cancellation stop the process, and queued calls are bounded", 
     const calls = Array.from({ length: 40 }, () => f.manager.peer());
     const settled = await Promise.allSettled(calls);
     assert.ok(settled.some(r => r.status === "rejected" && /queue is full/.test(String(r.reason))));
+  } finally { await f.cleanup(); }
+});
+
+test("full file pulls have a longer bounded budget while ordinary requests keep their shorter deadline", async () => {
+  const f = await fixture(200, 1200);
+  try {
+    const peer = await f.manager.peer();
+    await f.update({ pullDelayMs: 400 });
+    await call(peer, "figmog_open", { file: "A" });
+    await f.manager.refresh("A");
+    await assert.rejects(call(peer, "hang"), /timed out/);
   } finally { await f.cleanup(); }
 });
 

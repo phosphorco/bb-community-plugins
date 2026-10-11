@@ -11,7 +11,7 @@ const resultSchema = z.object({}).passthrough();
 /** The SDK owns negotiation, request ids, cancellation and protocol handling. */
 export async function openStdioPeer(input: {
   binaryPath: string; cwd: string; token: string; intervalSeconds: number;
-  timeoutMs: number; signal?: AbortSignal; onFailure: () => void;
+  timeoutMs: number; fullPullTimeoutMs?: number; signal?: AbortSignal; onFailure: () => void;
 }): Promise<McpPeer> {
   const transport = new StdioClientTransport({
     command: input.binaryPath,
@@ -61,7 +61,8 @@ export async function openStdioPeer(input: {
       if (Buffer.byteLength(JSON.stringify(request)) > 8 * 1024 * 1024) throw new Error("Figmog request exceeds the size limit.");
       try {
         // Passthrough preserves content extensions, structuredContent and metadata.
-        return await client.request(request, resultSchema, { signal, timeout: input.timeoutMs }) as JsonObject;
+        const fullPull = method === "tools/call" && (params?.name === "figmog_open" || params?.name === "figmog_sync");
+        return await client.request(request, resultSchema, { signal, timeout: fullPull ? input.fullPullTimeoutMs ?? input.timeoutMs : input.timeoutMs }) as JsonObject;
       } catch (error) {
         if (signal?.aborted || (error instanceof McpError && error.code === ErrorCode.RequestTimeout)) {
           // figmog ignores MCP cancellation. Stop the owner so queued work cannot continue.

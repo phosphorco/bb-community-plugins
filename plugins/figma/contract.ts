@@ -73,6 +73,7 @@ export interface MirrorOptions {
   config: MirrorConfig;
   onChange?: () => void;
   requestTimeoutMs?: number;
+  fullPullTimeoutMs?: number;
 }
 export interface SettingsSnapshot {
   scope: "shared";

@@ -369,6 +369,33 @@ test("failed file tests remain visible after queued realtime and focus refresh",
   expect(slot.getByRole("alert").textContent).toContain("Couldn't verify read access");
 });
 
+test("a timed-out read test reveals and focuses its error, retains it through refresh, and clears on a successful retry", async () => {
+  const request = deferred<SettingsSnapshot>();
+  let retry = false;
+  const testConnection = vi.fn(() => retry ? snapshot() : request.promise);
+  const slot = await mount({ testConnection });
+  const input = await slot.findByLabelText("Figma file URL");
+  const cache = input.closest("details")!;
+  cache.open = true;
+  fireEvent.change(input, { target: { value: "https://www.figma.com/design/abc" } });
+  fireEvent.click(button(slot, "Test read"));
+  cache.open = false; // The user can collapse the section during a slow request.
+  await act(async () => request.reject(new Error("Figmog request timed out. private-token-sentinel")));
+  const alert = await slot.findByRole("alert");
+  expect(alert.textContent).toContain("The read test timed out.");
+  expect(alert.textContent).toContain("official Figma connection");
+  expect(alert.textContent).not.toContain("private-token-sentinel");
+  expect(cache.open).toBe(true);
+  expect(document.activeElement).toBe(alert);
+  await slot.behavior.emitRealtime("figma", {});
+  expect(slot.getByRole("alert")).toBe(alert);
+  retry = true;
+  fireEvent.click(button(slot, "Test read"));
+  await slot.findByText("Read access works.");
+  expect(slot.queryByRole("alert")).toBeNull();
+  expect(testConnection).toHaveBeenCalledTimes(2);
+});
+
 test("file-test error snapshots retain their failure after status refresh", async () => {
   const failed = snapshot(); failed.mirror = { ...connection, phase: "error", detail: "File permission denied" };
   const slot = await mount({ testConnection: () => failed });

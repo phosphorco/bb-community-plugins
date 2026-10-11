@@ -55,6 +55,15 @@ export function FigmaSettings() {
   const reading = useRef(false);
   const queued = useRef(false);
   const officialStatus = useRef<HTMLParagraphElement>(null);
+  const actionAlert = useRef<HTMLParagraphElement>(null);
+  useEffect(() => {
+    // A failed action can finish after its controls have scrolled off screen.
+    // Focus its alert so the failure is visible and announced, even in a disclosure.
+    if (actionError && actionAlert.current) {
+      actionAlert.current.closest("details")?.setAttribute("open", "");
+      actionAlert.current.focus();
+    }
+  }, [actionError]);
   useEffect(() => {
     if (signedIn) officialStatus.current?.focus();
   }, [signedIn]);
@@ -111,8 +120,12 @@ export function FigmaSettings() {
         actionFailure.current = null; setActionError(null);
       }
     }
-    catch {
-      if (mounted.current && generation.current === epoch) reportActionError(label, area, failure);
+    catch (error) {
+      // Interpret known categories, never display an untrusted RPC error body.
+      const timedOut = label === "Test read" && error instanceof Error && /\bFigmog\b.*\btimed out\b/i.test(error.message.slice(0, 512));
+      if (mounted.current && generation.current === epoch) reportActionError(label, area, timedOut
+        ? "The read test timed out. Try again, or use the official Figma connection for reads."
+        : failure);
     } finally {
       mutation.current = false;
       if (mounted.current && generation.current === epoch) {
@@ -231,7 +244,7 @@ export function FigmaSettings() {
 
   const isBusy = busy !== null;
   const notices = (area: Area) => <>
-    {actionError?.area === area && <p role="alert" className="figma-error">{actionError.message}</p>}
+    {actionError?.area === area && <p ref={actionAlert} tabIndex={-1} role="alert" className="figma-error">{actionError.message}</p>}
     {busy?.area === area ? <p role="status" className="figma-hint">{busy.progress}</p>
       : feedback?.area === area && <p role="status" className="figma-hint">{feedback.text}</p>}
   </>;

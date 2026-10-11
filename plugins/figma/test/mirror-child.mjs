@@ -15,7 +15,7 @@ event({ kind: 'start', pid: process.pid, cwd: process.cwd(), tokenMatches: proce
 process.stderr.write('fixture confidential diagnostic ' + process.env.FIGMA_TOKEN + '\n');
 if (control().mode === 'stderr-flood') process.stderr.write(Buffer.alloc(1100000, 120));
 const lines = createInterface({ input: process.stdin });
-lines.on('line', line => {
+lines.on('line', async line => {
   const request = JSON.parse(line);
   if (request.id === undefined) return;
   const reply = result => process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: request.id, result }) + '\n');
@@ -45,6 +45,7 @@ lines.on('line', line => {
   active.add(key);
   cache[key] ??= settings.versions[key] ?? '100'; persist();
   if (name === 'figmog_sync' || name === 'figmog_open') {
+    if (settings.pullDelayMs) await new Promise(resolve => setTimeout(resolve, settings.pullDelayMs));
     if (settings.syncError || settings.syncErrors?.includes(key)) { reply({ content: [{ type: 'text', text: 'sync failed' }], isError: true }); return; }
     cache[key] = settings.versions[key] ?? cache[key]; persist(); reply(toolResult({ changed: 1 })); return;
   }
