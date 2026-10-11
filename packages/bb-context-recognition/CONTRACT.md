@@ -79,8 +79,9 @@ type SourceIdentity = { provider: string; id: string; kind?: string };
   request. `identityKey(source)` returns `canonicalJson([provider, id])`.
 - Ids must be **context-free** wherever the referent has a global name
   (`github.com/phosphorco/bb-plugins#312`). When a referent only exists relative
-  to a frame, the id embeds that frame (`env_abc123:plans/x.plan.pkl`), so the
-  same id means the same thing in every consumer.
+  to a frame, the id embeds that frame (`env_abc123:plans/x.plan.pkl`, or
+  `thr_abc123:thread-storage:plans/x.plan.pkl` for a plan in a thread's
+  storage), so the same id means the same thing in every consumer.
 - Providers starting with `bb.` are **reserved** for BB-native referents
   implemented as consumer built-ins. Their id grammars are consumer-defined,
   not extra wire DTO fields. Thread Brief uses `bb.thread` (id `thr_…`, kind
@@ -741,8 +742,14 @@ recursive resolution of excerpts, writes of any kind, polling, and fork changes.
    An operator choice is deferred until a real contention exists.
 3. **GitHub id grammar.** Keep `github.com/owner/repo#N`. The host segment is
    part of the canonical id so Enterprise hosts never collide.
-4. **Plan Graph identity.** Keep `env_…:path` for v1. Cross-environment and
-   cross-host plan references are out of scope until a consumer needs them.
+4. **Plan Graph identity.** Keep `env_…:path` for v1 whenever an environment
+   is in frame. Amended 2026-10-12 (Cole): a plan in a thread's storage uses
+   `thr_…:thread-storage:path`. Plan Graph emits it only when the consumer
+   frames a destination as thread storage by sending a thread and no
+   environment (see below). Each form resolves only in its own root and never
+   falls back to the other; there is no unframed thread form for plans. Plan
+   Graph records saved views under the same two keys. Cross-environment and
+   cross-host plan references remain out of scope until a consumer needs them.
 5. **Low-confidence rendering.** Link every accepted candidate. Thread Brief
    marks inferred candidates (any basis other than `explicit`) with a subtle
    "inferred" affordance whose tooltip is the provenance explanation, so a
@@ -754,6 +761,14 @@ not a wire extension. The consumer preserves authored hrefs, titles and anchor
 children, classifies local fragments and native routes, retains filesystem
 frames, and applies its document-wide budgets. Images, definitions and raw
 HTML admission likewise belong to the consumer.
+
+A consumer conveys a destination's filesystem frame through the existing
+context fields, not a new one. Thread Brief sends a destination inside thread
+storage with `threadId` and no `environmentId`, and a destination inside the
+workspace with both. Relative Markdown destinations resolve beside the
+document, so for a brief they are thread-storage destinations; bare paths in
+prose keep the full context. Suppliers whose identities embed a frame read it
+from which fields are present (decision 4).
 
 Package 0.2.0 changes discovery admission and adds explicit cache inputs and
 progressive continuation snapshots. RPC names and wire v1 DTO bounds remain unchanged.
