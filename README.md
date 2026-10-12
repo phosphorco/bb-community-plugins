@@ -9,6 +9,7 @@
 | Plugin | Purpose |
 |---|---|
 | [Figma](plugins/figma/) | Use official Figma tools for reads and edits through native agent tools, `bb figma`, and shared sign-in settings. |
+| [Sentry](plugins/sentry/) | Use official Sentry MCP tools through native agent tools, `bb sentry`, and shared sign-in settings. |
 | [Compact display](plugins/compact-display/) | Reduce prompt editor height and spacing with the plugin enable switch. |
 | [Message Timings Nerd](plugins/message-timings-nerd/) | Send times, agent turnaround, and waits between replies. |
 | [Cross References](plugins/cross-references/) | Connect and discover related resources through authority-free multipart identities. |
@@ -37,10 +38,11 @@ workspaces link them to the local `packages/` sources during development.
 
 ## Install directly
 
-Install Figma from this repository’s BB plugin collection on any supported BB deployment:
+Install Figma or Sentry from this repository’s BB plugin collection on any supported BB deployment:
 
 ```sh
 bb plugin install git:https://github.com/phosphorco/bb-community-plugins.git --plugin figma
+bb plugin install git:https://github.com/phosphorco/bb-community-plugins.git --plugin sentry
 ```
 
 The following plugins are published independently to npm by their prefixed release tags:

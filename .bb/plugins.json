@@ -12,6 +12,7 @@
     { "name": "sticky-notes", "source": "./plugins/sticky-notes" },
     { "name": "bb-ui-reference", "source": "./plugins/bb-ui-reference" },
     { "name": "attach-text-snippets", "source": "./plugins/attach-text-snippets" },
-    { "name": "figma", "source": "./plugins/figma" }
+    { "name": "figma", "source": "./plugins/figma" },
+    { "name": "sentry", "source": "./plugins/sentry" }
   ]
 }
