@@ -766,7 +766,6 @@ export function ProductMap({
             aria-roledescription="carousel"
             aria-label="bb surfaces a plugin can extend"
             onKeyDown={onKeyDown}
-            className="mt-1"
           >
             <div
               data-guide-navigation-toolbar

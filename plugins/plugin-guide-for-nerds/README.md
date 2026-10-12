@@ -44,6 +44,10 @@ an AI-ready reference note in that column; Close restores the screen summary
 and list. At narrow widths the reference stacks below the map. The large visible
 window title is removed; Move and Close share the top navigation line while
 the accessible dialog name remains.
+Navigation and the map canvas reach the frame edges. The responsive reference
+pane owns one text gutter; selected details share it without an inset card.
+Numbered markers retain edge clearance, and the end of the reference stays clear
+of the resize control.
 Page changes, card layout and scrolling are instant.
 Only the active map mounts its fixtures.
 

@@ -285,13 +285,13 @@ export function FloatingGuide({ loadContent, toggleEvent, title, initialSelectio
           className="nerd-guide-chrome-button" style={{ ...chromeButton, border: 'none', background: 'transparent' }} onClick={close}><span aria-hidden="true">×</span></button>
       </div>
       <div ref={bodyRef} data-guide-stage-viewport="" className="nerd-guide-scroll"
-        style={{ minHeight: 0, minWidth: 0, overflow: 'auto', overscrollBehavior: 'contain', scrollBehavior: 'auto', containerType: 'size', padding: '8px 8px 44px' }}>
+        style={{ minHeight: 0, minWidth: 0, overflow: 'auto', overscrollBehavior: 'contain', scrollBehavior: 'auto', containerType: 'size', padding: 0 }}>
         <span id={helpId} style={{ position: 'absolute', width: 1, height: 1, padding: 0, margin: -1,
           overflow: 'hidden', clipPath: 'inset(50%)', whiteSpace: 'nowrap' }}>
           Drag the move or resize control, or focus it and use arrow keys. Hold Shift for smaller steps.
         </span>
-        {load.status === 'loading' ? <p role="status">Loading guide…</p> : load.status === 'failed'
-          ? <div role="alert"><p>The guide couldn’t load.</p><button type="button" className="nerd-guide-chrome-button" style={chromeButton} onClick={retry}>Retry</button></div>
+        {load.status === 'loading' ? <p role="status" className="p-3">Loading guide…</p> : load.status === 'failed'
+          ? <div role="alert" className="p-3"><p>The guide couldn’t load.</p><button type="button" className="nerd-guide-chrome-button" style={chromeButton} onClick={retry}>Retry</button></div>
           : <ContentMount component={load.component} session={session} onSelectionChange={rememberSelection} />}
       </div>
       <button type="button" aria-label="Resize guide" aria-describedby={helpId} title="Drag to resize, or use arrow keys"

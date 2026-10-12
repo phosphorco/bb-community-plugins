@@ -54,18 +54,21 @@
 [data-bb-plugin="plugin-guide-for-nerds"] .nerd-guide-reference-layout {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  gap: 16px;
-  margin-top: 8px;
+  gap: 0;
+  margin-top: 0;
   align-items: start;
 }
 [data-bb-plugin="plugin-guide-for-nerds"] .nerd-guide-reference-column {
   min-width: 0;
+  box-sizing: border-box;
+  padding: 12px 12px 52px;
+  border-top: 1px solid var(--border);
 }
 [data-bb-plugin="plugin-guide-for-nerds"] .nerd-guide-reference-row {
   display: flex;
   align-items: start;
   gap: 10px;
-  padding: 8px 6px;
+  padding: 8px 0;
   border-radius: 6px;
 }
 [data-bb-plugin="plugin-guide-for-nerds"] .nerd-guide-reference-row:hover,
@@ -74,19 +77,21 @@
 }
 @container guide (min-width: 760px) {
   [data-bb-plugin="plugin-guide-for-nerds"] .nerd-guide-reference-layout {
-    grid-template-columns: minmax(0, 1fr) 300px;
+    grid-template-columns: minmax(0, 1fr) clamp(260px, 30cqw, 300px);
   }
   [data-bb-plugin="plugin-guide-for-nerds"] .nerd-guide-reference-column {
     border-left: 1px solid var(--border);
-    padding-left: 14px;
-    max-height: calc(100cqh - 64px);
+    border-top: 0;
+    max-height: calc(100cqh - 52px);
     overflow-y: auto;
     overscroll-behavior: contain;
     scrollbar-gutter: stable;
   }
 }
 [data-bb-plugin="plugin-guide-for-nerds"] [data-guide-navigation-toolbar] {
-  padding-right: 100px;
+  box-sizing: border-box;
+  padding: 4px 100px 4px 4px;
+  border-bottom: 1px solid var(--border);
 }
 
 [data-bb-plugin="plugin-guide-for-nerds"] [data-guide-current-page] {
@@ -111,4 +116,13 @@
     min-width: 0;
     padding-right: 8px;
   }
+}
+
+/* The reference column owns its text gutter; details need no second card shell. */
+[data-bb-plugin="plugin-guide-for-nerds"] [data-guide-reference-column] [data-guide-card] {
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
 }
