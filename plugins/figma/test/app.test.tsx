@@ -295,6 +295,29 @@ test("failed saves keep drafts, suppress secret-bearing errors and permit retry"
   expect(configure).toHaveBeenCalledTimes(2);
 });
 
+test("a status-read warning survives an unrelated failed save and clears on an unchanged authoritative snapshot", async () => {
+  let statusFails = false;
+  const failedSave = deferred<SettingsSnapshot>();
+  const configure = vi.fn().mockImplementationOnce(() => failedSave.promise).mockResolvedValue(snapshot());
+  const slot = await mount({ status: () => { if (statusFails) throw new Error("read failed"); return snapshot(); }, configure });
+  const token = await slot.findByLabelText("Read token") as HTMLInputElement;
+  fireEvent.change(token, { target: { value: "new-read-token" } });
+  statusFails = true;
+  fireEvent(window, new Event("focus"));
+  await slot.findByText("Couldn't check Figma status.");
+  const save = within(form(token)).getByRole("button", { name: "Save" });
+  fireEvent.click(save);
+  expect(slot.getByText("Couldn't check Figma status.")).toBeTruthy();
+  await act(async () => failedSave.reject(new Error("save failed")));
+  await slot.findByText("Couldn't save. Your changes are kept; try again.");
+  expect(slot.getByText("Couldn't check Figma status.")).toBeTruthy();
+  expect(slot.getAllByRole("alert")).toHaveLength(2);
+  fireEvent.click(save);
+  await slot.findByText("Saved.");
+  expect(slot.queryByText("Couldn't check Figma status.")).toBeNull();
+  expect(slot.queryByRole("alert")).toBeNull();
+});
+
 test("unmount removes focus subscription and ignores late OAuth result", async () => {
   const begin = deferred<{ authorizationUrl: string }>();
   const status = vi.fn(() => snapshot());

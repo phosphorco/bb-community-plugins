@@ -112,7 +112,6 @@ export function FigmaSettings() {
     const epoch = ++generation.current;
     const failureBefore = actionFailure.current;
     setBusy({ area, progress });
-    setError(null);
     setFeedback(null);
     try {
       await action();
@@ -137,7 +136,10 @@ export function FigmaSettings() {
   };
   // Mutation results can only update this mounted lifetime, never a later remount.
   const accept = (next: SettingsSnapshot, epoch: number) => {
-    if (mounted.current && generation.current === epoch) setSnapshot(next);
+    if (mounted.current && generation.current === epoch) {
+      setSnapshot(next);
+      setError(null);
+    }
   };
   const save = (area: "mirror" | "advanced") => run(`Save ${area}`, area, "Saving…", "Couldn't save. Your changes are kept; try again.", async () => {
     const epoch = generation.current;
