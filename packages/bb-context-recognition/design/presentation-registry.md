@@ -176,7 +176,11 @@ Built in the consumer by `/react` from the consumer's `useSdk()`; target is
 explicit, so routing is correct. Identity is attribution only: the supplier sees
 the consumer as caller and must serve hosted reads as it would any caller. The
 `methods` allowlist is a guard against accidental writes from hosted code, not a
-security boundary. Hosted reads are GET-like and side-effect free.
+security boundary. Hosted reads are GET-like and side-effect free, with one
+exception (Cole, 2026-10-12): a supplier may materialize its own derived,
+idempotent cache when showing a presentation requires it, such as Plan Graph
+exporting a mentioned plan the first time its graph is shown. Resolution itself
+stays read-only (§6.2 obligation 3).
 
 ### 5.3 Settings
 
