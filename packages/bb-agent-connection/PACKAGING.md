@@ -1,0 +1,9 @@
+# Packaging and evidence boundaries
+
+Bun emits five independent browser ESM entries; tsc emits declarations. Every sibling public-entry import remains external. Zod and identity remain registry dependencies; React/SDK are optional peers and are never bundled. SDK and identity imports in `/bb` are type-only; no SDK/identity runtime is loaded. Tests and jsdom are development-only and absent from the publish files. No generated dist should be committed.
+
+Package checks use the existing canonical community workspace dependencies (Bun 1.3.14, TypeScript 5.9.3, public SDK 0.6.31 plus separately verified selected enhanced composition). The initial 0.4.15 workspace baseline failed the strict emitted consumer witness for sourceProjectId; the package requires a published descriptor with this field rather than adding fields to that older SDK. npm has no 0.6.29 public release; 0.6.31 is the reproducible dev pin. Selected enhanced 0.6.29+ composition requires a separate consumer witness. Enhanced installed SDK/native acceptance was independently probed by the prerequisite worker; these package tests do not repeat or claim that native integration. Runtime source is this package only, not materialized fork code. No performance timing claim is made from jsdom.
+
+Self-tests import emitted entries, check public declaration availability and validate root closure. Rendered React proof uses injected clipboard, failure→success, stale owner/value and teardown. No `/testing/react` entry is exported because the conformance driver requires no DOM. Real adopter tests and live composition remain required before claiming integration.
+
+Root owns workspace lock/install, registry publication, adopter changes and repository-wide test/typecheck/build. This scoped worker does not run npm ci or modify lockfiles. Publish only after independently reviewing tarball contents and declarations under exact consumer pins.
