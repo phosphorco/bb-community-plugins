@@ -44,6 +44,7 @@ jobs:
           npm run build --workspace @phosphorco/bb-identity
           npm run build --workspace @phosphorco/bb-provider-settings
           npm run build --workspace @phosphorco/bb-context-recognition
+          npm run build --workspace @phosphorco/bb-cross-references
           npm run build --workspace @phosphorco/bb-agent-connection
 
       - name: Test
