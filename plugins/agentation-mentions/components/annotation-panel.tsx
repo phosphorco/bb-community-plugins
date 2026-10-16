@@ -143,8 +143,7 @@ function AnnotationCard({
 
   return (
     <div className={cn("rounded-lg border border-border bg-card p-3", isClosed && "opacity-60")}>
-      <AnnotationPanelHeader />
-        <div className="flex flex-wrap items-center gap-1.5">
+      <div className="flex flex-wrap items-center gap-1.5">
         <span className="font-mono text-xs text-foreground">{annotation.element}</span>
         <Pill className={statusTone[annotation.status]}>{annotation.status}</Pill>
         {routing ? (
