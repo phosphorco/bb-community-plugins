@@ -333,6 +333,7 @@ export function RoleSettingsEditor({ client, role, catalogSdk, sampleRoute, prov
     const [busy, setBusy] = useState(false), [saving, setSaving] = useState(false), [refreshing, setRefreshing] = useState(false);
     // The initial Read settled with an error (distinct from still pending).
     const [readFailed, setReadFailed] = useState(false);
+    const [pickerError, setPickerError] = useState('');
     const [error, setError] = useState(''), [refreshError, setRefreshError] = useState(''), [notice, setNotice] = useState(''), [label, setLabel] = useState('');
     const [validation, setValidation] = useState<ValidateResult | null>(null);
     const [conflict, setConflict] = useState<ReadResult | null>(null);
@@ -357,6 +358,7 @@ export function RoleSettingsEditor({ client, role, catalogSdk, sampleRoute, prov
         setRead(null);
         setDraft({ kind: 'inherit' });
         setBrowse(null);
+        setPickerError('');
         setEditing(false);
         setDirty(false);
         setBusy(false);
@@ -534,6 +536,7 @@ export function RoleSettingsEditor({ client, role, catalogSdk, sampleRoute, prov
             // Browsing may reconcile a stored alias, but only explicit promotion writes intent.
             const value = { ...base, ...Object.fromEntries(Object.entries(explicit).filter(([, v]) => v !== undefined)), ...(fixed ? { providerId } : {}) };
             setBrowse(value);
+            setPickerError('');
             setLabel(featureSeed?.label ?? 'Browsing');
             setEditing(true);
         }
@@ -583,6 +586,7 @@ export function RoleSettingsEditor({ client, role, catalogSdk, sampleRoute, prov
     function stopBrowsing() {
         setEditing(false);
         setBrowse(null);
+        setPickerError('');
         setBusy(false);
     }
     function deleteEntry() {
@@ -639,6 +643,7 @@ export function RoleSettingsEditor({ client, role, catalogSdk, sampleRoute, prov
                 setConflict(null);
                 setEditing(false);
                 setBrowse(null);
+                setPickerError('');
                 setNotice('Saved');
             }
             else if (r.outcome === 'conflict') {
@@ -670,6 +675,7 @@ export function RoleSettingsEditor({ client, role, catalogSdk, sampleRoute, prov
                     setDirty(false);
                     setEditing(false);
                     setBrowse(null);
+                    setPickerError('');
                 }
                 else {
                     setError(outcome === 'unchanged' ? 'Not observed; the save may still land' : 'Conflicting current choice');
@@ -739,9 +745,17 @@ export function RoleSettingsEditor({ client, role, catalogSdk, sampleRoute, prov
         <p className="bbps-step-title"><span aria-hidden="true">1</span>Preview a model</p>
         <p className="bbps-muted bbps-small bbps-wrap">{label}: {browse.providerId}/{browse.model} on {routeLabel(route)}. Previewing doesn’t change anything.</p>
         <Picker value={browse as ExperimentalProviderModelPickerValue} onChange={value => {
-            if (pickerLifetime && lifetime.current === pickerLifetime && !pickerLifetime.signal.aborted && operation.current === pickerOperation)
-                setBrowse(value);
+            if (pickerLifetime && lifetime.current === pickerLifetime && !pickerLifetime.signal.aborted && operation.current === pickerOperation) {
+                const serviceTier = value.serviceTier;
+                if (serviceTier !== undefined && serviceTier !== 'default' && serviceTier !== 'fast') {
+                    setPickerError(`This role does not support service tier ${serviceTier}.`);
+                    return;
+                }
+                setPickerError('');
+                setBrowse({ providerId: value.providerId, model: value.model, reasoningLevel: value.reasoningLevel, ...(serviceTier === undefined ? {} : { serviceTier }) });
+            }
         }} {...(route ? { routing: route } : {})} allowProviderChange={!fixed} disabled={saving || !role.writable}/>
+        {pickerError && <p role="alert" className="bbps-alert">{pickerError}</p>}
         {fixed && <p className="bbps-muted bbps-small">The provider can’t be changed here: this role always uses the original conversation’s provider.</p>}
       </div>
       {tupleRole

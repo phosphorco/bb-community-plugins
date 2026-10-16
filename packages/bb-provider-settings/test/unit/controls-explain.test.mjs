@@ -199,3 +199,39 @@ test('a retained override the role no longer supports is explained in user terms
     assert.match(m.text(),/Current: Inherit/);
   }finally{await m.editor.dispose();}
 });
+
+test('native picker rejects an unsupported service tier without changing saved intent', async()=>{
+  const m=await mounted(descriptor());
+  try {
+    await m.editor.click('Edit');
+    const select=m.editor.picker().querySelector('select[aria-label="Service tier"]');
+    const option=m.editor.document.createElement('option');option.value='priority';option.textContent='Priority';select.append(option);
+    await m.editor.applyPicker({serviceTier:'priority'});
+    assert.match(m.text(),/This role does not support service tier priority/);
+    assert.equal(m.editor.button('Save').disabled,true);
+    assert.equal(m.calls.includes('save'),false);
+    await m.editor.applyPicker({serviceTier:'fast'});
+    assert.doesNotMatch(m.text(),/This role does not support service tier/);
+    assert.equal(m.editor.button('Save').disabled,true,'preview reconciliation must not promote intent');
+  } finally { await m.editor.dispose(); }
+});
+
+
+test('picker recovery cannot dismiss an unrelated owner write rejection', async()=>{
+  const m=await mounted(descriptor({choiceKinds:['inherit','tuple'],providerPolicy:'any'}),undefined,{}, {save:()=>({outcome:'rejected',issues:[{code:'field-not-offered',message:'Fixture owner rejected save'}]})});
+  try {
+    await m.editor.click('Edit');
+    await m.editor.click('Use this selection');
+    await m.editor.click('Save');
+    assert.match(m.text(),/Fixture owner rejected save/);
+    const select=m.editor.picker().querySelector('select[aria-label="Service tier"]');
+    const option=m.editor.document.createElement('option');option.value='priority';option.textContent='Priority';select.append(option);
+    await m.editor.applyPicker({serviceTier:'priority'});
+    assert.match(m.text(),/This role does not support service tier priority/);
+    assert.match(m.text(),/Fixture owner rejected save/);
+    await m.editor.applyPicker({serviceTier:'fast'});
+    assert.doesNotMatch(m.text(),/This role does not support service tier/);
+    assert.match(m.text(),/Fixture owner rejected save/);
+    assert.equal(m.calls.filter(call=>call==='save').length,1);
+  } finally { await m.editor.dispose(); }
+});
