@@ -23,7 +23,7 @@ test("community collection and publish workflow carry the plugin identity", asyn
     { name: pluginId, source: `./plugins/${pluginId}` },
   );
   assert.equal(manifest.name, "@phosphorco/bb-plugin-attach-text-snippets");
-  assert.equal(manifest.engines.bb, ">=0.46.1 <1.0.0");
+  assert.equal(manifest.engines.bb, ">=0.42.0 <1.0.0");
   assert.match(workflowSource, /- attach-text-snippets/u);
   assert.match(workflowSource, /- "attach-text-snippets\/v\*"/u);
   assert.match(
