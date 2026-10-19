@@ -12,7 +12,6 @@ import { toast } from "sonner";
 
 import {
   useComposer,
-  useComposerView,
   useRealtime,
   useRealtimeConnectionState,
   useRpc,
@@ -22,12 +21,14 @@ import type { StoredAnnotation } from "@/lib/afs.ts";
 import {
   AGENTATION_MENTION_PROVIDER,
   encodeAgentationAttachment,
+  decodeAgentationAttachment,
   MAX_ATTACHED_ANNOTATIONS,
 } from "@/lib/attachment.ts";
 import { createRealtimeRefreshGate } from "@/lib/public-loop.ts";
 import {
   getAttachedAnnotationSnapshot,
   markAttachedAnnotationIds,
+  observeAttachedAnnotationIds,
   subscribeToDrafts,
 } from "@/lib/draft-attachments.ts";
 import {
@@ -62,7 +63,15 @@ function annotationContext(annotation: StoredAnnotation): string {
 export function AgentationPromptAction() {
   const rpc = useRpc<typeof rpcContract>();
   const composer = useComposer();
-  const view = useComposerView();
+  const draft = composer.draft;
+  useEffect(() => {
+    const ids = new Set<string>();
+    for (const mention of draft.mentions) {
+      if (mention.kind !== "plugin" || (mention.provider !== AGENTATION_MENTION_PROVIDER && !mention.provider.endsWith(`:${AGENTATION_MENTION_PROVIDER}`))) continue;
+      try { for (const id of decodeAgentationAttachment(mention.id).annotationIds) ids.add(id); } catch { /* Ignore malformed older pills. */ }
+    }
+    observeAttachedAnnotationIds(composer.scope, ids);
+  }, [composer.scope, draft]);
   const realtimeConnection = useRealtimeConnectionState();
   const refreshGate = useRef(createRealtimeRefreshGate());
   const requestGate = useRef(createLatestRequestGate());
@@ -81,7 +90,7 @@ export function AgentationPromptAction() {
   const [open, setOpen] = useState(false);
   const attachedAnnotationSnapshot = useSyncExternalStore(
     subscribeToDrafts,
-    () => getAttachedAnnotationSnapshot(view.scope),
+    () => getAttachedAnnotationSnapshot(composer.scope),
   );
   const attachedAnnotationIds = useMemo(
     () => new Set<string>(JSON.parse(attachedAnnotationSnapshot) as string[]),
@@ -219,14 +228,14 @@ export function AgentationPromptAction() {
         toast.info("Feedback changed. Review the current selection before adding it.");
         return;
       }
-      composer.insertMention({
+      composer.insert({
         provider: AGENTATION_MENTION_PROVIDER,
         id: encodeAgentationAttachment({
           annotationIds: selected,
         }),
         label: `${selected.length} annotation${selected.length === 1 ? "" : "s"}`,
       });
-      markAttachedAnnotationIds(view.scope, selected);
+      markAttachedAnnotationIds(composer.scope, selected);
       setOpen(false);
       composer.focus();
     } catch (cause) {
@@ -281,7 +290,7 @@ export function AgentationPromptAction() {
           variant="ghost"
           size="sm"
           className="h-7 gap-1.5 px-2 text-muted-foreground data-[state=open]:bg-state-active data-[state=open]:text-foreground"
-          disabled={isAdding || isDiscarding || view.run.isSubmitting}
+          disabled={isAdding || isDiscarding || composer.isSubmitting}
           aria-label={`Choose Agentation feedback (${countLabel})`}
           aria-haspopup="dialog"
           aria-controls={popoverId}
@@ -428,7 +437,7 @@ export function AgentationPromptAction() {
                   size="sm"
                   className="h-7 px-2 text-xs"
                   disabled={
-                    selectedCount === 0 || isAdding || isDiscarding || view.run.isSubmitting
+                    selectedCount === 0 || isAdding || isDiscarding || composer.isSubmitting
                   }
                   onClick={() => void addAnnotations()}
                 >
