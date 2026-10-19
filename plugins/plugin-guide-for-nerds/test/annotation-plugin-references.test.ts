@@ -11,8 +11,7 @@ vi.mock("../src/product-map", () => ({
       createElement("button", { onClick: () => props.onSlideChange("composer") }, "Select composer")),
 }));
 const { default: GuideContent, loadPluginReferences } = await import("../src/guide-content");
-const mountedSlots = new Set<() => void>();
-afterEach(() => { for (const unmount of mountedSlots) unmount(); mountedSlots.clear(); cleanup(); vi.restoreAllMocks(); });
+afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 // Transferred from the donor app.test.tsx; registration belongs to the steward.
 describe("loadPluginReferences", () => {
   it("merges installed plugins over catalog results through the public API", async () => {
@@ -47,7 +46,6 @@ function mount(session: AbortController, list: ReturnType<typeof vi.fn>, pageId 
   const view = renderSlot({ component: GuideContent }, {
     sessionSignal: session.signal, initialSelection: { section: "surfaces", pageId }, onSelectionChange: selection,
   }, { sdk: { plugins: { list, catalog: { search: async () => ({ results: [], collections: [] }) } } } as never });
-  mountedSlots.add(view.unmount);
   return { view, selection };
 }
 describe("mounted guide reference lifetime and local selection", () => {

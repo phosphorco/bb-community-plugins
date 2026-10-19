@@ -11,15 +11,7 @@ function sdkSchema<T>(schema: z.ZodType<T>): StandardSchemaV1<T> {
 }
 // Only the methods the directory calls, so callers may pass a narrowed SDK
 // and later SDK releases may add methods to these areas.
-type CatalogRouting = { hostId?: never; environmentId?: never }
-    | { hostId: string; environmentId?: never }
-    | { environmentId: string; hostId?: never };
-export interface CatalogSdk {
-    readonly providers: {
-        list(args?: CatalogRouting & { signal?: AbortSignal }): Promise<(Omit<ProviderInfo, 'serviceTiers'> & { serviceTiers?: { id: string }[] })[]>;
-        models(args: CatalogRouting & { providerId: string; signal?: AbortSignal }): Promise<Pick<ProviderCatalog, 'models' | 'selectedOnlyModels' | 'modelLoadError'>>;
-    };
-}
+export type CatalogSdk = { readonly providers: Pick<BbPluginApi['sdk']['providers'], 'list' | 'models'> } | { readonly providers: Pick<PluginBrowserBbSdk['providers'], 'list' | 'models'> };
 export type OwnerSdk = { readonly plugins: Pick<BbPluginApi['sdk']['plugins'], 'list' | 'callRpc'> } | { readonly plugins: Pick<PluginBrowserBbSdk['plugins'], 'list' | 'callRpc'> };
 export interface OwnerRolePort {
     descriptor: RoleDescriptorV1;
@@ -52,14 +44,7 @@ export async function readCatalog(sdk: CatalogSdk, route: CatalogRoute | null, p
     const routing = route?.kind === 'host' ? { hostId: route.hostId } : route?.kind === 'environment' ? { environmentId: route.environmentId } : {};
     const providers = await sdk.providers.list(routing);
     const result = await sdk.providers.models({ providerId, ...routing });
-    // The SDK may advertise newer tiers before this contract can store them.
-    const supportedProviders: ProviderInfo[] = providers.map(({ serviceTiers, ...provider }) => ({
-        ...provider,
-        ...(serviceTiers === undefined ? {} : {
-            serviceTiers: serviceTiers.filter((tier): tier is { id: 'default' | 'fast' } => tier.id === 'default' || tier.id === 'fast'),
-        }),
-    }));
-    return { providers: supportedProviders, catalog: { ...result, providerId, route } };
+    return { providers: providers as ProviderInfo[], catalog: { ...result, providerId, route } as ProviderCatalog };
 }
 export function registerProviderSettingsOwner(bb: Pick<BbPluginApi, 'rpc'>, roles: readonly OwnerRolePort[]): void {
     roles = roles.map(port => ({ ...port, descriptor: roleDescriptorV1Schema.parse(structuredClone(port.descriptor)) }));

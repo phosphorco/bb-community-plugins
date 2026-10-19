@@ -13,15 +13,6 @@ test('both provider availability and model catalog use the explicit route; prima
  const calls=[];const sdk={providers:{async list(args){calls.push(['list',args]);return[provider()]},async models(args){calls.push(['models',args]);return catalog()}}};
  for(const route of [null,{kind:'host',hostId:'h'},{kind:'environment',environmentId:'e'}]){calls.length=0;await readCatalog(sdk,route,'p');const r=route===null?{}:route.kind==='host'?{hostId:'h'}:{environmentId:'e'};assert.deepEqual(calls,[['list',r],['models',{providerId:'p',...r}]]);}
 });
-test('catalog retains new reasoning values and only exposes tiers the role contract can store',async()=>{
- const p=provider();p.serviceTiers=[{id:'default'},{id:'priority'},{id:'fast'}];
- const c=catalog();c.models[0].supportedReasoningEfforts=[{reasoningEffort:'future-effort'}];
- const sdk={providers:{list:async()=>[p],models:async()=>c}};
- const result=await readCatalog(sdk,null,'p');
- assert.deepEqual(result.providers[0].serviceTiers,[{id:'default'},{id:'fast'}]);
- assert.deepEqual(p.serviceTiers,[{id:'default'},{id:'priority'},{id:'fast'}]);
- assert.deepEqual(result.catalog.models[0].supportedReasoningEfforts,[{reasoningEffort:'future-effort'}]);
-});
 test('model-only first send does not validate or emit an unrequested inherited effort',()=>{
  const c=catalog();c.models[0].defaultReasoningEffort='unsupported-default';
  const r=resolveByProvider({kind:'by-provider',entries:{p:{model:'exec-model'}}},{providerId:'p',model:'old',reasoningLevel:'unsupported-inherited',boundary:'fork-child'},[provider()],c,policies.rosetta,capability());

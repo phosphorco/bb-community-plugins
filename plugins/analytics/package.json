@@ -27,8 +27,8 @@
     "agent-tools"
   ],
   "engines": {
-    "bb": ">=0.46.1 <1.0.0",
-    "bbPluginSdk": ">=0.6.52"
+    "bb": ">=0.39.0 <1.0.0",
+    "bbPluginSdk": ">=0.4.8"
   },
   "bb": {
     "name": "Analytics",
@@ -88,10 +88,10 @@
   "dependencies": {
     "@duckdb/duckdb-wasm": "1.33.1-dev57.0",
     "echarts": "6.1.0",
-    "zod": "4.6.7"
+    "zod": "4.3.6"
   },
   "devDependencies": {
-    "@get-bb/plugin-sdk": "file:../../../sdk-artifacts/get-bb-plugin-sdk-0.6.52+phosphor.975e38f02f1a.sdk.12eb78c20820.tgz",
+    "@get-bb/plugin-sdk": "file:../../../sdk-artifacts/get-bb-plugin-sdk-0.5.29+phosphor.f35653218f9b.sdk.a0aca52c9e73.tgz",
     "@types/better-sqlite3": "^7.6.12",
     "@types/node": "^22",
     "@types/react": "19.2.2",
