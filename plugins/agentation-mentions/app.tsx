@@ -11,16 +11,10 @@ import { definePluginApp } from "@get-bb/plugin-sdk/app";
 import { AgentationSettingsSection } from "@/components/settings-section.tsx";
 import {
   AnnotationPanel,
-  AnnotationPanelHeader,
 } from "@/components/annotation-panel.tsx";
 import {
   AgentationPromptAction,
 } from "@/components/annotation-prompt-action.tsx";
-import { observeAttachedAnnotationIds } from "@/lib/draft-attachments.ts";
-import {
-  AGENTATION_MENTION_PROVIDER,
-  decodeAgentationAttachment,
-} from "@/lib/attachment.ts";
 import { mountAnnotationToolbar } from "@/lib/toolbar.ts";
 
 export default definePluginApp((app) => {
@@ -33,29 +27,6 @@ export default definePluginApp((app) => {
     id: "agentation-mentions",
     scopes: ["thread"],
     actions: [{ id: "add-annotations", component: AgentationPromptAction }],
-    richText: {
-      onDraftChange(draft, view) {
-        const attachedAnnotationIds = new Set<string>();
-        for (const mention of draft.mentions) {
-          if (
-            mention.provider !== AGENTATION_MENTION_PROVIDER &&
-            !mention.provider.endsWith(`:${AGENTATION_MENTION_PROVIDER}`)
-          ) {
-            continue;
-          }
-          try {
-            for (const annotationId of decodeAgentationAttachment(mention.id)
-              .annotationIds) {
-              attachedAnnotationIds.add(annotationId);
-            }
-          } catch {
-            // Keep malformed legacy mentions attached, but do not use them to
-            // filter individual current annotations from the prompt action.
-          }
-        }
-        observeAttachedAnnotationIds(view.scope, attachedAnnotationIds);
-      },
-    },
   });
 
   app.slots.navPanel({
@@ -64,7 +35,6 @@ export default definePluginApp((app) => {
     icon: "ChatFeedback",
     path: "annotations",
     component: AnnotationPanel,
-    headerContent: AnnotationPanelHeader,
   });
 
   app.slots.settingsSection({
