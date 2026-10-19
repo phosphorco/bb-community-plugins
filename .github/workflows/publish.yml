@@ -67,7 +67,7 @@ jobs:
         run: |
           mkdir -p ../sdk-artifacts
           archive='get-bb-plugin-sdk-0.6.52+phosphor.975e38f02f1a.sdk.12eb78c20820.tgz'
-          base='https://github.com/phosphorco/bb-workspace/releases/download/sdk-0.6.52-phosphor.975e38f02f1a'
+          base='https://github.com/phosphorco/bb-fork/releases/download/sdk-0.6.52-phosphor.975e38f02f1a'
           curl --fail --location --retry 3 "$base/$archive" --output "../sdk-artifacts/$archive"
           curl --fail --location --retry 3 "$base/$archive.provenance.json" --output "../sdk-artifacts/$archive.provenance.json"
           printf '%s  %s\n' 'f9bca05575191c8e9be5bf8d641755dbea95cd00853869e9e472b428c366d5ae' "../sdk-artifacts/$archive" | sha256sum --check
