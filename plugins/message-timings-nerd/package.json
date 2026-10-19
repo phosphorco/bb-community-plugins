@@ -23,8 +23,8 @@
     "timestamps"
   ],
   "engines": {
-    "bb": ">=0.39.0 <1.0.0",
-    "bbPluginSdk": ">=0.4.15"
+    "bb": ">=0.46.1 <1.0.0",
+    "bbPluginSdk": ">=0.6.52"
   },
   "bb": {
     "name": "Message Timings Nerd",
@@ -45,10 +45,10 @@
     "app.css"
   ],
   "dependencies": {
-    "zod": "4.3.6"
+    "zod": "4.6.7"
   },
   "devDependencies": {
-    "@get-bb/plugin-sdk": "0.4.15",
+    "@get-bb/plugin-sdk": "0.6.52",
     "@types/jsdom": "^21.1.7",
     "@types/node": "^22",
     "@types/react": "19.2.2",
