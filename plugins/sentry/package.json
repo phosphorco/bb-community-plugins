@@ -11,8 +11,8 @@
     "directory": "plugins/sentry"
   },
   "engines": {
-    "bb": ">=0.46.1 <1.0.0",
-    "bbPluginSdk": ">=0.6.52"
+    "bb": ">=0.44.0 <1.0.0",
+    "bbPluginSdk": "^0.5.29 || ^0.6.29"
   },
   "bb": {
     "name": "Sentry",
@@ -41,10 +41,10 @@
     "@modelcontextprotocol/sdk": "1.32.1",
     "ajv": "8.20.0",
     "ajv-formats": "3.0.1",
-    "zod": "4.6.7"
+    "zod": "4.3.6"
   },
   "devDependencies": {
-    "@get-bb/plugin-sdk": "0.6.52",
+    "@get-bb/plugin-sdk": "0.5.29",
     "@types/better-sqlite3": "^7.6.12",
     "@types/node": "^22",
     "@types/react": "19.2.2",
