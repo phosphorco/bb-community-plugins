@@ -16,7 +16,7 @@ import { createPortal } from "react-dom"
 import {
   definePluginApp,
   useBbNavigate,
-  useComposer,
+  useComposerView,
   useRealtime,
   useRpc,
 } from "@get-bb/plugin-sdk/app"
@@ -740,10 +740,10 @@ function Note({
 
 function StickyNotesSurface() {
   const rpc = useRpc<typeof rpcContract>()
-  const composer = useComposer()
+  const view = useComposerView()
   const anchorRef = useRef<HTMLSpanElement>(null)
   const bounds = usePaneBounds(anchorRef)
-  const threadId = composer.scope.kind === "thread" ? composer.scope.threadId : null
+  const threadId = view.scope.kind === "thread" ? view.scope.threadId : null
   const [notes, setNotes] = useState<StickyNote[]>([])
   const [activeId, setActiveId] = useState<string | null>(null)
   const [topId, setTopId] = useState<string | null>(null)
@@ -865,7 +865,7 @@ function StickyNotesSurface() {
   }
 
   const beginCreateDrag = (event: ReactPointerEvent<HTMLButtonElement>) => {
-    if (event.button !== 0 || !bounds || composer.isSubmitting) return
+    if (event.button !== 0 || !bounds || view.run.isSubmitting) return
     clickSuppressionRef.current.beginPointerGesture()
     cleanupCreateDragRef.current?.()
     const pointerId = event.pointerId
@@ -1005,9 +1005,9 @@ function StickyNotesSurface() {
 }
 
 function StickyNotesPromptAction() {
-  const composer = useComposer()
+  const view = useComposerView()
   const buttonRef = useRef<HTMLButtonElement>(null)
-  const threadId = composer.scope.kind === "thread" ? composer.scope.threadId : null
+  const threadId = view.scope.kind === "thread" ? view.scope.threadId : null
   const resolveController = () => {
     if (!threadId) return null
     const rect = buttonRef.current?.getBoundingClientRect()
@@ -1024,7 +1024,7 @@ function StickyNotesPromptAction() {
       className="bb-sticky-notes-action"
       aria-label="Add sticky note. Drag to place it."
       title="Add sticky note · drag to place"
-      disabled={composer.isSubmitting}
+      disabled={view.run.isSubmitting}
       onPointerDown={(event) => resolveController()?.beginCreateDrag(event)}
       onClick={() => resolveController()?.click("button")}
     >
@@ -1044,8 +1044,8 @@ export default definePluginApp((app) => {
       label: "Add sticky note",
       icon: "Note",
       description: "Add a shared note to this thread",
-      run({ composer }) {
-        if (composer.scope.kind === "thread") controllerFor(composer.scope.threadId)?.click("plus-menu")
+      run({ view }) {
+        if (view.scope.kind === "thread") controllerFor(view.scope.threadId)?.click("plus-menu")
       },
     }],
   })

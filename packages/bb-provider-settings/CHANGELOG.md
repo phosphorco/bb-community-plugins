@@ -1,10 +1,5 @@
 # @phosphorco/bb-provider-settings changelog
 
-## 0.1.2
-
-- Accept structural catalog SDK ports across reasoning-level changes without binding callers to one installed SDK version. Wire protocol and stored choices are unchanged.
-- Filter unsupported advertised service tiers and reject unsupported native picker selections before replacing the current preview. Picker recovery preserves unrelated owner write failures.
-
 ## 0.1.1
 
 - Support Plugin SDK 0.6: the peer range is now `>=0.5.29 <0.6 || ^0.6.29`.
