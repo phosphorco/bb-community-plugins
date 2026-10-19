@@ -103,7 +103,3 @@ Phosphor-authored plugins are MIT licensed. Agentation preserves its upstream
 attribution and plugin-scoped third-party notices, including the PolyForm
 Shield 1.0.0 terms of its vendored `agentation` dependency. See each plugin directory
 for its exact license and notices.
-
-## Fork SDK verification
-
-Analytics and Machine Monitor use the SDK archive bound to the fork result tree in their manifests. SDK archives stay outside Git. CI fetches the exact archive and provenance receipt from the workspace SDK release and verifies both hashes before `npm ci`. Update the release URL and hashes in validation and publication workflows together with these manifest pins. Build with the selected fork CLI when verifying the Phosphor composition; the pinned public CLI remains an independent public build lane.

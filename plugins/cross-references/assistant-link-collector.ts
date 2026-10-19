@@ -79,7 +79,7 @@ export class AssistantLinkCollector {
           for (const row of page.rows) {
             if (row.kind === "conversation" && row.role === "assistant") messages.set(row.id, { text: row.text, createdAt: row.createdAt });
           }
-          complete = page.timelinePage.olderCursor == null;
+          complete = !page.timelinePage.hasOlderRows;
           if (complete) break;
           const next = page.timelinePage.olderCursor;
           if (next === null || (cursor !== null && next.anchorId === cursor.anchorId && next.anchorSeq === cursor.anchorSeq)) throw new Error("Timeline cursor did not advance.");

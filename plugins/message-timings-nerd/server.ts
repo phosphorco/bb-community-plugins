@@ -39,7 +39,7 @@ export default function plugin(bb: BbPluginApi) {
       if (page === 0 && prior?.maxSeq === result.maxSeq && prior.running === running) return history.get(threadId)!.result;
       rows.push(...result.rows);
       if (page === 0) maxSeq = result.maxSeq;
-      truncated = result.timelinePage.olderCursor != null;
+      truncated = result.timelinePage.hasOlderRows;
       cursor = result.timelinePage.olderCursor;
       if (!truncated || !cursor) break;
     }

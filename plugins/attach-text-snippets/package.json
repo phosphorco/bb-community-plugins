@@ -27,8 +27,8 @@
     "composer"
   ],
   "engines": {
-    "bb": ">=0.46.1 <1.0.0",
-    "bbPluginSdk": ">=0.6.52"
+    "bb": ">=0.42.0 <1.0.0",
+    "bbPluginSdk": ">=0.4.47"
   },
   "bb": {
     "name": "Attach Text Snippets",
@@ -52,10 +52,10 @@
     "test/"
   ],
   "dependencies": {
-    "zod": "4.6.7"
+    "zod": "4.3.6"
   },
   "devDependencies": {
-    "@get-bb/plugin-sdk": "0.6.52",
+    "@get-bb/plugin-sdk": "0.4.47",
     "@types/better-sqlite3": "^7.6.12",
     "@types/node": "^22",
     "@types/react": "19.2.2",

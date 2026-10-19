@@ -29,7 +29,7 @@ test("an in-turn page boundary never invents an origin or consume a newer comple
     timeline: () => {
       pages++;
       return { rows: [{ id: "answer", threadId: "t", turnId: "turn", kind: "conversation", role: "assistant", sourceSeqStart: 10, sourceSeqEnd: 11, createdAt: 100 }],
-        maxSeq: pages === 1 ? 12 : 20, timelinePage: { olderCursor: pages < 2 ? { anchorSeq: 9, anchorId: "older" } : null } };
+        maxSeq: pages === 1 ? 12 : 20, timelinePage: { hasOlderRows: pages < 2, olderCursor: { anchorSeq: 9, anchorId: "older" } } };
     },
     events: { list: ({ types, beforeSeq }) => {
       assert.equal(beforeSeq, "13", "completion reads stay at the first page's snapshot");
