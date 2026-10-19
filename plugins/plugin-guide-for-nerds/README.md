@@ -10,8 +10,8 @@ When the action is hidden in **More footer actions**, focus transfers after that
 menu closes and returns to More when the guide closes. This fallback uses the
 existing host trigger ID `sidebar-footer-more`; no host change is required.
 
-The independent public type target is SDK **0.6.52**, paired with public
-`bb-app@0.46.1`. `npm run build` selects that exact public CLI and clears ambient
+The independent public type target is SDK **0.5.29**, paired with public
+`bb-app@0.44.0`. `npm run build` selects that exact public CLI and clears ambient
 `BB_CLI`; it emits a single frontend bundle. The published compiler artifacts
 run from a temporary tool directory that resolves this plugin's exact SDK;
 this prevents a hoisted compiler from using another workspace's older SDK.
@@ -67,4 +67,4 @@ BB_GUIDE_FORK_CLI=/home/ubuntu/bb/fork/build/bb/packages/bb-app/host-daemon/dist
 BB_GUIDE_EXPECTED_BUILD_BB=0.45.0 BB_GUIDE_EXPECTED_BUILD_SDK=0.6.29 npm run build:lazy
 ```
 
-The public development build/type target remains BB 0.46.1 / SDK 0.6.52.
+The public development build/type target remains BB 0.44.0 / SDK 0.5.29.
