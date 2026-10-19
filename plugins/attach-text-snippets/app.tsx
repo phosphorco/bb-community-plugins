@@ -13,7 +13,7 @@ import {
 import { createPortal } from "react-dom";
 import {
   definePluginApp,
-  useComposer,
+  useComposerView,
   useRpc,
   type PluginComposerApi,
 } from "@get-bb/plugin-sdk/app";
@@ -132,7 +132,7 @@ function SnippetDialogSurface({ threadId }: { threadId: string }) {
     setError(null);
     try {
       const result = await rpc.call("createSnippet", { threadId, title, content });
-      composer.insert({
+      composer.insertMention({
         provider: MENTION_PROVIDER_ID,
         id: result.snippet.id,
         label: result.snippet.label,
@@ -253,9 +253,9 @@ function SnippetDialogSurface({ threadId }: { threadId: string }) {
 const MemoSnippetDialogSurface = memo(SnippetDialogSurface);
 
 function SnippetDialogHost() {
-  const composer = useComposer();
-  if (composer.scope.kind !== "thread") return null;
-  return <MemoSnippetDialogSurface threadId={composer.scope.threadId} />;
+  const view = useComposerView();
+  if (view.scope.kind !== "thread") return null;
+  return <MemoSnippetDialogSurface threadId={view.scope.threadId} />;
 }
 
 export default definePluginApp((app) => {
@@ -268,9 +268,9 @@ export default definePluginApp((app) => {
       label: "Attach text snippet",
       icon: "FileText",
       description: "Paste text into a file and attach its reference",
-      disabled: (composer) => composer.isSubmitting,
-      run({ composer }) {
-        if (composer.scope.kind === "thread") openSnippetDialog(composer.scope.threadId, composer);
+      disabled: (view) => view.run.isSubmitting,
+      run({ composer, view }) {
+        if (view.scope.kind === "thread") openSnippetDialog(view.scope.threadId, composer);
       },
     }],
   });

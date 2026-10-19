@@ -27,8 +27,8 @@
     "orchestration"
   ],
   "engines": {
-    "bb": ">=0.46.1 <1.0.0",
-    "bbPluginSdk": ">=0.6.52"
+    "bb": ">=0.44.0 <1.0.0",
+    "bbPluginSdk": "^0.5.29"
   },
   "bb": {
     "name": "Perspectives",
@@ -52,12 +52,12 @@
     "execution-settings.ts"
   ],
   "dependencies": {
-    "@phosphorco/bb-provider-settings": "0.1.2",
-    "zod": "4.6.7"
+    "@phosphorco/bb-provider-settings": "0.1.1",
+    "zod": "4.3.6"
   },
   "devDependencies": {
-    "bb-app": "0.46.1",
-    "@get-bb/plugin-sdk": "0.6.52",
+    "bb-app": "0.42.0",
+    "@get-bb/plugin-sdk": "0.5.29",
     "@types/node": "^22",
     "typescript": "^5.9.3"
   },
