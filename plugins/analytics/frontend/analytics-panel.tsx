@@ -774,7 +774,7 @@ const Dashboard = memo(function Dashboard({ dashboard, loading, refreshing, exec
           }}
           onAddToChat={async () => {
             const reference = await createReference(figureMenu);
-            composer.insertMention({
+            composer.insert({
               provider: "analytics-reference",
               id: reference.id,
               label: `Analytics: ${reference.label}`,

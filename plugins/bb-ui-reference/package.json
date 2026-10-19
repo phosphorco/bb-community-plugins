@@ -26,8 +26,8 @@
     "theme-tokens"
   ],
   "engines": {
-    "bb": ">=0.37",
-    "bbPluginSdk": "^0.4.1"
+    "bb": ">=0.46.1 <1.0.0",
+    "bbPluginSdk": ">=0.6.52"
   },
   "bb": {
     "name": "BB UI Reference",
@@ -54,7 +54,7 @@
   ],
   "dependencies": {},
   "devDependencies": {
-    "@get-bb/plugin-sdk": "0.4.47",
+    "@get-bb/plugin-sdk": "0.6.52",
     "@types/node": "^22",
     "@types/react": "19.2.2",
     "react": "19.2.1",

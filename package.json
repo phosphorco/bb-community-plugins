@@ -14,7 +14,8 @@
     "typecheck": "npm run typecheck --workspaces --if-present"
   },
   "devDependencies": {
-    "bb-app": "0.39.0",
-    "bb-app-target": "npm:bb-app@0.42.0"
+    "bb-app": "0.46.1",
+    "bb-app-target": "npm:bb-app@0.46.1",
+    "zod": "4.6.7"
   }
 }
