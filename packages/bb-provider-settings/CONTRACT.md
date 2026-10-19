@@ -600,3 +600,10 @@ Future Threads defaults, and fork patches.
 `field-not-offered`, `catalog-unavailable`, `model-unavailable`,
 `selected-only-not-offered`, `reasoning-unsupported`, `service-tier-unsupported`,
 `sample-route-unreadable`, `owner-fields-would-be-lost`, `conflict`.
+
+## SDK catalogue compatibility (0.1.2)
+
+`CatalogSdk` accepts the structural provider and model facts used by this package.
+It does not derive its read ports from one installed SDK version; callers may use
+provider-defined reasoning strings and carry extra model/session metadata. The
+wire schemas, role policy, and owner storage remain unchanged.

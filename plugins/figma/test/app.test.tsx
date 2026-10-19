@@ -484,7 +484,7 @@ test("loopback callback stays visible and editable after failure and clears afte
   await slot.findByText("Signed in to Figma.");
   expect(slot.queryByLabelText("Callback URL")).toBeNull();
   expect(slot.queryByRole("alert")).toBeNull();
-  expect(document.activeElement).toBe(slot.getByText("Connected").closest("p"));
+  await waitFor(() => expect(document.activeElement).toBe(slot.getByText("Connected").closest("p")));
 });
 
 test("disconnect clears a pending callback and an unrelated success cannot dismiss a failed file test", async () => {

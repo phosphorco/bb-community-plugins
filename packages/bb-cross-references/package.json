@@ -1,6 +1,6 @@
 {
   "name": "@phosphorco/bb-cross-references",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "type": "module",
   "license": "MIT",
   "description": "Shared Cross References v1 codecs, explicit clients, and reference controls.",
@@ -47,11 +47,11 @@
     "access": "public"
   },
   "dependencies": {
-    "zod": "4.3.6",
+    "zod": "4.6.7",
     "@noble/hashes": "1.8.0"
   },
   "peerDependencies": {
-    "@get-bb/plugin-sdk": ">=0.5.29 <0.6",
+    "@get-bb/plugin-sdk": ">=0.5.29 <0.6 || ^0.6.29",
     "react": "^19.2.1",
     "react-dom": "^19.2.1"
   },
@@ -67,7 +67,7 @@
     }
   },
   "devDependencies": {
-    "@get-bb/plugin-sdk": "0.5.29",
+    "@get-bb/plugin-sdk": "0.6.52",
     "@types/bun": "1.3.14",
     "@types/react": "19.2.2",
     "@types/react-dom": "19.2.2",
