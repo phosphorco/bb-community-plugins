@@ -10,7 +10,7 @@
 |---|---|
 | [Figma](plugins/figma/) | Use official Figma tools for reads and edits through native agent tools, `bb figma`, and shared sign-in settings. |
 | [Sentry](plugins/sentry/) | Use official Sentry MCP tools through native agent tools, `bb sentry`, and shared sign-in settings. |
-| [Compact display](plugins/compact-display/) | Reduce prompt editor height and spacing with the plugin enable switch. |
+| [Compact display](plugins/compact-display/) | Shared native UI overrides: responsive 760/1080/1440px thread columns, contained tables, and compact composers. |
 | [Message Timings Nerd](plugins/message-timings-nerd/) | Send times, agent turnaround, and waits between replies. |
 | [Cross References](plugins/cross-references/) | Connect and discover related resources through authority-free multipart identities. |
 | [Machine Monitor](plugins/machine-monitor/) | Monitor the deployment machine and keep exact BB thread context attached locally and discoverable from those threads. |

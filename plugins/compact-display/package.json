@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "type": "module",
   "license": "MIT",
-  "description": "Reduce prompt editor height and spacing when enabled.",
+  "description": "Responsive thread widths and compact prompt editor height and spacing.",
   "author": "Phosphor",
   "homepage": "https://github.com/phosphorco/bb-community-plugins/tree/main/plugins/compact-display#readme",
   "repository": {
@@ -16,7 +16,7 @@
   "engines": { "bb": ">=0.42.0 <1.0.0", "bbPluginSdk": ">=0.4.47" },
   "bb": {
     "name": "Compact display",
-    "description": "Reduce prompt editor height and spacing. Enable this plugin for compact display; disable it to restore the default spacing.",
+    "description": "Adapt thread columns to 760, 1080, or 1440px, contain wide tables, and reduce prompt editor height and spacing. Disable to restore BB defaults.",
     "branding": { "icon": "Minimize2" },
     "server": "./server.ts",
     "app": "./app.ts",
