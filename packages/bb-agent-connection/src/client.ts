@@ -18,7 +18,9 @@ export async function readBoundedBody(stream:ReadableStream<Uint8Array>, maxByte
    options.onBytes?.(total);chunks.push(value.slice());
   }
   const result=new Uint8Array(total);let offset=0;for(const c of chunks){result.set(c,offset);offset+=c.length;}return result;
- }catch(e){await reader.cancel(e).catch(()=>{});throw e;}finally{options.signal?.removeEventListener('abort',abort);reader.releaseLock();}
+ // Cancellation closes pending reads immediately, but its source acknowledgement
+ // may never settle. It must not retain accumulated chunks or the caller's lease.
+ }catch(e){void reader.cancel(e).catch(()=>{});throw e;}finally{options.signal?.removeEventListener('abort',abort);reader.releaseLock();}
 }
 export async function readUploadBody(stream:ReadableStream<Uint8Array>, metadata:UploadRequest, options:{budget:UploadBudget;signal?:AbortSignal;onBytes?:(received:number)=>void}):Promise<Uint8Array>{
  const request=uploadRequestSchema.parse(metadata);options.signal?.throwIfAborted();
@@ -40,10 +42,20 @@ export async function uploadAttachment(options:{endpoint:string;request:UploadRe
  const request=uploadRequestSchema.parse(options.request);if(options.bytes.byteLength!==request.sizeBytes)throw new UploadProtocolError('INVALID_UPLOAD','Byte count differs',400);
  options.signal?.throwIfAborted();
  const response=await options.fetch(options.endpoint,{method:'POST',headers:uploadRequestHeaders(request),body:new Blob([Uint8Array.from(options.bytes)]),...(options.signal?{signal:options.signal}:{})});
- if(!response.body)throw new UploadProtocolError('INVALID_RESPONSE','Missing upload response');
+ if(!response.body)throw new UploadProtocolError(response.ok?'INVALID_RESPONSE':'UPLOAD_FAILED',response.ok?'Missing upload response':`Upload failed (${response.status})`,response.status);
  const bytes=await readBoundedBody(response.body,LIMITS.responseBytes,options);
- const body:unknown=JSON.parse(new TextDecoder().decode(bytes));
- if(!response.ok){const error=uploadErrorSchema.safeParse(body);throw new UploadProtocolError(error.success?error.data.code:'UPLOAD_FAILED',error.success?error.data.message:`Upload failed (${response.status})`,response.status);}
+ const text=new TextDecoder().decode(bytes);
+ let body:unknown;
+ try{body=JSON.parse(text);}catch{
+  if(response.ok)throw new UploadProtocolError('INVALID_RESPONSE','Invalid upload response JSON',response.status);
+ }
+ if(!response.ok){
+  const error=uploadErrorSchema.safeParse(body);
+  // Native host admission errors predate the shared envelope and use {error}.
+  const nativeMessage=body&&typeof body==='object'&&'error' in body&&typeof body.error==='string'?body.error:undefined;
+  const message=error.success?error.data.message:(nativeMessage??(body===undefined?text:undefined));
+  throw new UploadProtocolError(error.success?error.data.code:'UPLOAD_FAILED',message?.trim().slice(0,4096)||`Upload failed (${response.status})`,response.status);
+ }
  const result=uploadResponseSchema.parse(body);
  const a=result.attachment;
  if(result.operationId!==request.operationId||a.filename!==request.filename||a.declaredMimeType!==request.declaredMimeType||a.sizeBytes!==request.sizeBytes||a.presentationKind!==request.presentationKind)throw new UploadProtocolError('INVALID_RESPONSE','Upload response identity differs');

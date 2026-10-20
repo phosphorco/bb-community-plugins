@@ -33,6 +33,22 @@ test('abort cancels blocked read and releases budget exactly once',async()=>{
  const task=readUploadBody(new ReadableStream({cancel(){cancelled++;}}),request,{signal:controller.signal,budget:{async reserve(){return()=>{released++;};}}});
  await Promise.resolve();controller.abort();await expect(task).rejects.toThrow();expect(released).toBe(1);expect(cancelled).toBe(1);
 });
+test('overflow and hook failure release budget despite unacknowledged source cancellation',async()=>{
+ for(const hookFails of [false,true]){
+  let released=0,cancelled=0;
+  const source=new ReadableStream<Uint8Array>({start(c){c.enqueue(new Uint8Array(hookFails?3:4));},cancel(){cancelled++;return new Promise<void>(()=>{});}});
+  await expect(readUploadBody(source,request,{budget:{async reserve(){return()=>{released++;};}},...(hookFails?{onBytes(){throw Error('hook failed');}}:{})})).rejects.toThrow(hookFails?'hook failed':'Received byte limit exceeded');
+  expect(released).toBe(1);expect(cancelled).toBe(1);expect(source.locked).toBe(false);
+ }
+},1000);
+test('upload errors preserve native token guidance, status and bounded non-JSON failures',async()=>{
+ const call=(response:Response)=>uploadAttachment({endpoint:'https://example/upload',request,bytes:new Uint8Array(3),fetch:async()=>response});
+ await expect(call(Response.json({error:'Missing plugin token. Supply x-bb-plugin-token from bb plugin token.'},{status:401}))).rejects.toMatchObject({code:'UPLOAD_FAILED',status:401,message:'Missing plugin token. Supply x-bb-plugin-token from bb plugin token.'});
+ await expect(call(new Response('Ingress unavailable',{status:503}))).rejects.toMatchObject({code:'UPLOAD_FAILED',status:503,message:'Ingress unavailable'});
+ await expect(call(new Response(null,{status:401}))).rejects.toMatchObject({code:'UPLOAD_FAILED',status:401});
+ await expect(call(Response.json({error:'x'.repeat(5000)},{status:403}))).rejects.toMatchObject({message:'x'.repeat(4096),status:403});
+ await expect(call(new Response('bad JSON'))).rejects.toMatchObject({code:'INVALID_RESPONSE',status:200});
+});
 test('headers encode Unicode and operation key binds metadata; client does one raw-body POST',async()=>{
  expect(uploadRequestFromHeaders(uploadRequestHeaders(request))).toEqual(request);
  expect(uploadIdentity(request)).not.toBe(uploadIdentity({...request,filename:'b.png'}));
