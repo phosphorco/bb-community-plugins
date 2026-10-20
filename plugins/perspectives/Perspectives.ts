@@ -56,7 +56,7 @@ interface SpawnContext {
 type CallerExecution = NonNullable<Awaited<ReturnType<Threads["defaultExecutionOptions"]>>>;
 type ReasoningLevel = CallerExecution["reasoningLevel"];
 type PermissionMode = CallerExecution["permissionMode"];
-type ServiceTier = CallerExecution["serviceTier"];
+type ServiceTier = "default" | "fast";
 
 interface ResolvedExecution {
   readonly providerId: string;
@@ -568,6 +568,9 @@ async function createSpawnContexts(
     );
   }
 
+  if (execution.serviceTier !== undefined && execution.serviceTier !== "default" && execution.serviceTier !== "fast") {
+    throw configurationError(`Perspectives does not support caller service tier ${execution.serviceTier}.`);
+  }
   const inheritedExecution: ResolvedExecution = {
     providerId: caller.providerId,
     model: execution.model,
