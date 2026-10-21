@@ -1,3 +1,4 @@
+import { normalizeProvenanceOutput } from './external-person-output-runtime.js';
 /** Runtime validators for the declaration-only portable vocabulary. */
 import type {
   Codec, ConflictToken, ContributionReference, ExecutionProvenance, IdentityError,
@@ -194,6 +195,7 @@ function hasCompleteCausality(groups: readonly unknown[], contributions: readonl
 /** The adapter verifies the discriminant and causal references before exposing provenance. */
 export const provenanceCodec: Codec<ExecutionProvenance> = {
   decode(input: unknown): Result<ExecutionProvenance> {
+    input = normalizeProvenanceOutput(input);
     if (!isRecord(input) || (input.status !== 'known' && input.status !== 'partial' && input.status !== 'unknown')) {
       return err('invalid-input', 'Invalid execution provenance.');
     }

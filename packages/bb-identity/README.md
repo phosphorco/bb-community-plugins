@@ -477,3 +477,7 @@ V1 receipts confirm the frozen `externalContribution`. Reconcile V1 exclusively 
 The default host rendering policy adds the integration sender envelope once. A producer such as Rosetta must select `externalMessageRendering: 'producer'` at binding construction; its prompt bytes remain unchanged. A capable native host projects the person into the native timeline while contribution/attempt history keeps the external origin and optional `personAttribution`. This does not add native-message history queries.
 
 Native history containing integration-asserted person authors requires a capable runtime even after queues drain or plugins are downgraded. Do not roll back to a host that only accepts provider-verified person authors. Package-only rollback retains the legacy external path; it does not make old native readers understand newer stored authorship.
+
+### 0.3.1 decoder corrections
+
+V1 external subjects are opaque nonempty strings of at most256 characters, including email-shaped or percent-encoded subjects. They are not BB resource IDs. Contribution and attempt-history output normalize additive person snapshot, identity, and presentation fields while preserving strict V1 input decoding. `externalContributionOutcomeV1Codec` from `/host` validates and normalizes persisted V1 outcomes; consumers must additionally compare submitted receipts with the reserved operation ID and frozen contribution. A stored final lacking that evidence remains uncertainty and must not trigger a resend.

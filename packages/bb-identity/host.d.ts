@@ -49,6 +49,7 @@ export type ExternalContributionOutcomeV1 = Exclude<AcceptanceOutcome, { status:
     readonly externalContribution: ExternalContributionV1;
   };
 };
+export declare const externalContributionOutcomeV1Codec: Codec<ExternalContributionOutcomeV1>;
 /** Context-free support; native storage written by V1 requires a capable host on rollback. */
 export interface ExternalContributionCapabilityV1 {
   readonly version: 1; readonly personKinds: readonly ['person'];

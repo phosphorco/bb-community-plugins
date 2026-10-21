@@ -96,3 +96,31 @@ test('V1 receipts tolerate additive output metadata; unsupported lookup is not a
   value.personAttribution.identity[field]+='a';assert.equal(externalContributionV1Codec.decode(value).ok,false);
  }
  });
+
+test('V1 external subjects are bounded opaque strings',async()=>{
+ const f=fixture(capability(async({contribution})=>receipt(contribution)));
+ try {
+  for(const subject of ['user+tag@example.com','user%2Fencoded','a'.repeat(256)]) {
+   const value={...contribution,author:{...contribution.author,subject}};
+   assert.equal(externalContributionV1Codec.decode(value).ok,true);
+   assert.equal((await f.host.sendExternalContribution(value,input)).status,'submitted');
+  }
+  for(const subject of ['','a'.repeat(257)]) assert.equal(externalContributionV1Codec.decode({...contribution,author:{...contribution.author,subject}}).ok,false);
+ } finally {f.host.dispose();}
+});
+
+test('contribution and attempt history normalize additive person snapshot fields',async()=>{
+ const f=fixture(capability());
+ const richer={...contribution.personAttribution,future:true,identity:{...contribution.personAttribution.identity,future:true},presentation:{...presentation,future:true}};
+ const item={acceptedAt:'2026-10-21T00:00:00Z',author:{kind:'external',actor:{identity:{kind:'external',key:'external-key',pluginId:'plugin',subject:'T/U'},presentation,evidence:'integration-asserted'}},latestEditor:null,mentionedPeople:[],reference:{contributionId:'contribution-1',threadId:'thread-1'},personAttribution:richer};
+ const page=items=>({ok:true,value:{status:'known',items,missing:[],nextCursor:null,traversal:'complete'}});
+ const provenance={status:'known',correlation:{threadId:'thread-1',turnId:'turn-1',attemptId:'attempt-1',toolCallId:null},inputGroups:[{sources:[{kind:'contribution',reference:item.reference}]}],contributions:[item]};
+ f.protocol.historyContributions=async()=>page([item]);
+ f.protocol.historyAttempts=async()=>page([provenance]);
+ try {
+  const history=await f.host.history.contributions({kind:'references',references:[item.reference]});
+  assert.equal(history.ok,true);assert.deepEqual(history.value.items[0].personAttribution,contribution.personAttribution);
+  const attempts=await f.host.history.attempts({kind:'operation',operationId:'operation-1'});
+  assert.equal(attempts.ok,true);assert.deepEqual(attempts.value.items[0].contributions[0].personAttribution,contribution.personAttribution);
+ } finally {f.host.dispose();}
+});
