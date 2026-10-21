@@ -99,10 +99,17 @@ export interface ContributionReference {
   readonly threadId: ThreadId;
   readonly contributionId: ContributionId;
 }
+/** Frozen integration assertion; V1 supports canonical people, not default-user. */
+export type ExternalPersonSnapshotV1 = ActorSnapshot & {
+  readonly identity: Extract<IdentityReference, { kind: 'person' }>;
+  readonly evidence: 'integration-asserted';
+};
+export declare const externalPersonSnapshotCodec: Codec<ExternalPersonSnapshotV1>;
 /** A contribution is independent of delivery grouping and execution attempts. */
 export interface Contribution {
   readonly reference: ContributionReference;
   readonly author: Origin;
+  readonly personAttribution?: ExternalPersonSnapshotV1;
   readonly latestEditor: ActorSnapshot | null;
   readonly acceptedAt: string;
   readonly mentionedPeople: readonly PersonReference[];

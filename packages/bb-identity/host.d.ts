@@ -37,6 +37,29 @@ export type HostInvalidation =
   | { readonly kind: 'participants'; readonly threadIds: readonly string[] }
   | { readonly kind: 'disconnected' | 'reconnected' | 'disposed' };
 export interface ExternalAuthorInput { readonly subject: string; readonly presentation: ProfilePresentation; }
+export interface ExternalContributionV1 {
+  readonly version: 1;
+  readonly author: ExternalAuthorInput;
+  readonly personAttribution?: import('./model.js').ExternalPersonSnapshotV1;
+}
+export declare const externalContributionV1Codec: Codec<ExternalContributionV1>;
+export type ExternalContributionOutcomeV1 = Exclude<AcceptanceOutcome, { status: 'submitted' }> | {
+  readonly status: 'submitted';
+  readonly receipt: Extract<import('./model.js').AcceptanceReceipt, { evidence: 'host-accepted' }> & {
+    readonly externalContribution: ExternalContributionV1;
+  };
+};
+/** Context-free support; native storage written by V1 requires a capable host on rollback. */
+export interface ExternalContributionCapabilityV1 {
+  readonly version: 1; readonly personKinds: readonly ['person'];
+  readonly history: 'accepted-and-queued'; readonly rollback: 'requires-capable-host';
+}
+export interface ExternalContributionProtocolV1<Input> {
+  readonly versions: readonly number[]; readonly personKinds: readonly ['person'];
+  readonly history: 'accepted-and-queued'; readonly rollback: 'requires-capable-host';
+  acceptV1(request: { readonly contribution: Wire<ExternalContributionV1>; readonly input: Wire<SendInput<Input>> }, options?: ReadOptions): Promise<Wire<ExternalContributionOutcomeV1>>;
+  lookupV1(operationId: string, options?: ReadOptions): Promise<Wire<Result<OperationLookup<ExternalContributionOutcomeV1>>>>;
+}
 export interface IdentityHost<RequestContext, ToolContext, Input> extends Disposable {
   readonly pluginId: PluginId;
   readonly instanceId: InstanceId;
@@ -51,6 +74,10 @@ export interface IdentityHost<RequestContext, ToolContext, Input> extends Dispos
   /** Checks synchronously before upstream dispatch; enhanced host checks again inside acceptance. */
   send(request: LiveRequest, input: SendInput<Input>, options?: ReadOptions): Promise<AcceptanceOutcome>;
   sendExternal(author: ExternalAuthorInput, input: SendInput<Input>, options?: ReadOptions): Promise<AcceptanceOutcome>;
+  externalContributionCapabilities(): Result<ExternalContributionCapabilityV1 | null>;
+  sendExternalContribution(contribution: ExternalContributionV1, input: SendInput<Input>, options?: ReadOptions): Promise<ExternalContributionOutcomeV1>;
+  lookupExternalContribution(operationId: SendInput<Input>['operationId'], options?: ReadOptions): Promise<Result<OperationLookup<ExternalContributionOutcomeV1>>>;
+
   lookupOperation(operationId: SendInput<Input>['operationId'], options?: ReadOptions): Promise<Result<OperationLookup<AcceptanceOutcome>>>;
   forward(request: LiveRequest, destinationPlugin: string, method: string, input: import('./model.js').Json): Promise<unknown>;
   registerProvider(provider: IdentityProvider): Promise<Result<ProviderRegistrationV1>>;
@@ -149,6 +176,7 @@ export interface ForkIdentityProvider {
 /** Core implements these host-owned operations, not IdentityHost's fallback/directory composition. */
 export interface ForkIdentityProtocolV1<RequestContext, ToolContext, Input> {
   readonly version: 1;
+  readonly externalContributions?: ExternalContributionProtocolV1<Input>;
   /** Persisted core storage namespace; stable across plugin replacement and never request-derived. */
   readonly instanceId: string;
   /** Enables this plugin generation's producer-owned external message rendering in the SDK host. */

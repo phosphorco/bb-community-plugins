@@ -1,7 +1,7 @@
 /** Runtime validators for the declaration-only portable vocabulary. */
 import type {
   Codec, ConflictToken, ContributionReference, ExecutionProvenance, IdentityError,
-  IdentityKey, IdentityProfile, Id, InstanceId, Json, OperationId, Result,
+  IdentityKey, IdentityProfile, Id, InstanceId, Json, OperationId, Result, ExternalPersonSnapshotV1,
 } from './model.js';
 
 const ID_MAX_LENGTH = 256;
@@ -133,6 +133,7 @@ function isOrigin(value: unknown): boolean {
 
 function isContribution(value: unknown): boolean {
   return isRecord(value) && isContributionReference(value.reference) && isOrigin(value.author)
+    && (value.personAttribution === undefined || externalPersonSnapshotCodec.decode(value.personAttribution).ok)
     && (value.latestEditor === null || isActorSnapshot(value.latestEditor))
     && isBoundedString(value.acceptedAt, 256)
     && Array.isArray(value.mentionedPeople) && value.mentionedPeople.every(isPersonReference);
@@ -212,6 +213,19 @@ export const provenanceCodec: Codec<ExecutionProvenance> = {
   encode(value: ExecutionProvenance): Json {
     return value as unknown as Json;
   },
+};
+
+export const externalPersonSnapshotCodec: Codec<ExternalPersonSnapshotV1> = {
+  decode(value: unknown): Result<ExternalPersonSnapshotV1> {
+    if (!isRecord(value) || Object.keys(value).some(key => !['identity', 'presentation', 'evidence'].includes(key))
+      || value.evidence !== 'integration-asserted' || !isActorSnapshot(value)
+      || !isRecord(value.identity) || value.identity.kind !== 'person'
+      || Object.keys(value.identity).some(key => !['kind', 'key', 'issuer', 'subject'].includes(key))) {
+      return err('invalid-input', 'External person attribution requires a canonical person and integration-asserted evidence.');
+    }
+    return ok(value as unknown as ExternalPersonSnapshotV1);
+  },
+  encode(value) { return value as unknown as Json; },
 };
 
 export function defaultIdentityKey(instance: InstanceId): IdentityKey {

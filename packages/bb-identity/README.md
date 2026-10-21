@@ -463,3 +463,17 @@ lookup decoding. Later conformance must use a packed artifact with two
 independently bundled UI consumers and real upstream→fork→upstream→fork
 sessions. Preserve native content, provider references and upstream grouped-edit
 restrictions in that proof.
+
+## External person attribution V1 (0.3)
+
+`binding.server.externalContributionCapabilities()` synchronously distinguishes an absent capability (`ok(null)`) from a malformed or incompatible host (`ok: false`). A capable host advertises V1, canonical `person` identities, accepted/queued history, and `rollback: 'requires-capable-host'`. This optional subprotocol fits inside outer protocol 1; legacy `sendExternal` and `lookupOperation` retain their existing wire format and hashes.
+
+For a new operation, `sendExternalContribution({version: 1, author, personAttribution}, input)` retains the external Slack/integration origin and an optional canonical person snapshot. The person snapshot contains `identity`, `presentation`, and `evidence: 'integration-asserted'`. It attributes a contribution in a trusted workspace; it conveys no authentication or authorization. Local `default-user` identities are not canonical people.
+
+Persist the exact contribution, operation ID, prompt bytes, and selected transport before dispatch. Capability absence may select legacy external-only attribution for a **new** operation. Never upgrade, downgrade, or rebuild an existing operation from a current directory or mapping. A malformed capability is an incompatibility, not permission to fall back.
+
+V1 receipts confirm the frozen `externalContribution`. Reconcile V1 exclusively through `lookupExternalContribution`, checking its returned attribution against the reservation. Wrong-operation receipts fail validation. Changed or malformed send receipts and exceptions after dispatch are indeterminate. Unknown/unsupported lookup does not authorize resend; only `absent-final` permits the same immutable operation to be retried. Legacy final receipts remain unchanged.
+
+The default host rendering policy adds the integration sender envelope once. A producer such as Rosetta must select `externalMessageRendering: 'producer'` at binding construction; its prompt bytes remain unchanged. A capable native host projects the person into the native timeline while contribution/attempt history keeps the external origin and optional `personAttribution`. This does not add native-message history queries.
+
+Native history containing integration-asserted person authors requires a capable runtime even after queues drain or plugins are downgraded. Do not roll back to a host that only accepts provider-verified person authors. Package-only rollback retains the legacy external path; it does not make old native readers understand newer stored authorship.

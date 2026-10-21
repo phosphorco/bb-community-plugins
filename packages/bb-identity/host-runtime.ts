@@ -4,13 +4,13 @@ import type {
   IdentityProfile, Json, OperationLookup, PersonReference, Result, SendInput, Wire,
 } from './model.js';
 import {
-  err, idCodec, identityKeyCodec, ok, profileCodec, provenanceCodec,
+  err, idCodec, identityKeyCodec, ok, profileCodec, provenanceCodec, externalPersonSnapshotCodec,
 } from './model-runtime.js';
 import type {
   Directory, Participant, ParticipantReader, ReadOptions, RequestExpectation, Unsubscribe,
 } from './model.js';
 import type {
-  ExternalAuthorInput, ExtensionDiscovery, ForkIdentityProtocolV1, ForkIdentityProvider, ForkProviderRegistration, HostInvalidation,
+  ExternalAuthorInput, ExternalContributionV1, ExternalContributionOutcomeV1, ExternalContributionProtocolV1, ExtensionDiscovery, ForkIdentityProtocolV1, ForkIdentityProvider, ForkProviderRegistration, HostInvalidation,
   ForkRequestHandle, ForkInvocationScope, HostRequestHandle, IdentityCapabilities, IdentityHost, IdentityProvider, ProviderDirectorySource,
   LiveRequest, ProviderRegistrationV1, ServerSession, UpstreamDriver,
 } from './host.js';
@@ -250,7 +250,8 @@ function isContribution(value: unknown): boolean {
       : origin.kind === 'agent' ? origin.agentId === null || idCodec('agent').decode(origin.agentId).ok
         : origin.kind === 'system' ? typeof origin.reason === 'string' && origin.reason.length > 0 && origin.reason.length <= 1_024
           : origin.kind === 'unknown' && (origin.reason === 'legacy' || origin.reason === 'upstream-unattributed' || origin.reason === 'missing-source');
-  return validOrigin && (value.latestEditor === null || snapshot(value.latestEditor));
+  return (value.personAttribution === undefined || externalPersonSnapshotCodec.decode(value.personAttribution).ok)
+    && validOrigin && (value.latestEditor === null || snapshot(value.latestEditor));
 }
 
 function decodeEvidencePage<T>(value: unknown, decodeItem: (item: unknown) => boolean): Result<EvidencePage<T>> {
@@ -541,6 +542,7 @@ export function createHostAdapter<R, T, I>(options: {
     const subscriptions = upstream.subscribe((event) => { for (const listener of listeners) listener(event); });
     const contexts = new WeakMap<LiveRequest, R>();
     return {
+      ...externalContributionMethods(upstream, extension, () => disposed),
       pluginId: upstream.pluginId,
       instanceId: upstream.instanceId,
       session: (context) => upstream.session(context),
@@ -577,6 +579,7 @@ export function createHostAdapter<R, T, I>(options: {
     const error = protocolError(extension);
     const unavailableResult = async <V>(): Promise<Result<V>> => ({ ok: false, error });
     return {
+      ...externalContributionMethods(upstream, extension, () => disposed),
       pluginId: upstream.pluginId, instanceId: upstream.instanceId,
       session: async () => ({ status: error.code === 'incompatible' ? 'incompatible' : 'unavailable', instanceId: upstream.instanceId, error }),
       selfProfile: unavailableResult,
@@ -625,6 +628,7 @@ export function createHostAdapter<R, T, I>(options: {
   const subscription = protocol.subscribe((event) => { for (const listener of listeners) listener(event); });
   const scopes = new WeakMap<LiveRequest, ForkInvocationScope>();
   return {
+    ...externalContributionMethods(upstream, extension, () => disposed),
     pluginId: upstream.pluginId, instanceId: protocol.instanceId as typeof upstream.instanceId,
     async session(context) {
       const decoded = serverSessionCodec.decode(await protocol.session(context));
@@ -688,6 +692,111 @@ export function createHostAdapter<R, T, I>(options: {
     },
     subscribe(listener) { listeners.add(listener); return () => listeners.delete(listener); },
     dispose() { subscription(); close(); },
+  };
+}
+
+/** Versioned input decoder. Output reads tolerate additive fields but still
+ * validate every V1 field; inputs reject unknown fields before dispatch. */
+function decodeExternalContribution(value: unknown, strict = true): Result<ExternalContributionV1> {
+  if (!isRecord(value) || value.version !== 1 || !isRecord(value.author)
+    || strict && Object.keys(value).some(key => !['version', 'author', 'personAttribution'].includes(key))
+    || strict && Object.keys(value.author).some(key => !['subject', 'presentation'].includes(key))
+    || strict && isRecord(value.author.presentation) && Object.keys(value.author.presentation).some(key => !['displayName', 'handle', 'avatarUrl'].includes(key))
+    || !idCodec('subject').decode(value.author.subject).ok || !isProfilePresentation(value.author.presentation)) {
+    return err('invalid-input', 'Invalid V1 external contribution.');
+  }
+  let person: unknown = value.personAttribution;
+  if (!strict && isRecord(person) && isRecord(person.identity)) person = {
+    identity: { kind: person.identity.kind, key: person.identity.key, issuer: person.identity.issuer, subject: person.identity.subject },
+    presentation: isRecord(person.presentation) ? { displayName: person.presentation.displayName, handle: person.presentation.handle, avatarUrl: person.presentation.avatarUrl } : person.presentation, evidence: person.evidence,
+  };
+  if (strict && isRecord(person) && isRecord(person.presentation) && Object.keys(person.presentation).some(key => !['displayName', 'handle', 'avatarUrl'].includes(key))) return err('invalid-input', 'Unexpected presentation field.');
+  const decoded = person === undefined ? null : externalPersonSnapshotCodec.decode(person);
+  if (decoded && !decoded.ok) return decoded;
+  return ok({ version: 1, author: { subject: value.author.subject as string, presentation: { displayName: (value.author.presentation as ExternalAuthorInput['presentation']).displayName, handle: (value.author.presentation as ExternalAuthorInput['presentation']).handle, avatarUrl: (value.author.presentation as ExternalAuthorInput['presentation']).avatarUrl } },
+    ...(decoded?.ok ? { personAttribution: decoded.value } : {}) });
+}
+
+export const externalContributionV1Codec: Codec<ExternalContributionV1> = {
+  decode: value => decodeExternalContribution(value),
+  encode: value => value as unknown as Json,
+};
+function canonicalExternal(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonicalExternal).join(',')}]`;
+  if (isRecord(value)) return `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${canonicalExternal(value[key])}`).join(',')}}`;
+  return JSON.stringify(value);
+}
+
+function externalContributionMethods<R, T, I>(upstream: UpstreamDriver<R, T, I>, extension: ExtensionDiscovery<R, T, I>, disposed: () => boolean):
+  Pick<IdentityHost<R, T, I>, 'externalContributionCapabilities' | 'sendExternalContribution' | 'lookupExternalContribution'> {
+  const support = (): Result<ExternalContributionProtocolV1<I> | null> => {
+    if (disposed()) return err('disposed', 'Identity host is disposed.');
+    if (extension.status === 'absent') return ok(null);
+    if (extension.status !== 'supported') return { ok: false, error: protocolError(extension) };
+    const value: unknown = extension.protocol.externalContributions;
+    if (value === undefined) return ok(null);
+    if (!isRecord(value) || !Array.isArray(value.versions) || !value.versions.length
+      || !value.versions.every(version => Number.isInteger(version) && version > 0)) return err('incompatible', 'Malformed external contribution capability.');
+    if (!value.versions.includes(1)) return ok(null);
+    if (!Array.isArray(value.personKinds) || value.personKinds.length !== 1 || value.personKinds[0] !== 'person'
+      || value.history !== 'accepted-and-queued' || value.rollback !== 'requires-capable-host'
+      || typeof value.acceptV1 !== 'function' || typeof value.lookupV1 !== 'function') return err('incompatible', 'Malformed V1 external contribution capability.');
+    return ok(value as unknown as ExternalContributionProtocolV1<I>);
+  };
+  const outcome = (raw: unknown): Result<ExternalContributionOutcomeV1> => {
+    const decoded = decodeAcceptance(raw);
+    if (!decoded.ok || decoded.value.status !== 'submitted') return decoded as Result<ExternalContributionOutcomeV1>;
+    if (decoded.value.receipt.evidence !== 'host-accepted') return err('incompatible', 'V1 needs durable native acceptance.');
+    const receipt = decoded.value.receipt as unknown as Record<string, unknown>;
+    const contribution = decodeExternalContribution(receipt.externalContribution, false);
+    return contribution.ok ? ok({ status: 'submitted', receipt: { ...decoded.value.receipt, externalContribution: contribution.value } })
+      : err('incompatible', 'Host receipt omitted or changed V1 attribution.');
+  };
+  return {
+    externalContributionCapabilities() {
+      const negotiated = support();
+      return !negotiated.ok ? negotiated : ok(negotiated.value ? { version: 1, personKinds: ['person'], history: 'accepted-and-queued', rollback: 'requires-capable-host' } : null);
+    },
+    async sendExternalContribution(contribution, input, options) {
+      const operationId = input.operationId;
+      const decoded = decodeExternalContribution(contribution);
+      if (!decoded.ok) return { status: 'rejected', error: decoded.error };
+      const negotiated = support();
+      if (!negotiated.ok) return { status: 'rejected', error: negotiated.error };
+      if (!negotiated.value) return { status: 'rejected', error: { code: 'unsupported', message: 'Native external-person attribution V1 is unavailable.', retry: 'never' } };
+      if (options?.signal?.aborted) return { status: 'rejected', error: { code: 'expired', message: 'The send was cancelled before dispatch.', retry: 'never' } };
+      // Capture caller-owned objects before the first await, including input.
+      const frozen = JSON.parse(JSON.stringify(decoded.value)) as ExternalContributionV1;
+      const wire = JSON.parse(JSON.stringify(wireInput(input, upstream.inputCodec))) as Wire<SendInput<I>>;
+      try {
+        const result = outcome(await negotiated.value.acceptV1({ contribution: frozen, input: wire }, options));
+        if (!result.ok) return { status: 'indeterminate', operationId, message: result.error.message };
+        if (result.value.status === 'submitted' && (result.value.receipt.operationId !== operationId
+          || canonicalExternal(result.value.receipt.externalContribution) !== canonicalExternal(frozen))) {
+          return { status: 'indeterminate', operationId, message: 'Host receipt did not confirm the reserved attribution.' };
+        }
+        return result.value;
+      } catch {
+        return { status: 'indeterminate', operationId, message: 'External contribution dispatch outcome is unknown; reconcile this operation.' };
+      }
+    },
+    async lookupExternalContribution(operationId, options) {
+      const negotiated = support();
+      if (!negotiated.ok) return negotiated;
+      if (!negotiated.value) return ok({ status: 'unknown', reason: 'unsupported' });
+      try {
+        const result = asResult<unknown>(await negotiated.value.lookupV1(operationId, options));
+        if (!result.ok) return result;
+        if (isRecord(result.value) && result.value.status === 'final') {
+          const decoded = outcome(result.value.outcome);
+          if (decoded.ok && decoded.value.status === 'submitted' && decoded.value.receipt.operationId !== operationId) {
+            return err('incompatible', 'Host lookup returned a receipt for another operation.');
+          }
+          return decoded.ok ? ok({ status: 'final', outcome: decoded.value }) : decoded;
+        }
+        return decodeLookup(result.value) as Result<OperationLookup<ExternalContributionOutcomeV1>>;
+      } catch { return err('unavailable', 'External contribution lookup is unavailable.', 'after-reconnect'); }
+    },
   };
 }
 

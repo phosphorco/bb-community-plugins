@@ -76,6 +76,9 @@ export interface BbInvocationServer {
   selfProfile(invocation: BbInvocation): Promise<Result<import('./model.js').IdentityProfile>>;
   personRequest(invocation: BbInvocation): Promise<Result<PersonRequest<BbPromptInput>>>;
   readonly sendExternal: IdentityServer<unknown, unknown, BbPromptInput>['sendExternal'];
+  readonly externalContributionCapabilities: IdentityServer<unknown, unknown, BbPromptInput>['externalContributionCapabilities'];
+  readonly sendExternalContribution: IdentityServer<unknown, unknown, BbPromptInput>['sendExternalContribution'];
+  readonly lookupExternalContribution: IdentityServer<unknown, unknown, BbPromptInput>['lookupExternalContribution'];
   readonly lookupOperation: IdentityServer<unknown, unknown, BbPromptInput>['lookupOperation'];
   /** Bounded, validated provenance reads; disposal fences new raw history calls. */
   readonly history: IdentityServer<unknown, unknown, BbPromptInput>['history'];

@@ -1,6 +1,6 @@
 {
   "name": "@phosphorco/bb-identity",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "type": "module",
   "license": "MIT",
   "description": "Portable identity, provenance, and state contracts for BB integrations.",

@@ -8,7 +8,7 @@ import { retainIdentityHttpResponse } from './http-lifetime-runtime.js';
 import type { BbPortableIdentityHandlers, BbPortableInvocation, BbPortableRpcFoundation } from './bb-runtime.js';
 import { createBbUpstreamDriver, renderExternalPrompt, type BbUpstreamBinding, type ExternalMessageRendering } from './bb-upstream-runtime.js';
 import type { ForkIdentityExtensionSurface, ForkInvocationContext, ForkInvocationRegistration, IdentityHost } from './host.js';
-import { createHostAdapter, inspectForkExtension } from './host-runtime.js';
+import { createHostAdapter, inspectForkExtension, externalContributionV1Codec } from './host-runtime.js';
 import type { Codec, IdentityKey, Json, Result, Scheduler } from './model.js';
 import { err, idCodec, identityKeyCodec, ok } from './model-runtime.js';
 import type { PersonRequest } from './server.js';
@@ -244,6 +244,17 @@ export function createBbIdentityServerBinding(options: BbIdentityServerBindingOp
         : input.input;
       return server.sendExternal(author, { ...input, input: renderedInput }, readOptions);
     },
+    externalContributionCapabilities: () => disposed ? err('disposed', 'Identity binding is disposed.') : server.externalContributionCapabilities(),
+    async sendExternalContribution(contribution, input, readOptions) {
+      if (disposed) return { status: 'rejected', error: { code: 'disposed', message: 'Identity binding is disposed.', retry: 'never' } };
+      const decoded = externalContributionV1Codec.decode(contribution);
+      if (!decoded.ok) return { status: 'rejected', error: decoded.error };
+      const renderedInput = upstream.value.externalMessageRendering === 'host'
+        ? renderExternalPrompt(upstream.value.driver.pluginId, decoded.value.author, input.input) : input.input;
+      return server.sendExternalContribution(decoded.value, { ...input, input: renderedInput }, readOptions);
+    },
+    lookupExternalContribution: (operationId, readOptions) => disposed
+      ? Promise.resolve(err('disposed', 'Identity binding is disposed.')) : server.lookupExternalContribution(operationId, readOptions),
     lookupOperation: (operationId, readOptions) => disposed
       ? Promise.resolve(err('disposed', 'Identity binding is disposed.')) : server.lookupOperation(operationId, readOptions),
     history: guardedHistory,
