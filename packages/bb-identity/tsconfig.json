@@ -52,6 +52,19 @@
     "type-tests/bb-runtime.runtime.test.ts",
     "type-tests/bb-upstream-sdk-contract.runtime.test.ts",
     "type-tests/browser/identity-browser-app.tsx",
-    "type-tests/browser/run.mts"
+    "type-tests/browser/run.mts",
+    "native.d.ts",
+    "native-runtime.ts",
+    "native-testing.d.ts",
+    "native-testing-runtime.ts",
+    "type-tests/native-source.test-d.ts",
+    "editing.d.ts",
+    "editing-runtime.ts",
+    "editing-codecs-runtime.ts",
+    "type-tests/editing.test-d.ts",
+    "type-tests/editing-react-app.tsx",
+    "type-tests/editing-react.mts",
+    "type-tests/native-parent-instance.test-d.ts",
+    "type-tests/native-supported-peer.test-d.ts"
   ]
 }

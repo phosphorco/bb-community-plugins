@@ -38,3 +38,8 @@ export const useIdentityViewSnapshot: typeof UseIdentityViewSnapshot = () => BbI
 export const useIdentityViewActions: typeof UseIdentityViewActions = () => BbIdentityReact.useIdentityViewActions();
 export const useIdentityPreservationFailures: typeof UseIdentityPreservationFailures = () => BbIdentityReact.usePreservationFailures();
 export const useAcknowledgeIdentityPreservationFailure: typeof UseAcknowledgeIdentityPreservationFailure = () => BbIdentityReact.useAcknowledgePreservationFailure();
+
+export const useIdentityEditingBinding: typeof import('./react.js').useIdentityEditingBinding = BbIdentityReact.useBoundIdentityEditing;
+export const useIdentityEditingSnapshot: typeof import('./react.js').useIdentityEditingSnapshot = BbIdentityReact.useIdentityEditingSnapshot;
+export const useIdentityEditingPreservationFailures: typeof import('./react.js').useIdentityEditingPreservationFailures = BbIdentityReact.useEditingPreservationFailures;
+export const useAcknowledgeIdentityEditingPreservationFailure: typeof import('./react.js').useAcknowledgeIdentityEditingPreservationFailure = BbIdentityReact.useAcknowledgeEditingPreservationFailure;

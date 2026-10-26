@@ -127,3 +127,19 @@ export interface IdentityPreservationFailure {
 export declare function useIdentityPreservationFailures(): readonly IdentityPreservationFailure[];
 /** Returns false for an absent or superseded generation; feature code owns retry/recovery. */
 export declare function useAcknowledgeIdentityPreservationFailure(): (generation: number) => boolean;
+
+/** Opt-in editing snapshot; legacy SyncSnapshot never receives new outcomes. */
+export declare function useIdentityEditingBinding<T, Target>(
+  options: Omit<import('./editing.js').EditingBindingOptions<T, Target>, 'client' | 'view'>,
+): import('./editing.js').IdentityEditingBinding<T, Target> | null;
+export declare function useIdentityEditingSnapshot<T, Target>(binding: import('./editing.js').IdentityEditingBinding<T, Target> | null):
+  | import('./editing.js').EditingSnapshot<T, Target>
+  | { readonly status: 'waiting-for-identity' };
+export interface EditingPreservationFailure {
+  readonly generation: number;
+  readonly draft: import('./editing.js').EditingDraft<unknown, unknown>;
+  readonly error: IdentityError;
+}
+/** Full exportable Target + desired + exact pending request after retirement checkpoint failure. */
+export declare function useIdentityEditingPreservationFailures(): readonly EditingPreservationFailure[];
+export declare function useAcknowledgeIdentityEditingPreservationFailure(): (generation: number) => boolean;

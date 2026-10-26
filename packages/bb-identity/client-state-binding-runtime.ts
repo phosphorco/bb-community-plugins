@@ -1,8 +1,8 @@
 /** Internal framework-neutral controller/view owner for the portable client binding. */
 import type { IdentityStateBinding, IdentityStateBindingOptions, StateBindingSource, ViewTransitionGuard } from './client.js';
 import type { ServerSession } from './host.js';
-import type { ActorReference, IdentityError, OwnerSessionId, Result } from './model.js';
-import type { IdentityState, PendingDraft, SyncSnapshot } from './state.js';
+import type { ActorReference, ConflictToken, IdentityError, OwnerSessionId, ReadOptions, Result, Unsubscribe } from './model.js';
+import type { ConflictDecision, DraftCheckpoint, IdentityState, PendingDraft, SyncSnapshot } from './state.js';
 import { err, idCodec, newOperationId, ok } from './model-runtime.js';
 import { createIdentityState } from './state-controller-runtime.js';
 import { createStateTransport } from './state-transport-runtime.js';
@@ -11,21 +11,68 @@ import type { DraftRetirementOwner, DraftRetirementScope } from './draft-retirem
 type Ready = Extract<ServerSession, { status: 'ready' }>;
 const waiting = Object.freeze({ status: 'waiting-for-identity' as const });
 
+/** Shared lifetime for both legacy state and opt-in editing; no snapshot coercion. */
+export interface OwnedController<T, D, C, S> {
+  getSnapshot(): S; subscribe(listener: () => void): Unsubscribe; start(): Promise<Result<void>>;
+  edit(value: T): Result<void>; flush(): Promise<Result<void>>;
+  reconnect(options?: { readonly reuseInFlight?: boolean }): Promise<Result<void>>;
+  resolveConflict(token: ConflictToken, decision: ConflictDecision<T>): Promise<Result<void>>;
+  recover(candidate: C): Promise<Result<void>>; discardRecovery(candidate: C): Promise<Result<void>>;
+  recoveryCandidates(options?: ReadOptions): Promise<Result<readonly C[]>>;
+  checkpoint(): Promise<Result<C | null>>;
+  detach(reason: 'identity-invalidated' | 'view-change' | 'unmount'): D | null;
+  close(options: { readonly pending: 'flush' | 'preserve' | 'discard' }): Promise<Result<void>>;
+  suspendAutomaticDispatch?(): Unsubscribe; dispose(): void;
+}
+export interface OwnedBinding<T, D, C, S> {
+  getSnapshot(): S | { readonly status: 'waiting-for-identity' }; subscribe(listener: () => void): Unsubscribe;
+  currentOwnerSession(): OwnerSessionId | null; edit(value: T): Result<void>; flush(): Promise<Result<void>>;
+  reconnect(owner: OwnerSessionId): Promise<Result<void>>;
+  resolveConflict(owner: OwnerSessionId, token: ConflictToken, decision: ConflictDecision<T>): Promise<Result<void>>;
+  recover(owner: OwnerSessionId, candidate: C): Promise<Result<void>>;
+  discardRecovery(owner: OwnerSessionId, candidate: C): Promise<Result<void>>;
+  recoveryCandidates(owner: OwnerSessionId, options?: ReadOptions): Promise<Result<readonly C[]>>;
+  checkpoint(owner: OwnerSessionId): Promise<Result<C | null>>; dispose(): void;
+}
+export interface OwnedBindingOptions<T, D, C, S> {
+  readonly client: import('./client.js').IdentityClient; readonly view: import('./client.js').IdentityView;
+  readonly target: 'actor' | 'viewed-subject'; readonly editPolicy: 'actor-only' | 'collaborators';
+  create(input: { session: Ready; subject: ActorReference; ownerSession: OwnerSessionId }): OwnedController<T, D, C, S>;
+  readonly hasPending: (snapshot: S) => boolean;
+  readonly onUnpersistedDraft?: (draft: D, error: IdentityError) => void;
+  readonly preservation?: (controller: OwnedController<T, D, C, S>, session: Ready) => { storage: object; scope: DraftRetirementScope } | null;
+}
 export function bindIdentityState<T>(options: IdentityStateBindingOptions<T> & StateBindingSource<T>, retirementOwner?: DraftRetirementOwner): IdentityStateBinding<T> {
-  type Entry = { key: string; recoveryKey: string; owner: OwnerSessionId; controller: IdentityState<T>; stop: () => void; writable: boolean;
+  return bindOwnedIdentityController<T, PendingDraft<T>, DraftCheckpoint<T>, SyncSnapshot<T>>({
+    ...options,
+    hasPending: state => state.status === 'ready' ? state.dirty || state.saving : (state.status === 'blocked' || state.status === 'detached') && state.draft !== null,
+    create: input => options.create ? options.create(input) : createIdentityState({
+      address: { instanceId: input.session.instanceId, pluginId: options.resource.pluginId,
+        collection: options.resource.definition.collection, recordId: options.recordId, owner: input.subject.key },
+      expected: { actor: input.session.actor.identity.key, session: input.session.stamp }, ownerSession: input.ownerSession,
+      definition: options.resource.definition, transport: createStateTransport({ connection: options.client.connection, resource: options.resource }),
+      ...(options.drafts ? { drafts: options.drafts } : {}), onConflict: options.onConflict, initializeEmpty: options.initializeEmpty && (options.editPolicy === 'collaborators' || input.subject.key === input.session.actor.identity.key),
+      ...(options.scheduler ? { scheduler: options.scheduler } : {}), currentSession: () => options.client.currentSession(),
+    }),
+    preservation: (controller, session) => options.resource && options.drafts ? { storage: options.drafts, scope: {
+      address: controller.getSnapshot().address, actor: session.actor.identity.key, schemaVersion: options.resource.definition.schemaVersion } } : null,
+  }, retirementOwner);
+}
+
+export function bindOwnedIdentityController<T, D, C, S>(options: OwnedBindingOptions<T, D, C, S>, retirementOwner?: DraftRetirementOwner): OwnedBinding<T, D, C, S> {
+  type Entry = { key: string; recoveryKey: string; owner: OwnerSessionId; controller: OwnedController<T, D, C, S>; stop: () => void; writable: boolean;
     reconnect: Promise<Result<void>> | null;
     preservation: { storage: object; scope: DraftRetirementScope } | null };
   let disposed = false;
   let viewDisposed = false;
   let current: Entry | null = null;
   let pause: object | null = null;
-  let snapshot: ReturnType<IdentityStateBinding<T>['getSnapshot']> = waiting;
+  let snapshot: S | typeof waiting = waiting;
   let stateHealthy = options.client.connection.getHealth().state.status === 'healthy';
   const listeners = new Set<() => void>();
   const retirements = new Map<string, Set<Promise<Result<void>>>>();
   const publish = () => { for (const listener of [...listeners]) { try { listener(); } catch {} } };
-  const hasPending = (state: SyncSnapshot<T>) => state.status === 'ready'
-    ? state.dirty || state.saving : (state.status === 'blocked' || state.status === 'detached') && state.draft !== null;
+  const hasPending = options.hasPending;
   const live = (): { session: Ready; subject: ActorReference; key: string; writable: boolean } | null => {
     if (disposed || viewDisposed) return null;
     const result = options.client.currentSession();
@@ -40,7 +87,7 @@ export function bindIdentityState<T>(options: IdentityStateBindingOptions<T> & S
       writable: options.editPolicy === 'collaborators' || subject.key === session.actor.identity.key };
   };
   const valid = (entry: Entry) => !disposed && current === entry && live()?.key === entry.key;
-  const failedPreservation = (draft: PendingDraft<T> | null, error: IdentityError) => {
+  const failedPreservation = (draft: D | null, error: IdentityError) => {
     if (draft) { try { options.onUnpersistedDraft?.(draft, error); } catch {} }
   };
   const retire = (reason: 'identity-invalidated' | 'view-change' | 'unmount', pending: 'preserve' | 'discard' = 'preserve') => {
@@ -79,19 +126,9 @@ export function bindIdentityState<T>(options: IdentityStateBindingOptions<T> & S
     if (live()?.key !== next.key) { observeAgain = true; continue; }
     const owner = idCodec('owner-session').decode(`owner-${newOperationId()}`);
     if (!owner.ok) throw new Error(owner.error.message);
-    const controller = options.create
-      ? options.create({ session: next.session, subject: next.subject, ownerSession: owner.value })
-      : createIdentityState({
-        address: { instanceId: next.session.instanceId, pluginId: options.resource.pluginId,
-          collection: options.resource.definition.collection, recordId: options.recordId, owner: next.subject.key },
-        expected: { actor: next.session.actor.identity.key, session: next.session.stamp }, ownerSession: owner.value,
-        definition: options.resource.definition, transport: createStateTransport({ connection: options.client.connection, resource: options.resource }),
-        ...(options.drafts ? { drafts: options.drafts } : {}), onConflict: options.onConflict, initializeEmpty: next.writable && options.initializeEmpty,
-        ...(options.scheduler ? { scheduler: options.scheduler } : {}), currentSession: () => options.client.currentSession(),
-      });
+    const controller = options.create({ session: next.session, subject: next.subject, ownerSession: owner.value });
     if (live()?.key !== next.key) { controller.dispose(); observeAgain = true; continue; }
-    const preservation = options.resource && options.drafts ? { storage: options.drafts, scope: { address: controller.getSnapshot().address,
-      actor: next.session.actor.identity.key, schemaVersion: options.resource.definition.schemaVersion } } : null;
+    const preservation = options.preservation?.(controller, next.session) ?? null;
     const entry: Entry = { key: next.key, recoveryKey: JSON.stringify([next.session.instanceId, next.session.actor.identity.key, next.subject.key]), owner: owner.value, controller, stop: () => {}, writable: next.writable, reconnect: null, preservation };
     current = entry;
     const update = () => { if (valid(entry)) { snapshot = controller.getSnapshot(); publish(); } };
@@ -100,7 +137,7 @@ export function bindIdentityState<T>(options: IdentityStateBindingOptions<T> & S
     } while (observeAgain && !disposed && !viewDisposed);
     } finally { observing = false; }
   };
-  const command = async <V>(owner: OwnerSessionId, run: (controller: IdentityState<T>) => Promise<Result<V>>, write = false): Promise<Result<V>> => {
+  const command = async <V>(owner: OwnerSessionId, run: (controller: OwnedController<T, D, C, S>) => Promise<Result<V>>, write = false): Promise<Result<V>> => {
     const entry = current;
     if (!entry || owner !== entry.owner || !valid(entry)) return err('stale-context', 'State controller ownership changed.');
     if (write && (!entry.writable || pause)) return err('unsupported', 'The selected state is not editable during this view or transition.');
@@ -152,7 +189,7 @@ export function bindIdentityState<T>(options: IdentityStateBindingOptions<T> & S
           if (unaffected) return ok(undefined);
           if (!valid(entry) || transition.signal.aborted) return err('stale-context', 'View transition expired.');
           pause = token;
-          resume = entry.controller.suspendAutomaticDispatch();
+          resume = entry.controller.suspendAutomaticDispatch?.() ?? (() => {});
           if (transition.pending === 'block' && hasPending(entry.controller.getSnapshot())) return err('conflict', 'New edits arrived before the view transition.');
           const result = transition.pending === 'flush' ? await entry.controller.flush()
             : transition.pending === 'preserve' ? await entry.controller.checkpoint() : ok(undefined);

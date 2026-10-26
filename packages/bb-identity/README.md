@@ -106,6 +106,20 @@ Notifications as a third consumer. Offline fixtures establish specific safety
 properties but do not replace those migrations or the master plan's
 upstream → fork → upstream → fork authored-session compatibility proof.
 
+## Native source evidence (0.4.0 candidate)
+
+The additive `/native` entry normalizes retained public SDK event/group/item/terminal
+snapshots into evidence distinct from Contribution history. It preserves independent
+source, attribution, execution and lineage coverage. See [NATIVE-SOURCES.md](NATIVE-SOURCES.md)
+for API, ownership, public joins, bounds and proof limits; `/native/testing` supplies
+the caller-driven semantic conformance kit. This source candidate is not evidence
+of registry publication or installed consumer adoption.
+
+The combined 0.4.0 source candidate also adds opt-in `/editing` and explicit React
+hooks for continued local typing across unknown publication, conflicts and backup
+failures. See [EDITING.md](EDITING.md) for the independent editing/v1 contract and
+proof limits; existing state protocol and default behavior remain unchanged.
+
 ## Entry points
 
 | Import suffix | Runtime/declaration status | Responsibility |

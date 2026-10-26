@@ -1,0 +1,18 @@
+export const threadId = 'thread';
+export const actor = name => ({ evidence:'provider-verified', identity:{kind:'person',key:`person:${name}`,issuer:'fixture',subject:name},presentation:{displayName:name,handle:null,avatarUrl:null} });
+export const machine = {evidence:'machine',identity:{kind:'machine',key:'machine:fixture',instanceId:'instance',hostId:'host'},presentation:{displayName:'machine',handle:null,avatarUrl:null}};
+export const text = text => ({type:'text',text,mentions:[]});
+export const event = (seq,type,data,turnId) => ({id:`e${seq}`,seq,threadId,createdAt:seq,scope:turnId?{kind:'turn',turnId}:{kind:'thread'},type,data});
+export const request = (seq=1,id='creq_a',groups=[[text('Actual input')]]) => event(seq,'client/turn/requested',{direction:'outbound',requestId:id,source:'tell',initiator:'user',senderThreadId:null,input:groups.flat(),inputGroups:groups,p6rAuthors:groups.map(()=>actor('author')),p6rEditors:groups.map(()=>actor('editor')),p6rMentionedTargets:[],target:{kind:'new-turn'},request:{method:'turn/start',params:{}},execution:{model:'fixture',reasoningLevel:'low',permissionMode:'readonly',serviceTier:'fixture',source:'client/turn/requested'}});
+export const accept = (seq=2,id='creq_a',turnId='turn') => event(seq,'turn/input/accepted',{clientRequestId:id,providerThreadId:'provider'},turnId);
+export const delta = (seq=3,id='item',value='Visible',turnId='turn') => event(seq,'item/agentMessage/delta',{itemId:id,delta:value},turnId);
+export const completed = (seq=4,id='item',value='Visible',phase='final_answer',turnId='turn') => event(seq,'item/completed',{item:{type:'agentMessage',id,text:value,phase}},turnId);
+export const terminal = (seq=9,status='completed',turnId='turn') => event(seq,'turn/completed',{providerThreadId:'provider',status},turnId);
+export const row = (start=3,end=4,value='Visible',id='row',turnId='turn') => ({id,kind:'conversation',role:'assistant',threadId,turnId,createdAt:end,startedAt:start,sourceSeqStart:start,sourceSeqEnd:end,messageSeq:end,text:value,attachments:null,turnRequest:null});
+export const timeline = rows => ({maxSeq:20,rows,contextSize:null,modelFallback:null,pendingTodos:null,providerCommands:null,sessionOptions:null,timelinePage:{historySnapshot:'snapshot',olderCursor:null,olderRowsSourceSeqEnd:null,returnedSegmentCount:rows.length}});
+export const assistantSource = {kind:'assistant-terminal',threadId,terminalEventId:'e9',scope:{turnId:'turn'}};
+export const requestSource = {kind:'event',threadId,eventId:'e1'};
+export const base = () => ({source:{...assistantSource},events:[request(),accept(),delta(),completed(),terminal()],timeline:timeline([row()])});
+export const reqBase = () => ({source:{...requestSource},events:[request(),accept()]});
+export const known = items => ({ok:true,value:{status:'known',items,missing:[],nextCursor:null,traversal:'complete'}});
+export const contribution = (id='genuine',thread='thread') => ({reference:{threadId:thread,contributionId:id},author:{kind:'agent',agentId:'agent'},latestEditor:null,acceptedAt:'2026-10-26T00:00:00Z',mentionedPeople:[]});

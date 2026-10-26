@@ -1,6 +1,6 @@
 {
   "name": "@phosphorco/bb-identity",
-  "version": "0.3.1",
+  "version": "0.4.0",
   "type": "module",
   "license": "MIT",
   "description": "Portable identity, provenance, and state contracts for BB integrations.",
@@ -56,6 +56,18 @@
     "./react": {
       "types": "./react.d.ts",
       "import": "./dist/react-entry-runtime.js"
+    },
+    "./native": {
+      "types": "./native.d.ts",
+      "import": "./dist/native-runtime.js"
+    },
+    "./native/testing": {
+      "types": "./native-testing.d.ts",
+      "import": "./dist/native-testing-runtime.js"
+    },
+    "./editing": {
+      "types": "./editing.d.ts",
+      "import": "./dist/editing-runtime.js"
     }
   },
   "files": [
@@ -70,7 +82,12 @@
     "bb.d.ts",
     "react.d.ts",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "native.d.ts",
+    "native-testing.d.ts",
+    "NATIVE-SOURCES.md",
+    "editing.d.ts",
+    "EDITING.md"
   ],
   "publishConfig": {
     "access": "public"
@@ -102,7 +119,7 @@
     "typescript": "^5.9.3"
   },
   "scripts": {
-    "build": "bun build index-runtime.ts --outdir dist --target bun --format esm --external \"react\" --external \"react/*\" --external \"react-dom\" --external \"react-dom/*\" --external \"@get-bb/plugin-sdk\" --external \"@get-bb/plugin-sdk/*\" --external \"zod\" && bun build model-runtime.ts --outdir dist --target bun --format esm --external \"react\" --external \"react/*\" --external \"react-dom\" --external \"react-dom/*\" --external \"@get-bb/plugin-sdk\" --external \"@get-bb/plugin-sdk/*\" --external \"zod\" && bun build host-runtime.ts --outdir dist --target bun --format esm --external \"react\" --external \"react/*\" --external \"react-dom\" --external \"react-dom/*\" --external \"@get-bb/plugin-sdk\" --external \"@get-bb/plugin-sdk/*\" --external \"zod\" && bun build server-runtime.ts --outdir dist --target bun --format esm --external \"react\" --external \"react/*\" --external \"react-dom\" --external \"react-dom/*\" --external \"@get-bb/plugin-sdk\" --external \"@get-bb/plugin-sdk/*\" --external \"zod\" && bun build testing-runtime.ts --outdir dist --target bun --format esm --external \"react\" --external \"react/*\" --external \"react-dom\" --external \"react-dom/*\" --external \"@get-bb/plugin-sdk\" --external \"@get-bb/plugin-sdk/*\" --external \"zod\" && bun build state-runtime.ts --outdir dist --target bun --format esm --external \"react\" --external \"react/*\" --external \"react-dom\" --external \"react-dom/*\" --external \"@get-bb/plugin-sdk\" --external \"@get-bb/plugin-sdk/*\" --external \"zod\" && bun build bb-entry-runtime.ts --outdir dist --target bun --format esm --external \"react\" --external \"react/*\" --external \"react-dom\" --external \"react-dom/*\" --external \"@get-bb/plugin-sdk\" --external \"@get-bb/plugin-sdk/*\" --external \"zod\" && bun build client-entry-runtime.ts --outdir dist --target browser --format esm --external \"react\" --external \"react/*\" --external \"react-dom\" --external \"react-dom/*\" --external \"@get-bb/plugin-sdk\" --external \"@get-bb/plugin-sdk/*\" --external \"zod\" && bun build react-entry-runtime.ts --outdir dist --target browser --format esm --external \"react\" --external \"react/*\" --external \"react-dom\" --external \"react-dom/*\" --external \"@get-bb/plugin-sdk\" --external \"@get-bb/plugin-sdk/*\" --external \"zod\" && bun build state-service-runtime.ts --outdir dist --target bun --format esm --external \"react\" --external \"react/*\" --external \"react-dom\" --external \"react-dom/*\" --external \"@get-bb/plugin-sdk\" --external \"@get-bb/plugin-sdk/*\" --external \"zod\" && bun build state-controller-runtime.ts --outdir dist --target bun --format esm --external \"react\" --external \"react/*\" --external \"react-dom\" --external \"react-dom/*\" --external \"@get-bb/plugin-sdk\" --external \"@get-bb/plugin-sdk/*\" --external \"zod\" && bun build state-transport-runtime.ts --outdir dist --target bun --format esm --external \"react\" --external \"react/*\" --external \"react-dom\" --external \"react-dom/*\" --external \"@get-bb/plugin-sdk\" --external \"@get-bb/plugin-sdk/*\" --external \"zod\"",
+    "build": "bun build index-runtime.ts --outdir dist --target bun --format esm --external \"react\" --external \"react/*\" --external \"react-dom\" --external \"react-dom/*\" --external \"@get-bb/plugin-sdk\" --external \"@get-bb/plugin-sdk/*\" --external \"zod\" && bun build model-runtime.ts --outdir dist --target bun --format esm --external \"react\" --external \"react/*\" --external \"react-dom\" --external \"react-dom/*\" --external \"@get-bb/plugin-sdk\" --external \"@get-bb/plugin-sdk/*\" --external \"zod\" && bun build host-runtime.ts --outdir dist --target bun --format esm --external \"react\" --external \"react/*\" --external \"react-dom\" --external \"react-dom/*\" --external \"@get-bb/plugin-sdk\" --external \"@get-bb/plugin-sdk/*\" --external \"zod\" && bun build server-runtime.ts --outdir dist --target bun --format esm --external \"react\" --external \"react/*\" --external \"react-dom\" --external \"react-dom/*\" --external \"@get-bb/plugin-sdk\" --external \"@get-bb/plugin-sdk/*\" --external \"zod\" && bun build testing-runtime.ts --outdir dist --target bun --format esm --external \"react\" --external \"react/*\" --external \"react-dom\" --external \"react-dom/*\" --external \"@get-bb/plugin-sdk\" --external \"@get-bb/plugin-sdk/*\" --external \"zod\" && bun build state-runtime.ts --outdir dist --target bun --format esm --external \"react\" --external \"react/*\" --external \"react-dom\" --external \"react-dom/*\" --external \"@get-bb/plugin-sdk\" --external \"@get-bb/plugin-sdk/*\" --external \"zod\" && bun build bb-entry-runtime.ts --outdir dist --target bun --format esm --external \"react\" --external \"react/*\" --external \"react-dom\" --external \"react-dom/*\" --external \"@get-bb/plugin-sdk\" --external \"@get-bb/plugin-sdk/*\" --external \"zod\" && bun build client-entry-runtime.ts --outdir dist --target browser --format esm --external \"react\" --external \"react/*\" --external \"react-dom\" --external \"react-dom/*\" --external \"@get-bb/plugin-sdk\" --external \"@get-bb/plugin-sdk/*\" --external \"zod\" && bun build react-entry-runtime.ts --outdir dist --target browser --format esm --external \"react\" --external \"react/*\" --external \"react-dom\" --external \"react-dom/*\" --external \"@get-bb/plugin-sdk\" --external \"@get-bb/plugin-sdk/*\" --external \"zod\" && bun build state-service-runtime.ts --outdir dist --target bun --format esm --external \"react\" --external \"react/*\" --external \"react-dom\" --external \"react-dom/*\" --external \"@get-bb/plugin-sdk\" --external \"@get-bb/plugin-sdk/*\" --external \"zod\" && bun build state-controller-runtime.ts --outdir dist --target bun --format esm --external \"react\" --external \"react/*\" --external \"react-dom\" --external \"react-dom/*\" --external \"@get-bb/plugin-sdk\" --external \"@get-bb/plugin-sdk/*\" --external \"zod\" && bun build state-transport-runtime.ts --outdir dist --target bun --format esm --external \"react\" --external \"react/*\" --external \"react-dom\" --external \"react-dom/*\" --external \"@get-bb/plugin-sdk\" --external \"@get-bb/plugin-sdk/*\" --external \"zod\" && bun build native-runtime.ts native-testing-runtime.ts --outdir dist --target bun --format esm --external \"@get-bb/plugin-sdk\" --external \"@get-bb/plugin-sdk/*\" --external \"@phosphorco/bb-identity/native\" --external \"zod\" && bun build editing-runtime.ts --outdir dist --target browser --format esm --external \"react\" --external \"react/*\" --external \"react-dom\" --external \"react-dom/*\" --external \"@get-bb/plugin-sdk\" --external \"@get-bb/plugin-sdk/*\" --external \"zod\"",
     "test": "bun test ./type-tests/*.runtime.test.ts ./type-tests/*.runtime.test.mjs ./type-tests/client-runtime.test.mjs && node --experimental-strip-types --experimental-loader ./type-tests/source-ts-loader.mjs --test ./type-tests/portable-binding-acceptance.node.test.mjs",
     "typecheck": "tsc --noEmit",
     "browser-check": "PLAYWRIGHT_BROWSERS_PATH=0 bun ./type-tests/browser/run.mts"

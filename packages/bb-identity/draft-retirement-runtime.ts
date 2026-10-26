@@ -7,6 +7,8 @@ export interface DraftRetirementScope {
   readonly address: StateAddress;
   readonly actor: IdentityKey;
   readonly schemaVersion: number;
+  /** Opt-in shared publication partition; absent keeps legacy keys unchanged. */
+  readonly targetKey?: string;
 }
 export interface DraftRetirementOwner {
   begin(storage: object, scope: DraftRetirementScope, task: Promise<Result<void>>): void;
@@ -14,8 +16,8 @@ export interface DraftRetirementOwner {
   wait(storage: object, scope: DraftRetirementScope, signal?: AbortSignal): Promise<Result<void>>;
   dispose(): void;
 }
-const scopeKey = ({ address: a, actor, schemaVersion }: DraftRetirementScope) =>
-  JSON.stringify([a.instanceId, a.pluginId, a.collection, a.recordId, a.owner, actor, schemaVersion]);
+const scopeKey = ({ address: a, actor, schemaVersion, targetKey }: DraftRetirementScope) =>
+  JSON.stringify([a.instanceId, a.pluginId, a.collection, a.recordId, a.owner, actor, schemaVersion, ...(targetKey === undefined ? [] : [targetKey])]);
 
 /** One explicit UI provider creates this; independent providers never share it implicitly. */
 export function createDraftRetirementOwner(): DraftRetirementOwner {

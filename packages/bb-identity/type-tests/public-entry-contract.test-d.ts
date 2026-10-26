@@ -88,3 +88,9 @@ void publicBinding.http.route('POST', '/identity', {
     return context.json(profile);
   },
 }, { auth: 'local' });
+
+// Additive editing entry and React hooks remain explicit public exports.
+import { createIdentityEditingState, bindIdentityEditingState, editingCodecs, EDITING_PROTOCOL } from '../editing.js';
+import { useIdentityEditingBinding, useIdentityEditingSnapshot, useIdentityEditingPreservationFailures, useAcknowledgeIdentityEditingPreservationFailure } from '../react.js';
+type _EditingBinding = Assert<Equal<ReturnType<typeof useIdentityEditingBinding<string, string>>, import('../editing.js').IdentityEditingBinding<string, string> | null>>;
+void [createIdentityEditingState, bindIdentityEditingState, editingCodecs, EDITING_PROTOCOL, useIdentityEditingSnapshot, useIdentityEditingPreservationFailures, useAcknowledgeIdentityEditingPreservationFailure];

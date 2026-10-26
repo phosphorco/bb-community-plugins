@@ -11,6 +11,9 @@ import type {
 } from './client.js';
 import type { IdentityError, IdentityProfile, ProfilePresentation, Result } from './model.js';
 import type { ConflictContext, ConflictDecision, PendingDraft, SyncSnapshot } from './state.js';
+import type { EditingBindingOptions, EditingDraft, EditingSnapshot, IdentityEditingBinding } from './editing.js';
+import { bindIdentityEditingState } from './editing-runtime.js';
+import { canonicalEditingJson } from './editing-codecs-runtime.js';
 import { bindIdentityState } from './client-state-binding-runtime.js';
 import { createNativeIdentityConnection, nativeIdentityRealtimeChannel } from './bb-client-connection-runtime.js';
 import { createIdentityClient } from './client-runtime.js';
@@ -126,26 +129,28 @@ function selectableProfile(profile: IdentityProfile): boolean {
   return profile.identity.kind === 'person' || profile.identity.kind === 'default-user';
 }
 
-interface FailureSink {
-  report(draft: PendingDraft<unknown>, error: IdentityError): void;
+interface FailureRecord<D> { readonly generation: number; readonly draft: D; readonly error: IdentityError; }
+interface FailureSink<D = PendingDraft<unknown>> {
+  report(draft: D, error: IdentityError): void;
   acknowledge(generation: number): boolean;
-  snapshot(): readonly PreservationFailure[];
+  snapshot(): readonly FailureRecord<D>[];
   subscribe(listener: () => void): () => void;
   dispose(): void;
 }
 
-function createFailureSink(): FailureSink {
-  let disposed = false;
-  const listeners = new Set<() => void>();
-  /** Presentation only: this is not a second checkpoint/retry store. */
-  const entries = new Map<string, PreservationFailure>();
-  let current: readonly PreservationFailure[] = Object.freeze([]);
-  let nextGeneration = 0;
-  const keyFor = (draft: PendingDraft<unknown>) => JSON.stringify([
+const legacyFailureKey = (draft: PendingDraft<unknown>) => JSON.stringify([
     draft.key.address.instanceId, draft.key.address.pluginId, draft.key.address.collection,
     draft.key.address.recordId, draft.key.address.owner, draft.key.actor, draft.key.ownerSession,
     draft.schemaVersion,
   ]);
+
+function createFailureSink<D = PendingDraft<unknown>>(keyFor: (draft: D) => string): FailureSink<D> {
+  let disposed = false;
+  const listeners = new Set<() => void>();
+  /** Presentation only: this is not a second checkpoint/retry store. */
+  const entries = new Map<string, FailureRecord<D>>();
+  let current: readonly FailureRecord<D>[] = Object.freeze([]);
+  let nextGeneration = 0;
   const emit = () => { for (const listener of [...listeners]) try { listener(); } catch {} };
   return {
     report(draft, error) {
@@ -176,19 +181,23 @@ function createFailureSink(): FailureSink {
 interface ProviderRoot {
   readonly retirements: DraftRetirementOwner;
   readonly failures: FailureSink;
+  readonly editingFailures: FailureSink<EditingDraft<unknown, unknown>>;
   dispose(): void;
 }
 function createProviderRoot(): ProviderRoot {
   const retirements = createDraftRetirementOwner();
-  const failures = createFailureSink();
+  const failures = createFailureSink(legacyFailureKey);
+  const editingFailures = createFailureSink<EditingDraft<unknown, unknown>>(draft => JSON.stringify([
+    legacyFailureKey(draft.draft),
+  ]));
   let disposed = false;
   return {
-    retirements, failures,
+    retirements, failures, editingFailures,
     dispose() {
       if (disposed) return;
       disposed = true;
       /* This settles waiters but never cancels an already accepted preservation task. */
-      retirements.dispose(); failures.dispose();
+      retirements.dispose(); failures.dispose(); editingFailures.dispose();
     },
   };
 }
@@ -251,6 +260,10 @@ export interface IdentityReactRuntime {
   useNativeIdentityClient(): IdentityClient | null;
   /** Null until the binding's committed controller/view subscriptions are live. */
   useBoundIdentityState<T>(options: Omit<IdentityStateBindingOptions<T>, 'client' | 'view'> & StateBindingSource<T>): IdentityStateBinding<T> | null;
+  useBoundIdentityEditing<T, Target>(options: Omit<EditingBindingOptions<T, Target>, 'client' | 'view'>): IdentityEditingBinding<T, Target> | null;
+  useIdentityEditingSnapshot<T, Target>(binding: IdentityEditingBinding<T, Target> | null): EditingSnapshot<T, Target> | { readonly status: 'waiting-for-identity' };
+  useEditingPreservationFailures(): readonly FailureRecord<EditingDraft<unknown, unknown>>[];
+  useAcknowledgeEditingPreservationFailure(): (generation: number) => boolean;
   useIdentityStateSnapshot<T>(binding: IdentityStateBinding<T> | null): SyncSnapshot<T> | { readonly status: 'waiting-for-identity' };
   /** Existing declared view primitives, exposed only in this internal slice. */
   useIdentityViewSnapshot(): ViewSnapshot;
@@ -357,6 +370,43 @@ export function createIdentityReactRuntime(native: NativeIdentityReactHooks): Id
     /* Subscribe here so a hook consumer rerenders without inventing a second store. */
     useIdentityStateSnapshot(binding);
     return binding;
+  };
+
+  const useIdentityEditingSnapshot = <T, Target>(binding: IdentityEditingBinding<T, Target> | null): EditingSnapshot<T, Target> | typeof waitingForBinding =>
+    React.useSyncExternalStore(
+      React.useCallback(listener => binding?.subscribe(listener) ?? (() => {}), [binding]),
+      React.useCallback(() => binding?.getSnapshot() ?? waitingForBinding, [binding]),
+      React.useCallback(() => binding?.getSnapshot() ?? waitingForBinding, [binding]),
+    );
+  const useBoundIdentityEditing = <T, Target>(options: Omit<EditingBindingOptions<T, Target>, 'client' | 'view'>): IdentityEditingBinding<T, Target> | null => {
+    const root = requireContext(React.useContext(ViewContext), 'useIdentityEditingBinding');
+    const callbacks = React.useRef({ create: options.create, failure: options.onUnpersistedDraft });
+    React.useLayoutEffect(() => { callbacks.current = { create: options.create, failure: options.onUnpersistedDraft }; }, [options.create, options.onUnpersistedDraft]);
+    // Semantic target identity survives harmless object/callback recreation.
+    const targetKey = canonicalEditingJson(options.targetCodec.encode(options.target));
+    const key = React.useMemo(() => ({ root, targetKey, resourceKey: options.resourceKey }), [root, targetKey, options.resourceKey]);
+    const binding = useCommittedResource(key, () => bindIdentityEditingState({
+      ...options, client: root.client, view: root.view,
+      create: input => callbacks.current.create(input),
+      onUnpersistedDraft(draft, error) {
+        root.root.editingFailures.report(draft, error);
+        try { callbacks.current.failure?.(draft, error); } catch {}
+      },
+    }, root.root.retirements), value => value.dispose());
+    useIdentityEditingSnapshot(binding);
+    return binding;
+  };
+  const useEditingPreservationFailures = (): readonly FailureRecord<EditingDraft<unknown, unknown>>[] => {
+    const root = requireContext(React.useContext(ProviderContext), 'useIdentityEditingPreservationFailures');
+    return React.useSyncExternalStore(
+      React.useCallback(listener => root.root.editingFailures.subscribe(listener), [root.root]),
+      React.useCallback(() => root.root.editingFailures.snapshot(), [root.root]),
+      React.useCallback(() => root.root.editingFailures.snapshot(), [root.root]),
+    );
+  };
+  const useAcknowledgeEditingPreservationFailure = (): ((generation: number) => boolean) => {
+    const root = requireContext(React.useContext(ProviderContext), 'useAcknowledgeIdentityEditingPreservationFailure');
+    return React.useCallback(generation => root.root.editingFailures.acknowledge(generation), [root.root]);
   };
 
   const useIdentityViewSnapshot = (): ViewSnapshot => {
@@ -637,7 +687,7 @@ export function createIdentityReactRuntime(native: NativeIdentityReactHooks): Id
 
   return { Provider, Context, IdentityAvatar, IdentityLabel, IdentityViewPicker, IdentityViewStatus,
     useBorrowedIdentityClient, useIdentitySession, useNativeIdentityConnection, useNativeIdentityClient,
-    useBoundIdentityState, useIdentityStateSnapshot, useIdentityViewSnapshot, useIdentityViewActions,
+    useBoundIdentityState, useIdentityStateSnapshot, useBoundIdentityEditing, useIdentityEditingSnapshot, useEditingPreservationFailures, useAcknowledgeEditingPreservationFailure, useIdentityViewSnapshot, useIdentityViewActions,
     usePreservationFailures, useAcknowledgePreservationFailure };
 }
 
