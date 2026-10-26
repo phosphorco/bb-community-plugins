@@ -286,12 +286,13 @@ jobs:
       - name: Publish only the reviewed pinned-next tgz
         if: ${{ steps.release.outputs.pinned_next == 'true' && !inputs.dry_run }}
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          # Pinned release uses only the current GitHub OIDC exchange.
+          NODE_AUTH_TOKEN: ''
         shell: bash
         run: |
           python3 .github/scripts/bb-identity-next-release.py preflight
           publish_status=0
-          npm publish release-candidate/phosphorco-bb-identity-0.4.0.tgz --registry https://registry.npmjs.org/ --access public --tag next --ignore-scripts --provenance --json > publication-result.json 2> publication-error.log || publish_status=$?
+          python3 .github/scripts/bb-identity-next-release.py publish > publication-result.json 2> publication-error.log || publish_status=$?
           printf '{"exitCode":%s}\n' "$publish_status" > publication-status.json
           postflight_status=0
           python3 .github/scripts/bb-identity-next-release.py postflight || postflight_status=$?

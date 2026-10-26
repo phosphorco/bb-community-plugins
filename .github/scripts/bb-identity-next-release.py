@@ -10,6 +10,7 @@ import re
 import stat
 import subprocess
 import sys
+import tempfile
 import tarfile
 import zipfile
 
@@ -217,6 +218,29 @@ def postflight():
     receipt = json.loads((OUT / RECEIPT).read_text())
     require(dist.get('exitCode') == 0 and isinstance(dist.get('value'), dict) and dist['value'].get('integrity') == receipt['payload']['integrity'] and dist['value'].get('shasum') == receipt['payload']['shasum'], 'Published integrity differs or is unresolved; inspect without retry')
 
+def publish():
+    archive = (OUT / TGZ).resolve(strict=True)
+    require(digest(bounded_file(archive)) == os.environ['EXPECTED_PAYLOAD_SHA256'], 'Reviewed publish payload drift')
+    require(not any(os.path.lexists(p) for p in ('.npmrc', PACKAGE + '/.npmrc')), 'Unexpected project npmrc; refuse publish')
+    require(json.loads(Path(PACKAGE, 'package.json').read_text()).get('publishConfig') == {'access': 'public'}, 'Unexpected publishConfig')
+    with tempfile.TemporaryDirectory(prefix='bb-identity-oidc-publish-') as isolated:
+        user = Path(isolated, 'user.npmrc')
+        global_config = Path(isolated, 'global.npmrc')
+        user.write_text('')
+        global_config.write_text('')
+        # No inherited npm settings, credentials or direct token overrides.
+        # Current GitHub OIDC request and CI/provenance context remain intact.
+        blocked = {'NODE_AUTH_TOKEN', 'NPM_TOKEN', 'NPM_AUTH_TOKEN', 'NPM_ID_TOKEN', 'SIGSTORE_ID_TOKEN', 'NPM_USERNAME', 'NPM_PASSWORD'}
+        env = {k: v for k, v in os.environ.items() if not k.lower().startswith('npm_config_') and k.upper() not in blocked}
+        env.update(NODE_AUTH_TOKEN='', NPM_TOKEN='', NPM_ID_TOKEN='')
+        result = subprocess.run([
+            'npm', 'publish', str(archive), '--registry', 'https://registry.npmjs.org/',
+            '--access', 'public', '--tag', 'next', '--ignore-scripts', '--provenance', '--json',
+            '--userconfig', str(user), '--globalconfig', str(global_config),
+            '--prefix', isolated, '--cache', str(Path(isolated, 'cache')),
+        ], cwd=isolated, env=env)
+    raise SystemExit(result.returncode if result.returncode >= 0 else 128 - result.returncode)
+
 if __name__ == '__main__':
-    require(len(sys.argv) == 2 and sys.argv[1] in ('capture', 'download', 'verify', 'preflight', 'postflight'), 'Expected capture/download/verify/preflight/postflight')
+    require(len(sys.argv) == 2 and sys.argv[1] in ('capture', 'download', 'verify', 'preflight', 'postflight', 'publish'), 'Expected capture/download/verify/preflight/postflight/publish')
     globals()[sys.argv[1]]()
