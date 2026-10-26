@@ -26,6 +26,29 @@ on:
         type: boolean
         default: false
         description: Verify the release and upload a receipt without publishing
+      dist_tag:
+        description: npm dist-tag; pinned bb-identity candidate requires next
+        type: choice
+        default: latest
+        options: [latest, next]
+      expected_sha:
+        description: Exact checked-out commit for pinned bb-identity next
+        type: string
+      expected_version:
+        description: Exact package version for pinned bb-identity next (0.4.0)
+        type: string
+      proof_run_id:
+        description: Reviewed successful dry-run ID; required for pinned-next publish
+        type: string
+      expected_payload_sha256:
+        description: Reviewed dry-run tgz SHA256; required for pinned-next publish
+        type: string
+      expected_preflight_tags:
+        description: Exact owner-approved preflight dist-tags JSON for final publish
+        type: string
+      expected_receipt_sha256:
+        description: Reviewed dry-run receipt SHA256; required for pinned-next publish
+        type: string
   push:
     tags:
       - "message-timings-nerd/v*"
@@ -45,6 +68,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
   id-token: write
 
 concurrency:
@@ -55,6 +79,13 @@ jobs:
   publish:
     if: github.repository == 'phosphorco/bb-community-plugins'
     runs-on: ubuntu-latest
+    env:
+      EXPECTED_SHA: ${{ inputs.expected_sha }}
+      EXPECTED_VERSION: ${{ inputs.expected_version }}
+      PROOF_RUN_ID: ${{ inputs.proof_run_id }}
+      EXPECTED_PAYLOAD_SHA256: ${{ inputs.expected_payload_sha256 }}
+      EXPECTED_RECEIPT_SHA256: ${{ inputs.expected_receipt_sha256 }}
+      EXPECTED_PREFLIGHT_TAGS: ${{ inputs.expected_preflight_tags }}
     steps:
       - name: Check out the release
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
@@ -62,6 +93,7 @@ jobs:
           fetch-depth: 0
 
       - name: Acquire the exact fork SDK release artifact
+        if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.plugin == 'bb-identity' && inputs.dist_tag == 'next' && !inputs.dry_run) }}
         # SDK archives are retained outside Git. Verify immutable selected bytes.
         shell: bash
         run: |
@@ -83,13 +115,16 @@ jobs:
       - name: Upgrade npm for trusted publishing
         run: npm install -g npm@^11.5.1
 
-      - name: Select and verify the tagged package
+      - name: Select and verify the release source
         id: release
         shell: bash
         env:
           REQUESTED_PLUGIN: ${{ inputs.plugin }}
+          REQUESTED_DIST_TAG: ${{ inputs.dist_tag || 'latest' }}
           DRY_RUN: ${{ inputs.dry_run || false }}
         run: |
+          dist_tag="${REQUESTED_DIST_TAG:-latest}"
+          case "$dist_tag" in latest|next) ;; *) echo "Unsupported npm dist-tag" >&2; exit 1 ;; esac
           plugin="${REQUESTED_PLUGIN:-${GITHUB_REF_NAME%%/*}}"
           case "$plugin" in
             message-timings-nerd) workspace="@phosphorco/bb-plugin-message-timings-nerd" ;;
@@ -113,45 +148,89 @@ jobs:
             *) path="plugins/$plugin" ;;
           esac
           package_version="$(npm pkg get version --workspace "$workspace" | node -e 'let input=""; process.stdin.on("data", chunk => input += chunk); process.stdin.on("end", () => console.log(Object.values(JSON.parse(input))[0]))')"
-          release_tag="$plugin/v$package_version"
-          test "$GITHUB_EVENT_NAME" = "workflow_dispatch" || test "$GITHUB_REF_NAME" = "$release_tag" || {
-            echo "Tag $GITHUB_REF_NAME does not match $workspace@$package_version" >&2
-            exit 1
-          }
-          if tag_commit="$(git rev-parse -q --verify "refs/tags/$release_tag^{commit}")"; then
-            git diff --quiet "$tag_commit" HEAD -- "$path" || {
-              echo "The tagged $plugin source differs from the requested workflow revision" >&2
+          pinned_next=false
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ] && [ "$plugin" = "bb-identity" ] && [ "$dist_tag" = "next" ]; then
+            [[ "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "Expected an exact lower-case source SHA" >&2; exit 1; }
+            test "$EXPECTED_VERSION" = "0.4.0" && test "$package_version" = "$EXPECTED_VERSION" || { echo "Pinned package version drift" >&2; exit 1; }
+            test "$(git rev-parse HEAD)" = "$EXPECTED_SHA" && test "$GITHUB_SHA" = "$EXPECTED_SHA" || { echo "Pinned checkout SHA drift" >&2; exit 1; }
+            if [ "$DRY_RUN" != "true" ]; then
+              [[ "$PROOF_RUN_ID" =~ ^[1-9][0-9]{0,19}$ ]] && [[ "$EXPECTED_PAYLOAD_SHA256" =~ ^[0-9a-f]{64}$ ]] && [[ "$EXPECTED_RECEIPT_SHA256" =~ ^[0-9a-f]{64}$ ]] || { echo "Reviewed dry-run ID and payload/receipt hashes required" >&2; exit 1; }
+            fi
+            pinned_next=true
+            echo "Pinned manual next release: tag prerequisite bypassed for $EXPECTED_SHA@$EXPECTED_VERSION"
+          else
+            if [ "$plugin" = "bb-identity" ] && [ "$package_version" = "0.4.0" ] && [ "$DRY_RUN" != "true" ]; then
+              echo "bb-identity0.4.0 requires pinned manual dist_tag=next; automatic/default publication refused" >&2
+              exit 1
+            fi
+            release_tag="$plugin/v$package_version"
+            test "$GITHUB_EVENT_NAME" = "workflow_dispatch" || test "$GITHUB_REF_NAME" = "$release_tag" || {
+              echo "Tag $GITHUB_REF_NAME does not match $workspace@$package_version" >&2
               exit 1
             }
-          elif [ "$DRY_RUN" = "true" ]; then
-            # A dry run may prove a release before its tag exists; it verifies the dispatched revision and never publishes.
-            echo "dry run before tag $release_tag: verifying $path at $GITHUB_SHA"
-          else
-            echo "Release tag $release_tag does not exist" >&2
-            exit 1
+            if tag_commit="$(git rev-parse -q --verify "refs/tags/$release_tag^{commit}")"; then
+              git diff --quiet "$tag_commit" HEAD -- "$path" || {
+                echo "The tagged $plugin source differs from the requested workflow revision" >&2
+                exit 1
+              }
+            elif [ "$DRY_RUN" = "true" ]; then
+              # A dry run may prove a release before its tag exists; it verifies the dispatched revision and never publishes.
+              echo "dry run before tag $release_tag: verifying $path at $GITHUB_SHA"
+            else
+              echo "Release tag $release_tag does not exist" >&2
+              exit 1
+            fi
           fi
           echo "workspace=$workspace" >> "$GITHUB_OUTPUT"
           echo "path=$path" >> "$GITHUB_OUTPUT"
           echo "plugin=$plugin" >> "$GITHUB_OUTPUT"
+          echo "version=$package_version" >> "$GITHUB_OUTPUT"
+          echo "dist_tag=$dist_tag" >> "$GITHUB_OUTPUT"
+          echo "pinned_next=$pinned_next" >> "$GITHUB_OUTPUT"
 
       - name: Install locked dependencies
+        if: ${{ steps.release.outputs.pinned_next != 'true' || inputs.dry_run }}
         run: npm ci
 
       - name: Build shared packages for tests
+        if: ${{ steps.release.outputs.pinned_next != 'true' || inputs.dry_run }}
         # Packages test against their own dist, and plugins import the workspace-linked packages' dist.
         run: npm run build --workspace packages/bb-identity --workspace packages/bb-provider-settings --workspace packages/bb-context-recognition --workspace packages/bb-cross-references --workspace packages/bb-agent-connection
 
       - name: Test
+        if: ${{ steps.release.outputs.pinned_next != 'true' || inputs.dry_run }}
         run: npm run test --workspace "${{ steps.release.outputs.workspace }}"
 
       - name: Typecheck
+        if: ${{ steps.release.outputs.pinned_next != 'true' || inputs.dry_run }}
         run: npm run typecheck --workspace "${{ steps.release.outputs.workspace }}"
 
       - name: Build BB artifacts
+        if: ${{ steps.release.outputs.pinned_next != 'true' }}
         run: npm run build --workspace "${{ steps.release.outputs.workspace }}"
 
       - name: Inspect package contents
+        if: ${{ steps.release.outputs.pinned_next != 'true' }}
         run: npm pack --dry-run --ignore-scripts --workspace "${{ steps.release.outputs.workspace }}"
+
+      - name: Pack the pinned-next dry-run payload once
+        if: ${{ steps.release.outputs.pinned_next == 'true' && inputs.dry_run }}
+        shell: bash
+        run: |
+          mkdir release-candidate
+          npm pack --ignore-scripts --json --workspace @phosphorco/bb-identity --pack-destination release-candidate > release-candidate/pack.json
+          python3 .github/scripts/bb-identity-next-release.py capture
+
+      - name: Upload exact pinned-next dry-run payload and receipt
+        if: ${{ steps.release.outputs.pinned_next == 'true' && inputs.dry_run }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: bb-identity-next-${{ inputs.expected_sha }}-${{ github.run_id }}
+          path: |
+            release-candidate/phosphorco-bb-identity-0.4.0.tgz
+            release-candidate/package-receipt.json
+          if-no-files-found: error
+          retention-days: 14
 
       - name: Write release receipt
         if: ${{ always() }}
@@ -160,6 +239,8 @@ jobs:
           RELEASE_WORKSPACE: ${{ steps.release.outputs.workspace }}
           RELEASE_PATH: ${{ steps.release.outputs.path }}
           RELEASE_PLUGIN: ${{ steps.release.outputs.plugin }}
+          RELEASE_VERSION: ${{ steps.release.outputs.version }}
+          RELEASE_DIST_TAG: ${{ steps.release.outputs.dist_tag }}
         run: |
           node <<'NODE'
           const fs = require('node:fs');
@@ -171,6 +252,8 @@ jobs:
             path: process.env.RELEASE_PATH,
             sha: process.env.GITHUB_SHA,
             plugin: process.env.RELEASE_PLUGIN,
+            version: process.env.RELEASE_VERSION,
+            distTag: process.env.RELEASE_DIST_TAG,
           }) + '\n');
           if (dryRun) console.log(`dry run: ${workspace}`);
           NODE
@@ -184,10 +267,53 @@ jobs:
           if-no-files-found: error
 
       - name: Publish public package
-        if: ${{ !inputs.dry_run }}
+        if: ${{ !inputs.dry_run && steps.release.outputs.pinned_next != 'true' }}
         # The repository is public, so every release carries SLSA provenance.
-        run: npm publish --ignore-scripts --access public --provenance --workspace "${{ steps.release.outputs.workspace }}"
+        run: npm publish --ignore-scripts --access public --provenance --workspace "$RELEASE_WORKSPACE" --tag "$RELEASE_DIST_TAG"
         env:
+          RELEASE_WORKSPACE: ${{ steps.release.outputs.workspace }}
+          RELEASE_DIST_TAG: ${{ steps.release.outputs.dist_tag }}
           # Only needed for a package's first release. Once npm trusted publishing
           # is configured, npm uses GitHub OIDC before falling back to this token.
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Download and verify the exact reviewed pinned-next dry-run artifact
+        if: ${{ steps.release.outputs.pinned_next == 'true' && !inputs.dry_run }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 .github/scripts/bb-identity-next-release.py download
+
+      - name: Publish only the reviewed pinned-next tgz
+        if: ${{ steps.release.outputs.pinned_next == 'true' && !inputs.dry_run }}
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        shell: bash
+        run: |
+          python3 .github/scripts/bb-identity-next-release.py preflight
+          publish_status=0
+          npm publish release-candidate/phosphorco-bb-identity-0.4.0.tgz --registry https://registry.npmjs.org/ --access public --tag next --ignore-scripts --provenance --json > publication-result.json 2> publication-error.log || publish_status=$?
+          printf '{"exitCode":%s}\n' "$publish_status" > publication-status.json
+          postflight_status=0
+          python3 .github/scripts/bb-identity-next-release.py postflight || postflight_status=$?
+          printf '{"exitCode":%s}\n' "$postflight_status" > postflight-status.json
+          if [ "$publish_status" -ne 0 ]; then
+            echo "Publish returned $publish_status; postflight ran once; inspect retained receipts before any retry" >&2
+            exit "$publish_status"
+          fi
+          exit "$postflight_status"
+
+      - name: Upload pinned-next publication selection and outcome
+        if: ${{ always() && steps.release.outputs.pinned_next == 'true' && !inputs.dry_run }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: bb-identity-next-publication-${{ github.run_id }}
+          path: |
+            artifact-selection.json
+            publication-result.json
+            publication-error.log
+            publication-status.json
+            postflight-status.json
+            registry-before.json
+            registry-after.json
+            release-candidate/package-receipt.json
+          if-no-files-found: warn
