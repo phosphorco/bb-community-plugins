@@ -100,6 +100,30 @@ Optional genuine history may contain an integration assertion or execution
 correlation; that assertion retains its original basis and does not silently
 populate stronger native lineage fields.
 
+## Recorded external people
+
+`NativeEvent`, `NativeActor` and `NativeMention` retain their actual public SDK
+meanings. `NativeSourceActor = NativeActor | ExternalPersonSnapshotV1` is a
+separate package-owned recorded-source capability. `NativeSourceEvent` derives
+all event fields from the SDK and overlays only the request's optional,
+group-parallel `p6rAuthors`/`p6rEditors` arrays with that actor type. Ordinary SDK
+event arrays remain assignable to `NativeSourceSnapshot.events`.
+
+The adapter validates recorded external people through the existing public
+`externalPersonSnapshotCodec`. It preserves `evidence: 'integration-asserted'`,
+identity and presentation; it never promotes that evidence to provider-verified.
+Author and latest editor remain independently indexed by group. Invalid asserted
+people return invalid-input; missing or misaligned arrays remain unknown.
+
+For typed recorded input, decode the actor with that codec and use the successful
+value in an event satisfying `NativeSourceEvent`. This explicit source input is
+not an augmentation of the SDK. The inspected fork's host source admits such
+assertions, while its consumed SDK version still excludes them; assigning the
+richer event to that stale `NativeEvent` is a type error. Public SDK 0.6.31 lacks
+the attribution properties entirely. The package seam does not establish that
+any baseline or live producer records them. Actual producer and adopter evidence
+remain separate gates. Assistant authorship and personal lineage remain unchanged.
+
 ## Retained terminal output join
 
 The adapter uses the supported public `threads.timeline` projection. It does
@@ -170,7 +194,8 @@ their previous contract. The current declaration witness uses installed SDK
 `0.6.52+phosphor.975e38f02f1a.sdk.12eb78c20820`, including optional native
 p6rAuthors/p6rEditors/p6rMentionedTargets. NativeActor and NativeMention derive
 conditionally from the SDK's public optional properties; when absent (as in public
-SDK 0.6.31), their member types are never and source attribution remains null/empty.
+SDK 0.6.31), their member types are never. Snapshots without recorded attribution
+retain null authors/editors and empty mentions; user dispatch never supplies a person.
 No fork property or protocol is copied to emulate a missing capability. Public
 0.6.31 all-entry declarations and its minimal native calls are a separate actual-peer
 conformance job, without skipLibCheck; missing upstream declaration dependencies
@@ -187,7 +212,8 @@ case lists; it does not substitute a fake adapter or assert live coverage.
 Package source fixtures cover human/machine/agent dispatch, author/editor/mention
 separation, multiple requests/groups sharing a turn, commentary/final and
 failed/interrupted delta projections, exact joins and refusals, missing lineage,
-bounds, and actual optional reader outcomes. These are synthetic SDK snapshots.
+bounds, and actual optional reader outcomes. These are synthetic SDK and recorded-source snapshots, including codec-validated
+external assertions; none establishes a live producer fact.
 Public declarations, emitted entries and a scratch packed consumer are separate
 package proofs. Registry publication, exact-version consumer adoption,
 producer/live fixtures, rewrite/outage/restart and host acceptance remain

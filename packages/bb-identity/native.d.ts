@@ -1,6 +1,6 @@
 /** Additive native evidence. Importing existing entries does not require these SDK capabilities. */
 import type { PluginBbSdk } from '@get-bb/plugin-sdk';
-import type { Contribution, EvidencePage, ExecutionProvenance, ProvenanceReader, ReadOptions, Result } from './model.js';
+import type { Contribution, EvidencePage, ExecutionProvenance, ExternalPersonSnapshotV1, ProvenanceReader, ReadOptions, Result } from './model.js';
 
 export type NativeEvent = Awaited<ReturnType<PluginBbSdk['threads']['events']['list']>>[number];
 export type NativeTimeline = Awaited<ReturnType<PluginBbSdk['threads']['timeline']>>;
@@ -11,6 +11,20 @@ type NativeArrayMember<T, Key extends PropertyKey> = Key extends keyof T
   : never;
 export type NativeActor = NativeArrayMember<RequestData, 'p6rAuthors'>;
 export type NativeMention = NativeArrayMember<RequestData, 'p6rMentionedTargets'>;
+/** Recorded source attribution may also carry the existing shared external-person assertion.
+ * This does not add a capability to the consumed SDK or change its NativeActor type. */
+export type NativeSourceActor = NativeActor | ExternalPersonSnapshotV1;
+type NativeRequestEvent = Extract<NativeEvent, { type: 'client/turn/requested' }>;
+/** Package-owned recorded-source seam, derived from the public SDK request shape.
+ * Ordinary SDK events remain assignable; richer recorded assertions need this input type. */
+export type NativeSourceEvent = Exclude<NativeEvent, { type: 'client/turn/requested' }> | (
+  Omit<NativeRequestEvent, 'data'> & {
+    readonly data: Omit<RequestData, 'p6rAuthors' | 'p6rEditors'> & {
+      readonly p6rAuthors?: readonly (NativeSourceActor | null)[] | undefined;
+      readonly p6rEditors?: readonly (NativeSourceActor | null)[] | undefined;
+    };
+  }
+);
 export type NativeSourceReference =
   | { readonly kind: 'request-group'; readonly threadId: string; readonly eventId: string; readonly requestId: string; readonly groupIndex: number }
   | { readonly kind: 'event'; readonly threadId: string; readonly eventId: string }
@@ -18,8 +32,8 @@ export type NativeSourceReference =
   | { readonly kind: 'assistant-terminal'; readonly threadId: string; readonly terminalEventId: string; readonly scope: { readonly turnId: string } };
 export interface NativeSourceSnapshot {
   readonly source: NativeSourceReference;
-  /** Retained public threads.events.list results. Gaps are not proof of deletion or completeness. */
-  readonly events: readonly NativeEvent[];
+  /** Retained public threads.events.list results or recorded-source events. Gaps are not proof of deletion or completeness. */
+  readonly events: readonly NativeSourceEvent[];
   /** Public threads.timeline result with content and nested rows requested. No internal projection imports. */
   readonly timeline?: NativeTimeline;
 }
@@ -51,8 +65,8 @@ export interface NativeSourceEvidence {
   readonly basis: 'public-sdk-native';
   /** Dispatch role does not establish a human identity. Assistant output always remains assistant. */
   readonly origin: 'assistant' | 'agent' | 'user' | 'system' | 'unknown';
-  readonly author: NativeActor | null;
-  readonly latestEditor: NativeActor | null;
+  readonly author: NativeSourceActor | null;
+  readonly latestEditor: NativeSourceActor | null;
   /** Targets are request-wide: never silently assigned to an individual group. */
   readonly mentionedTargets: readonly NativeMention[];
   readonly dispatch: { readonly initiator: RequestData['initiator']; readonly source: RequestData['source']; readonly senderThreadId: string | null } | null;

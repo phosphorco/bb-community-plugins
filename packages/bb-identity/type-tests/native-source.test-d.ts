@@ -1,6 +1,7 @@
 import type { PluginBbSdk } from '@get-bb/plugin-sdk';
 import { createNativeSourceAdapter } from '../native.js';
-import type { NativeEvent, NativeSourceReference, NativeTimeline } from '../native.js';
+import type { NativeEvent, NativeSourceEvent, NativeSourceActor, NativeSourceReference, NativeTimeline } from '../native.js';
+import { externalPersonSnapshotCodec } from '../model.js';
 import { defineNativeSourceConformance } from '../native-testing.js';
 
 declare const sdk: PluginBbSdk;
@@ -31,3 +32,21 @@ const event: NativeEvent = {
 };
 defineNativeSourceConformance({ test: (_name, _run) => {}, resolve: adapter.resolve, cases: [{ name: 'public source contract', snapshot: { source: { kind: 'event', threadId: 'thread', eventId: 'event' }, events: [event] }, verify: _result => {} }] });
 void [publicSdkWitness, source, missingTurn, inventedAttempt];
+
+// The existing shared codec owns the external assertion, including branded identity.
+const asserted = externalPersonSnapshotCodec.decode({
+  identity: { kind: 'person', key: 'person:external', issuer: 'fixture', subject: 'external' },
+  presentation: { displayName: 'external', handle: null, avatarUrl: null }, evidence: 'integration-asserted',
+});
+if (asserted.ok) {
+  const sourceActor: NativeSourceActor = asserted.value;
+  const recorded = { ...event, data: { ...event.data, p6rAuthors: [sourceActor], p6rEditors: [asserted.value] } } satisfies NativeSourceEvent;
+  adapter.resolve({ source: { kind: 'event', threadId: 'thread', eventId: 'event' }, events: [recorded] });
+  // @ts-expect-error the consumed SDK does not declare integration-asserted people
+  const staleSdkEvent: NativeEvent = recorded;
+  void staleSdkEvent;
+}
+// Every ordinary public SDK event remains accepted without a cast or SDK augmentation.
+declare const ordinarySdkEvents: readonly NativeEvent[];
+const recordedEvents: readonly NativeSourceEvent[] = ordinarySdkEvents;
+void recordedEvents;

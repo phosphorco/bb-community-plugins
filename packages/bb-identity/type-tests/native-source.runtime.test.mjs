@@ -2,6 +2,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'bun:test';
 import { createNativeSourceAdapter, NATIVE_SOURCE_LIMITS } from '@phosphorco/bb-identity/native';
+import { externalPersonSnapshotCodec } from '@phosphorco/bb-identity/model';
 import { defineNativeSourceConformance } from '@phosphorco/bb-identity/native/testing';
 const adapter = createNativeSourceAdapter();
 const actor = name => ({ identity: { kind: 'person', key: `person:${name}`, issuer: 'fixture', subject: name }, presentation: { displayName: name, handle: null, avatarUrl: null }, evidence: 'provider-verified' });
@@ -121,4 +122,73 @@ test('missing/unsupported source events never borrow unrelated request links or 
     const e = value(adapter.resolve({ source: candidate, events, timeline: projection }));
     assert.deepEqual(e.inputs, []); assert.deepEqual(e.text, []); assert.equal(e.origin, 'unknown'); assert.equal(e.coverage.attribution.status, 'unknown'); assert.equal(e.coverage.execution.status, 'unknown');
   }
+});
+
+// Recorded assertions are validated by the public shared model, not branded here.
+const assertedPerson = name => value(externalPersonSnapshotCodec.decode({ ...actor(name), evidence: 'integration-asserted' }));
+const assertedAuthor = assertedPerson('asserted-author'), assertedEditor = assertedPerson('asserted-editor');
+const groupSource = groupIndex => ({ kind: 'request-group', threadId: 'thread', eventId: 'event-1', requestId: 'creq_asserted', groupIndex });
+const assertedRequest = (authors, editors, groups = [[text('first')]]) => ({ ...request(1, 'creq_asserted', groups, authors), data: { ...request(1, 'creq_asserted', groups, authors).data, p6rAuthors: authors, p6rEditors: editors } });
+const assertUnknownLineage = e => {
+  assert.equal(e.initiatingPerson.status, 'unknown'); assert.equal(e.carriedPerson.status, 'unknown');
+  assert.equal(e.delegation.status, 'unknown'); assert.equal(e.agentId, null); assert.equal(e.coverage.personalLineage.status, 'unknown');
+};
+test('recorded asserted author and editor independently retain exact model evidence and identity', () => {
+  for (const [authors, editors, expectedAuthor, expectedEditor] of [
+    [[assertedAuthor], undefined, assertedAuthor, null],
+    [undefined, [assertedEditor], null, assertedEditor],
+    [[assertedAuthor], [assertedEditor], assertedAuthor, assertedEditor],
+  ]) {
+    const e = value(adapter.resolve({ source: groupSource(0), events: [assertedRequest(authors, editors)] }));
+    assert.deepEqual(e.author, expectedAuthor); assert.deepEqual(e.latestEditor, expectedEditor);
+    if (e.author) assert.equal(e.author.evidence, 'integration-asserted');
+    if (e.latestEditor) assert.equal(e.latestEditor.evidence, 'integration-asserted');
+    assert.equal(e.origin, 'user'); assert.deepEqual(e.history, []); assertUnknownLineage(e);
+  }
+});
+test('different indexed recorded people never leak between author/editor groups or missing arrays', () => {
+  const otherAuthor = assertedPerson('second-author'), otherEditor = assertedPerson('second-editor');
+  const groups = [[text('one')], [text('two')]];
+  const r = assertedRequest([assertedAuthor, otherAuthor], [assertedEditor, otherEditor], groups);
+  for (const [index, a, ed] of [[0, assertedAuthor, assertedEditor], [1, otherAuthor, otherEditor]]) {
+    const e = value(adapter.resolve({ source: groupSource(index), events: [r] }));
+    assert.deepEqual(e.author, a); assert.deepEqual(e.latestEditor, ed); assert.equal(e.text[0].text, groups[index][0].text);
+  }
+  for (const [authors, editors] of [[undefined, undefined], [[assertedAuthor], [assertedEditor]], [[null, assertedAuthor], [assertedEditor, null]]]) {
+    const e = value(adapter.resolve({ source: groupSource(0), events: [assertedRequest(authors, editors, groups)] }));
+    assert.equal(e.author, null);
+    if (editors?.length === 2) assert.deepEqual(e.latestEditor, assertedEditor); else assert.equal(e.latestEditor, null);
+    assertUnknownLineage(e);
+  }
+});
+test('malformed assertions cannot become recorded people or masquerade as machine/default-user identities', () => {
+  const malformed = [
+    { ...assertedAuthor, identity: { ...assertedAuthor.identity, key: '' } },
+    { ...assertedAuthor, identity: { ...assertedAuthor.identity, issuer: '' } },
+    { ...assertedAuthor, identity: { ...assertedAuthor.identity, subject: '' } },
+    { ...assertedAuthor, identity: { kind: 'default-user', key: 'default-user:fixture', instanceId: 'instance' } },
+    { ...machine, evidence: 'integration-asserted' },
+    { ...assertedAuthor, identity: { ...assertedAuthor.identity, kind: 'machine' } },
+    { ...assertedAuthor, presentation: { displayName: 'label only' } },
+    { ...assertedAuthor, extra: 'not part of shared external person' },
+    { ...assertedAuthor, evidence: 'asserted' },
+  ];
+  for (const actor of malformed) {
+    assert.equal(externalPersonSnapshotCodec.decode(actor).ok, false);
+    for (const [authors, editors] of [[[actor], [assertedEditor]], [[assertedAuthor], [actor]]]) {
+      const r = adapter.resolve({ source: groupSource(0), events: [assertedRequest(authors, editors)] });
+      assert.equal(r.ok, false); assert.equal(r.error.code, 'invalid-input');
+    }
+  }
+});
+test('assistant cause links to asserted input never become output people or personal lineage', async () => {
+  const r = assertedRequest([assertedAuthor], [assertedEditor]);
+  const snap = { source, events: [r, accept(2, 'creq_asserted'), delta(6, 'answer', 'Retained answer'), terminal()], timeline: timeline([assistantRow('answer-row', 6, 6, 'Retained answer')]) };
+  const e = value(adapter.resolve(snap));
+  assert.equal(e.origin, 'assistant'); assert.equal(e.author, null); assert.equal(e.latestEditor, null); assert.deepEqual(e.mentionedTargets, []);
+  assert.equal(e.inputs[0].requestEventId, 'event-1'); assert.equal(e.text[0].text, 'Retained answer'); assertUnknownLineage(e);
+  const actual = { ok: true, value: { status: 'pending' } };
+  const reader = createNativeSourceAdapter({ history: { async contributions() { return actual; }, async attempts() { throw new Error('no genuine contribution'); } } });
+  const enriched = value(await reader.enrich(e));
+  assert.deepEqual(enriched.history[0].result, actual); assert.equal(enriched.author, null); assert.equal(enriched.latestEditor, null); assertUnknownLineage(enriched);
 });
