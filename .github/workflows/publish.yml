@@ -37,7 +37,7 @@ on:
         description: Exact checked-out commit for pinned bb-identity next
         type: string
       expected_version:
-        description: Exact package version for pinned bb-identity next (0.4.0)
+        description: Exact approved package version for pinned bb-identity next (0.4.0 or 0.4.1)
         type: string
       proof_run_id:
         description: Reviewed successful dry-run ID; required for pinned-next publish
@@ -161,7 +161,8 @@ jobs:
           pinned_next=false
           if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ] && [ "$plugin" = "bb-identity" ] && [ "$dist_tag" = "next" ]; then
             [[ "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "Expected an exact lower-case source SHA" >&2; exit 1; }
-            test "$EXPECTED_VERSION" = "0.4.0" && test "$package_version" = "$EXPECTED_VERSION" || { echo "Pinned package version drift" >&2; exit 1; }
+            case "$EXPECTED_VERSION" in 0.4.0|0.4.1) ;; *) echo "Unapproved pinned bb-identity version" >&2; exit 1 ;; esac
+            test "$package_version" = "$EXPECTED_VERSION" || { echo "Pinned package version drift" >&2; exit 1; }
             test "$(git rev-parse HEAD)" = "$EXPECTED_SHA" && test "$GITHUB_SHA" = "$EXPECTED_SHA" || { echo "Pinned checkout SHA drift" >&2; exit 1; }
             if [ "$DRY_RUN" != "true" ]; then
               [[ "$PROOF_RUN_ID" =~ ^[1-9][0-9]{0,19}$ ]] && [[ "$EXPECTED_PAYLOAD_SHA256" =~ ^[0-9a-f]{64}$ ]] && [[ "$EXPECTED_RECEIPT_SHA256" =~ ^[0-9a-f]{64}$ ]] || { echo "Reviewed dry-run ID and payload/receipt hashes required" >&2; exit 1; }
@@ -169,8 +170,8 @@ jobs:
             pinned_next=true
             echo "Pinned manual next release: tag prerequisite bypassed for $EXPECTED_SHA@$EXPECTED_VERSION"
           else
-            if [ "$plugin" = "bb-identity" ] && [ "$package_version" = "0.4.0" ] && [ "$DRY_RUN" != "true" ]; then
-              echo "bb-identity0.4.0 requires pinned manual dist_tag=next; automatic/default publication refused" >&2
+            if [ "$plugin" = "bb-identity" ] && { [ "$package_version" = "0.4.0" ] || [ "$package_version" = "0.4.1" ]; } && [ "$DRY_RUN" != "true" ]; then
+              echo "bb-identity@$package_version requires pinned manual dist_tag=next; automatic/default publication refused" >&2
               exit 1
             fi
             release_tag="$plugin/v$package_version"
@@ -237,7 +238,7 @@ jobs:
         with:
           name: bb-identity-next-${{ inputs.expected_sha }}-${{ github.run_id }}
           path: |
-            release-candidate/phosphorco-bb-identity-0.4.0.tgz
+            release-candidate/phosphorco-bb-identity-${{ inputs.expected_version }}.tgz
             release-candidate/package-receipt.json
           if-no-files-found: error
           retention-days: 14

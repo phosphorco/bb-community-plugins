@@ -52,7 +52,7 @@
     "skills/"
   ],
   "dependencies": {
-    "@phosphorco/bb-identity": "0.3.1",
+    "@phosphorco/bb-identity": "0.4.1",
     "@phosphorco/bb-people-accounts": "0.1.0-attribution.0",
     "zod": "4.6.7"
   },

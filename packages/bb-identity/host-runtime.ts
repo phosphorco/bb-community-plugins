@@ -8,7 +8,7 @@ import {
   err, idCodec, identityKeyCodec, ok, profileCodec, provenanceCodec, externalPersonSnapshotCodec,
 } from './model-runtime.js';
 import type {
-  Directory, Participant, ParticipantReader, ReadOptions, RequestExpectation, Unsubscribe,
+  Directory, ParticipantReader, ReadOptions, RequestExpectation, Unsubscribe,
 } from './model.js';
 import type {
   ExternalAuthorInput, ExternalContributionV1, ExternalContributionOutcomeV1, ExternalContributionProtocolV1, ExtensionDiscovery, ForkIdentityProtocolV1, ForkIdentityProvider, ForkProviderRegistration, HostInvalidation,
@@ -205,32 +205,6 @@ function isProfilePresentation(value: unknown): boolean {
 function isExternalIdentity(value: unknown): boolean {
   return isRecord(value) && value.kind === 'external' && identityKeyCodec.decode(value.key).ok
     && idCodec('plugin').decode(value.pluginId).ok && idCodec('subject').decode(value.subject).ok;
-}
-
-function isParticipant(value: unknown): boolean {
-  if (!isRecord(value)) return false;
-  const roles = value.roles;
-  return (isActorIdentity(value.identity) || isExternalIdentity(value.identity)) && isProfilePresentation(value.presentation)
-    && Array.isArray(roles) && roles.length > 0 && new Set(roles).size === roles.length
-    && roles.every((role) => role === 'author' || role === 'editor' || role === 'mentioned' || role === 'interaction-resolver');
-}
-
-function decodeParticipantPage(value: unknown): Result<Awaited<ReturnType<ParticipantReader['list']>> extends Result<infer Page> ? Page : never> {
-  if (!isRecord(value) || !Array.isArray(value.items) || (value.nextCursor !== null && !idCodec('cursor').decode(value.nextCursor).ok)
-    || !idCodec('revision').decode(value.revision).ok || (value.coverage !== 'complete-history' && value.coverage !== 'partial-history')) {
-    return err('incompatible', 'Host returned a malformed participant page.');
-  }
-  const items: Participant[] = [];
-  for (const item of value.items) {
-    if (!isParticipant(item) || !isRecord(item) || !Array.isArray(item.roles)) return err('incompatible', 'Host returned a malformed participant item.');
-    const identity = profileCodec.decode({ identity: item.identity, presentation: item.presentation, revision: 'participant', status: 'current' });
-    if (!identity.ok) return err('incompatible', 'Host returned a malformed participant identity.');
-    items.push({ identity: identity.value.identity, presentation: identity.value.presentation, roles: [...item.roles] as Participant['roles'] });
-  }
-  const cursor = value.nextCursor === null ? null : idCodec('cursor').decode(value.nextCursor);
-  const revision = idCodec('revision').decode(value.revision);
-  if ((cursor !== null && !cursor.ok) || !revision.ok) return err('incompatible', 'Host returned malformed participant identifiers.');
-  return ok({ items, nextCursor: cursor === null ? null : cursor.value, revision: revision.value, coverage: value.coverage });
 }
 
 function isContribution(value: unknown): boolean {
@@ -596,18 +570,6 @@ export function createHostAdapter<R, T, I>(options: {
 
   const protocol = extension.protocol;
   const enhancedDirectory = createEnhancedDirectory(protocol);
-  const enhancedParticipants: ParticipantReader = {
-    async list(input, readOptions) {
-      if (!Number.isInteger(input.limit) || input.limit < 1 || input.limit > 100 || !idCodec('thread').decode(input.threadId).ok
-        || input.cursor !== undefined && !idCodec('cursor').decode(input.cursor).ok) return err('invalid-input', 'Invalid participant request.');
-      if (disposed) return err('disposed', 'Identity host is disposed.');
-      let result: Result<unknown>;
-      try { result = asResult(await protocol.participants(input, readOptions)); }
-      catch { return err('unavailable', 'Participant history is unavailable.', 'after-reconnect'); }
-      return result.ok ? decodeParticipantPage(result.value) : result;
-    },
-    previews: async () => err('unsupported', 'Participant previews are unavailable from this enhanced protocol.'),
-  };
   const enhancedHistory = {
     async contributions(query: ContributionQuery, readOptions?: ReadOptions): Promise<Result<EvidencePage<Contribution>>> {
       if (!validContributionQuery(query)) return err('invalid-input', 'Invalid contribution history request.');
@@ -662,7 +624,7 @@ export function createHostAdapter<R, T, I>(options: {
       getMany: (input, readOptions) => disposed ? Promise.resolve(err('disposed', 'Identity host is disposed.')) : enhancedDirectory.getMany(input, readOptions),
       subscribe: enhancedDirectory.subscribe,
     },
-    participants: enhancedParticipants,
+    participants,
     history: enhancedHistory,
     async send(request, input, readOptions) {
       const scope = scopes.get(request);
@@ -811,7 +773,7 @@ export function inspectForkExtension<R, T, I>(value: unknown): ExtensionDiscover
     || typeof value.session !== 'function' || typeof value.openRequest !== 'function'
     || typeof value.selfProfile !== 'function' || typeof value.accept !== 'function' || typeof value.lookup !== 'function'
     || typeof value.provenance !== 'function' || typeof value.historyContributions !== 'function' || typeof value.historyAttempts !== 'function'
-    || typeof value.directorySources !== 'function' || typeof value.participants !== 'function' || typeof value.forwardRpc !== 'function'
+    || typeof value.directorySources !== 'function' || typeof value.forwardRpc !== 'function'
     || typeof value.registerProvider !== 'function' || typeof value.subscribe !== 'function') {
     const version = isRecord(value) && typeof value.version === 'number' ? value.version : null;
     return version === null
