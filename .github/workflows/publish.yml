@@ -22,6 +22,8 @@ on:
           - bb-context-recognition
           - bb-cross-references
           - bb-agent-connection
+          - bb-usage-algebra
+          - bb-thread-metrics
       dry_run:
         type: boolean
         default: false
@@ -65,6 +67,8 @@ on:
       - "bb-context-recognition/v*"
       - "bb-cross-references/v*"
       - "bb-agent-connection/v*"
+      - "bb-usage-algebra/v*"
+      - "bb-thread-metrics/v*"
 
 permissions:
   contents: read
@@ -141,10 +145,12 @@ jobs:
             bb-context-recognition) workspace="@phosphorco/bb-context-recognition" ;;
             bb-cross-references) workspace="@phosphorco/bb-cross-references" ;;
             bb-agent-connection) workspace="@phosphorco/bb-agent-connection" ;;
+            bb-usage-algebra) workspace="@phosphorco/bb-usage-algebra" ;;
+            bb-thread-metrics) workspace="@phosphorco/bb-thread-metrics" ;;
             *) echo "Unsupported release plugin: $plugin" >&2; exit 1 ;;
           esac
           case "$plugin" in
-            bb-identity|bb-provider-settings|bb-context-recognition|bb-cross-references|bb-agent-connection) path="packages/$plugin" ;;
+            bb-identity|bb-provider-settings|bb-context-recognition|bb-cross-references|bb-agent-connection|bb-usage-algebra|bb-thread-metrics) path="packages/$plugin" ;;
             *) path="plugins/$plugin" ;;
           esac
           package_version="$(npm pkg get version --workspace "$workspace" | node -e 'let input=""; process.stdin.on("data", chunk => input += chunk); process.stdin.on("end", () => console.log(Object.values(JSON.parse(input))[0]))')"
@@ -195,7 +201,7 @@ jobs:
       - name: Build shared packages for tests
         if: ${{ steps.release.outputs.pinned_next != 'true' || inputs.dry_run }}
         # Packages test against their own dist, and plugins import the workspace-linked packages' dist.
-        run: npm run build --workspace packages/bb-identity --workspace packages/bb-provider-settings --workspace packages/bb-context-recognition --workspace packages/bb-cross-references --workspace packages/bb-agent-connection
+        run: npm run build --workspace packages/bb-identity --workspace packages/bb-provider-settings --workspace packages/bb-context-recognition --workspace packages/bb-cross-references --workspace packages/bb-agent-connection --workspace packages/bb-usage-algebra --workspace packages/bb-thread-metrics
 
       - name: Test
         if: ${{ steps.release.outputs.pinned_next != 'true' || inputs.dry_run }}
