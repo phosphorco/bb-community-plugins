@@ -19,6 +19,6 @@
   "scripts": {
     "build":"bun tools/build.mjs && tsc --project tsconfig.declarations.json",
     "typecheck":"tsc --noEmit",
-    "test":"bun run build && bun test test"
+    "test":"node tools/test.mjs"
   }
 }
