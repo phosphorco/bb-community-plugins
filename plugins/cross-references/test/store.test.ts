@@ -2,10 +2,20 @@ import assert from "node:assert/strict";
 import { Buffer } from "node:buffer";
 import test from "node:test";
 import Database from "better-sqlite3";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import {
+  canonicalizeIdentity,
   canonicalizeResource,
+  recognitionIdentity,
+  verifiedFileIdentity,
+  verifiedFileIdentityRecord,
+  sha256Hex,
   projectionPayloadDigest,
+  projectionPayloadJson,
+  MAX_PROJECTION_PAYLOAD_BYTES,
   type Resource,
 } from "../canonical.ts";
 import {
@@ -18,6 +28,8 @@ import {
   crossReferencesMigrations,
   enableForeignKeys,
 } from "../store.ts";
+
+import type { MentionScan, ObservedMention } from "../mention-evidence.ts";
 
 const targetId = "thr_target01";
 
@@ -480,4 +492,301 @@ test("does not reuse occurrence ids after complete replacement", (t) => {
   assert.equal(store.applyProjection(makeCommand({ revision: 3, expectedRevision: 2 })).outcome, "applied");
   const secondId = (db.prepare("SELECT id FROM reference_occurrences").get() as { id: number }).id;
   assert.ok(secondId > firstId);
+});
+
+
+test("conversation store persists typed PR/file Resources through strict identity boundaries", (t) => {
+  const { db, store } = makeStore();
+  t.after(() => db.close());
+  const source = makeThread("Mention source", "thr_source");
+  const sourceIdentity = { provider: source.provider, keys: source.keys };
+  const prSource = { provider: "github", id: "github.com/owner/repo#42", kind: "pull-request" };
+  const fileSource = { provider: "plan-graph", id: "env_a:plans/example.plan.pkl", kind: "plan" };
+  const occurrence = (recognized: typeof prSource, messageId: string, seq: number): ObservedMention => ({
+    target: { ...recognitionIdentity(recognized), presentation: { label: messageId } },
+    locator: { kind: "conversation", threadId: "thr_source", messageId, messageSeq: seq, anchorSeq: seq, role: "user" },
+    sourceContentRevision: sha256Hex("authored mention"), span: { start: 0, end: 2 }, messageCreatedAt: seq,
+    provenance: { pluginId: "supplier", origin: "contributed", confidence: "high",
+      recognition: { basis: "explicit", explanation: "Typed source fixture." }, source: recognized },
+  });
+  const locations = [occurrence(prSource, "pr", 1), occurrence(fileSource, "file", 2)];
+  const scan: MentionScan = { occurrences: locations, observedMessageIds: ["pr", "file"], scannedMessageIds: ["pr", "file"],
+    failedSuppliers: [], discoveryIncomplete: false, coverage: { timelineComplete: true, reasons: [], retentionLimited: false } };
+
+  store.replaceConversationMentions(source, scan);
+  const initial = store.mentionState(sourceIdentity);
+  assert.equal(initial.occurrences.length, 2);
+  assert.equal(store.listForwardReferences({ source: sourceIdentity }).total, 2);
+  for (const recognized of [prSource, fileSource]) {
+    assert.equal(store.listBacklinks({ target: recognitionIdentity(recognized) }).total, 1);
+  }
+  assert.deepEqual((db.prepare("SELECT source_identity_json FROM recognized_resources").all() as Array<{ source_identity_json: string }>)
+    .map(row => JSON.parse(row.source_identity_json)).sort((a, b) => a.provider.localeCompare(b.provider)),
+    [prSource, fileSource].map(({ provider, id }) => ({ provider, id })).sort((a, b) => a.provider.localeCompare(b.provider)));
+
+  // This takes the partial-scan prior-time path through identity-only v1 reads.
+  store.replaceConversationMentions(source, { ...scan, coverage: { ...scan.coverage, timelineComplete: false, reasons: ["partial"] } });
+  assert.equal(store.mentionState(sourceIdentity).occurrences.length, 2);
+  assert.equal(store.listForwardReferences({ source: sourceIdentity }).rows.find(row => row.target.keys.provider === "github")?.lastSeenAt, 1);
+});
+
+test("conversation store rejects malformed or mismatched typed identities without weakening v1 or changing stored facts", (t) => {
+  const { db, store } = makeStore();
+  t.after(() => db.close());
+  const source = makeThread("Mention source", "thr_source");
+  const sourceIdentity = { provider: source.provider, keys: source.keys };
+  const recognized = { provider: "github", id: "github.com/owner/repo#42" };
+  const target = { ...recognitionIdentity(recognized), presentation: { label: "PR" } };
+  const location: ObservedMention = { target,
+    locator: { kind: "conversation", threadId: "thr_source", messageId: "pr", messageSeq: 1, anchorSeq: 1, role: "assistant" },
+    sourceContentRevision: sha256Hex("authored mention"), span: { start: 0, end: 2 }, messageCreatedAt: 1,
+    provenance: { pluginId: "supplier", origin: "contributed", confidence: "high",
+      recognition: { basis: "explicit", explanation: "Typed source fixture." }, source: recognized } };
+  const scan: MentionScan = { occurrences: [location], observedMessageIds: ["pr"], scannedMessageIds: ["pr"], failedSuppliers: [],
+    discoveryIncomplete: false, coverage: { timelineComplete: true, reasons: [], retentionLimited: false } };
+  store.replaceConversationMentions(source, scan);
+  const before = store.mentionState(sourceIdentity);
+  const projection = store.getProjection({ producerPluginId: "cross-references", source: sourceIdentity });
+  const keys = db.prepare("SELECT * FROM recognized_resources").all();
+
+  // Full Resources remain invalid at identity-only v1 boundaries.
+  assert.throws(() => canonicalizeIdentity(target), /unknown field presentation/);
+  const malformed = { ...target, keys: { ...target.keys, identity: "x".repeat(513) } };
+  assert.throws(() => store.replaceConversationMentions(source, { ...scan, occurrences: [{ ...location, target: malformed }] }));
+  const wrongMapping = { ...recognitionIdentity({ ...recognized, id: "github.com/owner/repo#99" }), presentation: target.presentation };
+  assert.throws(() => store.replaceConversationMentions(source, { ...scan, occurrences: [{ ...location, target: wrongMapping }] }), /mapping mismatch/);
+  assert.throws(() => store.replaceConversationMentions(source, { ...scan, occurrences: [{ ...location, target: { ...target, unexpected: true } as Resource }] }), /unknown field unexpected/);
+  assert.deepEqual(store.mentionState(sourceIdentity), before);
+  assert.deepEqual(store.getProjection({ producerPluginId: "cross-references", source: sourceIdentity }), projection);
+  assert.deepEqual(db.prepare("SELECT * FROM recognized_resources").all(), keys);
+});
+
+
+function capLocations(source: Resource, count: number, id = "github.com/owner/repo#42", start = 1): ObservedMention[] {
+  const recognized = { provider: "github", id };
+  const target = { ...recognitionIdentity(recognized), presentation: { label: id } };
+  return Array.from({ length: count }, (_, index) => ({ target,
+    locator: { kind: "conversation", threadId: source.keys.thread!, messageId: `cap-${start + index}`, messageSeq: start + index, anchorSeq: start + index, role: "user" },
+    sourceContentRevision: sha256Hex("authored mention"), span: { start: 0, end: 2 }, messageCreatedAt: start + index,
+    provenance: { pluginId: "supplier", origin: "contributed", confidence: "high",
+      recognition: { basis: "explicit", explanation: "Typed source fixture." }, source: recognized } }));
+}
+function capScan(occurrences: ObservedMention[], complete = true): MentionScan {
+  return { occurrences, observedMessageIds: occurrences.map(row => row.locator.messageId), scannedMessageIds: occurrences.map(row => row.locator.messageId),
+    failedSuppliers: [], discoveryIncomplete: false, coverage: { timelineComplete: complete, reasons: complete ? [] : ["timeline-50-pages"], retentionLimited: false } };
+}
+
+test("per-edge cap truth survives unvisited scans/reopen, clears only on complete observation or producer tombstone, and invalidates evidence", t => {
+  const dir = mkdtempSync(join(tmpdir(), "reference-cap-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const path = join(dir, "caps.sqlite");
+  let db = new Database(path); enableForeignKeys(db);
+  for (const migration of crossReferencesMigrations) db.exec(migration);
+  let store = new CrossReferenceStore(db);
+  t.after(() => { if (db.open) db.close(); });
+  const source = makeThread("Capped source", "thr_caps");
+  const sourceIdentity = { provider: source.provider, keys: source.keys };
+  const a = capLocations(source, 105), b = capLocations(source, 1, "github.com/owner/repo#99", 200);
+  const graph = () => store.getProjection({ producerPluginId: "cross-references", source: sourceIdentity }).projection!;
+  const statuses = () => store.mentionState(sourceIdentity).edgeCaps.map(cap => [cap.target.keys.identity, cap.state]).sort();
+  const aKey = a[0]!.target.keys.identity!, bKey = b[0]!.target.keys.identity!;
+  const expected = (aState: string) => [[aKey, aState], [bKey, "uncapped"]].sort();
+
+  store.replaceConversationMentions(source, capScan([...a, ...b]));
+  assert.deepEqual(statuses(), expected("capped"));
+  assert.equal(store.mentionState(sourceIdentity).occurrences.length, 101);
+  const initial = store.mentionState(sourceIdentity), originalGraph = graph();
+  store.replaceConversationMentions(source, capScan([], false));
+  const partial = store.mentionState(sourceIdentity);
+  assert.equal(partial.coverage!.retentionLimited, true);
+  assert.deepEqual(statuses(), expected("capped"));
+  assert.equal(partial.occurrences.length, 101);
+  assert.ok(partial.revision > initial.revision);
+  assert.equal(graph().payloadDigest, originalGraph.payloadDigest);assert.equal(graph().revision, originalGraph.revision);
+  db.close();db = new Database(path);enableForeignKeys(db);store = new CrossReferenceStore(db);
+  assert.deepEqual(store.mentionState(sourceIdentity), partial);
+
+  // Outer collector transactions can roll back cap facts along with evidence.
+  assert.throws(() => db.transaction(() => { store.replaceConversationMentions(source, capScan([...a.slice(-100), ...b])); throw new Error("fenced rollback"); })(), /fenced rollback/);
+  assert.deepEqual(store.mentionState(sourceIdentity), partial);
+  const clearSignals = store.replaceConversationMentions(source, capScan([...a.slice(-100), ...b]));
+  assert.deepEqual(statuses(), expected("uncapped"));
+  const cleared = store.mentionState(sourceIdentity);
+  assert.equal(cleared.coverage!.retentionLimited, false);assert.ok(cleared.revision > partial.revision);
+  assert.notEqual(cleared.digest, partial.digest);assert.equal(clearSignals.length, 1);
+  assert.equal(clearSignals[0]!.revision, originalGraph.revision);
+  assert.equal(graph().payloadDigest, originalGraph.payloadDigest);assert.equal(graph().revision, originalGraph.revision);
+  assert.deepEqual(store.replaceConversationMentions(source, capScan([...a.slice(-100), ...b])), []);
+  assert.equal(store.mentionState(sourceIdentity).revision, cleared.revision);
+
+  store.replaceConversationMentions(source, capScan([...a, ...b]));
+  const otherSource = makeThread("Other capped source", "thr_other_caps");
+  const otherIdentity = { provider: otherSource.provider, keys: otherSource.keys };
+  store.replaceConversationMentions(otherSource, capScan(capLocations(otherSource, 105)));
+  // Seed another producer's durable cap fact: v1 has no public evidence writer.
+  const nativeStream = db.prepare("SELECT * FROM mention_streams WHERE source_resource_id = (SELECT id FROM resources WHERE canonical_keys_json = ?)").get(canonicalizeResource(source).canonicalKeysJson) as any;
+  const nativeCap = db.prepare("SELECT * FROM mention_edge_caps WHERE source_resource_id = ?").get(nativeStream.source_resource_id) as any;
+  db.prepare("INSERT INTO mention_streams (producer_plugin_id, source_resource_id, evidence_revision, evidence_digest, collector_version, coverage_json, last_successful_scan_at) SELECT 'external', source_resource_id, evidence_revision, evidence_digest, collector_version, coverage_json, last_successful_scan_at FROM mention_streams WHERE producer_plugin_id = 'cross-references' AND source_resource_id = ?").run(nativeStream.source_resource_id);
+  db.prepare("INSERT INTO mention_edge_caps VALUES ('external', ?, ?, 'capped')").run(nativeCap.source_resource_id, nativeCap.target_resource_id);
+  store.replaceConversationMentions(source, capScan([]), true);
+  assert.deepEqual(store.mentionState(sourceIdentity).edgeCaps, []);
+  assert.equal(store.mentionState(sourceIdentity).coverage!.retentionLimited, false);
+  assert.equal((db.prepare("SELECT COUNT(*) AS n FROM mention_edge_caps WHERE producer_plugin_id = 'external'").get() as any).n, 1);
+  assert.equal(store.mentionState(otherIdentity).edgeCaps[0]!.state, "capped");
+});
+
+test("append-only cap migration preserves earlier unattributed global clipping as unknown until complete observation", t => {
+  const db = new Database(":memory:");t.after(() => db.close());enableForeignKeys(db);
+  const capMigration = crossReferencesMigrations.findIndex(sql => sql.includes("CREATE TABLE mention_edge_caps"));
+  for (const migration of crossReferencesMigrations.slice(0, capMigration)) db.exec(migration);
+  const store = new CrossReferenceStore(db), source = makeThread("Migrating caps", "thr_migrate_caps");
+  const sourceIdentity = { provider: source.provider, keys: source.keys };
+  const a = capLocations(source, 1), b = capLocations(source, 1, "github.com/owner/repo#99", 200);
+  store.applyProjection(makeCommand({ producerPluginId: "cross-references", source, targets: [a[0]!.target, b[0]!.target] }));
+  const sourceId = (db.prepare("SELECT source_resource_id FROM source_projections").get() as any).source_resource_id;
+  db.prepare("INSERT INTO mention_streams VALUES ('cross-references', ?, 1, ?, 1, ?, 1)").run(sourceId, "a".repeat(64), JSON.stringify({ timelineComplete: true, reasons: [], retentionLimited: true }));
+  for (const migration of crossReferencesMigrations.slice(capMigration)) db.exec(migration);
+  assert.deepEqual(store.mentionState(sourceIdentity).edgeCaps.map(cap => cap.state), ["unknown", "unknown"]);
+  store.replaceConversationMentions(source, capScan([], false));
+  assert.equal(store.mentionState(sourceIdentity).coverage!.retentionLimited, true);
+  assert.ok(store.mentionState(sourceIdentity).edgeCaps.every(cap => cap.state === "unknown"));
+  store.replaceConversationMentions(source, capScan([...a, ...b]));
+  assert.ok(store.mentionState(sourceIdentity).edgeCaps.every(cap => cap.state === "uncapped"));
+  assert.equal(store.mentionState(sourceIdentity).coverage!.retentionLimited, false);
+});
+
+
+test("high-volume product-store grouping retains deterministic newest locations with linear membership work", t => {
+  const { db, store } = makeStore();t.after(() => db.close());
+  const source = makeThread("Volume source", "thr_volume");
+  const rows = capLocations(source, 25_600);
+  const originalSome = Array.prototype.some;
+  let predicates = 0;
+  Array.prototype.some = function(callback: any, thisArg?: any) {
+    return originalSome.call(this, (value: any, index: number, array: any[]) => {
+      predicates++;return callback.call(thisArg, value, index, array);
+    });
+  };
+  try { store.replaceConversationMentions(source, capScan(rows)); }
+  finally { Array.prototype.some = originalSome; }
+  // Count actual callback evaluations, not elapsed wall time. A per-group
+  // linear search for each of 25,600 rows would exceed 327 million probes.
+  assert.ok(predicates < rows.length * 200, `membership probes: ${predicates}`);
+  const state = store.mentionState({ provider: source.provider, keys: source.keys });
+  assert.equal(state.occurrences.length, 100);
+  assert.equal(state.edgeCaps[0]!.state, "capped");
+  assert.deepEqual(state.occurrences.map(o => o.messageCreatedAt).sort((a,b)=>a-b), Array.from({ length: 100 }, (_,i)=>25_501+i));
+});
+
+
+test("rotating partial targets bound keyed caps, retain source uncertainty through reopen and conservatively classify returning targets", t => {
+  const dir = mkdtempSync(join(tmpdir(), "reference-cap-rotation-"));t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const path = join(dir, "caps.sqlite");let db = new Database(path);enableForeignKeys(db);
+  for (const migration of crossReferencesMigrations) db.exec(migration);
+  let store = new CrossReferenceStore(db);t.after(() => { if(db.open)db.close(); });
+  const source = makeThread("Rotation source", "thr_rotation"), sourceIdentity = { provider: source.provider, keys: source.keys };
+  for (let batch = 0; batch < 6; batch++) {
+    const rows = Array.from({ length: 64 }, (_, group) => capLocations(source, 101, `target-${batch*64+group}`, batch*10_000+group*101+1)).flat();
+    store.replaceConversationMentions(source, capScan(rows, false));
+    assert.ok((db.prepare("SELECT COUNT(*) AS n FROM mention_edge_caps").get() as any).n <= 256);
+    assert.ok(store.mentionState(sourceIdentity).edgeCaps.length <= 256);
+    assert.ok(store.listForwardReferences({ source: sourceIdentity }).total <= 256);
+  }
+  const prior = store.mentionState(sourceIdentity);
+  assert.equal(prior.coverage!.capHistoryUnknown, true);assert.equal(prior.coverage!.retentionLimited, true);
+  db.close();db = new Database(path);enableForeignKeys(db);store = new CrossReferenceStore(db);
+  assert.deepEqual(store.mentionState(sourceIdentity), prior);
+  // Target-0 was dropped from the retained graph and its exact cap history was
+  // compressed into the source marker. A partial single sighting is unknown.
+  const returning = capLocations(source, 1, "target-0", 100_000);
+  store.replaceConversationMentions(source, capScan(returning, false));
+  const returned = store.mentionState(sourceIdentity);
+  assert.equal(returned.edgeCaps.find(cap => cap.target.keys.identity === returning[0]!.target.keys.identity)?.state, "unknown");
+  assert.equal(returned.coverage!.capHistoryUnknown, true);assert.ok(returned.revision > prior.revision);
+  assert.ok((db.prepare("SELECT COUNT(*) AS n FROM mention_edge_caps").get() as any).n <= 256);
+  const graph = store.getProjection({ producerPluginId: "cross-references", source: sourceIdentity }).projection!;
+  // A complete scan with exactly the retained observations resets uncertainty
+  // without changing graph identity/digest/revision.
+  const completeRows = returned.occurrences.map(({ occurrenceKey, observedAt, confirmed, ...row }) => row);
+  store.replaceConversationMentions(source, capScan(completeRows));
+  const complete = store.mentionState(sourceIdentity);
+  assert.equal(complete.coverage!.capHistoryUnknown, false);assert.equal(complete.coverage!.retentionLimited, false);
+  assert.ok(complete.edgeCaps.every(cap => cap.state === "uncapped"));assert.ok(complete.revision > returned.revision);
+  assert.equal(store.getProjection({ producerPluginId: "cross-references", source: sourceIdentity }).projection!.payloadDigest, graph.payloadDigest);
+  assert.equal(store.getProjection({ producerPluginId: "cross-references", source: sourceIdentity }).projection!.revision, graph.revision);
+  store.replaceConversationMentions(source, capScan([]), true);
+  assert.equal(store.mentionState(sourceIdentity).coverage!.capHistoryUnknown, false);
+  assert.equal((db.prepare("SELECT COUNT(*) AS n FROM mention_edge_caps").get() as any).n, 0);
+});
+
+
+test("verified workspace file claims coalesce across conversations and store full frame mapping with per-occurrence lexical provenance", t => {
+  const { db, store } = makeStore();t.after(() => db.close());
+  const a = makeThread("File A", "thr_file_a"), b = makeThread("File B", "thr_file_b"), c = makeThread("File C", "thr_file_c");
+  const shared = { kind: "workspace" as const, environmentId: "env_shared", path: "notes/日本語.txt" };
+  const location = (source: Resource, file: any, seq: number): ObservedMention => ({
+    target: { ...verifiedFileIdentity(file), presentation: { label: file.path } },
+    locator: { kind: "conversation", threadId: source.keys.thread!, messageId: `file-${seq}`, messageSeq: seq, anchorSeq: seq, role: "user" },
+    sourceContentRevision: sha256Hex("authored file mention"), span: { start: 0, end: 2 }, messageCreatedAt: seq,
+    provenance: { pluginId: "cross-references", origin: "builtin", confidence: "high", recognition: { basis: "explicit", explanation: "Native file." },
+      source: { provider: "bb.file", id: `${source.keys.thread}:${file.path}` }, verifiedFile: file } });
+  store.replaceConversationMentions(a, capScan([location(a, shared, 1), location(a, { kind: "thread-storage", threadId: a.keys.thread, path: shared.path }, 2)]));
+  store.replaceConversationMentions(b, capScan([location(b, shared, 1), location(b, { kind: "thread-storage", threadId: b.keys.thread, path: shared.path }, 2)]));
+  store.replaceConversationMentions(c, capScan([location(c, { ...shared, environmentId: "env_other" }, 1)]));
+  assert.equal(store.listBacklinks({ target: verifiedFileIdentity(shared) }).total, 2);
+  assert.equal(store.listBacklinks({ target: verifiedFileIdentity({ kind: "thread-storage", threadId: a.keys.thread!, path: shared.path }) }).total, 1);
+  const mapping = db.prepare("SELECT m.source_identity_json FROM recognized_resources m JOIN resources r ON r.id = m.resource_id WHERE r.canonical_keys_json = ?").get(canonicalizeIdentity(verifiedFileIdentity(shared)).canonicalKeysJson) as any;
+  assert.equal(mapping.source_identity_json, verifiedFileIdentityRecord(shared));
+  assert.deepEqual(JSON.parse(mapping.source_identity_json), { provider: "bb.file", verifiedFile: shared });
+  const stateA = store.mentionState({ provider: a.provider, keys: a.keys }), stateB = store.mentionState({ provider: b.provider, keys: b.keys });
+  assert.ok(stateA.occurrences.every(row => row.provenance.source.id.startsWith("thr_file_a:")));
+  assert.ok(stateB.occurrences.every(row => row.provenance.source.id.startsWith("thr_file_b:")));
+  assert.equal((db.prepare("SELECT COUNT(*) AS n FROM recognized_resources").get() as any).n, 4);
+  const invalid = location(a, shared, 3);delete invalid.provenance.verifiedFile;
+  assert.throws(() => store.replaceConversationMentions(a, capScan([invalid])), /requires verified frame/);
+  assert.deepEqual(store.mentionState({ provider: a.provider, keys: a.keys }), stateA);
+  // Existing public v1 producers still submit canonical Resources without any
+  // occurrence/file verification metadata being added to their strict DTOs.
+  assert.equal(store.applyProjection(makeCommand({ producerPluginId: "external", source: a, targets: [location(a, shared, 3).target] })).outcome, "applied");
+});
+
+
+test("source target admission honors exact aggregate v1 bytes as well as count without relaxing strict payload validation",t=>{
+  const {db,store}=makeStore();t.after(()=>db.close());const source=makeThread("Payload source","thr_payload");
+  const rows:ObservedMention[]=Array.from({length:256},(_,index)=>{
+    const href=`https://example.test/${"a".repeat(480)}/${index}`;
+    return {...capLocations(source,1,"fixture",index+1)[0]!,target:{provider:"url",keys:{href},presentation:{label:"link",url:href}},
+      provenance:{pluginId:"cross-references",origin:"builtin",confidence:"high",recognition:{basis:"explicit",explanation:"Authored URL."},source:{provider:"bb.url",id:href}}};
+  });
+  store.replaceConversationMentions(source,capScan(rows));
+  const projection=store.getProjection({producerPluginId:"cross-references",source:{provider:source.provider,keys:source.keys}}).projection!;
+  assert.ok(projection.targets.length<256);
+  const payload=projectionPayloadJson("cross-references",canonicalizeResource(source),false,projection.targets.map(canonicalizeResource));
+  assert.ok(Buffer.byteLength(payload)<=MAX_PROJECTION_PAYLOAD_BYTES);
+  const selected=new Set(projection.targets.map(target=>target.keys.href));
+  const dropped=rows.find(row=>!selected.has(row.target.keys.href))!;
+  assert.throws(()=>projectionPayloadJson("cross-references",canonicalizeResource(source),false,[...projection.targets,dropped.target].map(canonicalizeResource)),/payload exceeds/);
+  assert.equal(store.mentionState({provider:source.provider,keys:source.keys}).occurrences.length,projection.targets.length);
+});
+
+test("append-only queue priority migration preserves legacy ready times and generations; durable default and rank constraint survive reopen", t => {
+  const dir = mkdtempSync(join(tmpdir(), "cross-priority-migrate-"));t.after(() => rmSync(dir, {recursive: true, force: true}));
+  const path = join(dir, "queue.sqlite"), db = new Database(path);
+  const prefix = crossReferencesMigrations.slice(0, -1);assert.equal(prefix.length, 12);
+  for (const migration of prefix) db.exec(migration);
+  db.prepare("INSERT INTO assistant_link_jobs(thread_id,project_id,version,deleted,retry_at,attempts) VALUES (?,?,?,?,?,?)")
+    .run("thr_viewed", "proj_a", 7, 0, -1, 0);
+  db.prepare("INSERT INTO assistant_link_jobs(thread_id,project_id,version,deleted,retry_at,attempts) VALUES (?,?,?,?,?,?)")
+    .run("thr_failed", "proj_a", 9, 1, 900_000, 3);
+  const before = db.prepare("SELECT * FROM assistant_link_jobs ORDER BY thread_id").all() as any[];
+  db.exec(crossReferencesMigrations.at(-1)!);
+  assert.deepEqual(db.prepare("SELECT * FROM assistant_link_jobs ORDER BY thread_id").all(),
+    before.map(row => ({...row, priority: row.thread_id === "thr_viewed" ? 2 : 0})));
+  db.prepare("INSERT INTO assistant_link_jobs(thread_id,project_id,version) VALUES ('thr_cold','proj_a',1)").run();
+  assert.equal((db.prepare("SELECT priority FROM assistant_link_jobs WHERE thread_id='thr_cold'").get() as any).priority, 0);
+  assert.throws(() => db.prepare("UPDATE assistant_link_jobs SET priority=3").run(), /CHECK/);
+  db.prepare("UPDATE assistant_link_jobs SET priority=1 WHERE thread_id='thr_failed'").run();
+  const migrated = db.prepare("SELECT * FROM assistant_link_jobs ORDER BY thread_id").all();db.close();
+  const reopened = new Database(path);t.after(() => reopened.close());
+  assert.deepEqual(reopened.prepare("SELECT * FROM assistant_link_jobs ORDER BY thread_id").all(), migrated);
 });

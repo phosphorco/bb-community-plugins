@@ -1,3 +1,8 @@
+## 0.2.0
+
+- Add pure recognition identity adapter and bounded source-identity mapping.
+- Keep strict v1 inputs/outputs, projection digest and duplicate semantics unchanged.
+
 # @phosphorco/bb-cross-references changelog
 
 ## 0.1.1

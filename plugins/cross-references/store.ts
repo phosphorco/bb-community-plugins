@@ -1,12 +1,19 @@
 import { Buffer } from "node:buffer";
 import { randomUUID } from "node:crypto";
 import type Database from "better-sqlite3";
+import { canonicalJson } from "@phosphorco/bb-context-recognition";
+import { recognitionIdentity, recognitionIdentityRecord, verifiedFileIdentity, verifiedFileIdentityRecord } from "@phosphorco/bb-cross-references";
+import { MENTION_LIMITS, MentionLocationSchema, mentionKey, type MentionScan, type ObservedMention, type MentionEdgeCap } from "./mention-evidence.ts";
 
 import {
   canonicalizeIdentity,
   canonicalizeResource,
   serializeResource,
   projectionPayloadDigest,
+  projectionPayloadJson,
+  MAX_PROJECTION_PAYLOAD_BYTES,
+  utf8ByteLength,
+  sha256Hex,
   type CanonicalIdentity,
   type CanonicalResource,
   type Presentation,
@@ -110,6 +117,80 @@ export const crossReferencesMigrations = [
    CREATE TABLE assistant_link_sync (
      thread_id TEXT PRIMARY KEY, synced_at INTEGER NOT NULL
    )`,
+  `CREATE TABLE recognized_resources (
+     resource_id INTEGER PRIMARY KEY REFERENCES resources(id) ON DELETE CASCADE,
+     source_identity_json TEXT NOT NULL CHECK (length(CAST(source_identity_json AS BLOB)) <= 16384),
+     codec_version INTEGER NOT NULL CHECK (codec_version = 1)
+   );
+   CREATE TABLE mention_streams (
+     producer_plugin_id TEXT NOT NULL,
+     source_resource_id INTEGER NOT NULL REFERENCES resources(id) ON DELETE CASCADE,
+     evidence_revision INTEGER NOT NULL CHECK (evidence_revision >= 1),
+     evidence_digest TEXT NOT NULL CHECK (length(evidence_digest) = 64),
+     collector_version INTEGER NOT NULL,
+     coverage_json TEXT NOT NULL,
+     last_successful_scan_at INTEGER NOT NULL,
+     PRIMARY KEY (producer_plugin_id, source_resource_id)
+   );
+   CREATE TABLE mention_occurrences (
+     producer_plugin_id TEXT NOT NULL,
+     source_resource_id INTEGER NOT NULL,
+     target_resource_id INTEGER NOT NULL REFERENCES resources(id) ON DELETE RESTRICT,
+     occurrence_key TEXT NOT NULL CHECK (length(occurrence_key) = 64),
+     source_locator_json TEXT NOT NULL,
+     source_content_revision TEXT NOT NULL CHECK (length(source_content_revision) = 64),
+     span_start INTEGER NOT NULL CHECK (span_start >= 0),
+     span_end INTEGER NOT NULL CHECK (span_end > span_start),
+     message_created_at INTEGER NOT NULL,
+     observed_at INTEGER NOT NULL,
+     provenance_json TEXT NOT NULL,
+     confirmed_in_scan INTEGER NOT NULL CHECK (confirmed_in_scan IN (0, 1)),
+     PRIMARY KEY (producer_plugin_id, source_resource_id, target_resource_id, occurrence_key),
+     FOREIGN KEY (producer_plugin_id, source_resource_id)
+       REFERENCES mention_streams(producer_plugin_id, source_resource_id) ON DELETE CASCADE
+   );
+   CREATE INDEX mention_occurrences_target_idx ON mention_occurrences(target_resource_id, source_resource_id)`,
+  `CREATE TABLE mention_edge_caps (
+     producer_plugin_id TEXT NOT NULL,
+     source_resource_id INTEGER NOT NULL,
+     target_resource_id INTEGER NOT NULL REFERENCES resources(id) ON DELETE RESTRICT,
+     state TEXT NOT NULL CHECK (state IN ('capped', 'unknown')),
+     PRIMARY KEY (producer_plugin_id, source_resource_id, target_resource_id),
+     FOREIGN KEY (producer_plugin_id, source_resource_id)
+       REFERENCES mention_streams(producer_plugin_id, source_resource_id) ON DELETE CASCADE
+   );
+   -- Earlier global clipping cannot identify a particular edge. Preserve that
+   -- uncertainty until a complete authoritative scan replaces this producer.
+   INSERT INTO mention_edge_caps
+   SELECT s.producer_plugin_id, s.source_resource_id, o.target_resource_id, 'unknown'
+     FROM mention_streams s
+     JOIN source_projections p ON p.producer_plugin_id = s.producer_plugin_id
+       AND p.source_resource_id = s.source_resource_id
+     JOIN reference_occurrences o ON o.projection_id = p.id
+    WHERE json_extract(s.coverage_json, '$.retentionLimited') = 1`,
+  `ALTER TABLE mention_streams ADD COLUMN cap_history_unknown INTEGER NOT NULL DEFAULT 0
+     CHECK (cap_history_unknown IN (0, 1));
+   UPDATE mention_streams SET cap_history_unknown = 1
+    WHERE EXISTS (SELECT 1 FROM mention_edge_caps c
+      WHERE c.producer_plugin_id = mention_streams.producer_plugin_id
+        AND c.source_resource_id = mention_streams.source_resource_id
+        AND NOT EXISTS (SELECT 1 FROM source_projections p
+          JOIN reference_occurrences o ON o.projection_id = p.id
+          WHERE p.producer_plugin_id = c.producer_plugin_id
+            AND p.source_resource_id = c.source_resource_id
+            AND p.tombstone = 0 AND o.target_resource_id = c.target_resource_id));
+   DELETE FROM mention_edge_caps WHERE NOT EXISTS (
+     SELECT 1 FROM source_projections p JOIN reference_occurrences o ON o.projection_id = p.id
+      WHERE p.producer_plugin_id = mention_edge_caps.producer_plugin_id
+        AND p.source_resource_id = mention_edge_caps.source_resource_id
+        AND p.tombstone = 0 AND o.target_resource_id = mention_edge_caps.target_resource_id)`,
+  `ALTER TABLE assistant_link_jobs ADD COLUMN priority INTEGER NOT NULL DEFAULT 0
+     CHECK (priority BETWEEN 0 AND 2);
+   -- Recover the only historical viewed intent that was explicitly retained.
+   -- Failed positive-time retries carry no recoverable historical priority.
+   UPDATE assistant_link_jobs SET priority = 2 WHERE retry_at = -1 AND attempts = 0;
+   CREATE INDEX assistant_link_jobs_priority_retry_idx
+     ON assistant_link_jobs(priority DESC, retry_at)`,
 ] as const;
 
 export function enableForeignKeys(db: Sqlite): void {
@@ -650,6 +731,196 @@ export class CrossReferenceStore {
       if (timeChanged && signals.length === 0) signals.push({
         protocolVersion: 1, producerPluginId: "cross-references", sourceIdentityDigest: canonicalSource.identityDigest,
         revision: projection.revision, affectedIdentityDigests: [canonicalSource.identityDigest, ...selected.map((row) => canonicalizeResource(row.target).identityDigest)],
+      });
+      return signals;
+    })();
+  }
+
+  /** Internal product-store view, intentionally not exposed through strict v1 RPCs. */
+  mentionState(source: {provider:string;keys:Record<string,string>}): {
+    revision:number; digest:string|null; coverage: MentionScan["coverage"]|null; edgeCaps:MentionEdgeCap[];
+    occurrences:Array<ObservedMention & {occurrenceKey:string;observedAt:number;confirmed:boolean}>;
+  } {
+    const resource=this.findResource(canonicalizeIdentity(source));
+    if(!resource)return {revision:0,digest:null,coverage:null,edgeCaps:[],occurrences:[]};
+    const stream=this.db.prepare(`SELECT * FROM mention_streams WHERE producer_plugin_id = 'cross-references' AND source_resource_id = ?`).get(resource.id) as any;
+    if(!stream)return {revision:0,digest:null,coverage:null,edgeCaps:[],occurrences:[]};
+    const projection=this.getProjection({producerPluginId:'cross-references',source}).projection;
+    const targets=new Map((projection?.targets??[]).map(t=>[canonicalizeResource(t).canonicalIdentityJson,t]));
+    const caps=new Map<string,MentionEdgeCap>((projection?.targets??[]).map(t=>{
+      const identity=canonicalizeResource(t);
+      return [identity.canonicalIdentityJson,{target:{provider:identity.provider,keys:identity.keys},state:'uncapped'}];
+    }));
+    const capRows=this.db.prepare(`SELECT r.provider, r.canonical_keys_json, c.state FROM mention_edge_caps c
+      JOIN resources r ON r.id = c.target_resource_id
+      WHERE c.producer_plugin_id = 'cross-references' AND c.source_resource_id = ?`).all(resource.id) as Array<OccurrenceIdentityRow & {state:'capped'|'unknown'}>;
+    for(const row of capRows){const identity=identityFromRow(row);caps.set(identity.canonicalIdentityJson,{target:{provider:identity.provider,keys:identity.keys},state:row.state});}
+    const edgeCaps=[...caps].sort(([a],[b])=>a<b?-1:a>b?1:0).map(([,cap])=>cap);
+    const rows=this.db.prepare(`SELECT m.*, r.provider, r.canonical_keys_json FROM mention_occurrences m
+      JOIN resources r ON r.id = m.target_resource_id WHERE m.producer_plugin_id = 'cross-references' AND m.source_resource_id = ?
+      ORDER BY m.target_resource_id, m.occurrence_key`).all(resource.id) as any[];
+    return {revision:stream.evidence_revision,digest:stream.evidence_digest,coverage:{...JSON.parse(stream.coverage_json),capHistoryUnknown:stream.cap_history_unknown===1},edgeCaps,
+      occurrences:rows.map(row=>{
+        const identity=canonicalizeIdentity({provider:row.provider,keys:JSON.parse(row.canonical_keys_json)});
+        const target=targets.get(identity.canonicalIdentityJson);
+        if(!target)throw new Error('Location without an active producer edge.');
+        return {target,locator:JSON.parse(row.source_locator_json),sourceContentRevision:row.source_content_revision,
+          span:{start:row.span_start,end:row.span_end},messageCreatedAt:row.message_created_at,
+          provenance:JSON.parse(row.provenance_json),occurrenceKey:row.occurrence_key,observedAt:row.observed_at,confirmed:row.confirmed_in_scan===1};
+      })};
+  }
+
+  /** Commit edge claims and bounded locations together inside the collector's
+   * existing generation fence. v1 count/digest/revision semantics stay intact. */
+  replaceConversationMentions(source:Resource, scan:MentionScan, deleted=false):CrossReferencesChangedSignal[] {
+    const canonicalSource=canonicalizeResource(source);
+    // Resources carry presentation; identity-only store/v1 readers deliberately
+    // reject it. Project the validated identity explicitly at every boundary.
+    const sourceIdentity={provider:canonicalSource.provider,keys:canonicalSource.keys};
+    const normalized=scan.occurrences.map(({target,...location})=>({target:serializeResource(canonicalizeResource(target)),...MentionLocationSchema.parse(location)}));
+    for(const row of normalized) {
+      if(row.locator.threadId!==source.keys.thread)throw new Error('Location belongs to another source.');
+      // The adapter, rather than an opaque raw id parser, defines the mapping.
+      if(row.target.provider==='recognition' || row.provenance.source.provider==='bb.file' || row.provenance.verifiedFile){
+        const file=row.provenance.verifiedFile;
+        if(row.provenance.source.provider==='bb.file' && !file)throw new Error('Native file assertion requires verified frame metadata.');
+        if(file && row.provenance.source.provider!=='bb.file')throw new Error('Verified file metadata requires a native file source.');
+        if(file?.kind==='thread-storage' && file.threadId!==sourceIdentity.keys.thread)throw new Error('File storage owner does not match its source.');
+        const mapped=file?verifiedFileIdentity(file):recognitionIdentity(row.provenance.source);
+        if(canonicalizeIdentity(mapped).canonicalIdentityJson!==canonicalizeResource(row.target).canonicalIdentityJson)throw new Error('Recognition identity mapping mismatch.');
+      }
+    }
+    return this.db.transaction(()=>{
+      const prior=this.mentionState(sourceIdentity);
+      const now=Date.now(), fullyObserved=new Set(scan.observedMessageIds), scanned=new Set(scan.scannedMessageIds), failed=new Set(scan.failedSuppliers);
+      const retained:Array<ObservedMention & {occurrenceKey:string;observedAt:number;confirmed:boolean}>=[];
+      const incoming=normalized.map(row=>({...row,occurrenceKey:mentionKey(row),observedAt:now,confirmed:true}));
+      const byLocation=new Map(incoming.map(row=>[row.occurrenceKey,row]));
+      if(!deleted)for(const row of prior.occurrences){
+        const supplierUncertain=row.provenance.origin==='contributed' && (scan.discoveryIncomplete || failed.has(row.provenance.pluginId));
+        const missingMessage=scan.coverage.timelineComplete && !scanned.has(row.locator.messageId);
+        if(missingMessage)continue;
+        const replacement=byLocation.get(row.occurrenceKey);
+        if(replacement) {
+          // A transport failure is not evidence that a typed observation went
+          // away. Keep it unconfirmed instead of adding a second generic edge.
+          if(supplierUncertain && replacement.provenance.source.provider==='bb.url' && replacement.sourceContentRevision===row.sourceContentRevision){
+            byLocation.delete(row.occurrenceKey);retained.push({...row,confirmed:false});
+          }
+          continue;
+        }
+        if(!fullyObserved.has(row.locator.messageId) || supplierUncertain)retained.push({...row,confirmed:false});
+      }
+      const groups=new Map<string,typeof retained>();
+      const groupKeys=new Map<string,Set<string>>();
+      for(const row of deleted?[]:[...byLocation.values(),...retained]){
+        const key=canonicalizeResource(row.target).canonicalIdentityJson;
+        const group=groups.get(key)??[];
+        const keys=groupKeys.get(key)??new Set<string>();
+        if(!keys.has(row.occurrenceKey)){keys.add(row.occurrenceKey);group.push(row);}
+        groupKeys.set(key,keys);groups.set(key,group);
+      }
+      const incomplete=!scan.coverage.timelineComplete || scan.coverage.reasons.length>0 || scan.discoveryIncomplete || failed.size>0;
+      let capHistoryUnknown=!deleted && incomplete && prior.coverage?.capHistoryUnknown===true;
+      const durableCaps=new Map<string,MentionEdgeCap>();
+      if(incomplete && !deleted)for(const cap of prior.edgeCaps)if(cap.state!=='uncapped')durableCaps.set(canonicalizeIdentity(cap.target).canonicalIdentityJson,cap);
+      // A bounded sample cannot prove that earlier clipping stopped. Reset only
+      // after sufficient complete observation or this producer/source tombstone.
+      let retentionLimited=!deleted && (scan.coverage.retentionLimited || (incomplete && prior.coverage?.retentionLimited===true));
+      const ordered=[...groups].map(([key,rows])=>({key,rows:rows.sort((a,b)=>b.messageCreatedAt-a.messageCreatedAt || a.locator.messageId.localeCompare(b.locator.messageId) || a.span.start-b.span.start || a.occurrenceKey.localeCompare(b.occurrenceKey))}))
+        .sort((a,b)=>b.rows[0]!.messageCreatedAt-a.rows[0]!.messageCreatedAt || a.key.localeCompare(b.key));
+      if(ordered.length>MENTION_LIMITS.targets)retentionLimited=true;
+      const selectedGroups=ordered.slice(0,MENTION_LIMITS.targets);
+      const kept=selectedGroups.flatMap(group=>{
+        if(group.rows.length>MENTION_LIMITS.perEdge){
+          retentionLimited=true;
+          const identity=canonicalizeResource(group.rows[0]!.target);
+          durableCaps.set(group.key,{target:{provider:identity.provider,keys:identity.keys},state:'capped'});
+        }
+        return group.rows.slice(0,MENTION_LIMITS.perEdge);
+      });
+      const observations:ObservedReference[]=selectedGroups.map(group=>({target:group.rows[0]!.target,lastSeenAt:group.rows[0]!.messageCreatedAt}));
+      // Pre-migration native claims lack locations. An incomplete scan cannot
+      // withdraw them. Known located claims follow the message/supplier scope.
+      const current=this.getProjection({producerPluginId:'cross-references',source:sourceIdentity}).projection;
+      const located=new Set(prior.occurrences.map(row=>canonicalizeResource(row.target).canonicalIdentityJson));
+      if(incomplete && !deleted)for(const target of current?.targets??[]){
+        if(!located.has(canonicalizeResource(target).canonicalIdentityJson))observations.push({target,lastSeenAt:null});
+      }
+      // Retained claims keep the original v1 lastSeenAt meaning and time, even
+      // when the newest location was clipped by the bounded retained sample.
+      if(incomplete){
+        const times=this.listForwardReferences({source:sourceIdentity,producerPluginId:'cross-references',pageSize:100});
+        let page=times;
+        const priorTimes=new Map<string,number|null>();
+        while(true){for(const row of page.rows)priorTimes.set(canonicalizeResource(row.target).canonicalIdentityJson,row.lastSeenAt??null);
+          if(!page.nextCursor)break;page=this.listForwardReferences({source:sourceIdentity,producerPluginId:'cross-references',pageSize:100,cursor:page.nextCursor});}
+        for(const row of observations)row.lastSeenAt=Math.max(row.lastSeenAt??-1,priorTimes.get(canonicalizeResource(row.target).canonicalIdentityJson)??-1);
+        for(const row of observations)if(row.lastSeenAt===-1)row.lastSeenAt=null;
+      }
+      // Fit the existing exact v1 payload before its strict writer runs. Measure
+      // canonical target JSON once and add comma bytes, rather than serializing
+      // an ever-growing projection on every candidate. Ordering/dedup matches
+      // the existing native edge selector; no protocol cap is relaxed.
+      const candidates=new Map<string,{target:Resource;lastSeenAt:number|null;canonical:CanonicalResource}>();
+      for(const row of observations){const canonical=canonicalizeResource(row.target),key=canonical.canonicalIdentityJson,prior=candidates.get(key);
+        if(!prior || (row.lastSeenAt??-1)>(prior.lastSeenAt??-1))candidates.set(key,{...row,canonical});}
+      const ranked=[...candidates].sort(([a,ar],[b,br])=>(br.lastSeenAt??-1)-(ar.lastSeenAt??-1) || (a<b?-1:a>b?1:0));
+      const fitted:ObservedReference[]=[];
+      let payloadBytes=utf8ByteLength(projectionPayloadJson('cross-references',canonicalSource,deleted,[])),payloadLimited=false;
+      for(const [,row] of ranked.slice(0,MENTION_LIMITS.targets)){
+        const extra=utf8ByteLength(JSON.stringify(serializeResource(row.canonical)))+(fitted.length?1:0);
+        if(payloadBytes+extra>MAX_PROJECTION_PAYLOAD_BYTES){payloadLimited=true;continue;}
+        fitted.push({target:row.target,lastSeenAt:row.lastSeenAt});payloadBytes+=extra;
+      }
+      if(payloadLimited){retentionLimited=true;capHistoryUnknown=true;}
+      const signals=this.replaceObservedThreadReferences(source,fitted,true,deleted);
+      const sourceId=this.findResource(canonicalSource)!.id;
+      const active=this.getProjection({producerPluginId:'cross-references',source:sourceIdentity}).projection!;
+      const activeKeys=new Set(active.targets.map(t=>canonicalizeResource(t).canonicalIdentityJson));
+      const final=kept.filter(row=>activeKeys.has(canonicalizeResource(row.target).canonicalIdentityJson));
+      if(final.length!==kept.length)retentionLimited=true;
+      // Only retained graph targets get keyed metadata. Remember any discarded
+      // clipping with one source bit rather than accumulating inactive targets.
+      for(const key of durableCaps.keys())if(!activeKeys.has(key)){durableCaps.delete(key);capHistoryUnknown=true;}
+      const priorActiveKeys=new Set((current?.targets??[]).map(target=>canonicalizeResource(target).canonicalIdentityJson));
+      if(capHistoryUnknown && incomplete)for(const target of active.targets){
+        const identity=canonicalizeResource(target),key=identity.canonicalIdentityJson;
+        if(!priorActiveKeys.has(key) && !durableCaps.has(key))durableCaps.set(key,{target:{provider:identity.provider,keys:identity.keys},state:'unknown'});
+      }
+      const edgeCaps=[...durableCaps].sort(([a],[b])=>a<b?-1:a>b?1:0).map(([,cap])=>cap);
+      retentionLimited=retentionLimited || edgeCaps.length>0 || capHistoryUnknown;
+      const coverage={...scan.coverage,retentionLimited,capHistoryUnknown,
+        reasons:[...new Set([...scan.coverage.reasons,...(payloadLimited?['projection-payload-budget']:[])])].sort()};
+      const digest=sha256Hex(canonicalJson({coverage,edgeCaps,locations:final.map(row=>({target:canonicalizeResource(row.target).canonicalIdentityJson,
+        locator:row.locator,sourceContentRevision:row.sourceContentRevision,span:row.span,messageCreatedAt:row.messageCreatedAt,
+        provenance:row.provenance,confirmed:row.confirmed})).sort((a,b)=>canonicalJson(a).localeCompare(canonicalJson(b)))}));
+      const revision=prior.revision+(digest!==prior.digest?1:0);
+      this.db.prepare(`INSERT INTO mention_streams (producer_plugin_id, source_resource_id, evidence_revision, evidence_digest, collector_version, coverage_json, last_successful_scan_at, cap_history_unknown) VALUES ('cross-references', ?, ?, ?, 1, ?, ?, ?)
+        ON CONFLICT(producer_plugin_id,source_resource_id) DO UPDATE SET evidence_revision=excluded.evidence_revision,
+        evidence_digest=excluded.evidence_digest,coverage_json=excluded.coverage_json,last_successful_scan_at=excluded.last_successful_scan_at,cap_history_unknown=excluded.cap_history_unknown`)
+        .run(sourceId,revision,digest,canonicalJson(coverage),now,capHistoryUnknown?1:0);
+      this.db.prepare(`DELETE FROM mention_edge_caps WHERE producer_plugin_id = 'cross-references' AND source_resource_id = ?`).run(sourceId);
+      const insertCap=this.db.prepare(`INSERT INTO mention_edge_caps VALUES ('cross-references', ?, ?, ?)`);
+      for(const cap of edgeCaps){
+        const target=this.findResource(canonicalizeIdentity(cap.target));
+        if(!target)throw new Error('Cap state without a retained resource identity.');
+        insertCap.run(sourceId,target.id,cap.state);
+      }
+      this.db.prepare(`DELETE FROM mention_occurrences WHERE producer_plugin_id = 'cross-references' AND source_resource_id = ?`).run(sourceId);
+      const insert=this.db.prepare(`INSERT INTO mention_occurrences VALUES ('cross-references', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+      for(const row of final){
+        const targetId=this.findResource(canonicalizeResource(row.target))!.id;
+        if(row.target.provider==='recognition')this.db.prepare(`INSERT INTO recognized_resources VALUES (?, ?, 1)
+          ON CONFLICT(resource_id) DO NOTHING`).run(targetId,row.provenance.verifiedFile?verifiedFileIdentityRecord(row.provenance.verifiedFile):recognitionIdentityRecord(row.provenance.source));
+        insert.run(sourceId,targetId,row.occurrenceKey,canonicalJson(row.locator),row.sourceContentRevision,row.span.start,row.span.end,
+          row.messageCreatedAt,row.observedAt,canonicalJson(row.provenance),row.confirmed?1:0);
+      }
+      if(digest!==prior.digest && signals.length===0)signals.push({
+        protocolVersion:1,producerPluginId:'cross-references',sourceIdentityDigest:canonicalSource.identityDigest,
+        revision:active.revision,affectedIdentityDigests:[...new Set([canonicalSource.identityDigest,
+          ...active.targets.map(t=>canonicalizeResource(t).identityDigest),
+          ...prior.edgeCaps.map(cap=>canonicalizeIdentity(cap.target).identityDigest)])],
       });
       return signals;
     })();
