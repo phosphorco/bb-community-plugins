@@ -24,6 +24,8 @@ on:
           - bb-cross-references
           - bb-agent-connection
           - bb-people-accounts
+          - bb-usage-algebra
+          - bb-thread-metrics
       dry_run:
         type: boolean
         default: false
@@ -69,6 +71,8 @@ on:
       - "bb-cross-references/v*"
       - "bb-agent-connection/v*"
       - "bb-people-accounts/v*"
+      - "bb-usage-algebra/v*"
+      - "bb-thread-metrics/v*"
 
 permissions:
   contents: read
@@ -147,10 +151,12 @@ jobs:
             bb-cross-references) workspace="@phosphorco/bb-cross-references" ;;
             bb-agent-connection) workspace="@phosphorco/bb-agent-connection" ;;
             bb-people-accounts) workspace="@phosphorco/bb-people-accounts" ;;
+            bb-usage-algebra) workspace="@phosphorco/bb-usage-algebra" ;;
+            bb-thread-metrics) workspace="@phosphorco/bb-thread-metrics" ;;
             *) echo "Unsupported release plugin: $plugin" >&2; exit 1 ;;
           esac
           case "$plugin" in
-            bb-identity|bb-provider-settings|bb-context-recognition|bb-cross-references|bb-agent-connection|bb-people-accounts) path="packages/$plugin" ;;
+            bb-identity|bb-provider-settings|bb-context-recognition|bb-cross-references|bb-agent-connection|bb-people-accounts|bb-usage-algebra|bb-thread-metrics) path="packages/$plugin" ;;
             *) path="plugins/$plugin" ;;
           esac
           package_version="$(npm pkg get version --workspace "$workspace" | node -e 'let input=""; process.stdin.on("data", chunk => input += chunk); process.stdin.on("end", () => console.log(Object.values(JSON.parse(input))[0]))')"
@@ -206,7 +212,7 @@ jobs:
       - name: Build shared packages for tests
         if: ${{ steps.release.outputs.pinned_next != 'true' || inputs.dry_run }}
         # Packages test against their own dist, and plugins import the workspace-linked packages' dist.
-        run: npm run build --workspace packages/bb-identity --workspace packages/bb-provider-settings --workspace packages/bb-context-recognition --workspace packages/bb-cross-references --workspace packages/bb-agent-connection --workspace packages/bb-people-accounts
+        run: npm run build --workspace packages/bb-identity --workspace packages/bb-provider-settings --workspace packages/bb-context-recognition --workspace packages/bb-cross-references --workspace packages/bb-agent-connection --workspace packages/bb-people-accounts --workspace packages/bb-usage-algebra --workspace packages/bb-thread-metrics
 
       - name: Test
         if: ${{ steps.release.outputs.pinned_next != 'true' || inputs.dry_run }}
@@ -277,8 +283,21 @@ jobs:
           path: release-receipt.json
           if-no-files-found: error
 
+      - name: Publish context recognition through trusted publisher
+        if: ${{ !inputs.dry_run && steps.release.outputs.plugin == 'bb-context-recognition' && steps.release.outputs.pinned_next != 'true' }}
+        # This package must fail closed if its configured GitHub OIDC trust is missing.
+        # Keep NPM_TOKEN available to other packages; never pass it to this step.
+        shell: bash
+        run: |
+          test "$RELEASE_WORKSPACE" = '@phosphorco/bb-context-recognition'
+          npm publish --ignore-scripts --access public --provenance --workspace "$RELEASE_WORKSPACE" --tag "$RELEASE_DIST_TAG"
+        env:
+          RELEASE_WORKSPACE: ${{ steps.release.outputs.workspace }}
+          RELEASE_DIST_TAG: ${{ steps.release.outputs.dist_tag }}
+          NODE_AUTH_TOKEN: ''
+
       - name: Publish public package
-        if: ${{ !inputs.dry_run && steps.release.outputs.pinned_next != 'true' }}
+        if: ${{ !inputs.dry_run && steps.release.outputs.plugin != 'bb-context-recognition' && steps.release.outputs.pinned_next != 'true' }}
         # The repository is public, so every release carries SLSA provenance.
         run: npm publish --ignore-scripts --access public --provenance --workspace "$RELEASE_WORKSPACE" --tag "$RELEASE_DIST_TAG"
         env:

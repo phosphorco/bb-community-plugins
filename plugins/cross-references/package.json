@@ -38,7 +38,8 @@
     },
     "server": "./server.ts",
     "app": "./app.tsx",
-    "skills": []
+    "skills": [],
+    "host": "./mention-file-host.ts"
   },
   "files": [
     "dist/",
@@ -57,12 +58,22 @@
     "model.ts",
     "rpc-contract.ts",
     "store.ts",
-    "test/"
+    "test/",
+    "mention-collection.ts",
+    "mention-markdown.ts",
+    "mention-evidence.ts",
+    "mention-file-contract.ts",
+    "mention-file-host.ts",
+    "mention-files.ts"
   ],
   "dependencies": {
     "marked": "^18.0.5",
     "zod": "4.6.7",
-    "@phosphorco/bb-cross-references": "0.1.1"
+    "@phosphorco/bb-cross-references": "0.2.0",
+    "@phosphorco/bb-context-recognition": "0.5.0",
+    "unified": "11.0.5",
+    "remark-parse": "11.0.0",
+    "remark-gfm": "4.0.1"
   },
   "devDependencies": {
     "@get-bb/plugin-sdk": "0.6.52",

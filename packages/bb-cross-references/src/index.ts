@@ -416,3 +416,7 @@ export type ListBacklinksRpcOutput = ListBacklinksResponse;
 export type ListForwardReferencesRpcOutput = ListForwardReferencesResponse;
 
 export type AttachmentSnapshot = ReferenceSnapshot;
+
+export { recognitionIdentity, recognitionIdentityRecord, RECOGNITION_CODEC_VERSION, MAX_RECOGNITION_IDENTITY_BYTES, type VerifiedRecognitionThread } from './recognition.js';
+
+export { verifiedFileIdentity, verifiedFileIdentityRecord, VerifiedFileTargetSchema, type VerifiedFileTarget } from './recognition.js';

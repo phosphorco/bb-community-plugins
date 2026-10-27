@@ -40,3 +40,15 @@ client apply/get/backlinks acceptance and reports source conformance.
 Run `npm run build`, `npm run test`, `npm run typecheck` in the workspace.
 See [CONTRACT.md](./CONTRACT.md) for exports, bounds, wire compatibility,
 legacy describe fallback and proof limitations.
+
+Package 0.2.0 exports `recognitionIdentity` and `recognitionIdentityRecord` for
+recognition-backed consumers. Thread verification stays with the consumer;
+typed opaque IDs use a bounded SHA-256 identity and a separate raw mapping.
+See the [contract](CONTRACT.md#recognition-identity-adapter-package-020-wire-v1-unchanged).
+
+Verified native files use `verifiedFileIdentity` and `verifiedFileIdentityRecord`
+with `VerifiedFileTargetSchema`; the generic adapter rejects unverified `bb.file`.
+Workspace owner is environment ID; storage owner is the owning thread ID.
+Full frame/path survives separately from the bounded hashed graph key and
+original lexical source IDs remain occurrence provenance. See the contract for
+exact canonical tuple/path rules; consumers own bounded existence/containment.
