@@ -200,7 +200,6 @@ export interface ForkIdentityProtocolV1<RequestContext, ToolContext, Input> {
   historyAttempts(query: Wire<import('./model.js').AttemptQuery>, options?: ReadOptions): Promise<Wire<Result<import('./model.js').EvidencePage<ExecutionProvenance>>>>;
   /** Borrowed provider callbacks; package composes/searches/normalizes them with default/external profiles. */
   directorySources(): readonly ProviderDirectorySource[];
-  participants(input: Wire<import('./model.js').ParticipantQuery>, options?: ReadOptions): Promise<Wire<Awaited<ReturnType<ParticipantReader['list']>>>>;
   /** RPC-only forwarding fences the original scope and destination generation before and after work. */
   forwardRpc(scope: ForkInvocationScope, destination: { readonly pluginId: string; readonly method: string },
     input: import('./model.js').Json): Promise<unknown>;

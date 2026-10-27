@@ -1,34 +1,13 @@
 /** Public SDK snapshot adapter. No SDK runtime, lifecycle, history store or Contribution fabrication. */
-import { z } from 'zod';
-import type { NativeActor, NativeMention, NativeCoverage, NativeSourceActor, NativeSourceEvent as NativeEvent, NativeHistoryRead, NativeInputLink, NativeSourceAdapter, NativeSourceEvidence, NativeSourceReference, NativeSourceSnapshot, NativeTextEvidence, NativeTimeline } from './native.js';
+import { decodeSourceActors, nativeMention } from './native-actors-runtime.js';
+import type { NativeCoverage, NativeSourceActor, NativeSourceEvent as NativeEvent, NativeHistoryRead, NativeInputLink, NativeSourceAdapter, NativeSourceEvidence, NativeSourceReference, NativeSourceSnapshot, NativeTextEvidence, NativeTimeline } from './native.js';
 import type { ProvenanceReader, Result } from './model.js';
-import { err, externalPersonSnapshotCodec, idCodec, ok } from './model-runtime.js';
+import { err, idCodec, ok } from './model-runtime.js';
 
 export const NATIVE_SOURCE_LIMITS = Object.freeze({ events: 2000, rows: 2000, bytes: 2097152, depth: 8, historyReads: 16, identifier: 256, dataDepth: 64 } as const);
 const coverage = (reasons: string[], empty = false): NativeCoverage => ({ status: reasons.length ? (empty ? 'unknown' : 'partial') : 'known', reasons: [...new Set(reasons)] });
 const unknownLineage = () => ({ status: 'unknown', reason: 'not-established-by-native-source' } as const);
 const validId = (v: unknown): v is string => typeof v === 'string' && v.trim().length > 0 && v.length <= NATIVE_SOURCE_LIMITS.identifier;
-const presentation = z.object({ displayName: z.string().min(1).max(512), handle: z.string().max(512).nullable(), avatarUrl: z.string().max(2048).nullable() });
-const nativeActor = z.discriminatedUnion('evidence', [
-  z.object({ evidence: z.literal('provider-verified'), identity: z.object({ kind: z.literal('person'), key: z.string().min(1).max(2048), issuer: z.string().min(1).max(512), subject: z.string().min(1).max(512) }), presentation }),
-  z.object({ evidence: z.literal('machine'), identity: z.object({ kind: z.literal('machine'), key: z.string().min(1).max(2048), instanceId: z.string().min(1).max(256), hostId: z.string().max(256).nullable() }), presentation }),
-]) satisfies z.ZodType<NativeActor>;
-const nativeMention = z.object({ identity: z.object({ kind: z.literal('person'), key: z.string().min(1).max(2048), issuer: z.string().min(1).max(512), subject: z.string().min(1).max(512) }), presentation, source: z.object({ pluginId: z.string().min(1).max(256), generation: z.string().min(1).max(256) }) }) satisfies z.ZodType<NativeMention>;
-/** The shared model codec owns the assertion and branded identity validation. */
-function decodeSourceActors(value: unknown): Result<readonly (NativeSourceActor | null)[] | undefined> {
-  if (value === undefined) return ok(undefined);
-  if (!Array.isArray(value) || value.length > 256) return err('invalid-input', 'Malformed native actor snapshot.');
-  const actors: (NativeSourceActor | null)[] = [];
-  for (const actor of value) {
-    if (actor === null) { actors.push(null); continue; }
-    const external = externalPersonSnapshotCodec.decode(actor);
-    if (external.ok) { actors.push(external.value); continue; }
-    const native = nativeActor.safeParse(actor);
-    if (!native.success) return err('invalid-input', 'Malformed native actor snapshot.');
-    actors.push(native.data);
-  }
-  return ok(actors);
-}
 const seq = (v: unknown): v is number => typeof v === 'number' && Number.isSafeInteger(v) && v >= 0;
 const turn = (e: NativeEvent) => e.scope.kind === 'turn' ? e.scope.turnId : null;
 /** Copy one data representation without invoking accessors or serialization hooks.

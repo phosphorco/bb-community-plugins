@@ -263,7 +263,6 @@ export function createAdapterHarness<Input>(options: {
     historyContributions: unavailableHistory().contributions,
     historyAttempts: unavailableHistory().attempts,
     directorySources: () => [],
-    async participants() { observations.participantReads++; return err('unsupported', 'Fixture participants are disabled.'); },
     async forwardRpc(_scope, _destination, input) { return input; },
     registerProvider,
     subscribe(listener) { observations.subscriptions++; hostListeners.add(listener); return () => hostListeners.delete(listener); },

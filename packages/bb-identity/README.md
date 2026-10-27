@@ -405,6 +405,11 @@ it. Partial/unknown provenance is explicit. Participants aggregate roles across
 retained visible durable history, including external authors and mentioned-only
 people. Queue-only drafts are not participants. Pages and previews report
 coverage. Profile snapshots for mentions need no invented authorship evidence.
+The enhanced `/bb` binding composes native facet membership with paged retained
+request snapshots and public contribution history; see
+[retained participants](CONSUMERS.md#retained-participants). The obsolete host
+`protocol.participants` answer is ignored. Portable singleton participant
+history remains unsupported; its ordinary identity and state behavior is unchanged.
 
 ## State and transition semantics
 
