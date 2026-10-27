@@ -5,6 +5,7 @@
   "plugins": [
     { "name": "compact-display", "source": "./plugins/compact-display" },
     { "name": "message-timings-nerd", "source": "./plugins/message-timings-nerd" },
+    { "name": "people-accounts", "source": "./plugins/people-accounts" },
     { "name": "cross-references", "source": "./plugins/cross-references" },
     { "name": "agentation-mentions", "source": "./plugins/agentation-mentions" },
     { "name": "perspectives", "source": "./plugins/perspectives" },

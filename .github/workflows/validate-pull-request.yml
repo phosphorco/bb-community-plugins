@@ -44,6 +44,7 @@ jobs:
           npm run build --workspace @phosphorco/bb-context-recognition
           npm run build --workspace @phosphorco/bb-cross-references
           npm run build --workspace @phosphorco/bb-agent-connection
+          npm run build --workspace @phosphorco/bb-people-accounts
 
       - name: Test
         run: npm run test
@@ -56,6 +57,9 @@ jobs:
 
       - name: Inspect Agentation Mentions package
         run: npm pack --dry-run --ignore-scripts --workspace @phosphorco/bb-plugin-agentation-mentions
+
+      - name: Inspect People Accounts package
+        run: npm pack --dry-run --ignore-scripts --workspace @phosphorco/bb-plugin-people-accounts
 
       - name: Inspect Cross References package
         run: npm pack --dry-run --ignore-scripts --workspace @phosphorco/bb-plugin-cross-references

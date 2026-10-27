@@ -9,6 +9,7 @@ on:
         type: choice
         options:
           - message-timings-nerd
+          - people-accounts
           - cross-references
           - machine-monitor
           - agentation-mentions
@@ -53,6 +54,7 @@ on:
   push:
     tags:
       - "message-timings-nerd/v*"
+      - "people-accounts/v*"
       - "cross-references/v*"
       - "machine-monitor/v*"
       - "agentation-mentions/v*"
@@ -130,6 +132,7 @@ jobs:
           plugin="${REQUESTED_PLUGIN:-${GITHUB_REF_NAME%%/*}}"
           case "$plugin" in
             message-timings-nerd) workspace="@phosphorco/bb-plugin-message-timings-nerd" ;;
+            people-accounts) workspace="@phosphorco/bb-plugin-people-accounts" ;;
             cross-references) workspace="@phosphorco/bb-plugin-cross-references" ;;
             machine-monitor) workspace="@phosphorco/bb-plugin-machine-monitor" ;;
             agentation-mentions) workspace="@phosphorco/bb-plugin-agentation-mentions" ;;
