@@ -264,3 +264,55 @@ changes the projection revision when the membership/sum input changes and clears
 replaces its floor/unavailable state from the authoritative response. Actual
 recovery/deduplication and UI wording implementations are separate adopter work;
 this package supplies the reason codec and preserves observed values unchanged.
+
+## Byte conformance and aggregate approximation hardening
+
+The conformance kit admits every positive read/detail case with `parseBounded`
+before invoking a handler; shape-only parsing is insufficient. Every supplier
+must reject the mandatory shape-valid oversized read input: 200 unique IDs of
+200 characters plus a 256-character known revision per ID (133051 UTF-8 JSON
+bytes, above the 65536-byte input cap). Count/field validation alone accepts this
+input, so the kit requires a structured invalid_input or Zod validation failure
+from the real registered handler boundary. A raw-schema supplier that omits byte
+admission fails source conformance even if all ordinary reads work. This proves
+local handler admission, not a limit on the SDK's prior transport allocation.
+
+Detail's top-level `approximation` describes the **aggregate total**, not merely
+the page or a separate pricing lookup. If any contributing returned row has
+`approximate:true`, the aggregate must also be approximate and retain every
+reason on that row. A contradictory exact aggregate or a missing row reason is
+rejected. This requirement applies on partial/unknown pages too. Aggregate
+reasons may be a superset of current-page reasons (unseen contributors or
+aggregation uncertainty); partial pages still need not sum to the whole total.
+Across pages the supplier must retain the total's full provenance consistently.
+Existing null-money requirements remain: null total requires top-level
+missing-price provenance, and null row amounts require row missing-price
+provenance. Additive unknown output fields remain tolerated.
+
+Optional rate attribution remains optional; no caller is required to populate
+`rates`. When present, every matched/closest-model/provider-default record must
+have a non-null rateId identifying the selected priced rate. An unpriced record
+must have a null rateId. The codec rejects both contradictory pairings; it does
+not verify a rate against the supplier's operator-owned table.
+
+## Ordinary client deadlines and publication fences
+
+`createThreadMetricsClient` binds the owner and validates the wire data. It only
+forwards the caller's AbortSignal to the SDK. It creates no per-call deadline,
+queue, outstanding-read limit, generation fence or automatic retry, and does not
+promise that abort rejects the call or stops remote work. A supplier/transport
+that ignores abort can still return a schema-valid result after cancellation.
+The discovery coordinator's bounded lifetime/admission does not extend to these
+ordinary read/detail calls.
+
+Consumers own read/detail deadlines and actual outstanding admission across
+refresh/reconnect/replacement requests. Racing a call against a timeout permits
+local UI progress but must not free its transport slot until the actual promise
+settles. A new owner/client instance must not bypass the demand coordinator's
+retained admission budget. After **every await**, before publishing/caching any
+response or error, consumers check their abort state and current generation
+(owner, thread/scope/archive/window/series demand and view lifecycle) and discard
+obsolete outcomes. These post-await fences are required even when the SDK claims
+cancellation support. Keep last good data during failure according to the host's
+staleness policy; a late response cannot revive a disposed/replaced demand.
+No package-global lifecycle or client cancellation machinery is introduced.

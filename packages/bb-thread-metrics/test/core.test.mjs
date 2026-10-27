@@ -1,5 +1,5 @@
 import { test, expect } from 'bun:test';
-import { familyClosure,dollarPercentiles,heat,readInputSchema,parseBounded,readResultSchema,validateReadResult,validateDetailResult,negotiateVersion,retainedWindowStart,coverageSchema,coverageReasonSchema,detailInputSchema,LIMITS } from '../dist/index.js';
+import { familyClosure,dollarPercentiles,heat,readInputSchema,parseBounded,readResultSchema,validateReadResult,validateDetailResult,negotiateVersion,retainedWindowStart,coverageSchema,coverageReasonSchema,approximationSchema,detailInputSchema,LIMITS } from '../dist/index.js';
 export const vector={inputUncached:10,cacheRead:2,cacheWrite:3,output:4};
 export const approx={approximate:false,reasons:[]};
 export const pop={asOf:100000000,count:10,coverage:'complete'};
@@ -145,4 +145,27 @@ test('root-unattested reason preserves positive dollar floors and distinct cover
  const floors=dollarPercentiles([{threadId:'root',amount:summary.windows.m20.amount},{threadId:'peer',amount:2}]);
  expect(floors.get('root')).toBe(0);expect(dollarPercentiles([{threadId:'root',amount:0}]).get('root')).toBeNull();
  expect(validateReadResult(input,{version:1,rows:[]}).rows).toEqual([]); // supplier may omit unsupported zero evidence
+});
+
+test('rate attribution requires a rateId exactly for priced bases; optional list stays optional',()=>{
+ const rate={providerId:'provider',modelId:'model',rateId:'rate-v1',basis:'matched'};
+ for(const basis of ['matched','closest-model','provider-default']){
+  expect(approximationSchema.safeParse({approximate:true,reasons:[],rates:[{...rate,basis}]}).success).toBe(true);
+  expect(approximationSchema.safeParse({approximate:true,reasons:[],rates:[{...rate,basis,rateId:null}]}).success).toBe(false);
+ }
+ expect(approximationSchema.safeParse({approximate:true,reasons:['missing-price'],rates:[{...rate,basis:'unpriced',rateId:null}]}).success).toBe(true);
+ expect(approximationSchema.safeParse({approximate:true,reasons:['missing-price'],rates:[{...rate,basis:'unpriced'}]}).success).toBe(false);
+ expect(approximationSchema.parse({approximate:true,reasons:['provider-default']})).toEqual({approximate:true,reasons:['provider-default']});
+});
+test('detail top approximation covers aggregate total and every contributing row, including partial pages',()=>{
+ const fallback={approximate:true,reasons:['provider-default','model-attribution']};
+ const d={...detail(),rows:[{...detail().rows[0],approximation:fallback}]};
+ expect(()=>validateDetailResult(detailInput,d)).toThrow('Aggregate total');
+ expect(()=>validateDetailResult(detailInput,{...d,approximation:{approximate:true,reasons:['provider-default']}})).toThrow('Aggregate total');
+ expect(validateDetailResult(detailInput,{...d,approximation:fallback}).approximation).toEqual(fallback);
+ const page={...d,coverage:'partial',coverageReasons:['pagination'],nextCursor:'page2',total:{tokens:vector,amount:100}};
+ expect(()=>validateDetailResult(detailInput,page)).toThrow('Aggregate total');
+ expect(validateDetailResult(detailInput,{...page,approximation:{...fallback,reasons:[...fallback.reasons,'bucket-boundary']},future:true}).total.amount).toBe(100);
+ const absentPrice={...detail(),coverage:'unknown',total:{tokens:vector,amount:null},rows:[]};
+ expect(()=>validateDetailResult(detailInput,absentPrice)).toThrow('missing-price');
 });

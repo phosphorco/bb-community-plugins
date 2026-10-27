@@ -16,10 +16,14 @@ breakdown, normally `snapshot.total`, never a `{total,last}` envelope. The codec
 strips unknown fields for forwards compatibility; invalid numeric fields fail.
 Missing input/output classes become zero observed with `complete:false`. If all
 three cache observations (aggregate/read/write) are absent, cache classes are
-zero observed and `complete:false`, even for known translators. Without aggregate, Claude/Pi require both explicit cache read and write
-observations for completeness; either missing class is zero-observed incomplete.
-An explicit zero aggregate or explicit zero read/write pair is complete for
-Claude/Pi. Codex aggregate aliases reads only: a complete cache observation
+zero observed and `complete:false`, even for known translators. Claude/Pi require
+both explicit cache read and write observations for completeness, regardless of
+aggregate presence or value. Their translators can synthesize aggregate by
+turning missing split classes into zero, so even aggregate0 or aggregate plus
+one class does not prove both classes were observed. Explicit read0/write0 is
+complete; aggregate-only and aggregate-plus-single-class reconstruction remains
+available as an approximate vector with issues and is never a comparable
+complete baseline. Codex aggregate aliases reads only: a complete cache observation
 requires an explicit read or aggregate, plus an explicit write (zeros valid). Zero
 observed never proves zero billed. An entirely unclassified breakdown yields
 null; a total or reasoning field cannot establish billable classes.
@@ -36,7 +40,8 @@ Verified against BB translators on 2026-10-27:
   subtracted along with read from inclusive input.
 
 Claude/Pi missing cache split is inferred from aggregate minus known class;
-aggregate alone is assigned to reads with an explicit approximation issue.
+aggregate alone is assigned to reads with explicit approximation issues.
+Every inferred split, including inferred zero, is incomplete.
 Conflicting explicit cache classes win, with an issue. Codex explicit read wins
 over its aggregate alias. Its generated app-server
 `schema/v2/TokenUsageBreakdown.ts` requires `cacheWriteInputTokens`; BB translator
@@ -53,13 +58,20 @@ occupancy or background-task usage is accepted as billable totals.
 
 ## Counters and windows
 
-Persist returned state atomically with increments/checkpoint. Sequence is a
+Persist returned state atomically with increments/checkpoint. Counter checkpoint
+and accepted baseline must outlive bucket pruning: removing retained buckets
+must never drop counter state and cause a cumulative snapshot to be counted
+again as initial. Sequence is a
 nonnegative safe integer from one globally ordered event stream, including across
 epoch changes. Same sequence is duplicate (even differing payload); lower is
 stale. Both produce zero and retain prior state. Higher sequence with same epoch
 subtracts components. Any component regression starts an inferred new epoch and
 counts the entire new vector (`regression-reset`); this is deliberately explicit:
 a partial correction can overestimate and must downgrade consumer coverage.
+Completeness is necessary but does not establish comparability: even two fully
+observed split vectors can reflect a cache reclassification/correction rather
+than a reset. The emitted tests show that raw regression-reset would count the
+whole second vector in this case; consumers own provenance checks and coverage.
 Only comparable, complete canonical observations may be used as counter
 baselines. Reject incomplete observations as baselines and retain the last
 accepted state (while recording a coverage limitation). For example, complete A,

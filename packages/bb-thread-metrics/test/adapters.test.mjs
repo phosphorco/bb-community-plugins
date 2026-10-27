@@ -95,3 +95,49 @@ test('real registered handlers and conformance reject reviewer time/unchanged/nu
   const report=await runSupplierConformance({pluginId:'witness',register:bb=>registerThreadMetricsOwner(bb,broken),readCases:[witness.request??request],detailCases:[witness.detailRequest??detailInput]});expect(report.passed).toBe(false);
  }
 });
+
+test('kit requires byte rejection independently of shape-only registered supplier',async()=>{
+ const {z}=await import('zod');
+ const {readInputSchema,detailInputSchema,describeInputSchema}=await import('../dist/index.js');
+ const rawRegister=bb=>bb.rpc.register({
+  threadMetricsDescribe:{input:describeInputSchema,output:z.unknown()},
+  threadMetricsReadV1:{input:readInputSchema,output:z.unknown()},
+  threadMetricsDetailV1:{input:detailInputSchema,output:z.unknown()},
+ },{
+  threadMetricsDescribe:()=>description,
+  threadMetricsReadV1:()=>({version:1,rows:[]}),
+  threadMetricsDetailV1:()=>detail(),
+ },{experimental_discoverable:true});
+ const raw=await runSupplierConformance({pluginId:'shape-only',register:rawRegister,readCases:[request],detailCases:[detailInput]});
+ expect(raw.checks.filter(c=>!c.passed).map(c=>c.name)).toEqual(['oversized-input-bytes']);
+ const real=await runSupplierConformance({pluginId:'real',register:bb=>registerThreadMetricsOwner(bb,port),readCases:[request],detailCases:[detailInput]});
+ expect(real.passed).toBe(true);expect(real.checks.find(c=>c.name==='oversized-input-bytes').passed).toBe(true);
+ const ids=Array.from({length:200},(_,i)=>`thr_${i}_`.padEnd(200,'x'));
+ const oversized={scope:'family',threadIds:ids,knownRevisions:Object.fromEntries(ids.map(id=>[id,'r'.repeat(256)]))};
+ expect(readInputSchema.safeParse(oversized).success).toBe(true);expect(new TextEncoder().encode(JSON.stringify(oversized)).byteLength).toBe(133051);
+ const positive=await runSupplierConformance({pluginId:'bounded-cases',register:rawRegister,readCases:[oversized],detailCases:[detailInput]});
+ expect(positive.checks.find(c=>c.name==='read-0').error).toBe('Payload byte limit');
+});
+test('aggregate approximation and rate provenance faults fail real handlers and conformance',async()=>{
+ const fallback={approximate:true,reasons:['provider-default']};
+ const badRates={approximate:true,reasons:['provider-default'],rates:[{providerId:'provider',modelId:'model',rateId:null,basis:'provider-default'}]};
+ const witnesses=[
+  {...detail(),rows:[{...detail().rows[0],approximation:fallback}]},
+  {...detail(),approximation:{approximate:true,reasons:['bucket-boundary']},rows:[{...detail().rows[0],approximation:fallback}]},
+  {...detail(),approximation:badRates},
+  {...detail(),rows:[{...detail().rows[0],approximation:badRates}]},
+ ];
+ for(const value of witnesses){
+  const invalid={...port,detail:async()=>value};const host=createFakePluginHost({pluginId:'bad-provenance'});registerThreadMetricsOwner(host.bb,invalid);
+  try{await expect(host.harness.behavior.callRpc(METHODS.detail,detailInput)).rejects.toThrow();}finally{await host.harness.lifecycle.dispose();}
+  const report=await runSupplierConformance({pluginId:'bad-provenance',register:bb=>registerThreadMetricsOwner(bb,invalid),readCases:[request],detailCases:[detailInput]});
+  expect(report.checks.find(c=>c.name==='detail-0').passed).toBe(false);
+ }
+});
+test('ordinary client forwards abort but consumer fences a late ignored-abort response',async()=>{
+ let resolveRead,forwardedSignal;const control=new AbortController();let published=0;
+ const client=createThreadMetricsClient(sdkFor(args=>{forwardedSignal=args.signal;return new Promise(resolve=>{resolveRead=resolve;});}),'supplier');
+ const pending=client.read(request,control.signal).then(result=>{if(control.signal.aborted)return;published+=result.rows.length;});
+ expect(forwardedSignal).toBe(control.signal);control.abort();resolveRead({version:1,rows:[row()]});await pending;
+ expect(published).toBe(0); // aborted remote work still completed; caller owns the publication fence
+});

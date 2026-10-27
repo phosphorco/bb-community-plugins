@@ -21,7 +21,7 @@ export const coverageReasonSchema = z.enum(['source-gap','root-unattested','hist
 const reasons = z.array(coverageReasonSchema).max(16);
 export const approximationSchema = z.object({
  approximate:z.boolean(), reasons:z.array(z.enum(['closest-model','provider-default','model-attribution','bucket-boundary','missing-price','source-gap'])).max(6),
- rates:z.array(z.object({providerId:id,modelId:text,rateId:text.nullable(),basis:z.enum(['matched','closest-model','provider-default','unpriced'])})).max(32).optional(),
+ rates:z.array(z.object({providerId:id,modelId:text,rateId:text.nullable(),basis:z.enum(['matched','closest-model','provider-default','unpriced'])}).superRefine((rate,ctx)=>{if((rate.basis==='unpriced')!==(rate.rateId===null))ctx.addIssue({code:'custom',path:['rateId'],message:'Priced basis requires rateId; unpriced basis requires null'});})).max(32).optional(),
 }).strip().superRefine((v,ctx)=>{if(!v.approximate&&(v.reasons.length||v.rates?.some(r=>r.basis!=='matched')))ctx.addIssue({code:'custom',message:'Approximation provenance requires approximate flag'});});
 const rank = z.number().finite().min(0).max(1).nullable();
 export const ranksSchema = z.object({m20:rank,h24:rank,d7:rank}).strip();
@@ -131,7 +131,9 @@ export function validateDetailResult(input:DetailInput,value:unknown):DetailResu
  if(out.nextCursor&&out.coverage==='complete')throw new Error('Pagination must disclose incomplete coverage');
  if(out.threadId!==input.threadId||out.scope!==input.scope||out.axis!==input.axis||out.window!==input.window||out.rows.length>(input.limit??LIMITS.detailRows))throw new Error('Detail request mismatch');
  let priorEnd:number|undefined;
- const keys=new Set<string>();for(const row of out.rows){if(row.amount===null&&!row.approximation.reasons.includes('missing-price'))throw new Error('Unknown dollars require missing-price provenance');if(row.axis!==input.axis)throw new Error('Detail axis mismatch');
+ const keys=new Set<string>();for(const row of out.rows){
+ if(row.approximation.approximate&&(!out.approximation.approximate||row.approximation.reasons.some(reason=>!out.approximation.reasons.includes(reason))))throw new Error('Aggregate total must retain contributing row approximation provenance');
+ if(row.amount===null&&!row.approximation.reasons.includes('missing-price'))throw new Error('Unknown dollars require missing-price provenance');if(row.axis!==input.axis)throw new Error('Detail axis mismatch');
  if(row.axis==='time'){
   if(row.start<retainedWindowStart(out.asOf,input.window)||row.start>=out.asOf||row.end>out.asOf||row.start%METRIC_BUCKET_MS!==0||(row.end!==out.asOf&&row.end%METRIC_BUCKET_MS!==0)||(priorEnd!==undefined&&row.start<priorEnd))throw new Error('Invalid time detail range/order/overlap');
   priorEnd=row.end;

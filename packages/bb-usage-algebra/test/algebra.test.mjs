@@ -37,14 +37,14 @@ test('absent cache observations are incomplete; explicit zero observations remai
     const missing=a.canonicalize(provider,{inputTokens:100,outputTokens:10});
     assert.equal(missing.complete,false,provider);
     assert.ok(missing.issues.some(issue=>issue.startsWith('missing-cache-observations:')),provider);
-    for (const cache of [provider==='codex' ? {cachedInputTokens:0,cacheWriteInputTokens:0} : {cachedInputTokens:0},{cacheReadInputTokens:0,cacheWriteInputTokens:0}]) {
+    for (const cache of [{cachedInputTokens:0,cacheReadInputTokens:0,cacheWriteInputTokens:0},{cacheReadInputTokens:0,cacheWriteInputTokens:0}]) {
       const zero=a.canonicalize(provider,{inputTokens:100,outputTokens:10,...cache});
       assert.equal(zero.complete,true,provider);
       assert.deepEqual(zero.vector,v(100,0,0,10));
     }
   }
 });
-test('single cache class without aggregate is incomplete symmetrically; aggregate inference remains complete',()=>{
+test('single cache class is incomplete symmetrically; aggregate inference remains approximate',()=>{
   for (const provider of ['claude-code','pi','codex']) {
     for (const cache of [{cacheReadInputTokens:40},{cacheWriteInputTokens:20}]) {
       const result=a.canonicalize(provider,{inputTokens:100,outputTokens:10,...cache});
@@ -56,7 +56,7 @@ test('single cache class without aggregate is incomplete symmetrically; aggregat
   for (const provider of ['claude-code','pi']) {
     for (const cache of [{cachedInputTokens:60,cacheReadInputTokens:40},{cachedInputTokens:60,cacheWriteInputTokens:20}]) {
       const result=a.canonicalize(provider,{inputTokens:100,outputTokens:10,...cache});
-      assert.equal(result.complete,true);assert.deepEqual(result.vector,v(100,40,20,10));
+      assert.equal(result.complete,false);assert.deepEqual(result.vector,v(100,40,20,10));
     }
   }
   assert.equal(a.canonicalize('codex',{inputTokens:100,outputTokens:10,cachedInputTokens:0}).complete,false);
@@ -79,6 +79,39 @@ test('single-field A/B/C composition skips partial cache baseline symmetrically'
       assert.deepEqual(total,a.canonicalize(provider,observations[2]).vector);
     }
   }
+});
+test('synthesized aggregates and single-class aggregates cannot replace A baseline in A/B/C',()=>{
+  for (const provider of ['claude-code','pi']) {
+    for (const cache of [
+      {cachedInputTokens:0},
+      {cachedInputTokens:40,cacheReadInputTokens:40},
+      {cachedInputTokens:20,cacheWriteInputTokens:20},
+    ]) {
+      const full={cachedInputTokens:60,cacheReadInputTokens:40,cacheWriteInputTokens:20};
+      const observations=[{inputTokens:100,outputTokens:10,...full},{inputTokens:110,outputTokens:11,...cache},{inputTokens:120,outputTokens:12,...full}];
+      let state=null,total=a.zeroUsageVector();const statuses=[];
+      observations.forEach((breakdown,sequence)=>{
+        const canonical=a.canonicalize(provider,breakdown);
+        assert.ok(canonical.vector); // Approximate observation remains usable for presentation.
+        if (!canonical.complete) {assert.equal(sequence,1);assert.equal(state.sequence,0);assert.ok(canonical.issues.length);return;}
+        const result=a.counterToIncrement(state,{epochKey:'same-session',sequence,total:canonical.vector});
+        state=result.state;total=a.addUsageVectors(total,result.increment);statuses.push(result.status);
+      });
+      assert.deepEqual(statuses,['initial','advance']);
+      assert.deepEqual(total,v(120,40,20,12));
+    }
+  }
+});
+test('complete cache reclassification can still be incomparable to previous baseline',()=>{
+  const before=a.canonicalize('pi',{inputTokens:100,outputTokens:10,cachedInputTokens:60,cacheReadInputTokens:40,cacheWriteInputTokens:20});
+  const after=a.canonicalize('pi',{inputTokens:110,outputTokens:11,cachedInputTokens:60,cacheReadInputTokens:50,cacheWriteInputTokens:10});
+  assert.equal(before.complete,true);assert.equal(after.complete,true);
+  const initial=a.counterToIncrement(null,{epochKey:'same-session',sequence:0,total:before.vector});
+  const raw=a.counterToIncrement(initial.state,{epochKey:'same-session',sequence:1,total:after.vector});
+  // The raw policy cannot distinguish correction/reclassification from a reset.
+  assert.equal(raw.status,'regression-reset');assert.deepEqual(raw.increment,after.vector);
+  assert.notDeepEqual(a.addUsageVectors(initial.increment,raw.increment),after.vector);
+  // Consumers must check provenance/comparability and reconcile or downgrade coverage.
 });
 test('canonicalize-to-counter composition retains A baseline across incomplete B, then telescopes to C',()=>{
   const observations=[
@@ -142,4 +175,23 @@ test('pricing linearity, deterministic nearest model, provider/default fallbacks
   assert.equal(a.RateTableSchema.safeParse({...empty,defaultRateId:'absent'}).success,false);
   assert.equal(a.RateTableSchema.safeParse({...table,rates:[...table.rates,table.rates[0]]}).success,false);
   assert.equal(a.RateTableSchema.safeParse({...table,schemaVersion:2}).success,false);
+});
+
+test('pricing tie uses rate ID independent of order; explicit alias precedes nearest; normalized aliases collide',()=>{
+  const template=a.DEFAULT_RATE_TABLE.rates[0];
+  const first={...template,id:'a-rate',providerId:'openai',modelId:'model-a',aliases:['chosen-alias']};
+  const second={...template,id:'z-rate',providerId:'openai',modelId:'model-c',aliases:[]};
+  const table={schemaVersion:1,version:'operator-rates-42',currency:'USD',defaultRateId:null,rates:[second,first]};
+  for (const rates of [table.rates,[...table.rates].reverse()]) {
+    const current={...table,rates};
+    const nearest=a.matchRate(current,'codex','model-b');
+    assert.equal(nearest.rate.id,'a-rate');assert.equal(nearest.reason,'nearest-provider-model');
+    const alias=a.matchRate(current,'codex','chosen-alias');
+    assert.equal(alias.rate.id,'a-rate');assert.equal(alias.reason,'alias');
+    assert.equal(a.price(current,'codex','chosen-alias',v(100)).priceVersion,'operator-rates-42');
+  }
+  const aliasBeatsNear={...table,rates:[{...first,aliases:['model-c-preview']},{...second,modelId:'model-c-previex'}]};
+  assert.equal(a.matchRate(aliasBeatsNear,'codex','model-c-preview').reason,'alias');
+  assert.equal(a.matchRate(aliasBeatsNear,'codex','model-c-preview').rate.id,'a-rate');
+  assert.equal(a.RateTableSchema.safeParse({...table,rates:[first,{...second,providerId:'codex',aliases:['chosen-alias']}]}).success,false);
 });

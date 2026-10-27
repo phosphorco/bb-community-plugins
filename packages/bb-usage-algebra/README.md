@@ -8,7 +8,7 @@ No SDK, threads, storage, React, timers, I/O or background work. Import
 ```ts
 import { canonicalize, price, DEFAULT_RATE_TABLE } from '@phosphorco/bb-usage-algebra';
 const usage = canonicalize('codex', {
-  inputTokens: 1000, cachedInputTokens: 800, outputTokens: 100,
+  inputTokens: 1000, cachedInputTokens: 800, cacheWriteInputTokens: 0, outputTokens: 100,
 });
 const estimate = usage.vector && price(DEFAULT_RATE_TABLE, 'codex', 'gpt-6.1-sol', usage.vector);
 ```

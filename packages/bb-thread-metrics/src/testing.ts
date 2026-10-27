@@ -25,10 +25,18 @@ export async function runSupplierConformance(options:ConformanceOptions):Promise
   let detail=false;
   await check('describe-negotiation',async()=>{const n=negotiateVersion(parseBounded(describeEnvelopeSchema,await call(METHODS.describe,{}),LIMITS.describeBytes));if(n.kind!=='ready')throw new Error('No compatible v1');detail=n.capabilities.detail;});
   await check('strict-describe-input',()=>rejectsInput(METHODS.describe,{unexpected:true}));
-  for(let i=0;i<options.readCases.length;i++)await check(`read-${i}`,async()=>{const input=readInputSchema.parse(options.readCases[i]);validateReadResult(input,await call(METHODS.read,input));});
+  for(let i=0;i<options.readCases.length;i++)await check(`read-${i}`,async()=>{const input=parseBounded(readInputSchema,options.readCases[i],LIMITS.inputBytes);validateReadResult(input,await call(METHODS.read,input));});
   await check('strict-read-input',()=>rejectsInput(METHODS.read,{...options.readCases[0],unexpected:true}));
   await check('oversized-id-count',()=>rejectsInput(METHODS.read,{scope:'family',threadIds:Array.from({length:201},(_,i)=>`thr_${i}`)}));
-  if(detail){if(!options.detailCases?.length)checks.push({name:'detail-cases-required',passed:false,error:'Advertised detail needs real cases'});for(let i=0;i<(options.detailCases?.length??0);i++)await check(`detail-${i}`,async()=>{const input=detailInputSchema.parse(options.detailCases![i]);validateDetailResult(input,await call(METHODS.detail,input));});await check('strict-detail-input',()=>rejectsInput(METHODS.detail,{...options.detailCases?.[0],unexpected:true}));}
+  await check('oversized-input-bytes',async()=>{
+   // Count/field-valid input that only byte admission rejects (133051 UTF-8 bytes).
+   const threadIds=Array.from({length:200},(_,i)=>`thr_${i}_`.padEnd(200,'x'));
+   const oversized={scope:'family' as const,threadIds,knownRevisions:Object.fromEntries(threadIds.map(id=>[id,'r'.repeat(256)]))};
+   readInputSchema.parse(oversized);
+   if(new TextEncoder().encode(JSON.stringify(oversized)).byteLength<=LIMITS.inputBytes)throw new Error('Byte fixture is not oversized');
+   await rejectsInput(METHODS.read,oversized);
+  });
+  if(detail){if(!options.detailCases?.length)checks.push({name:'detail-cases-required',passed:false,error:'Advertised detail needs real cases'});for(let i=0;i<(options.detailCases?.length??0);i++)await check(`detail-${i}`,async()=>{const input=parseBounded(detailInputSchema,options.detailCases![i],LIMITS.inputBytes);validateDetailResult(input,await call(METHODS.detail,input));});await check('strict-detail-input',()=>rejectsInput(METHODS.detail,{...options.detailCases?.[0],unexpected:true}));}
  }finally{await host.harness.lifecycle.dispose();}
  return {passed:checks.every(c=>c.passed),checks,proof:'source-conformance'};
 }

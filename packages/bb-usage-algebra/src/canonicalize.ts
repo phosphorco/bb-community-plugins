@@ -44,12 +44,12 @@ export function canonicalize(providerId: string, breakdown: TokenBreakdown,
       issues.push('cache-alias-mismatch: explicit read wins');
   } else {
     // Claude/Pi aggregate cachedInputTokens includes BOTH read and write.
-    if (b.cachedInputTokens === undefined) {
-      if (b.cacheReadInputTokens === undefined)
-        issues.push('missing-cacheReadInputTokens: zero observed, not a complete counter baseline');
-      if (b.cacheWriteInputTokens === undefined)
-        issues.push('missing-cacheWriteInputTokens: zero observed, not a complete counter baseline');
-    }
+    // Translators can synthesize aggregate with missing split classes treated as zero.
+    // Therefore even aggregate=0 cannot attest that both classes were observed.
+    if (b.cacheReadInputTokens === undefined)
+      issues.push('missing-cacheReadInputTokens: aggregate reconstruction is approximate, not a complete counter baseline');
+    if (b.cacheWriteInputTokens === undefined)
+      issues.push('missing-cacheWriteInputTokens: aggregate reconstruction is approximate, not a complete counter baseline');
     if (b.cachedInputTokens !== undefined) {
       if (read === undefined && write === undefined) {
         read = b.cachedInputTokens; write = 0;
