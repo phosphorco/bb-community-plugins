@@ -291,3 +291,39 @@ retention uncertainty disclose the loss. Incomplete scans preserve prior indexed
 truth within count/byte bounds; sufficient complete smaller observation or the
 owned tombstone clears uncertainty. This avoids a permanent retry of otherwise
 valid near-limit URLs without weakening any existing v1 validator or limit.
+
+### Bounded collection diagnostics
+
+Existing per-source incomplete/failed-job warnings include one plugin-private
+`Diagnostics:` JSON envelope, separate from stored coverage and public v1 data.
+Its groups contain only enumerated stage/reason/frame, a count, and integer
+elapsed/remaining milliseconds when known. Counts describe failure observations
+at actual boundaries; replaying a cached rejection is not another SDK request.
+Repeated observations share a group. No candidate identity, authored text, URL,
+filesystem root/path, raw error message or stack enters this envelope. Failed-job
+warnings use this safe detail instead of interpolating arbitrary exception text.
+
+The envelope admits at most 16 groups and 4096 UTF-8 bytes, including its version,
+`omittedCount` and `capped` fields. Counts saturate at 1,000,000; known times clamp
+to 0..60,000 milliseconds. Capping/clipping is disclosed; unknown/nonfinite times
+are absent. Omitted counts also saturate, so capped diagnostics are not an exact
+attempt inventory. Unknown or invalid optional host detail becomes safe unknown;
+an older host's retryable response without detail remains explicitly retryable.
+Only returned host fact detail can identify a host syscall stage/errno class.
+A transport timeout reports the last entered server/transport wait, never a
+presumed host syscall. Host close rejection still propagates as a failed call;
+without a returned host result its server diagnosis is transport failure.
+
+Outer source/timeline/project prefetch has its existing 1-second bound, before
+the 10-second recognition clock starts. Native verification races the whole
+verifier against the smaller of 500 milliseconds and the remaining shared
+recognition budget; it does not grant 500 milliseconds anew to each internal
+metadata/host await. Its own timer, source expiry, parent cancellation, arbitrary
+SDK rejection and successful cleanup abort remain distinct. Diagnostic state
+closes before late callbacks, and only existing lifetime-fenced collector sites
+log. Successful and authoritative-missing-only scans add no warning. No extra
+SDK calls, reads, timers, retries, scheduling or graph/coverage changes are made.
+
+These diagnostics classify subsequent observations. They do not explain the
+historical 41 warning-only sources, establish complete file coverage, or satisfy
+the later phase-2 evidence/snippet/referent UI work.

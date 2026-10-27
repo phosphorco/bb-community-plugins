@@ -3,6 +3,7 @@ import type Database from "better-sqlite3";
 import { assistantLinkLabel } from "./assistant-links.ts";
 import { ContextBundleV1Schema, type ContextBundleV1, type TaggedCandidateV1 } from "@phosphorco/bb-context-recognition";
 import { createRecognitionDiscoveryOwner, enumerateRecognitionSuppliers, createSupplierClient, type ReadyRecognitionSupplier } from "@phosphorco/bb-context-recognition/bb";
+import { MentionDiagnostics, type MentionDiagnosticOperation } from './mention-file-contract.ts';
 import { createMentionFileVerifier } from './mention-files.ts';
 import { collectConversationMentions, type ConversationMessage } from "./mention-collection.ts";
 import { MENTION_LIMITS, type MentionScan } from "./mention-evidence.ts";
@@ -12,7 +13,7 @@ import { CrossReferenceStore } from "./store.ts";
 
 /** Bound SDK waits even when a transport ignores cancellation. Late responses
  * have no commit capability; the caller's generation fence still owns writes. */
-async function bounded<T>(run:(signal:AbortSignal)=>Promise<T>,signal:AbortSignal,ms=1000):Promise<T> {
+async function bounded<T>(run:(signal:AbortSignal)=>Promise<T>,signal:AbortSignal,ms=1000,diagnostic?:MentionDiagnosticOperation,native=false):Promise<T> {
   signal.throwIfAborted();
   const controller=new AbortController();
   const abort=()=>controller.abort();signal.addEventListener('abort',abort,{once:true});if(signal.aborted)abort();
@@ -21,8 +22,8 @@ async function bounded<T>(run:(signal:AbortSignal)=>Promise<T>,signal:AbortSigna
     const fail=()=>reject(new Error('Collection request cancelled or timed out.'));
     controller.signal.addEventListener('abort',fail,{once:true});
     if(controller.signal.aborted)fail();
-    timer=setTimeout(()=>controller.abort(),ms);
-  })]);}finally{clearTimeout(timer);signal.removeEventListener('abort',abort);controller.abort();}
+    timer=setTimeout(()=>{diagnostic?.fail(native?'native-timeout':'outer-timeout');controller.abort();},ms);
+  })]);}catch(error){diagnostic?.fail(signal.aborted?'cancelled':'sdk-failure');throw error;}finally{if(!native)diagnostic?.close();clearTimeout(timer);signal.removeEventListener('abort',abort);controller.abort();}
 }
 
 type Job = { thread_id: string; project_id: string; version: number; deleted: number; attempts: number };
@@ -101,10 +102,10 @@ export class AssistantLinkCollector {
 
   /** The SDK's project remote is a sanitized context hint, never a local git
    * scan or a recognizer I/O request. No branch/upstream is invented. */
-  private async context(projectId:string,threadId:string,environmentId:string|undefined,signal:AbortSignal):Promise<ContextBundleV1> {
+  private async context(projectId:string,threadId:string,environmentId:string|undefined,signal:AbortSignal,diagnostics:MentionDiagnostics):Promise<ContextBundleV1> {
     const base:ContextBundleV1={consumer:{pluginId:'cross-references',surface:'conversation'},projectId,threadId,links:[],...(environmentId?{environmentId}:{})};
     try {
-      const project=await bounded(s=>this.bb.sdk.projects.get({projectId,signal:s}),signal);
+      const project=await bounded(s=>this.bb.sdk.projects.get({projectId,signal:s}),signal,1000,diagnostics.operation('project-context'));
       const remote=project.gitRemoteUrl;
       if(!remote)return base;
       let url=remote;
@@ -159,6 +160,8 @@ export class AssistantLinkCollector {
     const epoch=this.supplierEpoch;
     const job = this.db.prepare("SELECT * FROM assistant_link_jobs WHERE retry_at <= ? ORDER BY priority DESC, retry_at, rowid LIMIT 1").get(Date.now()) as Job | undefined;
     if (job === undefined || signal.aborted) return false;
+    const diagnostics=new MentionDiagnostics(()=>!this.disposed && this.db.open && !signal.aborted);
+    let outerDiagnostic:MentionDiagnosticOperation|undefined;
     try {
       let title = "Thread";
       let deleted = job.deleted === 1;
@@ -170,9 +173,9 @@ export class AssistantLinkCollector {
       let textChars=0;
       if (!deleted) {
         try {
-          const thread = await bounded(s=>this.bb.sdk.threads.get({ threadId: job.thread_id, signal:s }),signal);
+          const thread = await bounded(s=>this.bb.sdk.threads.get({ threadId: job.thread_id, signal:s }),signal,1000,outerDiagnostic=diagnostics.operation('source-prefetch'));
           if(this.inactive() || signal.aborted)return true;
-          if (thread.id!==job.thread_id || thread.projectId !== job.project_id) throw new Error("Thread project identity changed.");
+          if (thread.id!==job.thread_id || thread.projectId !== job.project_id) {(outerDiagnostic=diagnostics.operation('source-prefetch')).fail('source-identity-mismatch');throw new Error("Thread project identity changed.");}
           deleted = thread.deletedAt != null;
           title = thread.title ?? "Thread";
           environmentId=thread.environmentId??undefined;
@@ -188,7 +191,7 @@ export class AssistantLinkCollector {
           const page = await bounded(s=>this.bb.sdk.threads.timeline({
             threadId: job.thread_id, includeNestedRows: "false", segmentLimit: "100", signal:s,
             ...(cursor === null ? {} : { beforeAnchorSeq: String(cursor.anchorSeq), beforeAnchorId: cursor.anchorId }),
-          }),signal);
+          }),signal,1000,outerDiagnostic=diagnostics.operation('timeline-prefetch'));
           if(this.inactive() || signal.aborted)return true;
           for (const row of page.rows) {
             if (row.kind !== "conversation" || (row.role !== "assistant" && row.role !== "user") || row.threadId!==job.thread_id) continue;
@@ -205,16 +208,16 @@ export class AssistantLinkCollector {
           if (sourceLimited){complete=false;break;}
           if (complete) break;
           const next = page.timelinePage.olderCursor;
-          if (next === null || (cursor !== null && next.anchorId === cursor.anchorId && next.anchorSeq === cursor.anchorSeq)) throw new Error("Timeline cursor did not advance.");
+          if (next === null || (cursor !== null && next.anchorId === cursor.anchorId && next.anchorSeq === cursor.anchorSeq)) {(outerDiagnostic=diagnostics.operation('timeline-prefetch')).fail('timeline-cursor-stalled');throw new Error("Timeline cursor did not advance.");}
           cursor = next;
         }
       }
       const scan:MentionScan=deleted?{occurrences:[],observedMessageIds:[],scannedMessageIds:[],failedSuppliers:[],discoveryIncomplete:false,
         coverage:{timelineComplete:true,reasons:[],retentionLimited:false}}:await collectConversationMentions({messages:[...messages.values()],
-        context:await this.context(job.project_id,job.thread_id,environmentId,signal),clients:this.suppliers,
-        getThread:(threadId,requestSignal)=>bounded(s=>this.bb.sdk.threads.get({threadId,signal:s}),requestSignal,500),
+        context:await this.context(job.project_id,job.thread_id,environmentId,signal,diagnostics),clients:this.suppliers,
+        getThread:(threadId,requestSignal,diagnostic)=>bounded(s=>this.bb.sdk.threads.get({threadId,signal:s}),requestSignal,500,diagnostic,true),
         verifyFile:createMentionFileVerifier(this.bb,{threadId:job.thread_id,projectId:job.project_id,environmentId}),signal,appUrl:this.bb.server.experimental_appUrl??undefined,
-        discoveryIncomplete:this.discoveryIncomplete,failedSuppliers:this.failedSuppliers,cache:this.recognitionCache});
+        discoveryIncomplete:this.discoveryIncomplete,failedSuppliers:this.failedSuppliers,cache:this.recognitionCache,diagnostics});
       scan.coverage.timelineComplete=complete;
       if(missingMessageSeq){scan.coverage.timelineComplete=false;scan.coverage.reasons.push('missing-message-seq');}
       if(!complete)scan.coverage.reasons.push(sourceLimited?'source-text-budget':'timeline-50-pages');
@@ -232,15 +235,17 @@ export class AssistantLinkCollector {
         return result;
       })();
       for (const changed of signals) {if(this.inactive() || signal.aborted)break;this.publish(changed);}
-      if(!this.inactive() && !signal.aborted && scan.coverage.reasons.length)this.bb.log.warn(`Cross References collection incomplete for ${job.thread_id}: ${scan.coverage.reasons.join(', ')}. Prior unvisited locations retained within caps.`);
+      if(!this.inactive() && !signal.aborted && scan.coverage.reasons.length)this.bb.log.warn(`Cross References collection incomplete for ${job.thread_id}: ${scan.coverage.reasons.join(', ')}. Prior unvisited locations retained within caps. Diagnostics: ${diagnostics.encode()}`);
     } catch (error) {
       if (!this.inactive() && !signal.aborted) {
         const retryAt = Date.now() + Math.min(60_000, 1_000 * 2 ** Math.min(job.attempts, 6));
         this.db.prepare(`UPDATE assistant_link_jobs SET retry_at = ?, attempts = attempts + 1
           WHERE thread_id = ? AND version = ?`).run(retryAt, job.thread_id, job.version);
-        this.bb.log.warn(`Could not collect Cross References for ${job.thread_id}: ${error instanceof Error ? error.message : String(error)}`);
+        diagnostics.fallback(outerDiagnostic);
+        this.bb.log.warn(`Could not collect Cross References for ${job.thread_id}: Diagnostics: ${diagnostics.encode()}`);
       }
     }
+    finally {diagnostics.close();}
     return true;
   }
 

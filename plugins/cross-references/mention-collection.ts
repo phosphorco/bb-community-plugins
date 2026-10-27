@@ -4,6 +4,7 @@ import { recognitionIdentity, recognitionIdentityRecord, verifiedFileIdentity } 
 import { canonicalizeResource, hasSensitiveUrlParameter, serializeResource, sha256Hex, type Resource } from './canonical.ts';
 import { assistantLinkLabel, localThreadTarget, webTarget } from './assistant-links.ts';
 import { mentionFrame, type MarkdownLink } from './mention-markdown.ts';
+import { MentionDiagnostics, type MentionDiagnosticOperation, type MentionDiagnosticStage } from './mention-file-contract.ts';
 import type { MentionFileVerifier, VerifiedMentionFile } from './mention-files.ts';
 import { MENTION_LIMITS, MentionLocationSchema, type MentionScan, type ConversationLocator } from './mention-evidence.ts';
 
@@ -21,37 +22,40 @@ function tagged(source:SourceIdentity, match:string, span:Span):TaggedCandidateV
 /** One source-wide budget, shared across prose and destination windows. Native
  * candidates are independent of supplier transport and always remain available. */
 export async function collectConversationMentions(options:{messages:readonly ConversationMessage[];context:ContextBundleV1;
-  clients:readonly ReadyRecognitionSupplier[];getThread:(id:string,signal:AbortSignal)=>Promise<{id:string;projectId:string;deletedAt?:number|null}>;
-  signal:AbortSignal;appUrl?:string;discoveryIncomplete?:boolean;failedSuppliers?:string[];verifyFile?:MentionFileVerifier;cache?:Map<string,TaggedCandidateV1[]>;
+  clients:readonly ReadyRecognitionSupplier[];getThread:(id:string,signal:AbortSignal,diagnostic?:MentionDiagnosticOperation)=>Promise<{id:string;projectId:string;deletedAt?:number|null}>;
+  signal:AbortSignal;appUrl?:string;discoveryIncomplete?:boolean;failedSuppliers?:string[];verifyFile?:MentionFileVerifier;cache?:Map<string,TaggedCandidateV1[]>;diagnostics?:MentionDiagnostics;
 }):Promise<MentionScan> {
   const scan:MentionScan={occurrences:[],observedMessageIds:[],scannedMessageIds:options.messages.map(m=>m.id),failedSuppliers:[...(options.failedSuppliers??[])],discoveryIncomplete:!!options.discoveryIncomplete,
     coverage:{timelineComplete:true,reasons:[],retentionLimited:false}};
   const reasons=new Set<string>(), failed=new Set(scan.failedSuppliers);
   const deadline=performance.now()+MENTION_LIMITS.sourceMs;
   let calls=0,chars=0,sourceExpired=false;
+  const diagnostics=options.diagnostics??new MentionDiagnostics(()=>!options.signal.aborted);
   const remaining=()=>Math.max(0,deadline-performance.now());
   const expire=()=>{sourceExpired=true;reasons.add('recognition-budget');scan.discoveryIncomplete=true;};
   // Native verification shares the source deadline, even if an injected port
   // ignores AbortSignal. A late result cannot become a confirmed observation.
-  const nativeRead=async<T>(run:(signal:AbortSignal)=>Promise<T>):Promise<T>=>{
-    const left=remaining();if(sourceExpired || left<=0){expire();throw new Error('Recognition source budget exhausted.');}
+  const nativeRead=async<T>(run:(signal:AbortSignal,diagnostic:MentionDiagnosticOperation)=>Promise<T>,stage:MentionDiagnosticStage='thread-target'):Promise<T>=>{
+    const diagnostic=diagnostics.operation(stage,'unknown',remaining);
+    const left=remaining();if(sourceExpired || left<=0){expire();diagnostic.fail('source-deadline',left);throw new Error('Recognition source budget exhausted.');}
     const controller=new AbortController();
     const abort=()=>controller.abort(options.signal.reason);
     options.signal.addEventListener('abort',abort,{once:true});if(options.signal.aborted)abort();
     let timer:ReturnType<typeof setTimeout>|undefined;
     try{
-      const value=await Promise.race([Promise.resolve().then(()=>run(controller.signal)),new Promise<never>((_,reject)=>{
+      const value=await Promise.race([Promise.resolve().then(()=>run(controller.signal,diagnostic)),new Promise<never>((_,reject)=>{
         const rejectAbort=()=>reject(controller.signal.reason??new Error('Native verification cancelled.'));
         controller.signal.addEventListener('abort',rejectAbort,{once:true});if(controller.signal.aborted)rejectAbort();
-        timer=setTimeout(()=>{if(left<=500)expire();controller.abort(new Error('Native verification deadline exceeded.'));},Math.min(500,left));
+        timer=setTimeout(()=>{if(left<=500)expire();diagnostic.fail(left<=500?'source-deadline':'native-timeout',remaining());controller.abort(new Error('Native verification deadline exceeded.'));},Math.min(500,left));
       })]);
       options.signal.throwIfAborted();
-      if(remaining()<=0){expire();throw new Error('Recognition source budget exhausted.');}
+      if(remaining()<=0){expire();diagnostic.fail('source-deadline',remaining());throw new Error('Recognition source budget exhausted.');}
       return value;
-    }finally{clearTimeout(timer);options.signal.removeEventListener('abort',abort);controller.abort();}
+    }catch(error){diagnostic.fail(options.signal.aborted?'cancelled':stage==='thread-target'?'sdk-failure':'unknown',remaining());throw error;
+    }finally{diagnostic.close();clearTimeout(timer);options.signal.removeEventListener('abort',abort);controller.abort();}
   };
   const threads=new Map<string,Promise<{id:string;projectId:string;deletedAt?:number|null}>>();
-  const getThread = (id:string) => {let promise=threads.get(id);if(!promise){promise=nativeRead(signal=>options.getThread(id,signal));threads.set(id,promise);}return promise;};
+  const getThread = (id:string) => {let promise=threads.get(id);if(!promise){promise=nativeRead((signal,diagnostic)=>options.getThread(id,signal,diagnostic));threads.set(id,promise);}return promise;};
   const contribute = async (text:string,excluded:Span[],context:ContextBundleV1,format:'plain'|'markdown'='plain'):Promise<TaggedCandidateV1[]> => {
     if(!options.clients.length)return [];
     const key=sha256Hex(JSON.stringify([options.clients.map(c=>[c.client.pluginId,c.capabilities.revision]),text,format,excluded,context]));
@@ -87,8 +91,8 @@ export async function collectConversationMentions(options:{messages:readonly Con
         try{
           let pending=fileChecks.get(source.id);
           if(!pending){
-            if(!options.verifyFile)throw new Error('Native file verifier unavailable.');
-            pending=nativeRead(signal=>options.verifyFile!(source,signal));fileChecks.set(source.id,pending);
+            if(!options.verifyFile){diagnostics.operation('file-admission').fail('verifier-unavailable',remaining());throw new Error('Native file verifier unavailable.');}
+            pending=nativeRead((signal,diagnostic)=>options.verifyFile!(source,signal,diagnostic),'native-wait');fileChecks.set(source.id,pending);
           }
           verifiedFile=await pending;if(!verifiedFile)return null;
         }catch{verificationFailed=true;reasons.add('file-verification');return null;}

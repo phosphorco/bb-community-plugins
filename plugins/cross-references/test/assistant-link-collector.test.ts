@@ -341,3 +341,56 @@ test("actual eligible worker orders viewed then active events then cold and lowe
   for (let n = 0; n < 3; n++) await collector.processNext(new AbortController().signal);
   assert.deepEqual(selected, ["thr_viewed", "thr_settled", "thr_cold"]);
 });
+
+for(const seam of ['source','timeline'] as const)test('actual '+seam+' prefetch timeout is outer1s, safe and preserves failed durable job',async t=>{
+ const {db,store}=open();t.after(()=>{if(db.open)db.close();});const f=fixture(db,store);
+ let portSignal!:AbortSignal,release!:(value:any)=>void;
+ const held=new Promise<any>(resolve=>release=resolve);
+ const port=({signal}:any)=>{portSignal=signal;return held;};
+ if(seam==='source')f.bb.sdk.threads.get=port;else f.bb.sdk.threads.timeline=port;
+ f.collector.enqueue('proj_a','thr_a',false,true,2);
+ const before=db.prepare('SELECT * FROM assistant_link_jobs').get() as any;
+ const started=Date.now();await f.collector.processNext(new AbortController().signal);
+ assert.equal(portSignal.aborted,true);assert.equal(f.warnings.length,1);
+ const rows=JSON.parse(f.warnings[0]!.split('Diagnostics: ')[1]!).groups;
+ assert.equal(rows.length,1);assert.equal(rows[0].stage,seam==='source'?'source-prefetch':'timeline-prefetch');assert.equal(rows[0].reason,'outer-timeout');
+ assert.ok(rows[0].elapsedMsMin>=900);assert.equal(rows[0].remainingMsMin,undefined);
+ const after=db.prepare('SELECT * FROM assistant_link_jobs').get() as any;
+ assert.equal(after.priority,before.priority);assert.equal(after.version,before.version);assert.equal(after.attempts,1);assert.ok(after.retry_at>=started+1000);
+ assert.deepEqual(f.signals,[]);const warnings=[...f.warnings];db.close();
+ release(seam==='source'?{id:'thr_a',projectId:'proj_a'}:{rows:[],timelinePage:{olderCursor:null}});
+ await new Promise<void>(resolve=>setImmediate(resolve));assert.deepEqual(f.warnings,warnings);
+});
+
+test('actual source404 remains a tombstone; project context failure remains a silent fallback on complete scans',async t=>{
+ for(const kind of ['source404','context'] as const){
+  const {db,store}=open();t.after(()=>db.close());const f=fixture(db,store);
+  f.bb.sdk.plugins={list:async()=>({plugins:[]})};
+  const error=Object.assign(new Error('SECRET /private/root https://secret.test'),{status:404,name:'TimeoutError'});
+  if(kind==='source404')f.bb.sdk.threads.get=async()=>{throw error;};else f.bb.sdk.projects={get:async()=>{throw error;}};
+  f.collector.enqueue('proj_a','thr_a');await f.collector.processNext(new AbortController().signal);
+  assert.deepEqual(f.warnings,[]);assert.equal(db.prepare('SELECT * FROM assistant_link_jobs').all().length,0);
+  if(kind==='source404')assert.equal(store.getProjection({producerPluginId:'cross-references',source:sourceIdentity}).projection?.tombstone,true);
+  else assert.equal(store.listForwardReferences({source:sourceIdentity}).total,1);
+ }
+});
+
+test('actual SDK failure warning never renders error text or guesses timeout from the error name',async t=>{
+ const {db,store}=open();t.after(()=>db.close());const f=fixture(db,store);
+ f.bb.sdk.threads.timeline=async()=>{throw Object.assign(new Error('SECRET /absolute/root https://secret.test/?token=SECRET'),{name:'TimeoutError',status:503});};
+ f.collector.enqueue('proj_a','thr_a');await f.collector.processNext(new AbortController().signal);
+ const log=f.warnings[0]!;assert.doesNotMatch(log,/SECRET|absolute|secret\.test|TimeoutError|503|stack/);
+ const rows=JSON.parse(log.split('Diagnostics: ')[1]!).groups;assert.equal(rows.length,1);assert.equal(rows[0].stage,'timeline-prefetch');assert.equal(rows[0].reason,'sdk-failure');
+});
+
+test('actual unclassified transaction exception stays unknown even after an earlier recoverable context failure',async t=>{
+ const {db,store}=open();t.after(()=>db.close());const f=fixture(db,store);
+ f.bb.sdk.plugins={list:async()=>({plugins:[]})};
+ f.bb.sdk.projects={get:async()=>{throw new Error('SECRET context');}};
+ t.mock.method(store,'replaceConversationMentions',()=>{throw 'SECRET transaction';});
+ f.collector.enqueue('proj_a','thr_a');await f.collector.processNext(new AbortController().signal);
+ assert.equal(f.warnings.length,1);assert.doesNotMatch(f.warnings[0]!,/SECRET/);
+ const rows=JSON.parse(f.warnings[0]!.split('Diagnostics: ')[1]!).groups;
+ assert.deepEqual(rows.map((r:any)=>[r.stage,r.reason]),[['project-context','sdk-failure'],['collection','unknown']]);
+ assert.equal(rows[1].elapsedMsMin,undefined);assert.equal((db.prepare('SELECT attempts FROM assistant_link_jobs').get() as any).attempts,1);
+});

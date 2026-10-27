@@ -12,6 +12,7 @@ import {CrossReferenceStore,crossReferencesMigrations,enableForeignKeys} from '.
 import {canonicalizeResource,threadResource,projectionPayloadDigest,projectionPayloadJson,MAX_PROJECTION_PAYLOAD_BYTES} from '../canonical.ts';
 import {MENTION_LIMITS,type MentionScan} from '../mention-evidence.ts';
 import fileHostEntry from '../mention-file-host.ts';
+import {MentionDiagnostics} from '../mention-file-contract.ts';
 import {mentionFrame} from '../mention-markdown.ts';
 
 const source=threadResource('proj_a','thr_source',{label:'Source',url:'/projects/proj_a/threads/thr_source'});
@@ -329,14 +330,16 @@ test('native file waits share source budget and cancelled late host responses ca
  // Spend nearly all source time in the first file check and hold a second
  // noncooperating check. Shared deadline must abort it and retain prior facts.
  let clock=0,calls=0,aborted=false;t.mock.method(performance,'now',()=>clock);
+ const diagnostics=new MentionDiagnostics();
  const scan=await collectConversationMentions({messages:[{id:'msg1',text:'note.txt second.txt',createdAt:1,messageSeq:17,anchorSeq:21,role:'assistant'}],
   context:{consumer:{pluginId:'cross-references'},projectId:'proj_a',threadId:'thr_source',environmentId:'env_a',links:[]},clients:[],
-  getThread:async id=>({id,projectId:'proj_a'}),verifyFile:async(source,signal)=>{
+  diagnostics,getThread:async id=>({id,projectId:'proj_a'}),verifyFile:async(source,signal)=>{
    calls++;if(calls===1){clock=MENTION_LIMITS.sourceMs-15;return {kind:'thread-storage',threadId:'thr_source',path:'note.txt'};}
    signal.addEventListener('abort',()=>aborted=true,{once:true});return new Promise(()=>{});
   },signal:new AbortController().signal});
  assert.equal(calls,2);assert.equal(aborted,true);assert.ok(scan.coverage.reasons.includes('recognition-budget'));
  assert.deepEqual(scan.observedMessageIds,[]);assert.equal(scan.occurrences.length,1);
+ const diagnostic=JSON.parse(diagnostics.encode()).groups[0];assert.equal(diagnostic.reason,'source-deadline');assert.equal(diagnostic.stage,'native-wait');assert.equal(diagnostic.remainingMsMin,15);
 });
 
 
@@ -374,3 +377,96 @@ test('actual near-limit collection fits deterministic v1 payload, commits withou
  assert.equal(smaller.occurrences.length,43);assert.equal(smaller.coverage!.retentionLimited,false);
  assert.equal(smaller.coverage!.capHistoryUnknown,false);assert.ok(!smaller.coverage!.reasons.includes('projection-payload-budget'));
 });
+
+test('actual collector aggregates cached file failure once, retains prior evidence, and suppresses successful/missing-only logs',async t=>{
+ const f=fileCollector(t,'note.txt note.txt second.txt');
+ await f.scan();assert.equal(f.state.logs.length,0);
+ const original=f.bb.sdk.threads.get;let metadata=0;
+ const error=Object.assign(new Error('SECRET /private/root https://secret.test/?token=SECRET'),{status:503});
+ f.bb.sdk.threads.get=async(args:any)=>{if(args.include==='host'){metadata++;throw error;}return original(args);};
+ const result=await f.scan();assert.equal(metadata,1);assert.equal(result.occurrences[0]?.confirmed,false);
+ assert.ok(result.coverage!.reasons.includes('file-verification'));assert.equal(f.state.logs.length,1);
+ const envelope=JSON.parse(f.state.logs[0]!.split('Diagnostics: ')[1]!);
+ assert.equal(envelope.groups.length,1);assert.equal(envelope.groups[0].count,1);assert.equal(envelope.groups[0].stage,'source-owner');
+ assert.ok(Number.isInteger(envelope.groups[0].remainingMsMin));assert.doesNotMatch(f.state.logs[0]!,/SECRET|private|secret\.test|stack/);
+ f.bb.sdk.threads.get=original;f.state.logs.length=0;await f.scan();assert.equal(f.state.logs.length,0);
+ unlinkSync(join(f.storage,'note.txt'));await f.scan();assert.equal(f.state.logs.length,0);assert.equal(f.store.mentionState(sourceId).occurrences.length,0);
+});
+
+for(const seam of ['source-owner','thread-storage','environment','host-transport'] as const)test('actual native timeout reports entered '+seam+' and freezes before late rejection',async t=>{
+ const f=fileCollector(t,'note.txt');await f.scan();
+ let reject!:(error:unknown)=>void,portSignal!:AbortSignal;
+ const held=new Promise<never>((_,fail)=>reject=fail);
+ const port=(args:any)=>{portSignal=args.signal;return held;};
+ if(seam==='source-owner'){const original=f.bb.sdk.threads.get;f.bb.sdk.threads.get=(args:any)=>args.include==='host'?port(args):original(args);}
+ if(seam==='thread-storage')f.bb.sdk.threads.storageLocation=port;
+ if(seam==='environment'){f.io.handler=async()=>({exists:false});f.bb.sdk.environments.get=port;}
+ if(seam==='host-transport')f.io.handler=async(_input,options)=>port(options);
+ const result=await f.scan();assert.equal(portSignal.aborted,true);
+ assert.equal(result.occurrences[0]?.confirmed,false);assert.ok(result.coverage!.reasons.includes('file-verification'));
+ const log=f.state.logs.at(-1)!,envelope=JSON.parse(log.split('Diagnostics: ')[1]!);
+ assert.equal(envelope.groups.length,1);assert.equal(envelope.groups[0].stage,seam);assert.equal(envelope.groups[0].reason,'native-timeout');
+ assert.equal(envelope.groups[0].frame,seam==='source-owner'?'unknown':seam==='environment'?'workspace':'thread-storage');
+ assert.ok(envelope.groups[0].elapsedMsMax>=400);assert.ok(envelope.groups[0].remainingMsMin>0);
+ const prior=f.store.mentionState(sourceId),logs=[...f.state.logs];
+ reject(Object.assign(new Error('SECRET late failure'),{name:'AbortError'}));await new Promise<void>(resolve=>setImmediate(resolve));
+ assert.deepEqual(f.state.logs,logs);assert.deepEqual(f.store.mentionState(sourceId),prior);
+});
+
+test('actual native race distinguishes arbitrary SDK errors, cleanup abort and caller cancellation with original cause',async t=>{
+ const base={messages:[{id:'msg1',text:'note.txt',createdAt:1,messageSeq:1,anchorSeq:1,role:'assistant' as const}],
+  context:{consumer:{pluginId:'cross-references'},projectId:'proj_a',threadId:'thr_source',links:[]},clients:[],getThread:async(id:string)=>({id,projectId:'proj_a'})};
+ for(const name of ['TimeoutError','AbortError']){
+  const diagnostics=new MentionDiagnostics();const error=Object.assign(new Error('SECRET'),{name});
+  const scan=await collectConversationMentions({...base,diagnostics,signal:signalForTest(),verifyFile:async()=>{throw error;}});
+  assert.ok(scan.coverage.reasons.includes('file-verification'));const rows=JSON.parse(diagnostics.encode()).groups;
+  assert.equal(rows[0].reason,'unknown');assert.notEqual(rows[0].reason,'native-timeout');
+ }
+ const diagnostics=new MentionDiagnostics();let nativeSignal!:AbortSignal,operation:any;
+ const scan=await collectConversationMentions({...base,diagnostics,signal:signalForTest(),verifyFile:async(_source,signal,diagnostic)=>{
+  nativeSignal=signal;operation=diagnostic;return {kind:'thread-storage',threadId:'thr_source',path:'note.txt'};
+ }});
+ assert.equal(scan.occurrences.length,1);assert.equal(nativeSignal.aborted,true);assert.deepEqual(JSON.parse(diagnostics.encode()).groups,[]);
+ operation.enter('host-open');operation.fail('host-io');assert.deepEqual(JSON.parse(diagnostics.encode()).groups,[]);
+ const controller=new AbortController(),cause=new Error('original cancellation');let entered!:()=>void,release!:(value:any)=>void;
+ const entry=new Promise<void>(resolve=>entered=resolve),held=new Promise<any>(resolve=>release=resolve);
+ const cancelled=new MentionDiagnostics();const pending=collectConversationMentions({...base,diagnostics:cancelled,signal:controller.signal,verifyFile:async(_source,signal)=>{nativeSignal=signal;entered();return held;}});
+ await entry;controller.abort(cause);const stopped=await pending;assert.equal(stopped.occurrences.length,0);assert.deepEqual(stopped.observedMessageIds,[]);assert.equal(nativeSignal.reason,cause);
+ const before=cancelled.encode();release({kind:'thread-storage',threadId:'thr_source',path:'note.txt'});await new Promise<void>(resolve=>setImmediate(resolve));assert.equal(cancelled.encode(),before);
+});
+function signalForTest(){return new AbortController().signal;}
+
+for(const kind of ['validated-invalid','bypass-invalid','valid3ms','missing-valid-host-time','old-no-detail'] as const)
+ test('actual collector preserves server versus host timing for '+kind,async t=>{
+  const f=fileCollector(t,'note.txt');await f.scan();assert.equal(f.state.logs.length,0);
+  const beforeCalls=f.checks.length;let clock=0;
+  t.mock.method(performance,'now',()=>clock);
+  f.io.handler=async()=>{
+   clock+=20; // Known entered transport duration, with no additional timer/I/O.
+   const detail=kind==='validated-invalid'||kind==='bypass-invalid'?
+    {stage:'source-owner',reason:'native-timeout',frame:'unknown',elapsedMs:999,extra:'SECRET /private/root https://private.test/?token=SECRET'}:
+    {stage:'host-open',reason:'host-permission',frame:'unknown',...(kind==='valid3ms'?{elapsedMs:3}:{})};
+   const response={exists:false,retryable:true,...(kind==='old-no-detail'?{}:{diagnostic:detail})};
+   if(kind==='bypass-invalid')return response;
+   const result=await fileHostEntry.contract.mentionFileExists.output['~standard'].validate(response);
+   if(result.issues)assert.fail('Expected accepted private host response');
+   return result.value;
+  };
+  const state=await f.scan();assert.equal(f.checks.length,beforeCalls+1);assert.equal(f.state.logs.length,1);
+  assert.equal(state.occurrences.length,1);assert.equal(state.occurrences[0]!.confirmed,false);
+  assert.deepEqual(state.coverage!.reasons,['file-verification']);
+  assert.equal((f.db.prepare('SELECT COUNT(*) AS n FROM assistant_link_jobs').get() as any).n,0);
+  const warning=f.state.logs[0]!,envelope=JSON.parse(warning.split('Diagnostics: ')[1]!);
+  assert.equal(envelope.groups.length,1);assert.equal(envelope.omittedCount,0);assert.equal(envelope.capped,false);
+  const group=envelope.groups[0];assert.equal(group.count,1);assert.equal(group.frame,'thread-storage');
+  assert.equal(group.remainingMsMin,9980);assert.equal(group.remainingMsMax,9980);
+  if(kind==='valid3ms'||kind==='missing-valid-host-time'){
+   assert.equal(group.stage,'host-open');assert.equal(group.reason,'host-permission');
+   assert.equal(group.elapsedMsMin,kind==='valid3ms'?3:undefined);assert.equal(group.elapsedMsMax,kind==='valid3ms'?3:undefined);
+  }else{
+   assert.equal(group.stage,'host-transport');assert.equal(group.reason,kind==='old-no-detail'?'retryable-host-response':'host-unknown');
+   assert.equal(group.elapsedMsMin,20);assert.equal(group.elapsedMsMax,20);
+  }
+  assert.ok(Buffer.byteLength(warning.split('Diagnostics: ')[1]!)<=4096);
+  assert.doesNotMatch(warning,/SECRET|private|999|stack/);
+ });
