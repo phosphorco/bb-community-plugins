@@ -1,5 +1,5 @@
 import { test, expect } from 'bun:test';
-import { familyClosure,dollarPercentiles,heat,readInputSchema,parseBounded,readResultSchema,validateReadResult,validateDetailResult,negotiateVersion,retainedWindowStart,coverageSchema,detailInputSchema,LIMITS } from '../dist/index.js';
+import { familyClosure,dollarPercentiles,heat,readInputSchema,parseBounded,readResultSchema,validateReadResult,validateDetailResult,negotiateVersion,retainedWindowStart,coverageSchema,coverageReasonSchema,detailInputSchema,LIMITS } from '../dist/index.js';
 export const vector={inputUncached:10,cacheRead:2,cacheWrite:3,output:4};
 export const approx={approximate:false,reasons:[]};
 export const pop={asOf:100000000,count:10,coverage:'complete'};
@@ -132,4 +132,17 @@ test('coverage uses complete/partial/unknown, optional excluded mirrors membersh
 test('shared metrics detail rejects descendant enumeration axis',()=>{
  expect(detailInputSchema.safeParse({...detailInput,axis:'descendant'}).success).toBe(false);
  expect(()=>validateDetailResult(detailInput,{...detail(),axis:'descendant',rows:[{axis:'descendant',threadId:'thr_a',amount:1,tokens:vector,approximation:approx}]})).toThrow();
+});
+
+test('root-unattested reason preserves positive dollar floors and distinct coverage semantics',()=>{
+ expect(coverageReasonSchema.parse('root-unattested')).toBe('root-unattested');
+ const floor={...row(),coverage:'partial',coverageReasons:['root-unattested']};
+ const summary=validateReadResult(input,{version:1,rows:[floor]}).rows[0];
+ expect(summary.coverageReasons).toEqual(['root-unattested']);expect(summary.coverage).toBe('partial');
+ expect(summary.windows.lifetime.amount).toBe(1);
+ const breakdown=validateDetailResult(detailInput,{...detail(),coverage:'partial',coverageReasons:['root-unattested']});
+ expect(breakdown.coverageReasons).toEqual(['root-unattested']);expect(breakdown.total.amount).toBe(1);
+ const floors=dollarPercentiles([{threadId:'root',amount:summary.windows.m20.amount},{threadId:'peer',amount:2}]);
+ expect(floors.get('root')).toBe(0);expect(dollarPercentiles([{threadId:'root',amount:0}]).get('root')).toBeNull();
+ expect(validateReadResult(input,{version:1,rows:[]}).rows).toEqual([]); // supplier may omit unsupported zero evidence
 });

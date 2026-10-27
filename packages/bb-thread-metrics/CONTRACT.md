@@ -64,7 +64,7 @@ Amounts are finite nonnegative USD values or null. Null is unknown, never zero;
 null estimates require `missing-price` approximation provenance. `reported`
 uses its own currency and timestamp and is never added to estimated amounts.
 
-Coverage is `complete|partial|unknown`; closed reasons are `source-gap`,
+Coverage is `complete|partial|unknown`; closed reasons are `source-gap`, `root-unattested`,
 `history-unavailable`, `member-cap`, `depth-cap`, `edge-cap`, `missing-thread`,
 `unpriced`, `retention`, `row-cap`, `pagination`, `population-incomplete`.
 Approximation reasons are `closest-model`, `provider-default`,
@@ -239,3 +239,28 @@ interval is omitted. Within each page rows must be sorted by start and disjoint
 rules independently of whether dollar/vector totals happen to reconcile.
 Cross-page interval ordering, completeness and revision consistency remain the
 supplier/consumer paging obligation.
+
+
+## Unattested root evidence (initial 0.1.0 owner ruling)
+
+`root-unattested` means the supplier cannot attest the root thread's own usage
+evidence. It is distinct from `source-gap` and general retention: observed
+family/descendant spend does not establish the missing root's spend. The ledger
+owns detection, omission/floor policy and later recovery; this contract adds no
+membership enumeration or root-policy decision.
+
+For partial coverage with `root-unattested`, positive reported dollars are an
+observed lower bound (floor). Consumers phrase that value **"at least $X"**,
+not a complete spend total. Heat compares these floor dollar amounts under the
+same population policy, preserving partial population coverage; it must not
+invent missing root dollars or substitute tokens. Zero observed root evidence
+must not be shown as zero actual spend: omit the unsupported spend result or
+render it unavailable, retaining any previous good value only as explicitly stale.
+A missing/unattested root is never evidence that actual spend was $0.
+
+When root evidence is later attested, the ledger reconciles it idempotently,
+changes the projection revision when the membership/sum input changes and clears
+`root-unattested` only after the matching evidence is recovered. The consumer
+replaces its floor/unavailable state from the authoritative response. Actual
+recovery/deduplication and UI wording implementations are separate adopter work;
+this package supplies the reason codec and preserves observed values unchanged.

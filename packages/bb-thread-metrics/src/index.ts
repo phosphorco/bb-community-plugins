@@ -17,7 +17,7 @@ const money = z.number().finite().nonnegative().nullable();
 const scope = z.enum(['own','family']);
 export const windowSchema = z.enum(['m20','h24','d7','lifetime']);
 export const coverageSchema = z.enum(['complete','partial','unknown']);
-export const coverageReasonSchema = z.enum(['source-gap','history-unavailable','member-cap','depth-cap','edge-cap','missing-thread','unpriced','retention','row-cap','pagination','population-incomplete']);
+export const coverageReasonSchema = z.enum(['source-gap','root-unattested','history-unavailable','member-cap','depth-cap','edge-cap','missing-thread','unpriced','retention','row-cap','pagination','population-incomplete']);
 const reasons = z.array(coverageReasonSchema).max(16);
 export const approximationSchema = z.object({
  approximate:z.boolean(), reasons:z.array(z.enum(['closest-model','provider-default','model-attribution','bucket-boundary','missing-price','source-gap'])).max(6),
