@@ -101,3 +101,8 @@ and all DOM peers stay external and optional for non-React consumers.
 SDK 0.5.29 `/testing/app` additionally requires its optional
 `@testing-library/react@16.3.2` peer; the packed probe provisions it only in
 scratch along with React/React DOM and jsdom.
+
+In 0.5.0, `nativeCandidates` is a pure native thread/file/URL helper for consumers
+that need a fallback when suppliers are absent. It uses original UTF-16 spans,
+respects explicit exclusions and has no SDK or DOM runtime dependency. Consumers
+own Markdown grammar, target verification, scheduling and durable evidence.

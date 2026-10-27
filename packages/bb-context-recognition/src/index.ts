@@ -174,3 +174,5 @@ export function arbitrate(tagged:readonly TaggedCandidateV1[],options:{text:stri
  for(const a of accepted)for(const c of [a.candidate,a.fallback?.candidate])if(c&&!keys.has(identityKey(c.source))){keys.add(identityKey(c.source));identities.push(c.source);}
  return {occurrences:accepted,identities,dropped};
 }
+
+export { nativeCandidates } from './native.js';
