@@ -19,9 +19,12 @@ export default function crossReferencesPlugin(bb: BbPluginApi): void {
   const checkLink = createLinkChecker();
   const collector = new AssistantLinkCollector(bb, db, store, (signal) => bb.realtime.publish(REALTIME_CHANNEL, signal));
   for (const event of ["thread.idle", "thread.failed"] as const) {
-    bb.events.on(event, ({ thread }) => collector.enqueue(thread.projectId, thread.id, false, true));
+    bb.events.on(event, ({ thread }) => collector.enqueue(thread.projectId, thread.id, false, true, 1));
   }
-  bb.events.on("thread.deleted", ({ thread }) => collector.enqueue(thread.projectId, thread.id, true, true));
+  bb.events.on("thread.deleted", ({ thread }) => collector.enqueue(thread.projectId, thread.id, true, true, 1));
+  // A staged candidate may be discarded without onDispose. The collector's
+  // service lifetime owns SDK subscriptions, so factory registration creates none.
+  bb.onDispose(()=>collector.dispose());
   bb.background.service("cross-references-assistant-links", { start: (signal) => collector.start(signal) });
 
   bb.rpc.register(rpcContract, {
@@ -41,7 +44,7 @@ export default function crossReferencesPlugin(bb: BbPluginApi): void {
     listBacklinks: (input) => store.listBacklinks(input),
     listForwardReferences: (input) => {
       if (input.source.provider === "bb" && input.source.keys.project !== undefined && input.source.keys.thread !== undefined) {
-        collector.enqueue(input.source.keys.project, input.source.keys.thread, false, false, true);
+        collector.enqueue(input.source.keys.project, input.source.keys.thread, false, false, 2);
       }
       return store.listForwardReferences(input);
     },

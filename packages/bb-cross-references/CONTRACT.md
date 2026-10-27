@@ -107,3 +107,49 @@ so the conformance kit uses the same production module instance. Do not commit
 Package self-tests, adopter source conformance, UI/host proof and live composition
 are separate evidence levels. Rendering, dependency locks, publication and live
 proof are owned by the coordinating lane.
+
+## Recognition identity adapter (package 0.2.0; wire v1 unchanged)
+
+Ownership: the recognition supplier owns its provider/id grammar; this package
+owns the pure `recognitionIdentity` codec; the consumer owns existing-thread
+verification, source eligibility, authored locators, persistence and scheduling.
+`bb.thread` requires an explicit verified existing `{id,projectId,deletedAt?}`
+and maps to existing `bb` project/thread keys. `bb.url` must pass safe canonical
+HTTP(S) URL policy, including credential/sensitive-parameter rejection. Other
+identities map to `recognition` keys `{provider,identity}`, where identity is
+SHA-256 of recognition `canonicalJson([provider,id])`. `kind` is advisory and
+excluded. This hashes, rather than truncates, recognition's bounded opaque id.
+`recognitionIdentityRecord` preserves the complete provider/id in at most
+16,384 UTF-8 bytes for a consumer-owned mapping. Authored href/span/URL remain
+separate; no alias/redirect/host equivalence is inferred.
+
+No v1 input, output, projection duplicate rule or resource-containment meaning
+changes. Package 0.2.0 adds no evidence RPC, storage or lifecycle code. Source
+codec tests import the emitted public entry; they do not prove live adoption.
+
+### Verified file identity codec (unreleased 0.2.0)
+
+`recognitionIdentity` requires `bb.file` callers to use `verifiedFileIdentity`
+with a consumer-verified `VerifiedFileTargetSchema` value:
+`{kind:'workspace',environmentId,path}` or `{kind:'thread-storage',threadId,path}`.
+The graph is provider `recognition`, keys `{provider:'bb.file',identity}`, where
+identity is SHA-256 of recognition `canonicalJson(['bb.file',kind,ownerId,path])`;
+ownerId is environmentId for workspace and threadId for storage. No truncation.
+`verifiedFileIdentityRecord` stores `{provider:'bb.file',verifiedFile:...}` in the
+existing 16,384-byte mapping bound. It never stores a source-thread lexical ID
+as the shared resource mapping. Original lexical identities remain per occurrence.
+
+Paths are canonical slash-separated relative paths: reject empty/dot/parent
+segments, leading slash, backslash, colon, percent, query/hash and controls.
+Owner IDs use the existing BB ID alphabet/bound. Preserve exact Unicode/case and
+authored symlink alias; do not normalize Unicode, case-fold or substitute realpath.
+A leading `./` is already removed by the existing native recognition grammar.
+The package validates/encodes data only; existence, regular-file and realpath
+containment verification belongs to the consumer and shares its source deadline.
+
+Workspace conversations in the same environment/path coalesce; different
+environments, storage owners and alias paths stay distinct. Metadata preserves
+future navigation/codec inputs, without claiming installation-local IDs are
+portable. Phase-2 query and phase-3 Brief production must use this same codec and
+frame rule. This helper adds no public wire method or v1 projection metadata
+requirement; existing v1 producers remain unchanged.

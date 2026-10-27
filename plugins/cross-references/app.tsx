@@ -404,6 +404,7 @@ function ReferencesDetail({ pages, loading, error, stale, loadingMore, checks, c
   return createPortal(
     <div ref={contentRef} className="cross-references__popover" id={popoverId} role="dialog" aria-label="References" tabIndex={-1} style={{ top: position.top, left: position.left }}>
       <header><strong>References</strong><button type="button" className="cross-references__close" onClick={onClose} aria-label="Close references">Close</button></header>
+      <p className="cross-references__message">Coverage is limited to known sources and at most 50 timeline pages per scan. Supplier failures and scan budgets can leave retained, unconfirmed locations. Legacy Thread Links claims remain until source deletion. Up to 256 targets per source and the newest 100 locations per producer edge are retained; counts show distinct resources, not all mentions.</p>
       {stale && <p className="cross-references__stale" role="status">The connection is recovering; this may be briefly out of date.</p>}
       {loading && pages.forward.rows.length === 0 && pages.backlink.rows.length === 0 && <p className="cross-references__message" role="status">Checking references…</p>}
       {error != null && <p className="cross-references__error" role="alert">{error}</p>}
