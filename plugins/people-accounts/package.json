@@ -32,7 +32,9 @@
     },
     "server": "./server.ts",
     "app": "./app.tsx",
-    "skills": []
+    "skills": [
+      "skills"
+    ]
   },
   "files": [
     "dist/",
@@ -46,7 +48,8 @@
     "test/",
     "app.tsx",
     "app.css",
-    "lib/"
+    "lib/",
+    "skills/"
   ],
   "dependencies": {
     "@phosphorco/bb-identity": "0.3.1",
