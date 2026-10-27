@@ -1,0 +1,15 @@
+{
+  "name": "@phosphorco/bb-usage-algebra",
+  "version": "0.1.0",
+  "description": "Pure disjoint usage counters, windows, and versioned dollar estimates.",
+  "type": "module",
+  "license": "MIT",
+  "author": "Phosphor",
+  "repository": {"type":"git","url":"git+https://github.com/phosphorco/bb-community-plugins.git","directory":"packages/bb-usage-algebra"},
+  "exports": {".":{"types":"./dist/types/index.d.ts","import":"./dist/index.js"},"./vector":{"types":"./dist/types/vector.d.ts","import":"./dist/vector.js"}},
+  "files": ["dist/", "README.md", "CONTRACT.md", "LICENSE"],
+  "publishConfig": {"access":"public"},
+  "dependencies": {"zod":"^4.3.6"},
+  "devDependencies": {"bun":"1.3.14","typescript":"^5.9.3"},
+  "scripts": {"build":"bun tools/build.mjs && tsc --project tsconfig.declarations.json","test":"node tools/test.mjs","typecheck":"tsc --noEmit"}
+}
