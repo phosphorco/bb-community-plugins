@@ -67,6 +67,7 @@
     "reference-validation.ts",
     "attachment-delivery.ts",
     "rpc-contract.ts",
+    "machine-sections.ts",
     "test/"
   ],
   "dependencies": {

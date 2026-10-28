@@ -189,7 +189,12 @@ type TimelineRow = NativeTimeline['rows'][number];
 function collectAssistant(args: { source: Extract<NativeSourceReference, { kind: 'assistant-item' | 'assistant-terminal' }>; timeline: NativeTimeline | undefined; events: readonly NativeEvent[]; terminalSeq: number; targetTurn: string; text: NativeTextEvidence[]; reasons: string[] }): void {
   const { source, timeline, events, terminalSeq, targetTurn, text, reasons } = args;
   if (!timeline) { reasons.push('public-timeline-required'); return; }
-  if (!seq(timeline.maxSeq) || timeline.maxSeq < terminalSeq || !validId(timeline.timelinePage.historySnapshot)) { reasons.push('projection-does-not-cover-terminal'); return; }
+  // This is an opaque public snapshot token, not an entity identifier. The
+  // producer can serialize a snapshot longer than the identifier limit. Keep
+  // the original token; the existing whole-input byte bound still applies.
+  const marker = timeline.timelinePage.historySnapshot;
+  const validMarker = typeof marker === 'string' && marker.trim().length > 0 && marker.length <= NATIVE_SOURCE_LIMITS.bytes;
+  if (!seq(timeline.maxSeq) || timeline.maxSeq < terminalSeq || !validMarker) { reasons.push('projection-does-not-cover-terminal'); return; }
   if (timeline.timelinePage.olderCursor) reasons.push('projection-page-incomplete');
   if (timeline.timelinePage.olderRowUpdates?.length) reasons.push('projection-row-updates-unapplied');
   if (timeline.delta) reasons.push('projection-delta-requires-materialized-rows');

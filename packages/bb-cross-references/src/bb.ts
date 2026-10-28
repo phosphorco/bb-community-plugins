@@ -1,4 +1,6 @@
-import type { BbPluginApi, JsonValue } from "@get-bb/plugin-sdk";
+import { defineRpcContract } from '@get-bb/plugin-sdk';
+import { crossReferencesV2RpcSchemas, MENTION_V2_LIMITS } from './evidence-v2.js';
+import type { BbPluginApi, JsonValue, StandardSchemaV1 } from "@get-bb/plugin-sdk";
 import type { PluginBrowserBbSdk } from "@get-bb/plugin-sdk/app";
 import { z } from "zod";
 import {
@@ -109,3 +111,54 @@ export function createCrossReferencesClient(
     checkForwardReferences: (input, signal) => operation("checkForwardReferences", input, signal) as Promise<ForwardReferenceStatus[]>,
   };
 }
+
+/** V2 never negotiates down to strict V1 reads or legacy missing-describe. */
+export interface CrossReferencesV2Client {
+ readonly pluginId:string;
+ describe(signal?:AbortSignal):Promise<{protocol:typeof CROSS_REFERENCES_PROTOCOL;version:2}>;
+ listMentions(input:import('./evidence-v2.js').ListMentionsInputV2,signal?:AbortSignal):Promise<import('./evidence-v2.js').ListMentionsOutputV2>;
+ resolveLookup(input:import('./evidence-v2.js').ResolveLookupInputV2,signal?:AbortSignal):Promise<import('./evidence-v2.js').ResolveLookupOutputV2>;
+}
+export function createCrossReferencesV2Client(sdk:CrossReferencesSdk,targetPluginId=CROSS_REFERENCES_PLUGIN_ID,options:CrossReferencesClientOptions={}):CrossReferencesV2Client {
+ const pluginId=validateProducerPluginId(targetPluginId),callMs=budget(options.callMs,LIMITS.callMs),describeMs=budget(options.describeMs,LIMITS.describeMs);
+ async function call<T>(method:string,input:unknown,inputSchema:z.ZodType,outputSchema:z.ZodType<T>,signal?:AbortSignal):Promise<T>{
+  const parsed=inputSchema.parse(input),json=JSON.stringify(parsed);
+  if(utf8ByteLength(json)>MENTION_V2_LIMITS.inputBytes)throw new CrossReferencesProtocolError('V2 input exceeds its byte bound.');
+  signal?.throwIfAborted();const controller=new AbortController();let reject!:(error:unknown)=>void;
+  const cancelled=new Promise<never>((_,r)=>{reject=r;});
+  const abort=()=>{const e=signal?.reason??new DOMException('Request aborted','AbortError');controller.abort(e);reject(e);};
+  signal?.addEventListener('abort',abort,{once:true});
+  const timer=setTimeout(()=>{const e=Object.assign(new Error('Cross References V2 timed out.'),{name:'TimeoutError',code:'timeout'});controller.abort(e);reject(e);},method==='crossReferences.describe'?describeMs:callMs);
+  try{const value=await Promise.race([sdk.plugins.callRpc({pluginId,method,input:JSON.parse(json) as JsonValue,outputSchema:z.unknown(),signal:controller.signal}),cancelled]);
+   const encoded=JSON.stringify(value);if(encoded===undefined||utf8ByteLength(encoded)>MENTION_V2_LIMITS.responseBytes)throw new CrossReferencesProtocolError('V2 response exceeds its canonical JSON byte bound.');
+   return outputSchema.parse(value);
+  }finally{clearTimeout(timer);signal?.removeEventListener('abort',abort);controller.abort();}
+ }
+ return {pluginId,async describe(signal){const s=crossReferencesRpcSchemas['crossReferences.describe'];const d=await call('crossReferences.describe',null,s.input,s.output,signal);if(!d.versions.includes(2))throw new CrossReferencesProtocolError('Wire V2 unavailable.');return {protocol:CROSS_REFERENCES_PROTOCOL,version:2};},
+  listMentions:(input,signal)=>call('crossReferencesV2ListMentions',input,crossReferencesV2RpcSchemas.crossReferencesV2ListMentions.input,crossReferencesV2RpcSchemas.crossReferencesV2ListMentions.output,signal),
+  resolveLookup:(input,signal)=>call('crossReferencesV2ResolveLookup',input,crossReferencesV2RpcSchemas.crossReferencesV2ResolveLookup.input,crossReferencesV2RpcSchemas.crossReferencesV2ResolveLookup.output,signal)};
+}
+// Zod's optional issue fields are wider than the SDK's exact optional shape.
+// Adapt validation results at this boundary while preserving both inferred
+// types (including output transforms) and the actual strict/tolerant schemas.
+function sdkSchema<S extends z.ZodType>(schema:S):StandardSchemaV1<z.input<S>,z.output<S>> {
+ return {'~standard':{
+  version:1,vendor:'bb-cross-references',
+  jsonSchema:{
+   input:()=>z.toJSONSchema(schema,{io:'input',unrepresentable:'any'}),
+   output:()=>z.toJSONSchema(schema,{io:'output',unrepresentable:'any'}),
+  },
+  validate(value){
+   const parsed=schema.safeParse(value);
+   return parsed.success?{value:parsed.data}:{issues:parsed.error.issues.map(issue=>({message:issue.message,path:issue.path}))};
+  },
+ }};
+}
+export const crossReferencesV2RpcContract=defineRpcContract({
+ crossReferencesV2ListMentions:{input:sdkSchema(crossReferencesV2RpcSchemas.crossReferencesV2ListMentions.input),output:sdkSchema(crossReferencesV2RpcSchemas.crossReferencesV2ListMentions.output)},
+ crossReferencesV2ResolveLookup:{input:sdkSchema(crossReferencesV2RpcSchemas.crossReferencesV2ResolveLookup.input),output:sdkSchema(crossReferencesV2RpcSchemas.crossReferencesV2ResolveLookup.output)},
+});
+export function registerCrossReferencesV2(bb:Pick<BbPluginApi,'rpc'>,handlers:{
+ crossReferencesV2ListMentions:(input:import('./evidence-v2.js').ListMentionsInputV2)=>import('./evidence-v2.js').ListMentionsOutputV2|Promise<import('./evidence-v2.js').ListMentionsOutputV2>;
+ crossReferencesV2ResolveLookup:(input:import('./evidence-v2.js').ResolveLookupInputV2)=>import('./evidence-v2.js').ResolveLookupOutputV2|Promise<import('./evidence-v2.js').ResolveLookupOutputV2>;
+}):void {bb.rpc.register(crossReferencesV2RpcContract,handlers);}

@@ -113,3 +113,34 @@ test("conformance kit drives apply/duplicate/get/backlinks and detects broken ac
   await assert.rejects(runCrossReferencesConformance({sdk:fixtureSdk({badGet:true}),command}), /getProjection/);
   await assert.rejects(runCrossReferencesConformance({sdk:fixtureSdk({badBacklink:true}),command}), /listBacklinks/);
 });
+
+test('emitted V2 client negotiates2, targets owner explicitly and admits bytes before tolerant decoding',async()=>{
+ const {createCrossReferencesV2Client}=await import('../dist/bb.js');let calls=0;
+ const client=createCrossReferencesV2Client(sdkFor(async({pluginId,method,input,outputSchema})=>{calls++;assert.equal(pluginId,'fixture-owner');
+  if(method==='crossReferences.describe')return outputSchema.parse({protocol:'cross-references',versions:[1,2],extra:true});
+  return outputSchema.parse({version:2,status:'unavailable',reason:'read-budget',retryable:true,extra:true});
+ }),'fixture-owner');assert.equal((await client.describe()).version,2);
+ const page=await client.listMentions({version:2,query:{kind:'authored-url',href:'https://example.test/a'}});assert.equal(page.status,'unavailable');assert.equal(calls,2);
+ const bad=createCrossReferencesV2Client(sdkFor(async()=>({version:2,status:'unavailable',reason:'read-budget',retryable:true,padding:'x'.repeat(1048576)})));await assert.rejects(bad.listMentions({version:2,query:{kind:'authored-url',href:'https://example.test/a'}}),/byte bound/);
+ const v1=createCrossReferencesV2Client(sdkFor(async()=>({protocol:'cross-references',versions:[1]})));await assert.rejects(v1.describe(),/V2 unavailable/);
+});
+
+test('V2 registration preserves schema validation and exact SDK issue paths',async()=>{
+ const {crossReferencesV2RpcContract,registerCrossReferencesV2}=await import('../dist/bb.js');
+ const method=crossReferencesV2RpcContract.crossReferencesV2ListMentions;
+ const input={version:2,query:{kind:'authored-url',href:'https://example.test/a'}};
+ const valid=await method.input['~standard'].validate(input);
+ assert.deepEqual(valid,{value:input});
+ for(const invalid of [{...input,extra:true},{...input,query:{kind:'authored-url',href:'javascript:alert(1)'}}]){
+  const result=await method.input['~standard'].validate(invalid);
+  assert.ok(result.issues.length>0);assert.equal('value' in result,false);
+  for(const issue of result.issues){assert.equal(typeof issue.message,'string');assert.ok(Array.isArray(issue.path));}
+ }
+ const output={version:2,status:'unavailable',reason:'read-budget',retryable:true,added:{value:true}};
+ assert.deepEqual(await method.output['~standard'].validate(output),{value:output});
+ assert.ok((await method.output['~standard'].validate({...output,retryable:'yes'})).issues.length>0);
+ const handlers={crossReferencesV2ListMentions:()=>output,crossReferencesV2ResolveLookup:()=>({version:2,state:'unrecognized',options:[],reasons:[]})};
+ let registrations=0;
+ registerCrossReferencesV2({rpc:{register(contract,registered){registrations++;assert.equal(contract,crossReferencesV2RpcContract);assert.equal(registered,handlers);}}},handlers);
+ assert.equal(registrations,1);
+});

@@ -394,3 +394,12 @@ test('actual unclassified transaction exception stays unknown even after an earl
  assert.deepEqual(rows.map((r:any)=>[r.stage,r.reason]),[['project-context','sdk-failure'],['collection','unknown']]);
  assert.equal(rows[1].elapsedMsMin,undefined);assert.equal((db.prepare('SELECT attempts FROM assistant_link_jobs').get() as any).attempts,1);
 });
+
+test('actual collector commits primary excerpt/href/binding once and read-only supplier snapshot never reseeds',async t=>{
+ const {db,store}=open();t.after(()=>db.close());const {collector}=fixture(db,store);t.after(()=>collector.dispose());
+ collector.enqueue('proj_a','thr_a');await collector.processNext(new AbortController().signal);
+ const stream=db.prepare('SELECT * FROM mention_streams').get() as any,projection=store.getProjection({producerPluginId:'cross-references',source:sourceIdentity}).projection!;
+ assert.equal(stream.bound_graph_revision,projection.revision);assert.equal((db.prepare('SELECT COUNT(*) n FROM mention_excerpts').get() as any).n,1);
+ const location=store.mentionState(sourceIdentity).occurrences[0]!;assert.equal(location.excerpt?.state,'ready');assert.equal(location.authoredUrlState,'exact');assert.equal(location.exactAuthoredHref,'https://example.test/a');
+ const before=db.prepare('SELECT * FROM assistant_link_jobs').all();collector.lookupSnapshot();assert.deepEqual(db.prepare('SELECT * FROM assistant_link_jobs').all(),before);
+});

@@ -8,7 +8,7 @@ export type FleetPerformanceRuntime = Readonly<{
   navigate: Readonly<{ toThread(threadId: string): void }>;
 }>;
 
-type NavPanel = Readonly<{ component: ComponentType }>;
+type NavPanel = Readonly<{ component: ComponentType<{ subPath?: string }> }>;
 type RegisteredPlugin = Readonly<{ panels: readonly NavPanel[] }>;
 
 const RuntimeContext = createContext<FleetPerformanceRuntime | null>(null);
@@ -24,9 +24,9 @@ function runtime(): FleetPerformanceRuntime {
 }
 
 /** Browser-test SDK seam; the production app itself stays unmodified. */
-export function definePluginApp(factory: (app: { slots: { navPanel(panel: NavPanel): void } }) => void): RegisteredPlugin {
+export function definePluginApp(factory: (app: { experimental_icons: { register(registration: unknown): void }; slots: { navPanel(panel: NavPanel): void } }) => void): RegisteredPlugin {
   const panels: NavPanel[] = [];
-  factory({ slots: { navPanel: (panel) => panels.push(panel) } });
+  factory({ experimental_icons: { register() {} }, slots: { navPanel: (panel) => panels.push(panel) } });
   return { panels };
 }
 
@@ -43,6 +43,14 @@ export function useRealtime(channel: string, callback: (payload: unknown) => voi
   useEffect(() => active.subscribe(channel, callback), [active, callback, channel]);
 }
 
-export function useBbNavigate(): Readonly<{ toThread(threadId: string): void }> {
-  return runtime().navigate;
+export function useBbNavigate(): Readonly<{ toThread(threadId: string): void; toPluginPanel(path: string, options?: unknown): void }> {
+  return { toPluginPanel() {}, ...runtime().navigate };
+}
+
+export function useSettings(): Readonly<{ values: undefined; isLoading: false }> {
+  return { values: undefined, isLoading: false };
+}
+
+export function experimental_usePluginId(): string {
+  return "machine-monitor";
 }

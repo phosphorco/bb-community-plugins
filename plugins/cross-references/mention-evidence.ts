@@ -1,6 +1,6 @@
 /** Internal phase-1 location records; these are not a new public wire API. */
 import { z } from 'zod';
-import { VerifiedFileTargetSchema } from '@phosphorco/bb-cross-references';
+import { excerptRecordV2Schema, safeAuthoredHrefSchema, VerifiedFileTargetSchema } from '@phosphorco/bb-cross-references';
 import { CandidateV1Schema, SourceIdentitySchema, canonicalJson } from '@phosphorco/bb-context-recognition';
 import { sha256Hex, type Resource, type ResourceIdentity } from './canonical.ts';
 export const MENTION_LIMITS = Object.freeze({perEdge:100, targets:256, messageChars:262_144,
@@ -10,7 +10,7 @@ export const ConversationLocatorSchema = z.strictObject({kind:z.literal('convers
   messageSeq:z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
   anchorSeq:z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).nullable(),role:z.enum(['user','assistant'])});
 export type ConversationLocator = z.infer<typeof ConversationLocatorSchema>;
-export const MentionLocationSchema = z.strictObject({locator:ConversationLocatorSchema,
+export const MentionLocationSchema = z.strictObject({excerpt:excerptRecordV2Schema.optional(),authoredUrlState:z.enum(['unknown','not-url','exact']).optional(),exactAuthoredHref:safeAuthoredHrefSchema.optional(),locator:ConversationLocatorSchema,
   sourceContentRevision:z.string().regex(/^[a-f0-9]{64}$/),span:z.strictObject({start:z.number().int().nonnegative(),end:z.number().int().positive()}).refine(v=>v.start<v.end && v.end<=MENTION_LIMITS.messageChars),
   messageCreatedAt:z.number().int().nonnegative().max(8_640_000_000_000_000),
   provenance: z.object({pluginId:id,origin:z.enum(['builtin','contributed']),confidence:CandidateV1Schema.shape.confidence,
@@ -20,7 +20,7 @@ export type MentionLocation = z.infer<typeof MentionLocationSchema>;
 export type ObservedMention = MentionLocation & {target:Resource};
 export type MentionCoverage = {timelineComplete:boolean;reasons:string[];retentionLimited:boolean;capHistoryUnknown?:boolean};
 export type MentionScan = {occurrences:ObservedMention[];observedMessageIds:string[];scannedMessageIds:string[];failedSuppliers:string[];
-  discoveryIncomplete:boolean;coverage:MentionCoverage};
+  discoveryIncomplete:boolean;coverage:MentionCoverage;sourceBodies?:ReadonlyMap<string,string>};
 export function mentionKey(row:Pick<MentionLocation,'locator'|'span'>):string {
   return sha256Hex(canonicalJson([row.locator,row.span]));
 }

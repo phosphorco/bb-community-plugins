@@ -1,6 +1,6 @@
 {
   "name": "@phosphorco/bb-cross-references",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "type": "module",
   "license": "MIT",
   "description": "Shared Cross References v1 codecs, explicit clients, and reference controls.",

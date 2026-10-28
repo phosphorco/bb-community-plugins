@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import os from "node:os";
 
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
+import { z } from "zod";
 
 import { MachineMonitorReferenceDelivery } from "./attachment-delivery.ts";
 import {
@@ -33,6 +34,7 @@ import {
   type MonitoredDirectory,
   withDirectoryHierarchy,
 } from "./monitor.ts";
+import { DEFAULT_MACHINE_SECTIONS, machineSectionsError } from "./machine-sections.ts";
 import { createPlatformCollector } from "./platform-collectors.ts";
 import { rpcContract } from "./rpc-contract.ts";
 import { MachineMonitorReferenceStore, MachineMonitorStore, machineMonitorMigrations } from "./store.ts";
@@ -133,6 +135,17 @@ export default async function machineMonitorPlugin(bb: BbPluginApi): Promise<voi
       label: "Additional directory paths",
       description: "Optional absolute paths to measure, one per line (up to 32 paths and 16 KiB total). Paths on another filesystem are shown but are excluded from root-disk Other. Blank lines and # comments are ignored.",
       default: "",
+    },
+    machineSections: {
+      type: "string" as const,
+      label: "Machine sections",
+      experimental_multiline: true,
+      description: "Fleet pages shared by every user, one per line: a glob matched against machine names, then a quoted title, for example `b*-hel \"Hetzner Builder\"` or `{palani,cole}-* \"Dev Machines\"`. The first section is the default page. Blank lines and # comments are ignored.",
+      experimental_schema: z.string().superRefine((value, context) => {
+        const error = machineSectionsError(value);
+        if (error != null) context.addIssue({ code: "custom", message: error });
+      }),
+      default: DEFAULT_MACHINE_SECTIONS,
     },
   });
   const db = bb.storage.database();
@@ -412,8 +425,22 @@ export default async function machineMonitorPlugin(bb: BbPluginApi): Promise<voi
     },
     getAttachments: () => referenceStore.snapshot(),
     attachmentStatus: () => referenceStore.snapshot().status,
+    saveMachineSections: async ({ text }) => {
+      const error = machineSectionsError(text);
+      if (error != null) throw new Error(error);
+      const saved = await settings.experimental_set({ machineSections: text });
+      return { text: saved.machineSections };
+    },
   });
-  settings.onChange(async () => {
+  settings.onChange(async (next, prev) => {
+    if (next.machineSections !== prev.machineSections) {
+      bb.realtime.publish("machine-monitor-sections", { text: next.machineSections });
+    }
+    // Sections are presentation only; they never invalidate collection or
+    // advance the fleet settings revision.
+    const collectionChanged = (Object.keys(next) as (keyof typeof next)[])
+      .some((key) => key !== "machineSections" && next[key] !== prev[key]);
+    if (!collectionChanged) return;
     processDetailsEnabled = (await settings.get()).showProcessDetails;
     fleetCoordinator.settingsChanged();
     // Preserve the existing local snapshot invalidation for settings-only UI.
