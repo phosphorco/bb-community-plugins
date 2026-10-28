@@ -10,6 +10,7 @@ import {
   machineTimelineRequestSchema,
   machineTimelineResultSchema,
 } from "./fleet-contract.ts";
+import { MAX_MACHINE_SECTIONS_BYTES } from "./machine-sections.ts";
 import { MAX_REPORTED_DIRECTORIES } from "./monitor.ts";
 
 const sampleSchema = z.object({
@@ -108,6 +109,10 @@ export const rpcContract = defineRpcContract({
       detail: z.string().max(256).optional(),
       archived: z.boolean(),
     }).strict(),
+  },
+  saveMachineSections: {
+    input: z.object({ text: z.string().max(MAX_MACHINE_SECTIONS_BYTES) }).strict(),
+    output: z.object({ text: z.string() }).strict(),
   },
   ...attachmentRpcSchemas,
   ...fleetRpcSchemas,

@@ -4,6 +4,31 @@ Machine Monitor is a deliberately small BB community plugin that records CPU, me
 
 It samples CPU/RAM/root disk every 30 seconds and cache directories every 15 minutes, retains 30 days in the plugin SQLite database, and aggregates each requested range to no more than 720 ECharts points. A separate Linux memory diagnostic samples kernel pressure/reclaim counters every minute and increases only those lightweight measurements to five seconds while the kernel reports memory stalls. A bounded process ranking remains at once per minute, retaining seven days or at most 20,000 compact snapshots. The panel shows root disk and per-directory average growth per day over the selected history. The browser has no foreground polling: it refreshes from emitted collection changes.
 
+## Machine sections
+
+The panel opens on a compact one-row-per-machine list for the first configured
+section. The same switcher that selects a machine also lists every section;
+each row links to that machine's full inspector (`machine/<id>`), and each
+section has its own route (`section/<slug>`). Sections are one shared plugin
+setting, editable under **Edit sections** on the page or in Plugin Settings, so
+every user of this BB sees the same pages:
+
+```
+* "All"
+b*-hel "Hetzner Builder"
+{palani,cole,florien,adam}-* "Dev Machines"
+```
+
+Each line is a case-insensitive glob (`*`, `?`, `{a,b}`) matched against a
+machine's name or ID, then an optional quoted title. Blank lines and `#`
+comments are ignored; invalid lines are rejected with their line number.
+Sections are presentation only and never change collection.
+
+Sections also order every machine list. A section matching fewer machines is
+more specific; machines group under their most specific section (broader ones
+subdivide further, ties keep config order), machines in no section come last,
+and names sort naturally within a group (`b2-hel` before `b10-hel`).
+
 ## Machine context
 
 Each selected machine also has a low-churn **Machine context** profile. It is
