@@ -26,20 +26,21 @@ on:
           - bb-people-accounts
           - bb-usage-algebra
           - bb-thread-metrics
+          - bb-thread-membership
       dry_run:
         type: boolean
         default: false
         description: Verify the release and upload a receipt without publishing
       dist_tag:
-        description: npm dist-tag; pinned bb-identity candidate requires next
+        description: Reviewed tag; identity next only, membership first publish latest
         type: choice
         default: latest
         options: [latest, next]
       expected_sha:
-        description: Exact checked-out commit for pinned bb-identity next
+        description: Exact checked-out commit for a pinned reviewed release
         type: string
       expected_version:
-        description: Exact approved package version for pinned bb-identity next (0.4.0, 0.4.1 or 0.4.2-native-marker.0)
+        description: Exact approved version (identity 0.4.0/0.4.1/0.4.2-native-marker.0/0.5.0, membership 0.1.0)
         type: string
       proof_run_id:
         description: Reviewed successful dry-run ID; required for pinned-next publish
@@ -73,6 +74,7 @@ on:
       - "bb-people-accounts/v*"
       - "bb-usage-algebra/v*"
       - "bb-thread-metrics/v*"
+      - "bb-thread-membership/v*"
 
 permissions:
   contents: read
@@ -88,6 +90,7 @@ jobs:
     if: github.repository == 'phosphorco/bb-community-plugins'
     runs-on: ubuntu-latest
     env:
+      DRY_RUN: ${{ inputs.dry_run || false }}
       EXPECTED_SHA: ${{ inputs.expected_sha }}
       EXPECTED_VERSION: ${{ inputs.expected_version }}
       PROOF_RUN_ID: ${{ inputs.proof_run_id }}
@@ -101,7 +104,7 @@ jobs:
           fetch-depth: 0
 
       - name: Acquire the exact fork SDK release artifact
-        if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.plugin == 'bb-identity' && inputs.dist_tag == 'next' && !inputs.dry_run) }}
+        if: ${{ !(github.event_name == 'workflow_dispatch' && !inputs.dry_run && ((inputs.plugin == 'bb-identity' && inputs.dist_tag == 'next') || inputs.plugin == 'bb-thread-membership')) }}
         # SDK archives are retained outside Git. Verify immutable selected bytes.
         shell: bash
         run: |
@@ -153,10 +156,11 @@ jobs:
             bb-people-accounts) workspace="@phosphorco/bb-people-accounts" ;;
             bb-usage-algebra) workspace="@phosphorco/bb-usage-algebra" ;;
             bb-thread-metrics) workspace="@phosphorco/bb-thread-metrics" ;;
+            bb-thread-membership) workspace="@phosphorco/bb-thread-membership" ;;
             *) echo "Unsupported release plugin: $plugin" >&2; exit 1 ;;
           esac
           case "$plugin" in
-            bb-identity|bb-provider-settings|bb-context-recognition|bb-cross-references|bb-agent-connection|bb-people-accounts|bb-usage-algebra|bb-thread-metrics) path="packages/$plugin" ;;
+            bb-identity|bb-provider-settings|bb-context-recognition|bb-cross-references|bb-agent-connection|bb-people-accounts|bb-usage-algebra|bb-thread-metrics|bb-thread-membership) path="packages/$plugin" ;;
             *) path="plugins/$plugin" ;;
           esac
           package_version="$(npm pkg get version --workspace "$workspace" | node -e 'let input=""; process.stdin.on("data", chunk => input += chunk); process.stdin.on("end", () => console.log(Object.values(JSON.parse(input))[0]))')"
@@ -164,20 +168,30 @@ jobs:
           if [ "$plugin" = "bb-people-accounts" ] && [[ "$package_version" == *-* ]]; then
             dist_tag=next
           fi
+          if [ "$plugin" = bb-thread-membership ]; then
+            test "$package_version" = 0.1.0 || { echo "Unapproved membership release version" >&2; exit 1; }
+          fi
           pinned_next=false
-          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ] && [ "$plugin" = "bb-identity" ] && [ "$dist_tag" = "next" ]; then
+          pinned_row=false
+          case "$plugin@$package_version" in
+            bb-identity@0.4.0|bb-identity@0.4.1|bb-identity@0.4.2-native-marker.0|bb-identity@0.5.0|bb-thread-membership@0.1.0) pinned_row=true ;;
+          esac
+          case "$plugin@$package_version" in
+            bb-identity@0.5.0) test "$dist_tag" = next || { echo "Identity 0.5.0 requires next" >&2; exit 1; } ;;
+            bb-thread-membership@0.1.0) test "$dist_tag" = latest || { echo "First membership release requires latest" >&2; exit 1; } ;;
+          esac
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ] && { { [ "$plugin" = "bb-identity" ] && [ "$dist_tag" = "next" ]; } || [ "$plugin@$package_version" = "bb-thread-membership@0.1.0" ]; }; then
             [[ "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "Expected an exact lower-case source SHA" >&2; exit 1; }
-            case "$EXPECTED_VERSION" in 0.4.0|0.4.1|0.4.2-native-marker.0) ;; *) echo "Unapproved pinned bb-identity version" >&2; exit 1 ;; esac
-            test "$package_version" = "$EXPECTED_VERSION" || { echo "Pinned package version drift" >&2; exit 1; }
+            test "$pinned_row" = true && test "$package_version" = "$EXPECTED_VERSION" || { echo "Pinned package version drift" >&2; exit 1; }
             test "$(git rev-parse HEAD)" = "$EXPECTED_SHA" && test "$GITHUB_SHA" = "$EXPECTED_SHA" || { echo "Pinned checkout SHA drift" >&2; exit 1; }
             if [ "$DRY_RUN" != "true" ]; then
               [[ "$PROOF_RUN_ID" =~ ^[1-9][0-9]{0,19}$ ]] && [[ "$EXPECTED_PAYLOAD_SHA256" =~ ^[0-9a-f]{64}$ ]] && [[ "$EXPECTED_RECEIPT_SHA256" =~ ^[0-9a-f]{64}$ ]] || { echo "Reviewed dry-run ID and payload/receipt hashes required" >&2; exit 1; }
             fi
             pinned_next=true
-            echo "Pinned manual next release: tag prerequisite bypassed for $EXPECTED_SHA@$EXPECTED_VERSION"
+            echo "Pinned manual release: tag prerequisite bypassed for $plugin $EXPECTED_SHA@$EXPECTED_VERSION"
           else
-            if [ "$plugin" = "bb-identity" ] && { [ "$package_version" = "0.4.0" ] || [ "$package_version" = "0.4.1" ] || [ "$package_version" = "0.4.2-native-marker.0" ]; } && [ "$DRY_RUN" != "true" ]; then
-              echo "bb-identity@$package_version requires pinned manual dist_tag=next; automatic/default publication refused" >&2
+            if [ "$pinned_row" = true ] && [ "$DRY_RUN" != "true" ]; then
+              echo "$plugin@$package_version requires its reviewed pinned manual release; automatic/default publication refused" >&2
               exit 1
             fi
             release_tag="$plugin/v$package_version"
@@ -204,6 +218,21 @@ jobs:
           echo "version=$package_version" >> "$GITHUB_OUTPUT"
           echo "dist_tag=$dist_tag" >> "$GITHUB_OUTPUT"
           echo "pinned_next=$pinned_next" >> "$GITHUB_OUTPUT"
+          # Preserve every existing identity hotfix artifact name.
+          case "$plugin@$package_version" in
+            bb-identity@0.4.0|bb-identity@0.4.1|bb-identity@0.4.2-native-marker.0)
+              echo "pinned_artifact=bb-identity-next-$EXPECTED_SHA" >> "$GITHUB_OUTPUT"
+              echo "pinned_publication=bb-identity-next-publication" >> "$GITHUB_OUTPUT" ;;
+            *)
+              echo "pinned_artifact=reviewed-$plugin-$package_version-$EXPECTED_SHA" >> "$GITHUB_OUTPUT"
+              echo "pinned_publication=reviewed-$plugin-$package_version-publication" >> "$GITHUB_OUTPUT" ;;
+          esac
+          if [ "$plugin@$package_version" = "bb-thread-membership@0.1.0" ]; then
+            echo "pinned_route=membership-bootstrap" >> "$GITHUB_OUTPUT"
+          else
+            echo "pinned_route=oidc" >> "$GITHUB_OUTPUT"
+          fi
+          echo "pinned_tgz=$(printf '%s' "$workspace" | sed 's#^@##; s#/#-#')-$package_version.tgz" >> "$GITHUB_OUTPUT"
 
       - name: Install locked dependencies
         if: ${{ steps.release.outputs.pinned_next != 'true' || inputs.dry_run }}
@@ -212,7 +241,7 @@ jobs:
       - name: Build shared packages for tests
         if: ${{ steps.release.outputs.pinned_next != 'true' || inputs.dry_run }}
         # Packages test against their own dist, and plugins import the workspace-linked packages' dist.
-        run: npm run build --workspace packages/bb-identity --workspace packages/bb-provider-settings --workspace packages/bb-context-recognition --workspace packages/bb-cross-references --workspace packages/bb-agent-connection --workspace packages/bb-people-accounts --workspace packages/bb-usage-algebra --workspace packages/bb-thread-metrics
+        run: npm run build --workspace packages/bb-identity --workspace packages/bb-provider-settings --workspace packages/bb-context-recognition --workspace packages/bb-cross-references --workspace packages/bb-agent-connection --workspace packages/bb-people-accounts --workspace packages/bb-usage-algebra --workspace packages/bb-thread-metrics --workspace packages/bb-thread-membership
 
       - name: Test
         if: ${{ steps.release.outputs.pinned_next != 'true' || inputs.dry_run }}
@@ -233,18 +262,22 @@ jobs:
       - name: Pack the pinned-next dry-run payload once
         if: ${{ steps.release.outputs.pinned_next == 'true' && inputs.dry_run }}
         shell: bash
+        env:
+          RELEASE_PLUGIN: ${{ steps.release.outputs.plugin }}
+          RELEASE_DIST_TAG: ${{ steps.release.outputs.dist_tag }}
+          RELEASE_WORKSPACE: ${{ steps.release.outputs.workspace }}
         run: |
           mkdir release-candidate
-          npm pack --ignore-scripts --json --workspace @phosphorco/bb-identity --pack-destination release-candidate > release-candidate/pack.json
+          npm pack --ignore-scripts --json --workspace "$RELEASE_WORKSPACE" --pack-destination release-candidate > release-candidate/pack.json
           python3 .github/scripts/bb-identity-next-release.py capture
 
       - name: Upload exact pinned-next dry-run payload and receipt
         if: ${{ steps.release.outputs.pinned_next == 'true' && inputs.dry_run }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: bb-identity-next-${{ inputs.expected_sha }}-${{ github.run_id }}
+          name: ${{ steps.release.outputs.pinned_artifact }}-${{ github.run_id }}
           path: |
-            release-candidate/phosphorco-bb-identity-${{ inputs.expected_version }}.tgz
+            release-candidate/${{ steps.release.outputs.pinned_tgz }}
             release-candidate/package-receipt.json
           if-no-files-found: error
           retention-days: 14
@@ -311,13 +344,39 @@ jobs:
         if: ${{ steps.release.outputs.pinned_next == 'true' && !inputs.dry_run }}
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_PLUGIN: ${{ steps.release.outputs.plugin }}
+          RELEASE_DIST_TAG: ${{ steps.release.outputs.dist_tag }}
         run: python3 .github/scripts/bb-identity-next-release.py download
 
       - name: Publish only the reviewed pinned-next tgz
-        if: ${{ steps.release.outputs.pinned_next == 'true' && !inputs.dry_run }}
+        if: ${{ steps.release.outputs.pinned_next == 'true' && steps.release.outputs.pinned_route == 'oidc' && !inputs.dry_run }}
         env:
           # Pinned release uses only the current GitHub OIDC exchange.
           NODE_AUTH_TOKEN: ''
+          RELEASE_PLUGIN: ${{ steps.release.outputs.plugin }}
+          RELEASE_DIST_TAG: ${{ steps.release.outputs.dist_tag }}
+        shell: bash
+        run: |
+          python3 .github/scripts/bb-identity-next-release.py preflight
+          publish_status=0
+          python3 .github/scripts/bb-identity-next-release.py publish > publication-result.json 2> publication-error.log || publish_status=$?
+          printf '{"exitCode":%s}\n' "$publish_status" > publication-status.json
+          postflight_status=0
+          python3 .github/scripts/bb-identity-next-release.py postflight || postflight_status=$?
+          printf '{"exitCode":%s}\n' "$postflight_status" > postflight-status.json
+          if [ "$publish_status" -ne 0 ]; then
+            echo "Publish returned $publish_status; postflight ran once; inspect retained receipts before any retry" >&2
+            exit "$publish_status"
+          fi
+          exit "$postflight_status"
+
+      - name: Bootstrap membership from the reviewed tgz
+        if: ${{ steps.release.outputs.pinned_next == 'true' && steps.release.outputs.pinned_route == 'membership-bootstrap' && steps.release.outputs.plugin == 'bb-thread-membership' && !inputs.dry_run }}
+        env:
+          # First package publish only; missing repository credential fails closed.
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          RELEASE_PLUGIN: ${{ steps.release.outputs.plugin }}
+          RELEASE_DIST_TAG: ${{ steps.release.outputs.dist_tag }}
         shell: bash
         run: |
           python3 .github/scripts/bb-identity-next-release.py preflight
@@ -337,7 +396,7 @@ jobs:
         if: ${{ always() && steps.release.outputs.pinned_next == 'true' && !inputs.dry_run }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: bb-identity-next-publication-${{ github.run_id }}
+          name: ${{ steps.release.outputs.pinned_publication }}-${{ github.run_id }}
           path: |
             artifact-selection.json
             publication-result.json

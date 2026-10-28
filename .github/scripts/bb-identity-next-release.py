@@ -1,4 +1,7 @@
-"""CI helper for explicitly approved pinned bb-identity next payloads."""
+"""CI helper for pinned reviewed payloads: a closed (plugin, version) table.
+
+All existing identity hotfix rows remain next/OIDC-only. Membership has one explicit
+first-publish token bootstrap; no row rebuilds or repacks during actual publication."""
 import base64
 import hashlib
 import gzip
@@ -13,13 +16,33 @@ import sys
 import tempfile
 import tarfile
 import zipfile
+from urllib.parse import unquote, urlparse
 
 REPOSITORY = 'phosphorco/bb-community-plugins'
 WORKFLOW = '.github/workflows/publish.yml'
 HELPER = '.github/scripts/bb-identity-next-release.py'
-PACKAGE = 'packages/bb-identity'
-NAME = '@phosphorco/bb-identity'
-APPROVED_VERSIONS = frozenset({'0.4.0', '0.4.1', '0.4.2-native-marker.0'})
+# (plugin, version) -> package path, npm name, dist-tag (None = owner decision not encoded),
+# publish route ('oidc' = isolated GitHub OIDC only; None = owner decision not encoded),
+# artifact name prefix (the 0.4.0 row keeps its original names).
+PINNED = {
+    ('bb-identity', '0.4.0'): ('packages/bb-identity', '@phosphorco/bb-identity', 'next', 'oidc', 'bb-identity-next'),
+    ('bb-identity', '0.4.1'): ('packages/bb-identity', '@phosphorco/bb-identity', 'next', 'oidc', 'bb-identity-next'),
+    ('bb-identity', '0.4.2-native-marker.0'): ('packages/bb-identity', '@phosphorco/bb-identity', 'next', 'oidc', 'bb-identity-next'),
+    ('bb-identity', '0.5.0'): ('packages/bb-identity', '@phosphorco/bb-identity', 'next', 'oidc', 'reviewed-bb-identity-0.5.0'),
+    ('bb-thread-membership', '0.1.0'): ('packages/bb-thread-membership', '@phosphorco/bb-thread-membership', 'latest', 'membership-bootstrap', 'reviewed-bb-thread-membership-0.1.0'),
+}
+
+PLUGIN = VERSION = PACKAGE = NAME = ARTIFACT = TGZ = ''
+DIST_TAG = ROUTE = None
+
+def bind(plugin, version):
+    """Select exactly one table row; anything else is refused."""
+    global PLUGIN, VERSION, PACKAGE, NAME, DIST_TAG, ROUTE, ARTIFACT, TGZ
+    if (plugin, version) not in PINNED:
+        raise ValueError(f'Not a pinned reviewed release: {plugin}@{version}')
+    PLUGIN, VERSION = plugin, version
+    PACKAGE, NAME, DIST_TAG, ROUTE, ARTIFACT = PINNED[(plugin, version)]
+    TGZ = NAME.lstrip('@').replace('/', '-') + '-' + VERSION + '.tgz'
 RECEIPT = 'package-receipt.json'
 LIMIT = 16 * 1024 * 1024
 OUT = Path('release-candidate')
@@ -30,15 +53,6 @@ def require(condition, message):
 
 def command(*args):
     return subprocess.check_output(args).decode().strip()
-
-def selected_version():
-    version = os.environ['EXPECTED_VERSION']
-    require(version in APPROVED_VERSIONS, 'Unapproved pinned bb-identity version')
-    return version
-
-def tgz_name(version):
-    require(version in APPROVED_VERSIONS, 'Unapproved pinned bb-identity version')
-    return f'phosphorco-bb-identity-{version}.tgz'
 
 def digest(data):
     return hashlib.sha256(data).hexdigest()
@@ -51,11 +65,11 @@ def bounded_file(path):
 def expected():
     sha = os.environ['EXPECTED_SHA']
     require(re.fullmatch('[0-9a-f]{40}', sha), 'Invalid expected source SHA')
-    version = selected_version()
+    require(os.environ['EXPECTED_VERSION'] == VERSION and (PLUGIN, VERSION) in PINNED, 'Only a pinned table version is approved for this path')
     require(os.environ['GITHUB_REPOSITORY'] == REPOSITORY, 'Wrong repository')
     require(os.environ['GITHUB_SHA'] == sha == command('git', 'rev-parse', 'HEAD'), 'Checked-out source drift')
-    require(json.loads(Path(PACKAGE, 'package.json').read_text())['version'] == version, 'Package version drift')
-    return sha, version
+    require(json.loads(Path(PACKAGE, 'package.json').read_text())['version'] == VERSION, 'Package version drift')
+    return sha
 
 def sources():
     paths = subprocess.check_output(['git', 'ls-files', '-z', '--', PACKAGE, 'package.json', 'package-lock.json', WORKFLOW, HELPER]).decode().split('\0')
@@ -93,7 +107,7 @@ def bounded_tar_stream(data):
         require(offset <= len(stream), 'Truncated TAR member data')
     return stream
 
-def payload(path, version):
+def payload(path):
     data = bounded_file(path)
     files = {}
     total = 0
@@ -113,21 +127,20 @@ def payload(path, version):
             if member.name == 'package/package.json':
                 manifest = json.loads(content)
     require('package/package.json' in files, 'Missing package manifest')
-    require(manifest['name'] == NAME and manifest['version'] == version, 'Wrong package payload')
+    require(manifest['name'] == NAME and manifest['version'] == VERSION, 'Wrong package payload')
     require(manifest == json.loads(Path(PACKAGE, 'package.json').read_text()), 'Payload manifest differs from checked-out source')
     for target in manifest['exports'].values():
         for entry in target.values():
             require(isinstance(entry, str) and entry.startswith('./') and 'package/' + entry[2:] in files, 'Missing public export target')
-    return {'archive': tgz_name(version), 'bytes': len(data), 'sha256': digest(data), 'shasum': hashlib.sha1(data).hexdigest(), 'integrity': 'sha512-' + base64.b64encode(hashlib.sha512(data).digest()).decode(), 'exports': manifest['exports'], 'files': dict(sorted(files.items()))}
+    return {'archive': TGZ, 'bytes': len(data), 'sha256': digest(data), 'shasum': hashlib.sha1(data).hexdigest(), 'integrity': 'sha512-' + base64.b64encode(hashlib.sha512(data).digest()).decode(), 'exports': manifest['exports'], 'files': dict(sorted(files.items()))}
 
 def capture():
-    sha, version = expected()
-    tgz = tgz_name(version)
+    sha = expected()
     pack = json.loads(Path(OUT, 'pack.json').read_text())
-    require(len(pack) == 1 and pack[0]['filename'] == tgz, 'Expected exactly one selected release archive')
-    result = payload(OUT / tgz, version)
+    require(len(pack) == 1 and pack[0]['filename'] == TGZ, 'Expected exactly one selected release archive')
+    result = payload(OUT / TGZ)
     require(pack[0]['shasum'] == result['shasum'] and pack[0]['integrity'] == result['integrity'], 'npm pack integrity mismatch')
-    receipt = {'schema': 1, 'repository': REPOSITORY, 'workflow': WORKFLOW, 'sourceCommit': sha, 'sourceTree': command('git', 'rev-parse', 'HEAD^{tree}'), 'packageTree': command('git', 'rev-parse', 'HEAD:' + PACKAGE), 'sourceFiles': sources(), 'package': NAME, 'version': version, 'distTag': 'next', 'dryRun': True, 'runId': os.environ['GITHUB_RUN_ID'], 'runAttempt': os.environ['GITHUB_RUN_ATTEMPT'], 'payload': result}
+    receipt = {'schema': 1, 'repository': REPOSITORY, 'workflow': WORKFLOW, 'sourceCommit': sha, 'sourceTree': command('git', 'rev-parse', 'HEAD^{tree}'), 'packageTree': command('git', 'rev-parse', 'HEAD:' + PACKAGE), 'sourceFiles': sources(), 'package': NAME, 'version': VERSION, 'distTag': DIST_TAG, 'dryRun': True, 'runId': os.environ['GITHUB_RUN_ID'], 'runAttempt': os.environ['GITHUB_RUN_ATTEMPT'], 'payload': result}
     (OUT / RECEIPT).write_text(json.dumps(receipt, sort_keys=True, indent=2) + '\n')
     print(json.dumps({'payloadSHA256': result['sha256'], 'receiptSHA256': digest((OUT / RECEIPT).read_bytes()), 'integrity': result['integrity']}))
 
@@ -143,7 +156,7 @@ def api(path, binary=False):
     return data if binary else json.loads(data)
 
 def download():
-    sha, version = expected()
+    sha = expected()
     run_id = os.environ['PROOF_RUN_ID']
     require(re.fullmatch('[1-9][0-9]{0,19}', run_id), 'Invalid proof run ID')
     run = api(f'repos/{REPOSITORY}/actions/runs/{run_id}')
@@ -151,7 +164,7 @@ def download():
     require(run['path'] == WORKFLOW and run['head_sha'] == sha and run['event'] == 'workflow_dispatch' and run['status'] == 'completed' and run['conclusion'] == 'success', 'Proof run is not successful same-source manual workflow')
     listing = api(f'repos/{REPOSITORY}/actions/runs/{run_id}/artifacts?per_page=100')
     require(listing['total_count'] <= 100, 'Unbounded artifact listing')
-    name = f'bb-identity-next-{sha}-{run_id}'
+    name = f'{ARTIFACT}-{sha}-{run_id}'
     found = [a for a in listing['artifacts'] if a['name'] == name and not a['expired']]
     require(len(found) == 1, 'Expected one retained proof artifact')
     artifact = found[0]
@@ -161,8 +174,7 @@ def download():
     OUT.mkdir()
     with zipfile.ZipFile(io.BytesIO(archive)) as zipped:
         members = zipped.infolist()
-        tgz = tgz_name(version)
-        require(len(members) == 2 and {m.filename for m in members} == {tgz, RECEIPT}, 'Unexpected artifact files')
+        require(len(members) == 2 and {m.filename for m in members} == {TGZ, RECEIPT}, 'Unexpected artifact files')
         require(sum(m.file_size for m in members) <= LIMIT, 'Oversized extracted artifact')
         for member in members:
             require(not stat.S_ISLNK(member.external_attr >> 16), 'Artifact link refused')
@@ -171,20 +183,19 @@ def download():
     verify()
 
 def verify():
-    sha, version = expected()
-    tgz = tgz_name(version)
-    for key, path in [('EXPECTED_PAYLOAD_SHA256', OUT / tgz), ('EXPECTED_RECEIPT_SHA256', OUT / RECEIPT)]:
+    sha = expected()
+    for key, path in [('EXPECTED_PAYLOAD_SHA256', OUT / TGZ), ('EXPECTED_RECEIPT_SHA256', OUT / RECEIPT)]:
         require(re.fullmatch('[0-9a-f]{64}', os.environ[key]), 'Invalid reviewed hash')
         require(digest(bounded_file(path)) == os.environ[key], 'Reviewed payload/receipt hash mismatch')
     receipt = json.loads((OUT / RECEIPT).read_text())
     require(receipt['schema'] == 1 and receipt['repository'] == REPOSITORY and receipt['workflow'] == WORKFLOW and receipt['sourceCommit'] == sha, 'Receipt source mismatch')
-    require(receipt['package'] == NAME and receipt['version'] == version and receipt['distTag'] == 'next' and receipt['dryRun'] is True and receipt['runId'] == os.environ['PROOF_RUN_ID'], 'Receipt is not selected dryrun payload')
+    require(receipt['package'] == NAME and receipt['version'] == VERSION and receipt['distTag'] == DIST_TAG and receipt['dryRun'] is True and receipt['runId'] == os.environ['PROOF_RUN_ID'], 'Receipt is not selected dryrun payload')
     require(receipt['sourceTree'] == command('git', 'rev-parse', 'HEAD^{tree}') and receipt['packageTree'] == command('git', 'rev-parse', 'HEAD:' + PACKAGE) and receipt['sourceFiles'] == sources(), 'Receipt source content drift')
-    require(receipt['payload'] == payload(OUT / tgz, version), 'Receipt files/exports/archive integrity mismatch')
+    require(receipt['payload'] == payload(OUT / TGZ), 'Receipt files/exports/archive integrity mismatch')
     print('Verified exact reviewed dryrun archive; no build, pack, or publish performed by helper.')
 
 def registry_read(selector, field):
-    with subprocess.Popen(['npm', 'view', selector, field, '--json', '--registry', 'https://registry.npmjs.org/'], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL) as process:
+    with subprocess.Popen(['npm', 'view', selector, field, '--json', '--registry', 'https://registry.npmjs.org/', '--prefer-online', '--fetch-retries=0', '--fetch-timeout=15000'], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL) as process:
         data = process.stdout.read(LIMIT + 1)
         if len(data) > LIMIT:
             process.kill()
@@ -197,21 +208,53 @@ def registry_read(selector, field):
         raise ValueError('Registry read did not provide bounded JSON; do not infer absence')
     return status, value
 
+def publishable():
+    # Owner decisions must be encoded in the table before anything reaches the registry.
+    require(DIST_TAG in ('latest', 'next'), 'Owner dist-tag decision not encoded for this row; publication refused')
+    require(ROUTE == 'oidc' or ((PLUGIN, VERSION) == ('bb-thread-membership', '0.1.0') and ROUTE == 'membership-bootstrap'), 'Publish route not approved for this row')
+    if ROUTE == 'membership-bootstrap':
+        require(bool(os.environ.get('NODE_AUTH_TOKEN')), 'Membership first publish requires repository NPM_TOKEN; bootstrap credential is missing')
+    require(os.environ.get('RELEASE_DIST_TAG', DIST_TAG) == DIST_TAG, 'Requested dist-tag differs from the reviewed row')
+
+def package_missing(code, value):
+    # npm must report an actual GET E404 for this exact package, not a timeout,
+    # authentication failure, nonexistent version of another package, or empty JSON.
+    if code == 0 or not isinstance(value, dict):
+        return False
+    error = value.get('error', {})
+    if not isinstance(error, dict) or error.get('code') != 'E404':
+        return False
+    match = re.search(r'Not Found - GET (https://registry\.npmjs\.org/\S+)', str(error.get('summary', '')))
+    if not match:
+        return False
+    url = urlparse(match[1])
+    return url.netloc == 'registry.npmjs.org' and unquote(url.path) == '/' + NAME and not url.query and not url.fragment
+
 def preflight():
-    _, version = expected()
+    publishable()
     verify()
     approved_text = os.environ['EXPECTED_PREFLIGHT_TAGS']
     require(len(approved_text) <= 4096, 'Oversized approved preflight tags')
     approved = json.loads(approved_text)
-    require(type(approved) is dict and 'latest' in approved and len(approved) <= 100 and all(isinstance(k, str) and 0 < len(k) <= 128 and isinstance(v, str) and 0 < len(v) <= 128 for k, v in approved.items()), 'Invalid owner-approved preflight tags')
+    require(type(approved) is dict and len(approved) <= 100 and all(isinstance(k, str) and 0 < len(k) <= 128 and isinstance(v, str) and 0 < len(v) <= 128 for k, v in approved.items()), 'Invalid owner-approved preflight tags')
     code, tags = registry_read(NAME, 'dist-tags')
-    require(code == 0 and tags == approved, 'Registry dist-tags drift from owner-approved payload; stop before publication')
-    code, registry_version = registry_read(NAME + '@' + version, 'version')
-    require(code != 0 and isinstance(registry_version, dict) and registry_version.get('error', {}).get('code') == 'E404', 'Version exists or registry result is unresolved; stop for owner inspection, never republish')
-    Path('registry-before.json').write_text(json.dumps({'tags': tags, 'versionAbsent': version}, sort_keys=True) + '\n')
+    if ROUTE == 'membership-bootstrap':
+        require(approved == {}, 'First membership publish requires explicitly approved empty tags')
+        require(package_missing(code, tags), 'Membership package already exists or absence is unresolved; bootstrap refused')
+        code, version = registry_read(NAME + '@' + VERSION, 'version')
+        require(package_missing(code, version), 'Membership version exists or absence is unresolved; bootstrap refused')
+        before = {'tags': {}, 'versionAbsent': VERSION, 'packageAbsent': True, 'route': ROUTE}
+    else:
+        require('latest' in approved, 'Existing identity package requires approved latest tag')
+        if VERSION == '0.5.0':
+            require(approved['latest'] == '0.3.1', 'Identity 0.5.0 must preserve latest0.3.1')
+        require(code == 0 and tags == approved, 'Registry dist-tags drift from owner-approved payload; stop before publication')
+        code, version = registry_read(NAME + '@' + VERSION, 'version')
+        require(code != 0 and isinstance(version, dict) and version.get('error', {}).get('code') == 'E404', 'Version exists or registry result is unresolved; stop for owner inspection, never republish')
+        before = {'tags': tags, 'versionAbsent': VERSION, 'route': ROUTE}
+    Path('registry-before.json').write_text(json.dumps(before, sort_keys=True) + '\n')
 
 def postflight():
-    _, version = expected()
     verify()
     before = json.loads(Path('registry-before.json').read_text())
     def observe(selector, field):
@@ -223,38 +266,48 @@ def postflight():
     # Observe both exactly once and persist actual outcomes before assessing them.
     # Nonzero publish may still have committed remotely; never infer absence.
     tags = observe(NAME, 'dist-tags')
-    dist = observe(NAME + '@' + version, 'dist')
+    dist = observe(NAME + '@' + VERSION, 'dist')
     after = {'approvedPreflightTags': before['tags'], 'tagsRead': tags, 'distRead': dist}
     Path('registry-after.json').write_text(json.dumps(after, sort_keys=True) + '\n')
-    expected_tags = {**before['tags'], 'next': version}
-    require(tags.get('exitCode') == 0 and tags.get('value') == expected_tags, 'Registry tags do not match approved next-only effect; inspect without retry or rollback')
+    expected_tags = {**before['tags'], DIST_TAG: VERSION}
+    require(tags.get('exitCode') == 0 and tags.get('value') == expected_tags, 'Registry tags do not match the approved single-tag effect; inspect without retry or rollback')
     receipt = json.loads((OUT / RECEIPT).read_text())
     require(dist.get('exitCode') == 0 and isinstance(dist.get('value'), dict) and dist['value'].get('integrity') == receipt['payload']['integrity'] and dist['value'].get('shasum') == receipt['payload']['shasum'], 'Published integrity differs or is unresolved; inspect without retry')
 
 def publish():
-    _, version = expected()
-    archive = (OUT / tgz_name(version)).resolve(strict=True)
+    require(os.environ.get('DRY_RUN') == 'false', 'Actual publication requires explicit non-dry-run context')
+    publishable()
+    archive = (OUT / TGZ).resolve(strict=True)
     require(digest(bounded_file(archive)) == os.environ['EXPECTED_PAYLOAD_SHA256'], 'Reviewed publish payload drift')
     require(not any(os.path.lexists(p) for p in ('.npmrc', PACKAGE + '/.npmrc')), 'Unexpected project npmrc; refuse publish')
     require(json.loads(Path(PACKAGE, 'package.json').read_text()).get('publishConfig') == {'access': 'public'}, 'Unexpected publishConfig')
-    with tempfile.TemporaryDirectory(prefix='bb-identity-oidc-publish-') as isolated:
+    if ROUTE == 'membership-bootstrap':
+        before = json.loads(Path('registry-before.json').read_text())
+        require(before == {'tags': {}, 'versionAbsent': VERSION, 'packageAbsent': True, 'route': ROUTE}, 'Missing exact first-publish preflight evidence')
+    with tempfile.TemporaryDirectory(prefix='pinned-publish-') as isolated:
         user = Path(isolated, 'user.npmrc')
         global_config = Path(isolated, 'global.npmrc')
-        user.write_text('')
+        user.write_text('//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}\n' if ROUTE == 'membership-bootstrap' else '')
+        user.chmod(0o600)
         global_config.write_text('')
         # No inherited npm settings, credentials or direct token overrides.
         # Current GitHub OIDC request and CI/provenance context remain intact.
         blocked = {'NODE_AUTH_TOKEN', 'NPM_TOKEN', 'NPM_AUTH_TOKEN', 'NPM_ID_TOKEN', 'SIGSTORE_ID_TOKEN', 'NPM_USERNAME', 'NPM_PASSWORD'}
         env = {k: v for k, v in os.environ.items() if not k.lower().startswith('npm_config_') and k.upper() not in blocked}
         env.update(NODE_AUTH_TOKEN='', NPM_TOKEN='', NPM_ID_TOKEN='')
+        if ROUTE == 'membership-bootstrap':
+            # Only this exact first-package row receives the repository bootstrap
+            # credential; the npmrc references it without writing its value.
+            env['NODE_AUTH_TOKEN'] = os.environ['NODE_AUTH_TOKEN']
         result = subprocess.run([
             'npm', 'publish', str(archive), '--registry', 'https://registry.npmjs.org/',
-            '--access', 'public', '--tag', 'next', '--ignore-scripts', '--provenance', '--json',
+            '--access', 'public', '--tag', DIST_TAG, '--ignore-scripts', '--provenance', '--json',
             '--userconfig', str(user), '--globalconfig', str(global_config),
             '--prefix', isolated, '--cache', str(Path(isolated, 'cache')),
         ], cwd=isolated, env=env)
     raise SystemExit(result.returncode if result.returncode >= 0 else 128 - result.returncode)
 
 if __name__ == '__main__':
+    bind(os.environ.get('RELEASE_PLUGIN', ''), os.environ.get('EXPECTED_VERSION', ''))
     require(len(sys.argv) == 2 and sys.argv[1] in ('capture', 'download', 'verify', 'preflight', 'postflight', 'publish'), 'Expected capture/download/verify/preflight/postflight/publish')
     globals()[sys.argv[1]]()
