@@ -5,7 +5,7 @@ import { createPeopleAccountsClient } from '@phosphorco/bb-people-accounts/bb';
 import { sdkFromFakeHost } from '@phosphorco/bb-people-accounts/testing';
 import { RPC_METHODS, type RosterEntryV1 } from '@phosphorco/bb-people-accounts';
 import factory from '../server';
-import { tokenSlot } from '../model';
+import { tokenSlot, parseRoster, tokenConfiguration } from '../model';
 
 const ada = rosterEntryFixture();
 const grace = rosterEntryFixture({ personKey: 'opaque:grace', displayName: 'Grace', aliases: { emails: [], nicknames: ['shared'], handles: [] }, githubLogin: 'grace-human', botLogin: 'grace-bot', committer: { name: 'Grace', email: 'grace@example.test' } });
@@ -27,8 +27,12 @@ describe('actual people-accounts factory', () => {
       const result = await client.resolve({ inputs: ['ada', 'Grace'] });
       expect(result.results.map(r => r.status)).toEqual(['resolved', 'resolved']);
       expect(result.attribution.assignees).toEqual(['ada-human', 'grace-human']);
+      const status = await host.harness.behavior.callRpc('peopleAccountsStatus', null) as { entries: { ownToken: { state: string }; effectiveTokenSupplier: { personKey: string } | null }[] };
+      expect(status.entries[0]?.ownToken.state).toBe('missing');
+      expect(status.entries[0]?.effectiveTokenSupplier?.personKey).toBe(grace.personKey);
+      expect(status.entries[1]?.ownToken.state).toBe('configured');
       expect(result.attribution.coAuthors.map(p => p.email)).toEqual([ada.committer!.email, grace.committer!.email]);
-      expect(result.attribution.postAs).toBe(ada.botLogin);
+      expect(result.attribution.primary?.person.personKey).toBe(ada.personKey);
       expect(await client.credential(ada.botLogin!)).toMatchObject({ status: 'available', token: 'second-dummy-token' });
       await host.harness.behavior.setSettings({ [tokenSlot(ada.personKey)]: token });
       expect(await client.credential(ada.botLogin!)).toMatchObject({ status: 'available', token });
@@ -85,7 +89,7 @@ describe('actual people-accounts factory', () => {
       const result = await client.resolve({ inputs: ['unknown', 'shared', 'Grace', ada.personKey, 'Grace'], participants: ['Seen Person'] });
       expect(result.results.map(r => r.status)).toEqual(['not-found', 'ambiguous', 'resolved', 'resolved', 'resolved']);
       expect(result.attribution.primary?.person.personKey).toBe(grace.personKey);
-      expect(result.attribution.postAs).toBeNull(); // missing primary token does not select Ada's bot
+      expect(result.attribution.primary?.person.personKey).toBe(grace.personKey); // human summary ignores token policy
       expect(result.attribution.assignees).toEqual(['grace-human', 'ada-human']);
       expect(result.attribution.coAuthors.map(p => p.email)).toEqual(['grace@example.test', ada.committer!.email]);
       expect(result.attribution.fallbackReason).toContain('Seen Person');
@@ -158,4 +162,59 @@ describe('actual people-accounts factory', () => {
       expect((await host.harness.behavior.runCli(['status'])).stdout).not.toContain('replacement-dummy');
     } finally { await host.harness.lifecycle.dispose(); }
   });
+});
+
+
+test('exact opaque keys win over another person’s alias and accept the full byte bound', async () => {
+  const long = { ...ada, personKey: 'é'.repeat(256) };
+  const conflicting = { ...grace, aliases: { emails: [], nicknames: [ada.personKey], handles: [] } };
+  const host = await seeded([long, ada, conflicting]);
+  try {
+    const result = await createPeopleAccountsClient(sdkFromFakeHost(host)).resolve({ inputs: [long.personKey, ada.personKey] });
+    expect(result.results[0]).toMatchObject({ status: 'resolved', person: { personKey: long.personKey }, matchedBy: 'person-key' });
+    expect(result.results[1]).toMatchObject({ status: 'resolved', person: { personKey: ada.personKey }, matchedBy: 'person-key' });
+    await expect(createPeopleAccountsClient(sdkFromFakeHost(host)).resolve({ inputs: ['é'.repeat(257)] })).rejects.toThrow();
+  } finally { await host.harness.lifecycle.dispose(); }
+});
+
+test('roster diagnostics name entry and field format without echoing a supplied secret', () => {
+  const bad = { ...ada, committer: { name: 'Ada', email: 'dummy-secret-without-email' } };
+  const parsed = parseRoster(JSON.stringify([bad]));
+  expect(parsed.diagnostics.join(' ')).toContain('Roster entry 1, committer.email');
+  expect(parsed.diagnostics.join(' ')).toContain('email address');
+  expect(parsed.diagnostics.join(' ')).not.toContain('dummy-secret-without-email');
+  expect(tokenConfiguration(undefined).state).toBe('missing');
+  expect(tokenConfiguration('not one word').state).toBe('invalid-format');
+});
+
+test('unreadable secret slot remains distinct from missing or invalid format', async () => {
+  const host = createFakePluginHost({ pluginId: 'people-accounts', settings: { roster: JSON.stringify([ada]) } });
+  const settings: typeof host.bb.settings = { define(descriptors) {
+    const handle = host.bb.settings.define(descriptors);
+    return Object.keys(descriptors).some(key => key.startsWith('github_pat_')) ? new Proxy(handle, { get(target, key, receiver) {
+      if (key === 'get') return async () => { throw new Error('dummy-secret-in-error'); };
+      return Reflect.get(target, key, receiver);
+    } }) : handle;
+  } };
+  try {
+    await factory(new Proxy(host.bb, { get(target, key, receiver) { return key === 'settings' ? settings : Reflect.get(target, key, receiver); } }));
+    const status = await host.harness.behavior.callRpc('peopleAccountsStatus', null) as { entries: { ownToken: { state: string } }[] };
+    expect(status.entries[0]?.ownToken.state).toBe('unreadable');
+    expect(JSON.stringify(status)).not.toContain('dummy-secret-in-error');
+  } finally { await host.harness.lifecycle.dispose(); }
+});
+
+
+test('invalid stored tokens diagnose their slot without leaking values or supplying a credential', async () => {
+  const invalid = 'dummy invalid token';
+  const host = createFakePluginHost({ pluginId: 'people-accounts', settings: { roster: JSON.stringify([ada]), [tokenSlot(ada.personKey)]: invalid } });
+  try {
+    await factory(host.bb);
+    const status = await host.harness.behavior.callRpc('peopleAccountsStatus', null) as { entries: { ownToken: { state: string; message: string | null }; effectiveTokenSupplier: unknown }[] };
+    expect(status.entries[0]?.ownToken.state).toBe('invalid-format');
+    expect(status.entries[0]?.ownToken.message).toContain('printable ASCII word');
+    expect(status.entries[0]?.effectiveTokenSupplier).toBeNull();
+    expect(JSON.stringify(status)).not.toContain(invalid);
+    expect(await createPeopleAccountsClient(sdkFromFakeHost(host)).credential(ada.botLogin!)).toMatchObject({ status: 'unavailable', reason: 'no-credential' });
+  } finally { await host.harness.lifecycle.dispose(); }
 });

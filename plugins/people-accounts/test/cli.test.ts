@@ -19,13 +19,19 @@ test('actual CLI stdout is pure trailers alongside unknown names and stderr expl
     expect(unknown.exitCode).toBe(0);
     const json = await host.harness.behavior.runCli(['resolve', '--for', 'ada']);
     expect(JSON.parse(json.stdout).results[0].status).toBe('resolved');
+    await host.harness.behavior.setSettings({ roster: '[]' });
+    const inactive = await host.harness.behavior.runCli(['resolve', '--for', 'ada', '--format', 'trailers']);
+    expect(inactive.stdout).toBe('Co-Authored-By: Ada Fixture <ada.commits@example.test>\n');
+    expect(inactive.stderr).toContain('Saved roster changes are inactive; reload people-accounts\n');
+    const inactiveJson = await host.harness.behavior.runCli(['resolve', '--for', 'ada']);
+    expect(inactiveJson.stderr).toContain('Saved roster changes are inactive; reload people-accounts\n');
     const bad = await host.harness.behavior.runCli(['resolve', '--for']);
     expect(bad.exitCode).toBe(1);
   } finally { await host.harness.lifecycle.dispose(); }
 });
 
 test('unavailable resolver fails open and trailer mode never emits status text to stdout', async () => {
-  const port = { resolve: async () => { throw new Error('transport failure'); }, status: async () => ({ entries: [], diagnostics: [], reloadRequired: false }) };
+  const port = { resolve: async () => { throw new Error('transport failure'); }, status: async () => ({ entries: [], diagnostics: [], reloadRequired: false }), check: async () => ({ entries: [], diagnostics: [], reloadRequired: false }) };
   const result = await runCli(['resolve', '--for', 'ada', '--format', 'trailers'], port);
   expect(result.exitCode).toBe(0);
   expect(result.stdout).toBe('');
@@ -39,4 +45,12 @@ test('opaque person keys map distinctly to stable SDK-safe slots', () => {
   expect(tokenSlot('person:a/b')).toMatch(/^[a-zA-Z0-9_-]+$/);
   expect(tokenSlot('person:a/b')).not.toBe(tokenSlot('person:a_b'));
   expect(tokenSlot('person:é')).not.toBe(tokenSlot('person:e'));
+});
+
+test('an explicit status check invokes the required check port', async () => {
+  let checks = 0, reads = 0;
+  const status = { entries: [], diagnostics: [], reloadRequired: false };
+  await runCli(['status', '--check'], { resolve: async () => { throw Error('unused'); }, status: async () => { reads++; return status; }, check: async () => { checks++; return status; } });
+  expect(checks).toBe(1);
+  expect(reads).toBe(0);
 });

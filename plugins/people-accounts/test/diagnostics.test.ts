@@ -31,14 +31,14 @@ test('checks are explicit, cached and advisory; errors recover and never echo re
     expect(status.entries[0]?.credential).toMatchObject({ state: 'ok', actsAs: 'different-bot', expiresAt: '2027-01-01T00:00:00.000Z', scopes: ['repo', 'read:user'] });
     expect(status.entries[0]?.credential.message).toContain('different account');
     expect(status.entries[0]?.credential.checkedAt).toBeTruthy();
-    expect((await client.resolve({ inputs: ['ada'] })).attribution.postAs).toBe(ada.botLogin);
+    expect((await client.resolve({ inputs: ['ada'] })).attribution.primary?.person.personKey).toBe(ada.personKey);
     await host.harness.behavior.runCli(['status']);
     expect(calls).toBe(1);
     fail = true;
     status = await host.harness.behavior.callRpc('peopleAccountsCheck', { personKeys: [ada.personKey] }) as PeopleStatus;
     expect(status.entries[0]?.credential.state).toBe('failing');
     expect(JSON.stringify(status)).not.toContain(token);
-    expect((await client.resolve({ inputs: ['ada'] })).attribution.postAs).toBe(ada.botLogin);
+    expect((await client.resolve({ inputs: ['ada'] })).attribution.primary?.person.personKey).toBe(ada.personKey);
     fail = false;
     const cli = await host.harness.behavior.runCli(['status', '--check']);
     expect(JSON.parse(cli.stdout).entries[0].credential.state).toBe('ok');

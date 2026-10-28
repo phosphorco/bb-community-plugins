@@ -52,8 +52,8 @@
     "skills/"
   ],
   "dependencies": {
-    "@phosphorco/bb-identity": "0.4.1",
-    "@phosphorco/bb-people-accounts": "0.1.0-attribution.0",
+    "@phosphorco/bb-identity": "0.4.2-native-marker.0",
+    "@phosphorco/bb-people-accounts": "0.1.0",
     "zod": "4.6.7"
   },
   "devDependencies": {

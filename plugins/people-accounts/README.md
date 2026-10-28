@@ -77,8 +77,7 @@ can continue. Invalid CLI syntax is reported as a usage error.
 ## Integration and diagnostics
 
 The server registers the real supplier with the exact public
-`@phosphorco/bb-people-accounts@0.1.0-attribution.0` contract. Public describe,
-resolve and roster RPCs never return PATs or check GitHub. The dedicated
+`@phosphorco/bb-people-accounts@0.1.0` contract. Public resolve and roster RPCs never return PATs or check GitHub. The dedicated
 credential RPC is a trusted backend convention: consumers use its token for a
 GitHub call and never render, persist, return or log it. There are no caller
 checks or attribution permissions.
@@ -114,3 +113,22 @@ may be partial.
 
 Tests drive the actual factory through the installed SDK fake host and public
 package conformance kit. That is source conformance, not live deployment proof.
+
+
+## Active configuration and matching
+
+A unique exact opaque person key takes priority over another person's alias.
+Keys and inputs share a 512 UTF-8 byte bound; keys preserve their exact spelling.
+Normalized alias matching runs only when no unique exact key matches.
+
+Resolution uses active rows until explicit reload. After saving roster changes,
+JSON and trailer modes warn on stderr: Saved roster changes are inactive; reload
+people-accounts. Trailer stdout stays pure. Explicit status --check calls the
+required check operation, with no downgrade to a cached read.
+
+Settings distinguish Your token slot (missing/configured/unreadable/invalid-format)
+from Effective token supplied by PERSON. Shared bots retain first-configured
+slot order; editing your slot may leave another person's token effective.
+Roster errors name entry index, field path and expected format without token
+values. Shared human summaries choose all humans/assignees/co-authors, dedup human
+logins case-insensitively and leave actual credential fallback to consumers.

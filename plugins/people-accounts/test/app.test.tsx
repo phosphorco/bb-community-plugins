@@ -21,7 +21,7 @@ afterAll(() => {
     else Reflect.deleteProperty(globalThis, key);
   }
 });
-const baseline = (): PeopleStatus => ({ entries: [{ ...rosterEntryFixture(), credential: healthFixture() }], diagnostics: [], reloadRequired: false });
+const baseline = (): PeopleStatus => ({ entries: [{ ...rosterEntryFixture(), credential: healthFixture(), ownToken: { state: 'configured', message: null }, effectiveTokenSupplier: { personKey: rosterEntryFixture().personKey, displayName: 'Ada Fixture' } }], diagnostics: [], reloadRequired: false });
 
 test('settings mounts cached summary only; checks and directory search require deliberate actions', async () => {
   let snapshot = baseline();
@@ -41,6 +41,8 @@ test('settings mounts cached summary only; checks and directory search require d
     await slot.behavior.setRealtimeConnectionState('reconnecting');
     await slot.behavior.setRealtimeConnectionState('connected');
     expect(checks).toBe(0); expect(searches).toBe(0);
+    expect(slot.container.textContent).toContain('Your token slot: configured');
+    expect(slot.container.textContent).toContain('Effective token supplied by Ada Fixture');
     expect(app.settingsSections).toHaveLength(1);
     expect(app.contentScripts).toHaveLength(0);
     expect(app.navPanels).toHaveLength(0);

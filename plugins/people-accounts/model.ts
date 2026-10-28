@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { LIMITS, normalizeAliasKey, rosterEntryV1Schema, type RosterEntryV1, type CredentialHealthV1 } from '@phosphorco/bb-people-accounts';
+import { LIMITS, normalizeAliasKey, rosterEntryV1Schema, tokenSchema, type RosterEntryV1, type CredentialHealthV1 } from '@phosphorco/bb-people-accounts';
 
 /** Fixed-size filename mapping for opaque keys, independent of presentation. */
 export function tokenSlot(personKey: string): string {
@@ -15,8 +15,13 @@ export function parseRoster(raw: string): { entries: RosterEntryV1[]; diagnostic
   const valid = value.flatMap((entry, index) => {
     const result = rosterEntryV1Schema.safeParse(entry);
     if (result.success) return [result.data];
-    // Do not echo user values (including accidentally pasted credentials).
-    diagnostics.push(`Roster entry ${index + 1} is invalid; expected personKey, displayName, aliases, githubLogin, botLogin and committer.`);
+    // Use only schema paths/messages, never supplied values or JSON parser snippets.
+    for (const issue of result.error.issues) {
+      const path = issue.path.map(segment => typeof segment === 'number' ? `[${segment}]` : String(segment)).join('.');
+      const expected = issue.code === 'invalid_type' ? `expected ${issue.expected}` :
+        issue.code === 'unrecognized_keys' ? 'expected only documented roster fields' : issue.message;
+      diagnostics.push(`Roster entry ${index + 1}, ${path || '(entry)'}: ${expected}.`);
+    }
     return [];
   });
   const entries = valid.filter(entry => {
@@ -27,7 +32,7 @@ export function parseRoster(raw: string): { entries: RosterEntryV1[]; diagnostic
   });
   const names = new Map<string, string>();
   for (const entry of entries) {
-    const aliases = [entry.personKey, entry.displayName, ...entry.aliases.emails, ...entry.aliases.nicknames, ...entry.aliases.handles,
+    const aliases = [entry.displayName, ...entry.aliases.emails, ...entry.aliases.nicknames, ...entry.aliases.handles,
       ...(entry.githubLogin ? [entry.githubLogin] : []), ...(entry.botLogin ? [entry.botLogin] : []), ...(entry.committer ? [entry.committer.email] : [])];
     for (const alias of aliases) {
       const key = normalizeAliasKey(alias);
@@ -41,6 +46,13 @@ export function parseRoster(raw: string): { entries: RosterEntryV1[]; diagnostic
 }
 export function uncheckedHealth(configured: boolean): CredentialHealthV1 {
   return { state: configured ? 'configured' : 'missing', actsAs: null, expiresAt: null, checkedAt: null, message: null };
+}
+
+
+export function tokenConfiguration(value: unknown): { state: 'missing' | 'configured' | 'invalid-format' | 'unreadable'; message: string | null } {
+  if (value === undefined || value === null || value === '') return { state: 'missing', message: 'No token saved in this person’s slot.' };
+  if (!tokenSchema.safeParse(value).success) return { state: 'invalid-format', message: 'Stored token has invalid format; expected one printable ASCII word of at most 1024 bytes.' };
+  return { state: 'configured', message: null };
 }
 
 export type AccountFetch = (url: string, init: RequestInit) => Promise<Response>;

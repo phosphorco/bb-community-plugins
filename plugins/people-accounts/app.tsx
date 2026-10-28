@@ -3,8 +3,7 @@ import { useRecoveringRead } from './lib/useRecoveringRead.ts';
 import { ReadStatus } from './lib/ReadStatus.tsx';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { definePluginApp, useRealtime, useRealtimeConnectionState, useRpc, useSdk, useSettings } from '@get-bb/plugin-sdk/app';
-import { STATUS_CHANNEL, type localContract } from './rpc-contract';
-import type { RosterRowV1 } from '@phosphorco/bb-people-accounts';
+import { STATUS_CHANNEL, type localContract, type PeopleStatus } from './rpc-contract';
 
 type DirectoryResult = { items: { personKey: string; displayName: string; handle: string | null }[]; reason: string | null; truncated: boolean };
 export function createPatUrl(botLogin: string | null, organization: string | undefined): string | null {
@@ -19,7 +18,7 @@ export function createPatUrl(botLogin: string | null, organization: string | und
   return url.toString();
 }
 
-function PersonHealth({ row, organization }: { row: RosterRowV1; organization: string | undefined }) {
+function PersonHealth({ row, organization }: { row: PeopleStatus['entries'][number]; organization: string | undefined }) {
   const health = row.credential;
   const mismatch = health.actsAs !== null && row.botLogin !== null && health.actsAs.toLowerCase() !== row.botLogin.toLowerCase();
   const patUrl = createPatUrl(row.botLogin, organization);
@@ -27,7 +26,10 @@ function PersonHealth({ row, organization }: { row: RosterRowV1; organization: s
   return <li className="people-account-row">
     <strong>{row.displayName}</strong>
     <p className="people-muted">Human: {row.githubLogin ? `@${row.githubLogin}` : 'not configured'} · Bot: {row.botLogin ? `@${row.botLogin}` : 'not configured'}</p>
-    <p>Token: {health.state === 'missing' ? 'missing' : health.state === 'configured' ? 'configured, not checked' : health.state === 'ok' ? 'last check succeeded' : 'last check failed'}</p>
+    <p>Your token slot: {row.ownToken.state}</p>
+    {row.ownToken.message && <p className="people-muted">{row.ownToken.message}</p>}
+    <p>Effective token supplied by {row.effectiveTokenSupplier?.displayName ?? 'nobody'}</p>
+    <p>Effective token: {health.state === 'missing' ? 'missing' : health.state === 'configured' ? 'configured, not checked' : health.state === 'ok' ? 'last check succeeded' : 'last check failed'}</p>
     <p>Token account: {health.actsAs ? `@${health.actsAs}` : 'not checked'} · Roster expects: {row.botLogin ? `@${row.botLogin}` : 'fill in your bot login'}</p>
     {mismatch && <p className="people-error people-mismatch" role="status">Token belongs to @{health.actsAs}; roster expects @{row.botLogin}. Attribution remains available.</p>}
     <p className="people-muted">Expiry: {health.checkedAt === null ? 'not checked' : health.expiresAt ?? 'not advertised'} · Last check: {health.checkedAt ?? 'never'}</p>

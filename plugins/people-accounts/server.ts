@@ -1,8 +1,8 @@
 import type { BbPluginApi } from '@get-bb/plugin-sdk';
 import { bindBbIdentity } from '@phosphorco/bb-identity/bb';
 import { registerPeopleAccountsSupplier } from '@phosphorco/bb-people-accounts/bb';
-import { summarizeAttribution, tokenSchema, type CredentialHealthV1, type ResolutionV1, type RosterRowV1 } from '@phosphorco/bb-people-accounts';
-import { checkGitHubToken, parseRoster, tokenSlot, uncheckedHealth, type AccountFetch } from './model';
+import { summarizeAttribution, tokenSchema, type CredentialHealthV1, type ResolutionV1 } from '@phosphorco/bb-people-accounts';
+import { checkGitHubToken, parseRoster, tokenSlot, tokenConfiguration, uncheckedHealth, type AccountFetch } from './model';
 import { resolvePerson } from './resolver';
 import { localContract, STATUS_CHANNEL, type PeopleStatus } from './rpc-contract';
 import { runCli } from './cli';
@@ -26,14 +26,15 @@ export default async function peopleAccounts(bb: BbPluginApi, options: { fetcher
     githubOrganization = saved.githubOrganization?.trim();
   } catch { readFailed = true; }
   const parsed = parseRoster(raw);
-  const rows: RosterRowV1[] = parsed.entries.map(entry => ({ ...entry, credential: uncheckedHealth(false) }));
+  type StatusRow = PeopleStatus['entries'][number];
+  const rows: StatusRow[] = parsed.entries.map(entry => ({ ...entry, credential: uncheckedHealth(false), ownToken: tokenConfiguration(undefined), effectiveTokenSupplier: null }));
   const secrets = new Map<string, () => Promise<string | null>>();
   const lifecycle = new AbortController();
   bb.onDispose(() => { lifecycle.abort(); });
   const revisions = new Map<string, number>();
   const publish = () => { if (!lifecycle.signal.aborted) bb.realtime.publish(STATUS_CHANNEL, { changed: true }); };
   const slotHealth = new Map<string, CredentialHealthV1>();
-  const byBot = new Map<string, RosterRowV1[]>();
+  const byBot = new Map<string, StatusRow[]>();
   for (const row of rows) {
     if (row.botLogin === null) continue;
     const key = row.botLogin.toLowerCase();
@@ -41,10 +42,16 @@ export default async function peopleAccounts(bb: BbPluginApi, options: { fetcher
     group.push(row); byBot.set(key, group);
   }
   const refreshHealth = () => {
-    for (const row of rows) row.credential = slotHealth.get(row.personKey) ?? uncheckedHealth(false);
+    for (const row of rows) {
+      row.credential = slotHealth.get(row.personKey) ?? uncheckedHealth(false);
+      row.effectiveTokenSupplier = row.ownToken.state === 'configured' ? { personKey: row.personKey, displayName: row.displayName } : null;
+    }
     for (const group of byBot.values()) {
-      const configured = group.map(row => slotHealth.get(row.personKey)).find(health => health && health.state !== 'missing');
-      if (configured) for (const row of group) row.credential = configured;
+      const supplier = group.find(row => row.ownToken.state === 'configured');
+      if (supplier) for (const row of group) {
+        row.credential = slotHealth.get(supplier.personKey) ?? uncheckedHealth(true);
+        row.effectiveTokenSupplier = { personKey: supplier.personKey, displayName: supplier.displayName };
+      }
     }
   };
   // Only factory registration defines slots: save callbacks must never redefine them.
@@ -56,9 +63,9 @@ export default async function peopleAccounts(bb: BbPluginApi, options: { fetcher
       description: row.botLogin === null ? 'Fill in your bot login in your roster row and reload before creating your PAT.' :
         `Paste your PAT created while signed in as @${row.botLogin}. Use the current GitHub organization setting above as resource owner; Pull requests read/write; Contents read.`,
     } });
-    const observe = (value: string | undefined) => { slotHealth.set(row.personKey, uncheckedHealth(tokenSchema.safeParse(value).success)); revisions.set(row.personKey, (revisions.get(row.personKey) ?? 0) + 1); refreshHealth(); publish(); };
+    const observe = (value: string | undefined) => { row.ownToken = tokenConfiguration(value); slotHealth.set(row.personKey, { ...uncheckedHealth(row.ownToken.state === 'configured'), message: row.ownToken.message }); revisions.set(row.personKey, (revisions.get(row.personKey) ?? 0) + 1); refreshHealth(); publish(); };
     try { observe((await handle.get())[slot]); }
-    catch { slotHealth.set(row.personKey, { ...uncheckedHealth(false), message: 'Stored token could not be read.' }); refreshHealth(); }
+    catch { row.ownToken = { state: 'unreadable', message: 'Stored token could not be read; save it again or clear this slot.' }; slotHealth.set(row.personKey, { ...uncheckedHealth(false), message: row.ownToken.message }); refreshHealth(); }
     handle.onChange((next, previous) => { if (next[slot] !== previous[slot]) observe(next[slot]); });
     secrets.set(row.personKey, async () => {
       try { const result = tokenSchema.safeParse((await handle.get())[slot]); return result.success ? result.data : null; }
@@ -98,7 +105,7 @@ export default async function peopleAccounts(bb: BbPluginApi, options: { fetcher
         revisions.set(row.personKey, revision);
         const token = await secrets.get(row.personKey)?.();
         const health = token ? await checkGitHubToken(token, row.botLogin, options.fetcher ?? fetch,
-          lifecycle.signal) : uncheckedHealth(false);
+          lifecycle.signal) : { ...uncheckedHealth(false), message: row.ownToken.message };
         if (!lifecycle.signal.aborted && revision === (revisions.get(row.personKey) ?? 0)) slotHealth.set(row.personKey, health);
       }
     };
