@@ -34,7 +34,7 @@
     "name": "Machine Monitor",
     "description": "Monitor CPU, memory, disk, and load on the BB deployment machine.",
     "branding": {
-      "icon": "Activity"
+      "icon": "./icons/fleet-health.svg"
     },
     "server": "./server.ts",
     "host": "./host.ts",
@@ -68,7 +68,8 @@
     "attachment-delivery.ts",
     "rpc-contract.ts",
     "machine-sections.ts",
-    "test/"
+    "test/",
+    "icons/"
   ],
   "dependencies": {
     "@phosphorco/bb-cross-references": "0.1.1",

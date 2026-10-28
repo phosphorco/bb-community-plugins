@@ -10,7 +10,7 @@
   ],
   "scripts": {
     "build": "npm run build --workspaces --if-present",
-    "test": "npm run test --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present && node --test tools/icon-names.test.mjs",
     "typecheck": "npm run typecheck --workspaces --if-present"
   },
   "devDependencies": {

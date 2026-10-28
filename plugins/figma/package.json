@@ -18,7 +18,7 @@
     "name": "Figma",
     "description": "Use official Figma tools for reads and edits with one shared sign-in.",
     "branding": {
-      "icon": "PenTool"
+      "icon": "./icons/pen-nib.svg"
     },
     "server": "./server.ts",
     "app": "./app.tsx",
@@ -36,7 +36,8 @@
     "*.tsx",
     "*.css",
     "mcp/",
-    "mirror/"
+    "mirror/",
+    "icons/"
   ],
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.32.1",

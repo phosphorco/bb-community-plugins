@@ -28,7 +28,7 @@
     "name": "People Accounts",
     "description": "Your roster row, bot token and attribution diagnostics.",
     "branding": {
-      "icon": "Users"
+      "icon": "./icons/people.svg"
     },
     "server": "./server.ts",
     "app": "./app.tsx",
@@ -49,7 +49,8 @@
     "app.tsx",
     "app.css",
     "lib/",
-    "skills/"
+    "skills/",
+    "icons/"
   ],
   "dependencies": {
     "@phosphorco/bb-identity": "0.4.2-native-marker.0",
