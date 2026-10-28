@@ -16,6 +16,7 @@ import {
   projectionPayloadDigest,
   projectionPayloadJson,
   MAX_PROJECTION_PAYLOAD_BYTES,
+  type ExcerptRecordV2,
   type Resource,
 } from "../canonical.ts";
 import {
@@ -772,14 +773,16 @@ test("source target admission honors exact aggregate v1 bytes as well as count w
 test("append-only queue priority migration preserves legacy ready times and generations; durable default and rank constraint survive reopen", t => {
   const dir = mkdtempSync(join(tmpdir(), "cross-priority-migrate-"));t.after(() => rmSync(dir, {recursive: true, force: true}));
   const path = join(dir, "queue.sqlite"), db = new Database(path);
-  const prefix = crossReferencesMigrations.slice(0, -1);assert.equal(prefix.length, 12);
+  // Fix this historical fixture to the pre-priority prefix even as newer
+  // append-only migrations are added after the priority migration at index12.
+  const prefix = crossReferencesMigrations.slice(0, 12);assert.equal(prefix.length, 12);
   for (const migration of prefix) db.exec(migration);
   db.prepare("INSERT INTO assistant_link_jobs(thread_id,project_id,version,deleted,retry_at,attempts) VALUES (?,?,?,?,?,?)")
     .run("thr_viewed", "proj_a", 7, 0, -1, 0);
   db.prepare("INSERT INTO assistant_link_jobs(thread_id,project_id,version,deleted,retry_at,attempts) VALUES (?,?,?,?,?,?)")
     .run("thr_failed", "proj_a", 9, 1, 900_000, 3);
   const before = db.prepare("SELECT * FROM assistant_link_jobs ORDER BY thread_id").all() as any[];
-  db.exec(crossReferencesMigrations.at(-1)!);
+  db.exec(crossReferencesMigrations[12]!);
   assert.deepEqual(db.prepare("SELECT * FROM assistant_link_jobs ORDER BY thread_id").all(),
     before.map(row => ({...row, priority: row.thread_id === "thr_viewed" ? 2 : 0})));
   db.prepare("INSERT INTO assistant_link_jobs(thread_id,project_id,version) VALUES ('thr_cold','proj_a',1)").run();
@@ -789,4 +792,91 @@ test("append-only queue priority migration preserves legacy ready times and gene
   const migrated = db.prepare("SELECT * FROM assistant_link_jobs ORDER BY thread_id").all();db.close();
   const reopened = new Database(path);t.after(() => reopened.close());
   assert.deepEqual(reopened.prepare("SELECT * FROM assistant_link_jobs ORDER BY thread_id").all(), migrated);
+});
+
+test('P2 append-only migration keeps the13 installed statements byte-identical',()=>{
+ const expected=['bf1cb81627037b2c1fe7c98dce443d5cf88acd3c59e252acee6aef3f1b5b9df1','b7db6354d1f1a820ee30aa1498862959a8cbb2b6806b737d3f278c9880b623c4','d231ce8ecbd519e4e80141f4f2e4fec2d12d51b5d75c10cd4aaa684b1e598015','ccabcf7b3e4e3dbd154c363f057dcaccce38417ae0efedfe0d3586a989ea38e6','38c5d744ea2aa070c88e17668e0991cb6bd0bdf1fb0893f59716cf76fa79941e','90c7a229feb10b2f45ffd93e4945e48eb5679384c36bc2efc2de583fd363a375','3782bac555c15a6f30e8f177d7f6430c2b2cbdf1a5f7e72b4bbca103464777c0','86c6c9aa0e85869b42b843ef7d389a63266a5f16cd85f970e0141f74ca4e5977','72423d9d60e29e05fb0af01aa714ae74958b1312cb4fd152d4b87d0165ce1a95','d5291042ec5f0fc4b00d0774fd2b23070d10c9ff239493fc961b29ee312fe1a0','922e0c821b879add45246f79e05fa4322f7b2401bfdc9f161258a67d2cf9061c','8090f07ed4397c56148db5c69dfa8a3d3a097272cfbd8d7fdd4721bc4dbacdd3','01df6c07c9a78bb0c2c528ee4851a8e05e2615a3c30a64f4ef1421c0ed3abd45'];
+ assert.deepEqual(crossReferencesMigrations.slice(0,13).map(sha256Hex),expected);
+});
+
+test('actual writer proves original evidence before mutation and SQLite ready numeric CHECKs reject NULL/fractions',async t=>{
+ const {collectConversationMentions}=await import('../mention-collection.ts');const {db,store}=makeStore();t.after(()=>db.close());
+ const source=makeThread('Source','thr_proof'),body='A sentence https://example.test/proof ends here.';
+ const scan=await collectConversationMentions({messages:[{id:'msg_proof',text:body,messageSeq:7,anchorSeq:null,createdAt:10,role:'user'}],context:{consumer:{pluginId:'cross-references'},threadId:'thr_proof',links:[]},clients:[],getThread:async id=>({id,projectId:'proj_12345678'}),signal:new AbortController().signal});
+ store.replaceConversationMentions(source,scan);const before=store.mentionState({provider:source.provider,keys:source.keys});assert.equal(before.occurrences[0]!.excerpt?.state,'ready');
+ for(const field of ['excerpt_source_start','excerpt_source_end','match_start','match_end'])for(const value of [null,0.5,-1])assert.throws(()=>db.prepare(`UPDATE mention_excerpts SET ${field}=?`).run(value),/CHECK/);
+ const tampered=structuredClone(scan);const ex=tampered.occurrences[0]!.excerpt!;if(ex.state==='ready')ex.text='x'.repeat(ex.text.length);assert.throws(()=>store.replaceConversationMentions(source,tampered),/original slice/);
+ assert.equal(store.mentionState({provider:source.provider,keys:source.keys}).revision,before.revision);
+ const missing={...scan,sourceBodies:undefined};assert.throws(()=>store.replaceConversationMentions(source,missing as any),/source body required/);
+});
+
+test('actual store rejects injected unsafe original-slice excerpts using the same cached privacy intervals as collection',async t=>{
+ const {collectConversationMentions}=await import('../mention-collection.ts');const {db,store}=makeStore();t.after(()=>db.close());
+ const source=makeThread('Source','thr_privacy'),body='Useful https://example.test/safe [PRIVATE_LABEL](https://example.test/?token=secret) after useful.';
+ const scan=await collectConversationMentions({messages:[{id:'msg_privacy',text:body,messageSeq:7,anchorSeq:null,createdAt:10,role:'user'}],context:{consumer:{pluginId:'cross-references'},threadId:'thr_privacy',links:[]},clients:[],getThread:async id=>({id,projectId:'proj_12345678'}),signal:new AbortController().signal});
+ store.replaceConversationMentions(source,scan);const before=store.mentionState({provider:source.provider,keys:source.keys});assert.equal(before.occurrences.length,1);
+ assert.ok(!JSON.stringify(before).includes('token=secret'));assert.ok(!JSON.stringify(before).includes('PRIVATE_LABEL'));
+ const location=scan.occurrences[0]!,injected=structuredClone(scan);
+ injected.occurrences[0]!.excerpt={state:'ready',text:body,sourceSpan:{start:0,end:body.length},matchSpan:{start:location.span.start,end:location.span.end},clippedBefore:false,clippedAfter:false,matchClippedBefore:false,matchClippedAfter:false,codecVersion:1};
+ assert.throws(()=>store.replaceConversationMentions(source,injected),/crosses excluded source/);
+ const after=store.mentionState({provider:source.provider,keys:source.keys});assert.deepEqual(after,before);
+});
+
+test('actual store body admission rejects safe-destination excerpts that expose unsafe label/title URLs',async t=>{
+ const {collectConversationMentions}=await import('../mention-collection.ts');const {db,store}=makeStore();t.after(()=>db.close());const source=makeThread('Source','thr_label_privacy'),safe='https://example.test/safe';
+ const cases:{link:string;retained:boolean}[]=[{link:`[https://example.test/?token=secret](${safe})`,retained:false},{link:`[label](${safe} "https://user:secret@example.test/a")`,retained:true},{link:'[label][safe]',retained:true},{link:`[/other-route?token=secret](${safe})`,retained:false},{link:'[/other-route#token=secret][safe]',retained:false},{link:`[/other-route?to&#107;en=secret](${safe})`,retained:true},{link:'[/other-route?to&#107;en=secret][safe]',retained:true}];
+ for(const {link,retained} of cases){
+  const body=`Useful https://example.test/anchor ${link} after.\n\n[safe]: ${safe} "https://example.test/?%74oken=secret"`;
+  const scan=await collectConversationMentions({messages:[{id:'msg_label',text:body,messageSeq:9,anchorSeq:null,createdAt:10,role:'assistant'}],context:{consumer:{pluginId:'cross-references'},threadId:'thr_label_privacy',links:[]},clients:[],getThread:async id=>({id,projectId:'proj_12345678'}),signal:new AbortController().signal});
+  store.replaceConversationMentions(source,scan);const before=store.mentionState({provider:source.provider,keys:source.keys});assert.ok(!JSON.stringify(before).includes('secret'));
+  assert.equal(before.occurrences.length,1+Number(retained));const outer=before.occurrences.find(o=>o.target.provider==='url'&&o.target.keys.href===safe);
+  if(retained){assert.ok(outer);assert.equal(body.slice(outer.span.start,outer.span.end),link);if(link.startsWith('[/other-route'))assert.equal(outer.target.presentation.label,'Link');}else assert.equal(outer,undefined);
+  const injected=structuredClone(scan),location=injected.occurrences.find(o=>o.target.provider==='url'&&o.target.keys.href==='https://example.test/anchor')!;
+  const end=body.indexOf('\n\n');location.excerpt={state:'ready',text:body.slice(0,end),sourceSpan:{start:0,end},matchSpan:{start:location.span.start,end:location.span.end},clippedBefore:false,clippedAfter:false,matchClippedBefore:false,matchClippedAfter:false,codecVersion:1};
+  assert.throws(()=>store.replaceConversationMentions(source,injected),/crosses excluded source/);assert.deepEqual(store.mentionState({provider:source.provider,keys:source.keys}),before);
+ }
+});
+
+test('actual store and V2 reader preserve astral/U+FFFD source slices and atomically reject unsafe UTF16 excerpt coordinates',async t=>{
+ const {collectConversationMentions}=await import('../mention-collection.ts');
+ const {createMentionReader}=await import('../mention-query.ts');
+ const {db,store}=makeStore();t.after(()=>db.close());const source=makeThread('Unicode','thr_unicode'),href='https://example.test/safe';
+ const body=`😀 useful \uFFFD ${href} after. 😀`;
+ const scan=await collectConversationMentions({messages:[{id:'msg_unicode',text:body,messageSeq:13,anchorSeq:null,createdAt:10,role:'user'}],context:{consumer:{pluginId:'cross-references'},threadId:'thr_unicode',links:[]},clients:[],getThread:async id=>({id,projectId:'proj_12345678'}),signal:new AbortController().signal});
+ store.replaceConversationMentions(source,scan);assert.equal(scan.occurrences.length,1);const location=scan.occurrences[0]!;
+ const reader=createMentionReader(db),query={version:2,query:{kind:'authored-url',href}} satisfies import('@phosphorco/bb-cross-references').ListMentionsInputV2;
+ const page=reader.read(query);assert.equal(page.status,'page');assert.ok(page.status==='page');const item=page.items[0];assert.ok(item?.kind==='occurrence');assert.equal(item.confirmation,'observed');assert.equal(item.sourceContentRevision,sha256Hex(body));assert.equal(item.locator.messageSeq,13);
+ assert.ok(item.excerpt.state==='ready');const ready=item.excerpt;assert.equal(ready.text,body.slice(ready.sourceSpan.start,ready.sourceSpan.end));assert.ok(ready.text.includes('😀'));assert.ok(ready.text.includes('\uFFFD'));
+ db.prepare('INSERT INTO assistant_link_jobs(thread_id,project_id,version,deleted,retry_at,attempts,priority) VALUES (?,?,?,?,?,?,?)').run('thr_unicode','proj_12345678',7,0,900000,3,2);
+ db.prepare('INSERT INTO assistant_link_sync(thread_id,synced_at) VALUES (?,?)').run('thr_unicode',123);
+ // Include every durable graph/evidence/job/counter table, including SQLite's
+ // AUTOINCREMENT sequence. Rejection must precede any mutation or allocation.
+ const snapshot=()=>db.prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name").pluck().all().map(name=>{
+  assert.ok(typeof name==='string');return {name,rows:db.prepare('SELECT * FROM "'+name.replaceAll('"','""')+'" ORDER BY rowid').all()};
+ });
+ const before=snapshot();
+ const whole=(text:string,start:number,end:number,matchStart=location.span.start-start,matchEnd=location.span.end-start):ExcerptRecordV2=>({state:'ready',text,sourceSpan:{start,end},matchSpan:{start:matchStart,end:matchEnd},clippedBefore:false,clippedAfter:false,matchClippedBefore:false,matchClippedAfter:false,codecVersion:1});
+ const replacementAt=body.indexOf('\uFFFD');
+ const cases=[
+  whole(body.slice(1),1,body.length),
+  whole('\uFFFD'+body.slice(2),1,body.length),
+  whole(body.slice(0,-1),0,body.length-1),
+  whole(body.slice(0,-2)+'\uFFFD',0,body.length-1),
+  whole(body.slice(0,replacementAt)+'\ud800'+body.slice(replacementAt+1),0,body.length),
+  whole(body.slice(0,replacementAt)+'\udc00'+body.slice(replacementAt+1),0,body.length),
+  whole(body,0,body.length,1,location.span.end),
+  whole(body,0,body.length,0,1),
+ ];
+ for(const excerpt of cases){
+  const rejected=structuredClone(scan);rejected.occurrences[0]!.excerpt=excerpt;
+  assert.throws(()=>store.replaceConversationMentions(source,rejected),/UTF16|code-point/);
+  assert.deepEqual(snapshot(),before);assert.deepEqual(reader.read(query),page);
+ }
+ // Persisted reading checks only stored Unicode/relative coordinates, with no
+ // source-body port and no claim that it can reprove the historical body.
+ const astral=ready.text.indexOf('😀');assert.ok(astral>=0);
+ db.prepare('UPDATE mention_excerpts SET match_start=?').run(astral+1);
+ assert.throws(()=>reader.read(query),/code-point/);
+ db.prepare('UPDATE mention_excerpts SET match_start=?').run(ready.matchSpan.start);
+ assert.deepEqual(snapshot(),before);assert.deepEqual(reader.read(query),page);
 });

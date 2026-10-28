@@ -143,6 +143,70 @@ test('malformed/oversize supplier results cannot bypass validation, URL policy o
  result=await f.scan();assert.ok(result.coverage!.reasons.includes('supplier-failure'));assert.ok(result.occurrences.every(o=>o.target.provider==='url'));
 });
 
+test('actual collector keeps useful same-paragraph excerpts but never serializes rejected URL syntax or private labels',async t=>{
+ const {db,store}=open();t.after(()=>db.close());
+ const unsafe=[
+  '[PRIVATE_LABEL](https://example.test/?token=secret)',
+  '[PRIVATE_LABEL](https://example.test/#api_key=secret)',
+  '[PRIVATE_LABEL](https://user:secret@example.test/a)',
+  '<https://user:secret@example.test/a>',
+  'https://example.test/?token=secret',
+  'https://example.test/#token=secret',
+  `/projects/proj_a/threads/${thread}?token=secret`,
+  `/projects/proj_a/threads/${thread}#token=secret`,
+  '/other-route?token=secret',
+  '/other-route#token=secret',
+  '[PRIVATE_LABEL][secret]',
+ ];
+ const texts=unsafe.map(h=>`🙂界 Useful before @thread:${thread} ${h} useful after @thread:${thread}.\n\n[secret]: https://example.test/?token=secret`);
+ const f=fixture(db,store,texts.map((text,i)=>row(`msg${i+1}`,text,'user'))),result=await f.scan();
+ const serialized=JSON.stringify(result);
+ for(const secret of ['token=secret','api_key=secret','user:secret','PRIVATE_LABEL'])assert.ok(!serialized.includes(secret),secret);
+ for(let i=0;i<texts.length;i++){
+  const known=result.occurrences.filter(o=>o.locator.messageId===`msg${i+1}`&&o.target.provider==='bb');assert.equal(known.length,2);
+  for(const location of known){assert.equal(location.locator.messageSeq,17);const ex=location.excerpt!;assert.equal(ex.state,'ready');
+   if(ex.state==='ready'){assert.equal(ex.text,texts[i]!.slice(ex.sourceSpan.start,ex.sourceSpan.end));assert.ok(ex.text.includes('Useful before')||ex.text.includes('useful after'));assert.equal(texts[i]!.slice(location.span.start,location.span.end),`@thread:${thread}`);}}
+ }
+ // Established sanitized credential target/occurrence survives; only its
+ // unsafe original context is unavailable, never a new raw-authored alias.
+ const credential=result.occurrences.find(o=>o.target.provider==='url'&&o.target.keys.href==='https://example.test/a');assert.ok(credential);
+ assert.equal(credential.excerpt!.state,'unavailable');assert.equal(credential.exactAuthoredHref,undefined);
+});
+
+test('actual collector retains safe outer targets and exact spans while unsafe label/title URLs stay out of the whole result',async t=>{
+ const {db,store}=open();t.after(()=>db.close());const safe='https://example.test/safe';
+ // P1's full-authored-spelling gate already rejects raw sensitive parameters
+ // even in some labels/titles. Assert that admission matrix stays unchanged.
+ const cases:{link:string;retained:boolean}[]=[
+  {link:`[https://example.test/?token=secret](${safe})`,retained:false},
+  {link:`[https://user:secret@example.test/a](${safe})`,retained:true},
+  {link:`[https://example.test/?%74oken=secret](${safe})`,retained:false},
+  {link:`[https://example.test/?page=1&amp;token=secret](${safe})`,retained:true},
+  {link:`[label](${safe} "https://example.test/#api_key=secret")`,retained:false},
+  {link:`[label](${safe} "https://user:secret@example.test/a")`,retained:true},
+  {link:`[label](${safe} "https://example.test/?%74oken=secret")`,retained:false},
+  {link:'[label][safe]',retained:true},
+  {link:`[/other-route?token=secret](${safe})`,retained:false},
+  {link:'[/other-route#token=secret][safe]',retained:false},
+  {link:`[/other-route?to&#107;en=secret](${safe})`,retained:true},
+  {link:'[/other-route?to&#107;en=secret][safe]',retained:true},
+ ];
+ const links=cases.map(c=>c.link);
+ const texts=links.map(link=>`Useful @thread:${thread} ${link} after useful @thread:${thread}.\n\n[safe]: ${safe} "https://example.test/?token=secret"`);
+ const f=fixture(db,store,texts.map((text,i)=>row(`msg${i+1}`,text))),result=await f.scan();
+ const serialized=JSON.stringify(result);for(const secret of ['token=secret','%74oken=secret','user:secret','api_key=secret'])assert.ok(!serialized.includes(secret),secret);
+ for(let i=0;i<texts.length;i++){
+  const locations=result.occurrences.filter(o=>o.locator.messageId===`msg${i+1}`);assert.equal(locations.length,2+Number(cases[i]!.retained));
+  const outer=locations.find(o=>o.target.provider==='url'&&o.target.keys.href===safe);
+  if(cases[i]!.retained){assert.ok(outer);assert.equal(texts[i]!.slice(outer.span.start,outer.span.end),links[i]);assert.equal(outer.excerpt!.state,'unavailable');if(links[i]!.startsWith('[/other-route'))assert.equal(outer.target.presentation.label,'Link');}
+  else assert.equal(outer,undefined);
+  for(const nearby of locations.filter(o=>o.target.provider==='bb')){assert.equal(nearby.excerpt!.state,'ready');if(nearby.excerpt!.state==='ready')assert.ok(nearby.excerpt!.text.includes('Useful')||nearby.excerpt!.text.includes('useful'));}
+ }
+ f.state.rows=[row('msg_control',`Useful @thread:${thread} [/other-route?page=2](${safe} "safe ordinary title") after.`)];
+ const control=await f.scan(),outer=control.occurrences.find(o=>o.target.provider==='url'&&o.target.keys.href===safe)!;
+ assert.equal(outer.target.presentation.label,'/other-route?page=2');assert.equal(outer.excerpt!.state,'ready');
+});
+
 test('eligibility excludes native system notifications/tools/nested; relayed ordinary user text survives',async t=>{
  const {db,store}=open();t.after(()=>db.close());
  const f=fixture(db,store,[row('msg1',pr,'user',{initiator:'agent',senderThreadId:'thr_relay'}),
@@ -470,3 +534,11 @@ for(const kind of ['validated-invalid','bypass-invalid','valid3ms','missing-vali
   assert.ok(Buffer.byteLength(warning.split('Diagnostics: ')[1]!)<=4096);
   assert.doesNotMatch(warning,/SECRET|private|999|stack/);
  });
+
+test('new collection retains literal typed PR href separately and historical parser normalization stays unknown',async()=>{
+ const messages=[{id:'msg_v2',text:`See [review](${pr}#pullrequestreview-7).`,createdAt:1,messageSeq:5,anchorSeq:null,role:'user' as const}];
+ const scan=await collectConversationMentions({messages,context:{consumer:{pluginId:'cross-references'},threadId:'thr_source',links:[]},clients:[],getThread:async id=>({id,projectId:'proj_a'}),signal:new AbortController().signal});
+ assert.equal(scan.occurrences[0]!.exactAuthoredHref,pr+'#pullrequestreview-7');assert.equal(scan.occurrences[0]!.excerpt?.state,'ready');
+ const changed=await collectConversationMentions({messages:[{...messages[0]!,text:'[x](https://example.test/a&amp;b)'}],context:{consumer:{pluginId:'cross-references'},threadId:'thr_source',links:[]},clients:[],getThread:async id=>({id,projectId:'proj_a'}),signal:new AbortController().signal});
+ assert.equal(changed.occurrences[0]!.authoredUrlState,'unknown');assert.equal(changed.occurrences[0]!.exactAuthoredHref,undefined);
+});

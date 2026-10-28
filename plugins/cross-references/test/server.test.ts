@@ -1,3 +1,4 @@
+import {crossReferencesV2RpcContract} from '@phosphorco/bb-cross-references/bb';
 import assert from "node:assert/strict";
 import test from "node:test";
 
@@ -8,7 +9,7 @@ import {
   projectionPayloadDigest,
   type Resource,
 } from "../canonical.ts";
-import { runCrossReferencesConformance } from "@phosphorco/bb-cross-references/testing";
+import { runCrossReferencesV2Conformance, runCrossReferencesConformance } from "@phosphorco/bb-cross-references/testing";
 import { rpcContract } from "../rpc-contract.ts";
 import crossReferencesPlugin from "../server.ts";
 
@@ -71,7 +72,7 @@ test("registers the typed RPCs, verifies FK-backed storage, and publishes commit
       migrate: (_database: Database.Database, migrations: string[]) => migrations.forEach((migration) => db.exec(migration)),
     },
     rpc: {
-      register: (_contract: unknown, registeredHandlers: Record<string, (input: any) => unknown>) => { handlers = registeredHandlers; },
+      register: (_contract: unknown, registeredHandlers: Record<string, (input: any) => unknown>) => { handlers = {...handlers,...registeredHandlers}; },
     },
     realtime: {
       publish: (channel: string, payload: unknown) => signals.push({ channel, payload }),
@@ -87,9 +88,9 @@ test("registers the typed RPCs, verifies FK-backed storage, and publishes commit
   const parsed = await rpcContract.applyProjection.input["~standard"].validate(input);
   assert.equal("issues" in parsed, false);
 
-  assert.deepEqual(Object.keys(handlers ?? {}), ["crossReferences.describe", "applyProjection", "getProjection", "listBacklinks", "listForwardReferences", "checkForwardReferences"]);
+  assert.deepEqual(Object.keys(handlers ?? {}), ["crossReferencesV2ListMentions", "crossReferencesV2ResolveLookup", "crossReferences.describe", "applyProjection", "getProjection", "listBacklinks", "listForwardReferences", "checkForwardReferences"]);
   assert.equal((await handlers!.applyProjection(input) as { outcome: string }).outcome, "applied");
-  assert.equal(signals.length, 1);
+  assert.equal(signals.length, 2);
   assert.equal(signals[0]?.channel, "cross-references-changed");
   const signal = signals[0]?.payload as { affectedIdentityDigests: string[]; revision: number };
   assert.equal(signal.revision, 1);
@@ -124,7 +125,7 @@ test("registers the typed RPCs, verifies FK-backed storage, and publishes commit
 
   const conformance = await runCrossReferencesConformance({
     sdk: { plugins: { callRpc: async ({ method, input, outputSchema }: any) => {
-      const methodContract = (rpcContract as any)[method];
+      const methodContract = (rpcContract as any)[method]??(crossReferencesV2RpcContract as any)[method];
       if (!methodContract || !handlers?.[method]) throw Object.assign(new Error("Unknown method"), { code: "unknown_method" });
       const parsedInput = await methodContract.input["~standard"].validate(input);
       if ("issues" in parsedInput) throw new Error("Invalid input");
@@ -137,6 +138,15 @@ test("registers the typed RPCs, verifies FK-backed storage, and publishes commit
   });
   assert.equal(conformance.level, "source-conformance");
   assert.ok(conformance.checks.includes("backlinks-acceptance"));
+  const jobsBefore=db.prepare('SELECT * FROM assistant_link_jobs ORDER BY thread_id').all();
+  const v2=await runCrossReferencesV2Conformance({sdk:{plugins:{callRpc:async({method,input,outputSchema}:any)=>{
+    const contract=(rpcContract as any)[method]??(crossReferencesV2RpcContract as any)[method];
+    const parsed=await contract.input['~standard'].validate(input);if('issues' in parsed)throw new Error('Invalid input');
+    return outputSchema.parse(await handlers![method]!(parsed.value));
+  }}} as any,input:{version:2,query:{kind:'resource',target:{provider:target.provider,keys:target.keys},relation:'self'}},lookup:{version:2,mode:'exact-url',text:'https://example.test/forward'},
+  assertPage(page){assert.equal(page.counts.producerClaims,1);assert.equal(page.items[0]!.kind,'claim-without-evidence');}});
+  assert.equal(v2.level,'source-conformance');assert.deepEqual(db.prepare('SELECT * FROM assistant_link_jobs ORDER BY thread_id').all(),jobsBefore,'V2 reads do not enqueue');
+
 
 });
 
@@ -165,7 +175,7 @@ function lifecycleFixture(t: any) {
     events: { on: (name: string, handler: (event: any) => void) => events.set(name, handler) },
     background: { service: (_: string, service: any) => services.push(service) },
     onDispose: (hook: () => void) => hooks.push(hook),
-    rpc: { register: (_: unknown, registered: any) => { handlers = registered; } },
+    rpc: { register: (_: unknown, registered: any) => { handlers = {...handlers,...registered}; } },
     realtime: { publish: (_: string, signal: unknown) => published.push(signal) },
     log: { warn: (message: string) => warnings.push(message) },
     get sdk() { assert.equal(invalidated, false, "stale runtime API handle"); sdkReads++; return sdk; },

@@ -2,7 +2,9 @@ import { Buffer } from "node:buffer";
 import { randomUUID } from "node:crypto";
 import type Database from "better-sqlite3";
 import { canonicalJson } from "@phosphorco/bb-context-recognition";
-import { recognitionIdentity, recognitionIdentityRecord, verifiedFileIdentity, verifiedFileIdentityRecord } from "@phosphorco/bb-cross-references";
+import { recognitionIdentity, recognitionIdentityRecord, verifiedFileIdentity, verifiedFileIdentityRecord, isUtf16CodePointBoundary } from "@phosphorco/bb-cross-references";
+import { persistedExcerpt } from './mention-excerpts.ts';
+import { mentionFrame } from './mention-markdown.ts';
 import { MENTION_LIMITS, MentionLocationSchema, mentionKey, type MentionScan, type ObservedMention, type MentionEdgeCap } from "./mention-evidence.ts";
 
 import {
@@ -191,6 +193,49 @@ export const crossReferencesMigrations = [
    UPDATE assistant_link_jobs SET priority = 2 WHERE retry_at = -1 AND attempts = 0;
    CREATE INDEX assistant_link_jobs_priority_retry_idx
      ON assistant_link_jobs(priority DESC, retry_at)`,
+  `ALTER TABLE mention_occurrences ADD COLUMN authored_url_state TEXT NOT NULL DEFAULT 'unknown'
+     CHECK(authored_url_state IN ('unknown','not-url','exact'));
+   ALTER TABLE mention_occurrences ADD COLUMN exact_authored_href TEXT
+     CHECK(exact_authored_href IS NULL OR (typeof(exact_authored_href)='text' AND length(exact_authored_href) BETWEEN 1 AND 4096
+       AND length(CAST(exact_authored_href AS BLOB))<=16384));
+   ALTER TABLE mention_streams ADD COLUMN bound_graph_revision INTEGER
+     CHECK(bound_graph_revision IS NULL OR (typeof(bound_graph_revision)='integer' AND bound_graph_revision BETWEEN 0 AND 9007199254740991));
+   CREATE TABLE mention_excerpts (
+     producer_plugin_id TEXT NOT NULL, source_resource_id INTEGER NOT NULL,
+     target_resource_id INTEGER NOT NULL, occurrence_key TEXT NOT NULL,
+     source_content_revision TEXT NOT NULL CHECK(length(source_content_revision)=64),
+     codec_version INTEGER NOT NULL CHECK(codec_version=1),
+     state TEXT NOT NULL CHECK(state IN ('ready','unavailable')),
+     excerpt_text TEXT, excerpt_source_start INTEGER, excerpt_source_end INTEGER,
+     match_start INTEGER, match_end INTEGER,
+     clipped_before INTEGER NOT NULL CHECK(clipped_before IN (0,1)),
+     clipped_after INTEGER NOT NULL CHECK(clipped_after IN (0,1)),
+     match_clipped_before INTEGER NOT NULL CHECK(match_clipped_before IN (0,1)),
+     match_clipped_after INTEGER NOT NULL CHECK(match_clipped_after IN (0,1)),
+     unavailable_reason TEXT,
+     PRIMARY KEY(producer_plugin_id,source_resource_id,target_resource_id,occurrence_key),
+     FOREIGN KEY(producer_plugin_id,source_resource_id,target_resource_id,occurrence_key)
+       REFERENCES mention_occurrences ON DELETE CASCADE,
+     CHECK((state='ready' AND excerpt_text IS NOT NULL AND typeof(excerpt_text)='text' AND unavailable_reason IS NULL
+       AND excerpt_source_start IS NOT NULL AND typeof(excerpt_source_start)='integer'
+       AND excerpt_source_end IS NOT NULL AND typeof(excerpt_source_end)='integer'
+       AND match_start IS NOT NULL AND typeof(match_start)='integer'
+       AND match_end IS NOT NULL AND typeof(match_end)='integer'
+       AND excerpt_source_start>=0 AND excerpt_source_end>excerpt_source_start AND excerpt_source_end<=262144
+       AND match_start>=0 AND match_end>match_start AND match_end<=262144)
+       OR (state='unavailable' AND excerpt_text IS NULL
+       AND excerpt_source_start IS NULL AND excerpt_source_end IS NULL AND match_start IS NULL AND match_end IS NULL
+       AND unavailable_reason IS NOT NULL AND unavailable_reason IN ('indivisible-word','no-eligible-context')
+       AND clipped_before=0 AND clipped_after=0 AND match_clipped_before=0 AND match_clipped_after=0)),
+     CHECK(excerpt_text IS NULL OR length(CAST(excerpt_text AS BLOB))<=1280)
+   );
+   CREATE INDEX mention_exact_href_v2_idx ON mention_occurrences(exact_authored_href COLLATE BINARY,
+     message_created_at DESC,source_resource_id,producer_plugin_id,target_resource_id,occurrence_key)
+     WHERE authored_url_state='exact' AND exact_authored_href IS NOT NULL;
+   CREATE INDEX mention_unknown_href_v2_idx ON mention_occurrences(producer_plugin_id,source_resource_id,target_resource_id,occurrence_key)
+     WHERE authored_url_state='unknown';
+   CREATE INDEX mention_target_time_v2_idx ON mention_occurrences(target_resource_id,message_created_at DESC,
+     source_resource_id,producer_plugin_id,occurrence_key)`,
 ] as const;
 
 export function enableForeignKeys(db: Sqlite): void {
@@ -756,8 +801,14 @@ export class CrossReferenceStore {
       WHERE c.producer_plugin_id = 'cross-references' AND c.source_resource_id = ?`).all(resource.id) as Array<OccurrenceIdentityRow & {state:'capped'|'unknown'}>;
     for(const row of capRows){const identity=identityFromRow(row);caps.set(identity.canonicalIdentityJson,{target:{provider:identity.provider,keys:identity.keys},state:row.state});}
     const edgeCaps=[...caps].sort(([a],[b])=>a<b?-1:a>b?1:0).map(([,cap])=>cap);
-    const rows=this.db.prepare(`SELECT m.*, r.provider, r.canonical_keys_json FROM mention_occurrences m
-      JOIN resources r ON r.id = m.target_resource_id WHERE m.producer_plugin_id = 'cross-references' AND m.source_resource_id = ?
+    const rows=this.db.prepare(`SELECT m.*, r.provider, r.canonical_keys_json, e.state excerpt_state, e.source_content_revision excerpt_content_revision,
+        e.codec_version,e.excerpt_text,e.excerpt_source_start,e.excerpt_source_end,e.match_start,e.match_end,
+        e.clipped_before,e.clipped_after,e.match_clipped_before,e.match_clipped_after,e.unavailable_reason FROM mention_occurrences m
+      JOIN resources r ON r.id = m.target_resource_id
+      JOIN source_projections p ON p.producer_plugin_id=m.producer_plugin_id AND p.source_resource_id=m.source_resource_id AND p.tombstone=0
+      JOIN reference_occurrences o ON o.projection_id=p.id AND o.target_resource_id=m.target_resource_id
+      LEFT JOIN mention_excerpts e ON e.producer_plugin_id=m.producer_plugin_id AND e.source_resource_id=m.source_resource_id
+        AND e.target_resource_id=m.target_resource_id AND e.occurrence_key=m.occurrence_key WHERE m.producer_plugin_id = 'cross-references' AND m.source_resource_id = ?
       ORDER BY m.target_resource_id, m.occurrence_key`).all(resource.id) as any[];
     return {revision:stream.evidence_revision,digest:stream.evidence_digest,coverage:{...JSON.parse(stream.coverage_json),capHistoryUnknown:stream.cap_history_unknown===1},edgeCaps,
       occurrences:rows.map(row=>{
@@ -766,7 +817,8 @@ export class CrossReferenceStore {
         if(!target)throw new Error('Location without an active producer edge.');
         return {target,locator:JSON.parse(row.source_locator_json),sourceContentRevision:row.source_content_revision,
           span:{start:row.span_start,end:row.span_end},messageCreatedAt:row.message_created_at,
-          provenance:JSON.parse(row.provenance_json),occurrenceKey:row.occurrence_key,observedAt:row.observed_at,confirmed:row.confirmed_in_scan===1};
+          provenance:JSON.parse(row.provenance_json),authoredUrlState:row.authored_url_state,...(row.exact_authored_href===null?{}:{exactAuthoredHref:row.exact_authored_href}),
+          ...(row.excerpt_state==null?{}:{excerpt:persistedExcerpt(row,row.source_content_revision) as import('@phosphorco/bb-cross-references').ExcerptRecordV2}),occurrenceKey:row.occurrence_key,observedAt:row.observed_at,confirmed:row.confirmed_in_scan===1};
       })};
   }
 
@@ -778,7 +830,30 @@ export class CrossReferenceStore {
     // reject it. Project the validated identity explicitly at every boundary.
     const sourceIdentity={provider:canonicalSource.provider,keys:canonicalSource.keys};
     const normalized=scan.occurrences.map(({target,...location})=>({target:serializeResource(canonicalizeResource(target)),...MentionLocationSchema.parse(location)}));
+    const bodies=new Map<string,{body:string;frame:ReturnType<typeof mentionFrame>;hrefs:Map<string,string>;revision:string}>();
     for(const row of normalized) {
+      const state=row.authoredUrlState??'unknown';
+      if((state==='exact')!==(row.exactAuthoredHref!==undefined))throw new Error('Inconsistent authored URL state.');
+      if(row.excerpt?.state==='ready'||state==='exact'){
+        let proof=bodies.get(row.locator.messageId);
+        if(!proof){const body=scan.sourceBodies?.get(row.locator.messageId);if(body===undefined||body.length>MENTION_LIMITS.messageChars)throw new Error('Admitted source body required for new evidence proof.');
+          const frame=mentionFrame(body);proof={body,frame,hrefs:new Map(frame.links.flatMap(l=>l.authoredHref?[[`${l.span.start}:${l.span.end}`,l.authoredHref] as const]:[])),revision:sha256Hex(body)};bodies.set(row.locator.messageId,proof);}
+        if(proof.revision!==row.sourceContentRevision||row.span.end>proof.body.length)throw new Error('Evidence source body binding mismatch.');
+        if(state==='exact'&&proof.body.slice(row.span.start,row.span.end)!==row.exactAuthoredHref&&
+          proof.hrefs.get(`${row.span.start}:${row.span.end}`)!==row.exactAuthoredHref)throw new Error('Authored destination lacks original spelling proof.');
+        const ex=row.excerpt;
+        if(ex?.state==='ready'){
+          if(!isUtf16CodePointBoundary(proof.body,ex.sourceSpan.start)||!isUtf16CodePointBoundary(proof.body,ex.sourceSpan.end)||
+             !isUtf16CodePointBoundary(proof.body,row.span.start)||!isUtf16CodePointBoundary(proof.body,row.span.end))throw new Error('Excerpt source offsets split a UTF16 code point.');
+          if(proof.body.slice(ex.sourceSpan.start,ex.sourceSpan.end)!==ex.text||ex.sourceSpan.end>proof.body.length||
+             ex.matchSpan.start!==Math.max(0,row.span.start-ex.sourceSpan.start)||ex.matchSpan.end!==Math.min(row.span.end,ex.sourceSpan.end)-ex.sourceSpan.start||
+             ex.matchClippedBefore!==(ex.sourceSpan.start>row.span.start)||ex.matchClippedAfter!==(ex.sourceSpan.end<row.span.end))throw new Error('Excerpt does not prove its original slice.');
+          // Sorted forbidden intervals; only a local predecessor/next seek is needed.
+          const holes=proof.frame.forbidden;let lo=0,hi=holes.length;
+          while(lo<hi){const mid=(lo+hi)>>>1;if(holes[mid]!.end<=ex.sourceSpan.start)lo=mid+1;else hi=mid;}
+          if(holes[lo]&&holes[lo]!.start<ex.sourceSpan.end)throw new Error('Excerpt crosses excluded source content.');
+        }
+      }
       if(row.locator.threadId!==source.keys.thread)throw new Error('Location belongs to another source.');
       // The adapter, rather than an opaque raw id parser, defines the mapping.
       if(row.target.provider==='recognition' || row.provenance.source.provider==='bb.file' || row.provenance.verifiedFile){
@@ -892,14 +967,14 @@ export class CrossReferenceStore {
       retentionLimited=retentionLimited || edgeCaps.length>0 || capHistoryUnknown;
       const coverage={...scan.coverage,retentionLimited,capHistoryUnknown,
         reasons:[...new Set([...scan.coverage.reasons,...(payloadLimited?['projection-payload-budget']:[])])].sort()};
-      const digest=sha256Hex(canonicalJson({coverage,edgeCaps,locations:final.map(row=>({target:canonicalizeResource(row.target).canonicalIdentityJson,
+      const digest=sha256Hex(canonicalJson({boundGraphRevision:active.revision,coverage,edgeCaps,locations:final.map(row=>({target:canonicalizeResource(row.target).canonicalIdentityJson,
         locator:row.locator,sourceContentRevision:row.sourceContentRevision,span:row.span,messageCreatedAt:row.messageCreatedAt,
-        provenance:row.provenance,confirmed:row.confirmed})).sort((a,b)=>canonicalJson(a).localeCompare(canonicalJson(b)))}));
+        provenance:row.provenance,confirmed:row.confirmed,excerpt:row.excerpt??null,authoredUrlState:row.authoredUrlState??'unknown',exactAuthoredHref:row.exactAuthoredHref??null})).sort((a,b)=>canonicalJson(a).localeCompare(canonicalJson(b)))}));
       const revision=prior.revision+(digest!==prior.digest?1:0);
-      this.db.prepare(`INSERT INTO mention_streams (producer_plugin_id, source_resource_id, evidence_revision, evidence_digest, collector_version, coverage_json, last_successful_scan_at, cap_history_unknown) VALUES ('cross-references', ?, ?, ?, 1, ?, ?, ?)
+      this.db.prepare(`INSERT INTO mention_streams (producer_plugin_id, source_resource_id, evidence_revision, evidence_digest, collector_version, coverage_json, last_successful_scan_at, cap_history_unknown,bound_graph_revision) VALUES ('cross-references', ?, ?, ?, 2, ?, ?, ?, ?)
         ON CONFLICT(producer_plugin_id,source_resource_id) DO UPDATE SET evidence_revision=excluded.evidence_revision,
-        evidence_digest=excluded.evidence_digest,coverage_json=excluded.coverage_json,last_successful_scan_at=excluded.last_successful_scan_at,cap_history_unknown=excluded.cap_history_unknown`)
-        .run(sourceId,revision,digest,canonicalJson(coverage),now,capHistoryUnknown?1:0);
+        evidence_digest=excluded.evidence_digest,coverage_json=excluded.coverage_json,last_successful_scan_at=excluded.last_successful_scan_at,cap_history_unknown=excluded.cap_history_unknown,bound_graph_revision=excluded.bound_graph_revision,collector_version=2`)
+        .run(sourceId,revision,digest,canonicalJson(coverage),now,capHistoryUnknown?1:0,active.revision);
       this.db.prepare(`DELETE FROM mention_edge_caps WHERE producer_plugin_id = 'cross-references' AND source_resource_id = ?`).run(sourceId);
       const insertCap=this.db.prepare(`INSERT INTO mention_edge_caps VALUES ('cross-references', ?, ?, ?)`);
       for(const cap of edgeCaps){
@@ -908,13 +983,19 @@ export class CrossReferenceStore {
         insertCap.run(sourceId,target.id,cap.state);
       }
       this.db.prepare(`DELETE FROM mention_occurrences WHERE producer_plugin_id = 'cross-references' AND source_resource_id = ?`).run(sourceId);
-      const insert=this.db.prepare(`INSERT INTO mention_occurrences VALUES ('cross-references', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+      const insert=this.db.prepare(`INSERT INTO mention_occurrences(producer_plugin_id,source_resource_id,target_resource_id,occurrence_key,source_locator_json,source_content_revision,span_start,span_end,message_created_at,observed_at,provenance_json,confirmed_in_scan,authored_url_state,exact_authored_href)
+        VALUES ('cross-references', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+      const insertExcerpt=this.db.prepare(`INSERT INTO mention_excerpts VALUES ('cross-references',?,?,?,?,1,?,?,?,?,?,?,?,?,?,?,?)`);
       for(const row of final){
         const targetId=this.findResource(canonicalizeResource(row.target))!.id;
         if(row.target.provider==='recognition')this.db.prepare(`INSERT INTO recognized_resources VALUES (?, ?, 1)
           ON CONFLICT(resource_id) DO NOTHING`).run(targetId,row.provenance.verifiedFile?verifiedFileIdentityRecord(row.provenance.verifiedFile):recognitionIdentityRecord(row.provenance.source));
         insert.run(sourceId,targetId,row.occurrenceKey,canonicalJson(row.locator),row.sourceContentRevision,row.span.start,row.span.end,
-          row.messageCreatedAt,row.observedAt,canonicalJson(row.provenance),row.confirmed?1:0);
+          row.messageCreatedAt,row.observedAt,canonicalJson(row.provenance),row.confirmed?1:0,row.authoredUrlState??'unknown',row.exactAuthoredHref??null);
+        const ex=row.excerpt;
+        if(ex)insertExcerpt.run(sourceId,targetId,row.occurrenceKey,row.sourceContentRevision,ex.state,ex.state==='ready'?ex.text:null,
+          ex.state==='ready'?ex.sourceSpan.start:null,ex.state==='ready'?ex.sourceSpan.end:null,ex.state==='ready'?ex.matchSpan.start:null,ex.state==='ready'?ex.matchSpan.end:null,
+          ex.state==='ready'&&ex.clippedBefore?1:0,ex.state==='ready'&&ex.clippedAfter?1:0,ex.state==='ready'&&ex.matchClippedBefore?1:0,ex.state==='ready'&&ex.matchClippedAfter?1:0,ex.state==='unavailable'?ex.reason:null);
       }
       if(digest!==prior.digest && signals.length===0)signals.push({
         protocolVersion:1,producerPluginId:'cross-references',sourceIdentityDigest:canonicalSource.identityDigest,

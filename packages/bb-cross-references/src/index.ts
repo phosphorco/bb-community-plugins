@@ -420,3 +420,6 @@ export type AttachmentSnapshot = ReferenceSnapshot;
 export { recognitionIdentity, recognitionIdentityRecord, RECOGNITION_CODEC_VERSION, MAX_RECOGNITION_IDENTITY_BYTES, type VerifiedRecognitionThread } from './recognition.js';
 
 export { verifiedFileIdentity, verifiedFileIdentityRecord, VerifiedFileTargetSchema, type VerifiedFileTarget } from './recognition.js';
+
+export * from './evidence-v2.js';
+export * from './lookup.js';

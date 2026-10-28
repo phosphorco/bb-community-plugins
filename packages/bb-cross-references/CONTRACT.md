@@ -153,3 +153,115 @@ future navigation/codec inputs, without claiming installation-local IDs are
 portable. Phase-2 query and phase-3 Brief production must use this same codec and
 frame rule. This helper adds no public wire method or v1 projection metadata
 requirement; existing v1 producers remain unchanged.
+
+## Wire V2: stored mention evidence (0.3.0 reservation)
+
+V1 methods, strict schemas and projection semantics remain unchanged. A host
+advertises `[1,2]` at `crossReferences.describe`; the separate explicit V2 client
+requires advertised2 and never substitutes a V1 read. Root remains data/pure;
+`/bb` provides `createCrossReferencesV2Client` and `registerCrossReferencesV2`;
+`/testing` provides read-only `runCrossReferencesV2Conformance` against actual
+registered handlers and caller-prepared fixtures. No registry publication is
+implied by this source reservation.
+
+`crossReferencesV2ListMentions` input is recursively strict:
+
+```ts
+{version:2,query:
+  | {kind:'resource',target:ResourceIdentity,relation:'self'|'github-pr-family'}
+  | {kind:'authored-url',href:string},
+ source?:ResourceIdentity,producerPluginId?:string,pageSize?:number,
+ cursor?:string,ifSnapshot?:string}
+```
+
+Page size defaults25/max100; cursor<=4096 UTF8 bytes and conditional64hex are
+exclusive. Source is exact and a missing source gives an empty result. Existing
+V1 exact-key lookup is unchanged; general containment is deferred. Current GitHub
+recognition collapses PR root/comment/review destinations into ONE primary root
+identity, selected directly with no descendant enumeration ceiling. There are no
+alias claims or derived posting graph. Supported explicit safe GitHub URL codec
+`githubLookup` is exported for every consumer: owner/repo lowercase and positive
+safe number map through the SAME recognition identity helper. A `/pull/N` route
+has PR authority; issue URLs select self. Bare repo#N/opaque hashes alone do not
+prove PR kind. Original descendant URL remains evidence, never root navigation.
+Future separately identified descendants need a separately documented codec.
+
+A page contains exact CURRENT retained matching location counts, confirmed and
+unconfirmed counts, producerClaims, DISTINCT indexedSources,
+**claimsWithoutLocations**, and excerptUnavailable. Repeated locations do not
+inflate primary claims; legacy/other producers without matching locations take
+one ordinary row slot. Counts describe known active producer/source/target facts,
+not all-time totals or complete source discovery. In a literal authored URL query,
+primary URL identity claims can appear with `matchBasis:'primary-url-identity'`
+without asserting original spelling; unknown typed history is coverage only.
+Claim reasons are `legacy`, `producer-no-evidence`, `not-yet-collected`.
+
+Occurrence rows keep the complete original UTF16 span, actual user/assistant role,
+threadId/messageId/messageSeq/anchorSeq, body-derived sourceContentRevision,
+occurrenceKey, evidenceRevision, source/target/producer, original messageCreatedAt,
+observedAt, original recognition provenance, URL-proof state and confirmation.
+Cap state is uncapped/capped/unknown with retained limit100/null and separate
+sourceHistoryUnknown. Absent producer evidence never means uncapped.
+
+Ready excerpts are contiguous slices of admitted original text, <=320 Unicode
+code points AND1280 UTF8 bytes, with original sourceSpan, relative nonempty
+matchSpan, context/match clipping flags and codecVersion1. No sentence/paragraph
+can bridge excluded code, inline code, raw HTML, standalone/linked image intervals.
+No reconstruction of offsets from rendered Markdown. Ordinary/reference link
+context remains eligible even though recognition excludes it from the prose pass.
+An overlong indivisible matching word gives unavailable/indivisible-word with full
+location/navigation retained; no eligible context gives no-eligible-context.
+Absent valid child gives not-materialized. A missing excerpt remains an occurrence.
+Original-slice proof is established while collection/commit has the body;
+persisted reads validate stored text/ranges/revision/codec without fetching it.
+
+Literal href lookup compares the original SAFE captured destination string,
+including query/fragment/case/spelling; no redirect, canonical alias or typed-hash
+reconstruction. Historical URL state is unknown until an ordinary existing scan
+observes original spelling. No reader-triggered enqueue or re-observation campaign.
+Unknown active locations under the same source/producer filters contribute to
+independent authoredUrlCoverage, including outside literal matched rows.
+
+Responses are page(snapshot,items,counts,coverage,nextCursor), not-modified
+(snapshot,**current coverage**), restart(snapshot-changed,snapshot), or unavailable
+(index-warming/read-budget,retryable). Direct storage needs no warming bootstrap.
+Semantic tokens bind query/filter/page size, relevant active graph revision/payload/
+presentation and evidence digest/revision/binding. They exclude observation-only
+clocks and unrelated filtered-out sources/producers; a producer/source evidence
+change may invalidate its other matching queries. The independent URL-unknown
+watermark updates coverage without resetting unchanged item cursors.
+
+Order is messageCreatedAt descending, binary canonical source digest, producer,
+target digest, item kind, message ID, original span start, occurrence key; stable
+claim sentinel time0. Cursor binds the complete query and semantic snapshot;
+mismatch restarts instead of mixing pages. The one shared1MiB canonical JSON
+UTF8 budget covers rows+counts+coverage+cursor; cursor advances only through the
+last emitted row. Individual row ceiling128KiB. Output unknown fields share that
+budget before tolerant decoding; parsed transport cannot bound pre-parse memory.
+Nested evolving outputs tolerate additive fields; unknown item/locator/excerpt
+enums safely preserve an unsupported item slot, required known fields still
+validate. Reasons are <=32 safe codes of <=128 UTF8 bytes, with honest clipping/
+unknown mapping; no raw errors. Direct counts/token/sort may scan all relevant
+facts. Cooperative server checks use2s and return read-budget on exhaustion;
+synchronous SQLite cannot be preempted by a JS timer. Client call budget<=5s.
+
+`crossReferencesV2ResolveLookup` is mandatory for pasted referents:
+`{version:2,text,mode:'recognize'|'exact-url',context?}`. Text1..4096 UTF16 units /
+<=16384 UTF8 bytes; complete input<=64KiB; context is the strict public recognition
+subset with <=16 safe unpositioned links and no caller attribution. Options<=8
+contain query,label<=256 UTF8 bytes,inputSpan,basis(supplier/native/stored-codec),
+reasons; overall state ready/ambiguous/unrecognized/incomplete. Exact-url mode stays
+literal. Recognition uses the existing service-owned supplier snapshot, shared
+arbitration and labelled pure codec fallback; <=8 suppliers share a1500ms stage.
+Native thread verification may use bounded SDK metadata reads. No discovery per
+reader, card/body/timeline/filesystem/network resolve, collection enqueue or graph
+write. Lexical file text cannot invent verified file identity. One failed supplier
+preserves healthy/native results with incompleteness disclosed.
+
+V2 invalidation channel `cross-references-mentions-v2-changed` carries version2,
+producerPluginId,sourceIdentityDigest,graphRevision,evidenceRevision(nullable),
+<=512 affectedIdentityDigests,scopeListClipped. Publish once after a changed
+committed source; old strict V1 signals are unchanged. Clipped/coarse wakes can
+refresh mounted literal-URL coverage conditionally. No idle polling/factory SDK
+subscription/new worker. Later consumers share lazy mounted queries, cancel on
+teardown and retain rows/cursors when only coverage changes.

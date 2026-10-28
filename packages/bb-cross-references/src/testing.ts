@@ -1,5 +1,5 @@
 import { canonicalizeIdentity, normalizeProjectionCommand, resourceIdentityOf, type ApplyProjectionInput } from "./index.js";
-import { createCrossReferencesClient, type CrossReferencesSdk } from "./bb.js";
+import { createCrossReferencesClient, createCrossReferencesV2Client, type CrossReferencesSdk } from "./bb.js";
 
 export interface CrossReferencesConformanceResult {
   level: "source-conformance";
@@ -49,4 +49,19 @@ export async function runCrossReferencesConformance(options: {
   }
   checks.push("backlinks-acceptance");
   return { level: "source-conformance", pluginId: client.pluginId, checks };
+}
+
+/** Read-only V2 conformance through the adopter's real transport/handlers.
+ * The caller owns fixture preparation; this kit never enqueues or writes. */
+export async function runCrossReferencesV2Conformance(options:{sdk:CrossReferencesSdk;pluginId?:string;
+ input:import('./evidence-v2.js').ListMentionsInputV2;lookup:import('./evidence-v2.js').ResolveLookupInputV2;
+ assertPage:(page:Extract<import('./evidence-v2.js').ListMentionsOutputV2,{status:'page'}>)=>void|Promise<void>;
+}):Promise<CrossReferencesConformanceResult>{
+ const client=createCrossReferencesV2Client(options.sdk,options.pluginId);await client.describe();
+ const page=await client.listMentions(options.input);if(page.status!=='page')throw new Error('V2 fixture must yield a page.');await options.assertPage(page);
+ const {cursor:_cursor,ifSnapshot:_conditional,...base}=options.input;
+ const conditional=await client.listMentions({...base,ifSnapshot:page.snapshot});
+ if(conditional.status!=='not-modified'||!conditional.coverage.authoredUrlCoverage.watermark)throw new Error('V2 conditional omitted current coverage.');
+ const lookup=await client.resolveLookup(options.lookup);if(!['ready','ambiguous','incomplete'].includes(lookup.state)||lookup.options.length===0)throw new Error('V2 lookup fixture did not resolve.');
+ return {level:'source-conformance',pluginId:client.pluginId,checks:['describe-v2','actual-evidence-page','conditional-current-coverage','query-normalization']};
 }

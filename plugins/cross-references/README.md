@@ -327,3 +327,35 @@ SDK calls, reads, timers, retries, scheduling or graph/coverage changes are made
 These diagnostics classify subsequent observations. They do not explain the
 historical 41 warning-only sources, establish complete file coverage, or satisfy
 the later phase-2 evidence/snippet/referent UI work.
+
+## Stored evidence and V2 reads
+
+The evidence backend adds append-only primary excerpt, exact authored-destination
+and graph-binding storage. Existing graph identities, V1 strict APIs, projection
+counts/digests and producer ownership remain unchanged. Ordinary existing scans
+materialize bounded excerpts while the admitted original message is available;
+reads never enqueue collection, fetch source text/cards, or start a backfill.
+Historical original URLs stay unknown until an ordinary scan proves spelling.
+
+Excerpts retain one contiguous original UTF16 slice (at most320 Unicode code points
+and1280 UTF8 bytes), never bridge excluded inline/fenced/indented code, HTML or
+standalone/linked images, and retain exact messageSeq/full match span/navigation.
+An indivisible overlong word is labelled unavailable instead of silently cut.
+A partial scan retains valid unvisited child excerpts unconfirmed; source deletion
+removes only owned claims/evidence. Evidence-only edits advance evidence revision,
+not graph digest; observation clocks alone do not create semantic content revision.
+
+New wireV2 ListMentions and required ResolveLookup are independent of strictV1
+reads. They expose self/current supported PR-root family/literal original URL,
+page25/max100 under one1MiB response budget, exact retained facts and honest legacy,
+cap/unknown history/discovery coverage. Current GitHub supplier root-collapses
+comment/review URLs; there is no256-family query ceiling or alias claim. Literal
+URLs keep their authored query/fragment and use separate unknown-history coverage.
+Direct SQL uses existing active full producer/source/target membership; no derived
+posting graph/bootstrap/service. SQLite counts/sorts are synchronous: cooperative
+2s checks detect exhaustion but cannot preempt one blocking statement.
+
+These are backend/contract seams; snippet layout and the later three-visible-entry
+UI are separate work. Existing50-page scan, source-discovery limits, retained legacy
+claims and100-location/edge retention remain disclosed. Recognition remains exact
+0.5.0, no Brief/Linky integration. Source/private-emission checks are not live proof.

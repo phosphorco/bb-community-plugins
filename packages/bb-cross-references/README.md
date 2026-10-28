@@ -52,3 +52,20 @@ Workspace owner is environment ID; storage owner is the owning thread ID.
 Full frame/path survives separately from the bounded hashed graph key and
 original lexical source IDs remain occurrence provenance. See the contract for
 exact canonical tuple/path rules; consumers own bounded existence/containment.
+
+### Stored mention evidence, V2
+
+The 0.3.0 contract reservation adds pure evidence schemas and the explicit
+`createCrossReferencesV2Client(sdk, pluginId)` in `/bb`. Call `describe()` and use
+`listMentions({version:2,query:{kind:'resource',target,relation:'self'}})` or literal
+`{kind:'authored-url',href}`. `resolveLookup({version:2,text,mode:'recognize'})`
+normalizes pasted PR URLs through shared recognition/pure labelled codec without
+fetching cards or writing claims. `githubLookup` is the shared explicit GitHub
+URL codec; issue/unknown-number input cannot silently become PR authority.
+
+Pages carry bounded original-location evidence, exact counts for retained active
+claims, clipping/cap/legacy/unknown-URL coverage and semantic cursors. Conditional
+not-modified includes current coverage. Existing V1 clients stay unchanged. See
+CONTRACT.md for strict inputs, tolerant bounded outputs, direct-query/time limits,
+no-word-cut behavior and read-only conformance. Package source tests and private
+emission are distinct from a published registry consumer or live host proof.

@@ -1,3 +1,7 @@
+import { registerCrossReferencesV2 } from '@phosphorco/bb-cross-references/bb';
+import { MENTIONS_V2_CHANNEL } from '@phosphorco/bb-cross-references';
+import { createMentionReader, mentionsChangedSignal } from './mention-query.ts';
+import { createMentionLookup } from './mention-lookup.ts';
 import { CROSS_REFERENCES_PROTOCOL } from "@phosphorco/bb-cross-references";
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 
@@ -17,7 +21,14 @@ export default function crossReferencesPlugin(bb: BbPluginApi): void {
   const store = new CrossReferenceStore(db);
   store.pruneUnsafeUrlResources();
   const checkLink = createLinkChecker();
-  const collector = new AssistantLinkCollector(bb, db, store, (signal) => bb.realtime.publish(REALTIME_CHANNEL, signal));
+  const reader=createMentionReader(db);
+  const collector = new AssistantLinkCollector(bb, db, store, (signal,source) => {
+    bb.realtime.publish(REALTIME_CHANNEL,signal);
+    bb.realtime.publish(MENTIONS_V2_CHANNEL,mentionsChangedSignal(db,source,signal));
+  });
+  const lookup=createMentionLookup({snapshot:()=>collector.lookupSnapshot(),getThread:(id,signal)=>bb.sdk.threads.get({threadId:id,signal}),
+    ...(bb.server?.experimental_appUrl?{appUrl:bb.server.experimental_appUrl}:{})});
+  registerCrossReferencesV2(bb,{crossReferencesV2ListMentions:input=>reader.read(input),crossReferencesV2ResolveLookup:lookup});
   for (const event of ["thread.idle", "thread.failed"] as const) {
     bb.events.on(event, ({ thread }) => collector.enqueue(thread.projectId, thread.id, false, true, 1));
   }
@@ -28,11 +39,12 @@ export default function crossReferencesPlugin(bb: BbPluginApi): void {
   bb.background.service("cross-references-assistant-links", { start: (signal) => collector.start(signal) });
 
   bb.rpc.register(rpcContract, {
-    "crossReferences.describe": () => ({ protocol: CROSS_REFERENCES_PROTOCOL, versions: [1] }),
+    "crossReferences.describe": () => ({ protocol: CROSS_REFERENCES_PROTOCOL, versions: [1,2] }),
     applyProjection: (input) => {
       const result = store.applyProjection(input);
       if (result.changed && result.signal !== null) {
         bb.realtime.publish(REALTIME_CHANNEL, result.signal);
+        bb.realtime.publish(MENTIONS_V2_CHANNEL,mentionsChangedSignal(db,{provider:input.source.provider,keys:input.source.keys},result.signal));
       }
       return {
         outcome: result.outcome,

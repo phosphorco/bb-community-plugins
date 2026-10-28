@@ -7,7 +7,7 @@ import { MentionDiagnostics, type MentionDiagnosticOperation } from './mention-f
 import { createMentionFileVerifier } from './mention-files.ts';
 import { collectConversationMentions, type ConversationMessage } from "./mention-collection.ts";
 import { MENTION_LIMITS, type MentionScan } from "./mention-evidence.ts";
-import { threadIdentity, threadResource } from "./canonical.ts";
+import { type ResourceIdentity, threadIdentity, threadResource } from "./canonical.ts";
 import type { CrossReferencesChangedSignal } from "./model.ts";
 import { CrossReferenceStore } from "./store.ts";
 
@@ -44,12 +44,19 @@ export class AssistantLinkCollector {
   private readonly bb: BbPluginApi;
   private readonly db: Database.Database;
   private readonly store: CrossReferenceStore;
-  private readonly publish: (signal: CrossReferencesChangedSignal) => void;
-  constructor(bb: BbPluginApi, db: Database.Database, store: CrossReferenceStore, publish: (signal: CrossReferencesChangedSignal) => void) {
+  private readonly publish: (signal: CrossReferencesChangedSignal, source:ResourceIdentity) => void;
+  constructor(bb: BbPluginApi, db: Database.Database, store: CrossReferenceStore, publish: (signal: CrossReferencesChangedSignal, source:ResourceIdentity) => void) {
     this.bb = bb;
     this.db = db;
     this.store = store;
     this.publish = publish;
+  }
+
+  /** Read-only snapshot of this service's existing discovery lifetime. No RPC
+   * read may trigger discovery, reseed collection or revive a disposed owner. */
+  lookupSnapshot():{clients:readonly ReadyRecognitionSupplier[];incomplete:boolean;signal:AbortSignal}{
+    if(this.inactive())return {clients:[],incomplete:true,signal:this.lifetime.signal};
+    return {clients:[...this.suppliers],incomplete:this.discoveryNeeded||this.discoveryIncomplete||this.failedSuppliers.length>0,signal:this.lifetime.signal};
   }
 
   /** Discovery is event-driven and shared by this one server collector. Pending
@@ -234,7 +241,7 @@ export class AssistantLinkCollector {
           ON CONFLICT(thread_id) DO UPDATE SET synced_at = excluded.synced_at`).run(job.thread_id, Date.now());
         return result;
       })();
-      for (const changed of signals) {if(this.inactive() || signal.aborted)break;this.publish(changed);}
+      for (const changed of signals) {if(this.inactive() || signal.aborted)break;this.publish(changed,threadIdentity(job.project_id,job.thread_id));}
       if(!this.inactive() && !signal.aborted && scan.coverage.reasons.length)this.bb.log.warn(`Cross References collection incomplete for ${job.thread_id}: ${scan.coverage.reasons.join(', ')}. Prior unvisited locations retained within caps. Diagnostics: ${diagnostics.encode()}`);
     } catch (error) {
       if (!this.inactive() && !signal.aborted) {

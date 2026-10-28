@@ -1,8 +1,9 @@
 import { LIMITS, arbitrate, nativeCandidates, SafeHrefSchema, type ContextBundleV1, type TaggedCandidateV1, type SourceIdentity, type Span } from '@phosphorco/bb-context-recognition';
 import { linkifyAll, type ReadyRecognitionSupplier } from '@phosphorco/bb-context-recognition/bb';
-import { recognitionIdentity, recognitionIdentityRecord, verifiedFileIdentity } from '@phosphorco/bb-cross-references';
+import { safeAuthoredHrefSchema, recognitionIdentity, recognitionIdentityRecord, verifiedFileIdentity } from '@phosphorco/bb-cross-references';
 import { canonicalizeResource, hasSensitiveUrlParameter, serializeResource, sha256Hex, type Resource } from './canonical.ts';
 import { assistantLinkLabel, localThreadTarget, webTarget } from './assistant-links.ts';
+import { createExcerptExtractor } from './mention-excerpts.ts';
 import { mentionFrame, type MarkdownLink } from './mention-markdown.ts';
 import { MentionDiagnostics, type MentionDiagnosticOperation, type MentionDiagnosticStage } from './mention-file-contract.ts';
 import type { MentionFileVerifier, VerifiedMentionFile } from './mention-files.ts';
@@ -26,7 +27,7 @@ export async function collectConversationMentions(options:{messages:readonly Con
   signal:AbortSignal;appUrl?:string;discoveryIncomplete?:boolean;failedSuppliers?:string[];verifyFile?:MentionFileVerifier;cache?:Map<string,TaggedCandidateV1[]>;diagnostics?:MentionDiagnostics;
 }):Promise<MentionScan> {
   const scan:MentionScan={occurrences:[],observedMessageIds:[],scannedMessageIds:options.messages.map(m=>m.id),failedSuppliers:[...(options.failedSuppliers??[])],discoveryIncomplete:!!options.discoveryIncomplete,
-    coverage:{timelineComplete:true,reasons:[],retentionLimited:false}};
+    coverage:{timelineComplete:true,reasons:[],retentionLimited:false},sourceBodies:new Map(options.messages.map(m=>[m.id,m.text]))};
   const reasons=new Set<string>(), failed=new Set(scan.failedSuppliers);
   const deadline=performance.now()+MENTION_LIMITS.sourceMs;
   let calls=0,chars=0,sourceExpired=false;
@@ -173,6 +174,7 @@ export async function collectConversationMentions(options:{messages:readonly Con
     const admitted=arbitrate(all,{text:message.text,excluded:[],implementedProviders:NATIVE}).occurrences;
     const locator:ConversationLocator={kind:'conversation',threadId:options.context.threadId!,messageId:message.id,messageSeq:message.messageSeq,anchorSeq:message.anchorSeq,role:message.role};
     const sourceContentRevision=sha256Hex(message.text);
+    const extract=createExcerptExtractor(message.text,frame.forbidden);
     for(const item of admitted){
       if(sourceExpired || remaining()<=0){expire();fullyObserved=false;break;}
       const c=item.candidate, link=authored.get(`${c.span.start}:${c.span.end}`);
@@ -189,9 +191,12 @@ export async function collectConversationMentions(options:{messages:readonly Con
       if(sourceExpired || remaining()<=0){expire();fullyObserved=false;break;}
       if(!target)continue;
       const verifiedFile=selected.candidate.source.provider==='bb.file'?await fileChecks.get(selected.candidate.source.id):undefined;
-      const location=MentionLocationSchema.parse({locator,sourceContentRevision,span:c.span,messageCreatedAt:message.createdAt,
+      const authoredHref=link?link.authoredHref:(safeAuthoredHrefSchema.safeParse(c.match).success?c.match:undefined);
+      const href=authoredHref&&safeAuthoredHrefSchema.safeParse(authoredHref).success?authoredHref:undefined;
+      const location=MentionLocationSchema.parse({locator,sourceContentRevision,span:c.span,messageCreatedAt:message.createdAt,excerpt:extract(c.span),
+        authoredUrlState:href?'exact':link?'unknown':'not-url',...(href?{exactAuthoredHref:href}:{}),
         provenance:{pluginId:selected.pluginId,origin:selected.origin,confidence:selected.candidate.confidence,recognition:selected.candidate.provenance,source:selected.candidate.source,...(verifiedFile?{verifiedFile}:{}),
-          ...(fallbackHref && !sensitiveDestination(fallbackHref) && SafeHrefSchema.safeParse(fallbackHref).success && !new URL(fallbackHref,'https://local.invalid').username?{authoredHref:fallbackHref}:{})}});
+          ...(href?{authoredHref:href}:{})}});
       scan.occurrences.push({...location,target});
       if(scan.occurrences.length>=MENTION_LIMITS.locations){fullyObserved=false;reasons.add('location-budget');break;}
     }

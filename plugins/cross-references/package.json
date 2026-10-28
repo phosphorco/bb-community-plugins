@@ -64,12 +64,15 @@
     "mention-evidence.ts",
     "mention-file-contract.ts",
     "mention-file-host.ts",
-    "mention-files.ts"
+    "mention-files.ts",
+    "mention-excerpts.ts",
+    "mention-query.ts",
+    "mention-lookup.ts"
   ],
   "dependencies": {
     "marked": "^18.0.5",
     "zod": "4.6.7",
-    "@phosphorco/bb-cross-references": "0.2.0",
+    "@phosphorco/bb-cross-references": "0.3.0",
     "@phosphorco/bb-context-recognition": "0.5.0",
     "unified": "11.0.5",
     "remark-parse": "11.0.0",
