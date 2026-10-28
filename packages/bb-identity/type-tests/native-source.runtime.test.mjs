@@ -25,6 +25,24 @@ const r2 = request(3, 'creq_two', [[text('steer')]], [actor('other')]);
 const events = [r1, accept(2, 'creq_one'), r2, accept(4, 'creq_two'), completed(5, 'comment', 'Commentary.', 'commentary'), delta(6, 'final', 'Retained '), delta(7, 'final', 'partial.'), terminal()];
 const projection = timeline([assistantRow('comment-row', 5, 5, 'Commentary.'), assistantRow('delta-row', 6, 7, 'Retained partial.')]);
 
+test('opaque timeline snapshot tokens are not entity identifiers; source and resource fences remain',()=>{
+ const baseline=value(adapter.resolve({source,events,timeline:projection}));
+ for(const length of [256,257,320,1024]){
+  const page=structuredClone(projection);page.timelinePage.historySnapshot='x'.repeat(length);
+  const actual=value(adapter.resolve({source,events,timeline:page}));
+  assert.deepEqual(actual,baseline);
+ }
+ for(const marker of ['', '   ']){
+  const page=structuredClone(projection);page.timelinePage.historySnapshot=marker;
+  const actual=value(adapter.resolve({source,events,timeline:page}));
+  assert.equal(actual.coverage.source.status,'unknown');assert.deepEqual(actual.text,[]);assert.ok(actual.coverage.source.reasons.includes('projection-does-not-cover-terminal'));
+ }
+ const stale=structuredClone(projection);stale.maxSeq=8;stale.timelinePage.historySnapshot='x'.repeat(320);
+ assert.ok(value(adapter.resolve({source,events,timeline:stale})).coverage.source.reasons.includes('projection-does-not-cover-terminal'));
+ const oversized=structuredClone(projection);oversized.timelinePage.historySnapshot='x'.repeat(NATIVE_SOURCE_LIMITS.bytes+1);
+ assert.equal(adapter.resolve({source,events,timeline:oversized}).ok,false);
+});
+
 defineNativeSourceConformance({ test, resolve: adapter.resolve, cases: [
   { name: 'author editor mentions separate; all groups retained; machine is not a person', snapshot: { source: { kind: 'request-group', threadId: 'thread', eventId: 'event-1', requestId: 'creq_one', groupIndex: 1 }, events }, verify(result) {
     const e = value(result); assert.deepEqual(e.author, machine); assert.deepEqual(e.latestEditor, editor); assert.deepEqual(e.mentionedTargets, [mention]); assert.equal(e.origin, 'user'); assert.equal(e.text[0].text, 'question B'); assert.equal(e.inputs[0].groupCount, 2); assert.equal(e.initiatingPerson.status, 'unknown'); assert.equal(e.carriedPerson.status, 'unknown'); assert.equal(e.agentId, null); assert.equal('reference' in e, false); assert.deepEqual(e.history, []);
