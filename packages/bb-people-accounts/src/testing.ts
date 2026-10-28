@@ -55,13 +55,14 @@ export function createFixtureSupplierPort(rows: readonly RosterRowV1[], tokens: 
     ...(row.githubLogin ? [[row.githubLogin, "github-login"] as const] : []),
     ...(row.botLogin ? [[row.botLogin, "bot-login"] as const] : []),
     ...(row.committer ? [[row.committer.email, "committer-email"] as const] : []),
-    [row.personKey, "person-key"] as const,
     [row.displayName, "display-name"] as const,
   ].map(([value, by]) => [normalizeAliasKey(value), by]);
   return {
     calls,
     listRoster: () => rows,
     resolve(input) {
+      const exact = rows.filter(row => row.personKey === input);
+      if (exact.length === 1) return { status: "resolved", person: personSummaryOf(exact[0]!), matchedBy: "person-key" };
       const key = normalizeAliasKey(input);
       const hits = rows.flatMap(row => {
         const hit = keysOf(row).find(([k]) => k === key);
@@ -132,16 +133,11 @@ export async function runPeopleAccountsConformance(options: PeopleAccountsConfor
     secretFree(check, reply);
   };
 
-  const description = await client.describe();
-  expect("describe", description.versions.includes(1), "does not advertise v1");
-  checks.push("describe-negotiates-v1");
-
   const roster = await client.roster();
   const row = roster.entries.find(r => r.personKey === entry.personKey);
   expect("roster", row, "seeded entry is missing from the roster");
   expect("roster", row.displayName === entry.displayName && row.githubLogin === entry.githubLogin && row.botLogin === entry.botLogin, "seeded entry fields changed");
   secretFree("roster", roster);
-  await rawSecretFree("roster", RPC_METHODS.describe, null);
   await rawSecretFree("roster", RPC_METHODS.roster, { version: 1 });
   checks.push("roster-secret-free");
 
@@ -168,7 +164,7 @@ export async function runPeopleAccountsConformance(options: PeopleAccountsConfor
   expect("not-found", mixed.attribution.primary?.input === names[0], "first resolved input is not primary");
   expect("not-found", mixed.attribution.skipped.length === 1 && mixed.attribution.fallbackReason?.includes(unknown) && mixed.attribution.fallbackReason.includes("Conformance Participant"), "skipped name or participants missing from the fallback reason");
   const empty = await client.resolve({ inputs: [], participants: [] });
-  expect("not-found", empty.attribution.primary === null && empty.attribution.postAs === null && empty.attribution.fallbackReason !== null, "empty request did not fail open with a reason");
+  expect("not-found", empty.attribution.primary === null && empty.attribution.fallbackReason !== null, "empty request did not fail open with a reason");
   checks.push("not-found-fails-open");
 
   if (options.ambiguous) {

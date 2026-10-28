@@ -42,18 +42,6 @@ test("closed DTOs reject unknown input fields and bound strings", () => {
 test("outputs tolerate and strip added fields", () => {
   const row = contract.rosterRowV1Schema.parse({ ...ada, token: TOKEN, credential: { ...ada.credential, secret: TOKEN } });
   assert.equal(JSON.stringify(row).includes(TOKEN), false);
-  const envelope = contract.describeEnvelopeSchema.parse({ protocol: "bb-people-accounts", versions: [1], future: true });
-  assert.deepEqual(envelope, { protocol: "bb-people-accounts", versions: [1] });
-});
-
-test("negotiation fixtures: [1], [1,2], [2], [], malformed", () => {
-  const env = versions => ({ protocol: "bb-people-accounts", versions });
-  assert.equal(contract.negotiateVersion(env([1])).kind, "ok");
-  assert.deepEqual(contract.negotiateVersion(env([1, 2])), { kind: "ok", version: 1, versions: [1, 2] });
-  assert.deepEqual(contract.negotiateVersion(env([2])), { kind: "incompatible", reason: "version", versions: [2] });
-  assert.deepEqual(contract.negotiateVersion(env([])), { kind: "incompatible", reason: "schema" });
-  for (const bad of [null, "x", { protocol: "other", versions: [1] }, env([1.5]), env(Array(17).fill(1))])
-    assert.equal(contract.negotiateVersion(bad).kind, "incompatible");
 });
 
 test("attribution: first resolved is primary, all human logins assign, duplicates collapse, skipped named", () => {
@@ -69,20 +57,19 @@ test("attribution: first resolved is primary, all human logins assign, duplicate
   assert.equal(a.primary.input, "bea");
   assert.deepEqual(a.others.map(o => o.input), ["ada"]);
   assert.deepEqual(a.skipped.map(s => s.input), ["ghost", "fixture"]);
-  // Bea is primary but has no token: default account, never Ada's bot.
-  assert.equal(a.postAs, null);
+  assert.equal("postAs" in a, false);
+  assert.equal("credentialState" in a.primary.person, false);
   assert.deepEqual(a.assignees, ["bea-human", "ada-human"]);
   assert.deepEqual(contract.coAuthorTrailers(a), ["Co-Authored-By: Bea Fixture <bea@example.test>", "Co-Authored-By: Ada Fixture <ada.commits@example.test>"]);
-  assert.match(a.fallbackReason, /Bea Fixture has no token configured for bea-bot/);
   assert.match(a.fallbackReason, /"ghost" \(not in the roster\)/);
   assert.match(a.fallbackReason, /"fixture" \(ambiguous: Bea Fixture, Cyd Fixture\)/);
   assert.match(a.fallbackReason, /Thread participants seen: Dee, Eve\./);
 
   const clean = contract.summarizeAttribution([{ input: "ada", status: "resolved", person: p(ada), matchedBy: "nickname" }]);
-  assert.equal(clean.postAs, "ada-bot");
+  assert.equal(clean.primary.person.personKey, ada.personKey);
   assert.equal(clean.fallbackReason, null);
   assert.match(contract.summarizeAttribution([], []).fallbackReason, /No people were named.*Thread participants seen: none\./);
-  assert.match(contract.summarizeAttribution([{ input: "cyd", status: "resolved", person: p(cyd), matchedBy: "nickname" }]).fallbackReason, /Cyd Fixture has no bot account/);
+  assert.equal(contract.summarizeAttribution([{ input: "cyd", status: "resolved", person: p(cyd), matchedBy: "nickname" }]).fallbackReason, null);
   const many = contract.summarizeAttribution(Array.from({ length: 16 }, (_, i) => ({ input: `n${i}`, status: "not-found" })));
   assert.match(many.fallbackReason, /and 8 more/);
   assert.ok(contract.utf8ByteLength(contract.summarizeAttribution([], Array(32).fill("é".repeat(64))).fallbackReason) <= contract.LIMITS.reasonBytes);
@@ -90,10 +77,9 @@ test("attribution: first resolved is primary, all human logins assign, duplicate
 
 test("real registered handlers emit the declared entries", async () => {
   const { host, client, port } = supplierHost();
-  assert.deepEqual(await client.describe(), { protocol: "bb-people-accounts", version: 1, versions: [1] });
   const resolved = await client.resolve({ inputs: ["nobody", "@ADA-L", "fixture", "ada@example.test"], participants: ["Dee"] });
   assert.deepEqual(resolved.results.map(r => [r.input, r.status]), [["nobody", "not-found"], ["@ADA-L", "resolved"], ["fixture", "ambiguous"], ["ada@example.test", "resolved"]]);
-  assert.equal(resolved.attribution.postAs, "ada-bot");
+  assert.equal(resolved.attribution.primary.person.personKey, ada.personKey);
   assert.deepEqual(resolved.attribution.assignees, ["ada-human"]);
   assert.match(resolved.attribution.fallbackReason, /Skipped: "nobody".*"fixture" \(ambiguous: Bea Fixture, Cyd Fixture\).*Dee/);
   assert.equal(JSON.stringify(resolved).includes(TOKEN), false);
@@ -104,7 +90,7 @@ test("real registered handlers emit the declared entries", async () => {
   assert.deepEqual(await client.credential("ada-bot"), { status: "available", botLogin: "ada-bot", token: TOKEN });
   assert.deepEqual(await client.credential("bea-bot"), { status: "unavailable", botLogin: "bea-bot", reason: "no-credential" });
   assert.deepEqual(await client.credential("zed-bot"), { status: "unavailable", botLogin: "zed-bot", reason: "unknown-account" });
-  await assert.rejects(host.harness.callRpc("peopleAccountsDescribe", { any: 1 }));
+  await assert.rejects(host.harness.callRpc("peopleAccountsV1Resolve", { version: 1, inputs: [], extra: true }));
 });
 
 test("supplier extras, including a token on a row, never reach the wire", async () => {
@@ -144,12 +130,10 @@ test("conformance kit rejects a real handler that leaks the token in raw replies
   const leaky = createFakePluginHost({ pluginId: "people-accounts" });
   // A supplier registering by hand (not via the helper) that adds a raw field.
   leaky.bb.rpc.register({
-    peopleAccountsDescribe: { input: contract.describeInputSchema, output: { "~standard": { version: 1, vendor: "t", validate: value => ({ value }) } } },
     peopleAccountsV1Roster: { input: contract.rosterInputSchema, output: { "~standard": { version: 1, vendor: "t", validate: value => ({ value }) } } },
     peopleAccountsV1Resolve: { input: contract.resolveInputSchema, output: { "~standard": { version: 1, vendor: "t", validate: value => ({ value }) } } },
     peopleAccountsV1Credential: { input: contract.credentialInputSchema, output: { "~standard": { version: 1, vendor: "t", validate: value => ({ value }) } } },
   }, {
-    peopleAccountsDescribe: () => good.harness.callRpc("peopleAccountsDescribe", null),
     peopleAccountsV1Roster: async input => ({ ...(await good.harness.callRpc("peopleAccountsV1Roster", input)), rawToken: TOKEN }),
     peopleAccountsV1Resolve: input => good.harness.callRpc("peopleAccountsV1Resolve", input),
     peopleAccountsV1Credential: input => good.harness.callRpc("peopleAccountsV1Credential", input),
@@ -160,7 +144,7 @@ test("conformance kit rejects a real handler that leaks the token in raw replies
 test("conformance kit passes the fixture supplier's real handlers and detects broken ones", async () => {
   const { host } = supplierHost();
   const result = await runPeopleAccountsConformance({ host, entry: rosterEntryFixture(), token: TOKEN, botLoginWithoutToken: "bea-bot", ambiguous: { input: "fixture", personKeys: [bea.personKey, cyd.personKey] } });
-  assert.deepEqual(result, { level: "source-conformance", pluginId: "people-accounts", checks: ["describe-negotiates-v1", "roster-secret-free", "aliases-resolve", "not-found-fails-open", "ambiguous-never-picks", "credential-backend", "strict-input"] });
+  assert.deepEqual(result, { level: "source-conformance", pluginId: "people-accounts", checks: ["roster-secret-free", "aliases-resolve", "not-found-fails-open", "ambiguous-never-picks", "credential-backend", "strict-input"] });
 
   const caseSensitive = createFixtureSupplierPort([ada, bea, cyd], { "ada-bot": TOKEN });
   const exact = caseSensitive.resolve;
@@ -184,38 +168,37 @@ test("unavailable supplier: every failure kind fails open with a reason and neve
   const cases = [
     [{ code: "plugin_not_found", status: 404 }, "absent"],
     [{ code: "plugin_disabled", status: 503 }, "disabled"],
-    [{ code: "unknown_method", status: 404 }, "unknown-method"],
     [{ status: 500, message: `boom ${TOKEN}` }, "failed"],
   ];
   for (const [error, kind] of cases) {
     const client = createPeopleAccountsClient(sdkFor(async () => { throw error; }));
     const r = await resolveAttributionFailOpen(client, { inputs: ["ada"], participants: ["Dee"] });
     assert.equal(r.source, "unavailable"); assert.equal(r.error, kind);
-    assert.equal(r.attribution.postAs, null);
-    assert.equal(r.attribution.fallbackReason, `People accounts were unavailable (${kind}), so authorship defaulted to the default account. Named: "ada". Thread participants seen: Dee.`);
+    assert.equal(r.attribution.primary, null);
+    assert.equal(r.attribution.fallbackReason, `People accounts were unavailable (${kind}). Named: "ada". Thread participants seen: Dee.`);
     assert.equal(r.attribution.fallbackReason.includes(TOKEN), false);
   }
-  const incompatible = await resolveAttributionFailOpen(createPeopleAccountsClient(sdkFor(async () => ({ protocol: "bb-people-accounts", versions: [2] }))), { inputs: [] });
-  assert.equal(incompatible.error, "incompatible");
-  const malformed = await resolveAttributionFailOpen(createPeopleAccountsClient(sdkFor(async ({ method }) => method === "peopleAccountsDescribe" ? { protocol: "bb-people-accounts", versions: [1] } : { version: 1, results: "nope" })), { inputs: ["ada"] });
-  assert.equal(malformed.error, "malformed");
-  const slow = await resolveAttributionFailOpen(createPeopleAccountsClient(sdkFor(() => new Promise(() => {})), undefined, { describeMs: 5 }), { inputs: ["ada"] });
+  for (const response of [null, {version: 1, results: "nope"}]) {
+    await assert.rejects(resolveAttributionFailOpen(createPeopleAccountsClient(sdkFor(async () => response)), { inputs: ["ada"] }), e => e.kind === "malformed" && /Installed people-accounts/.test(e.message));
+  }
+  await assert.rejects(resolveAttributionFailOpen(createPeopleAccountsClient(sdkFor(async () => { throw { code: "unknown_method", status: 404 }; })), { inputs: [] }), e => e.kind === "malformed");
+  const slow = await resolveAttributionFailOpen(createPeopleAccountsClient(sdkFor(() => new Promise(() => {})), undefined, { callMs: 5 }), { inputs: ["ada"] });
   assert.equal(slow.error, "timeout");
   await assert.rejects(resolveAttributionFailOpen(createPeopleAccountsClient(sdkFor(async () => null)), { inputs: [], extra: 1 }));
 });
 
-test("client rejects results that do not echo inputs and recomputes attribution", async () => {
-  const describe = { protocol: "bb-people-accounts", versions: [1] };
+test("client calls v1 directly, validates ordered echoes and returns supplier summary without recomputing", async () => {
   const person = contract.personSummaryOf(ada);
-  const lying = { postAs: "bea-bot", primary: null, others: [], skipped: [], assignees: ["someone"], coAuthors: [], fallbackReason: null };
-  const reply = results => sdkFor(async ({ method }) => method === "peopleAccountsDescribe" ? describe : { version: 1, results, attribution: lying });
+  const summary = contract.summarizeAttribution([]);
+  const methods = [];
+  const reply = results => sdkFor(async ({ method }) => { methods.push(method); return { version: 1, results, attribution: summary }; });
   const ok = await createPeopleAccountsClient(reply([{ input: "ada", status: "resolved", person, matchedBy: "nickname" }])).resolve({ inputs: ["ada"] });
-  assert.equal(ok.attribution.postAs, "ada-bot");
-  assert.deepEqual(ok.attribution.assignees, ["ada-human"]);
-  for (const results of [[], [{ input: "other", status: "not-found" }], [{ input: "ada", status: "not-found" }, { input: "ada", status: "not-found" }]])
+  assert.deepEqual(methods, ["peopleAccountsV1Resolve"]);
+  assert.deepEqual(ok.attribution, summary);
+  for (const results of [[], [{ input: "other", status: "not-found" }], [{ input: "ada", status: "not-found" }, { input: "ada", status: "not-found" }]]) {
     await assert.rejects(createPeopleAccountsClient(reply(results)).resolve({ inputs: ["ada"] }), e => e.kind === "malformed");
-  const failOpen = await resolveAttributionFailOpen(createPeopleAccountsClient(reply([])), { inputs: ["ada"] });
-  assert.equal(failOpen.error, "malformed");
+  }
+  await assert.rejects(resolveAttributionFailOpen(createPeopleAccountsClient(reply([])), { inputs: ["ada"] }), e => e.kind === "malformed");
   const otherLogin = createPeopleAccountsClient(sdkFor(async () => ({ status: "available", botLogin: "bea-bot", token: TOKEN })));
   await assert.rejects(otherLogin.credential("ada-bot"), e => e.kind === "malformed");
 });
@@ -248,12 +231,12 @@ test("fallback reason keeps participants when skipped names are long and multiby
 
 test("client validates before transport, targets the injected owner, enforces budgets and cancels", async () => {
   let calls = 0, seen;
-  const client = createPeopleAccountsClient(sdkFor(async args => { calls++; seen = args; return { protocol: "bb-people-accounts", versions: [1] }; }), "alt-people");
+  const client = createPeopleAccountsClient(sdkFor(async args => { calls++; seen = args; return { version: 1, entries: [] }; }), "alt-people");
   await assert.rejects(client.credential("bad login"));
   assert.equal(calls, 0);
-  await client.describe();
-  assert.equal(seen.pluginId, "alt-people"); assert.equal(seen.method, "peopleAccountsDescribe"); assert.equal(seen.input, null); assert.ok(seen.signal);
-  await assert.rejects(createPeopleAccountsClient(sdkFor(async () => ({ protocol: "bb-people-accounts", versions: [1], pad: "a".repeat(contract.LIMITS.responseBytes) }))).describe(), e => e.kind === "malformed");
+  await client.roster();
+  assert.equal(seen.pluginId, "alt-people"); assert.equal(seen.method, "peopleAccountsV1Roster"); assert.deepEqual(seen.input, { version: 1 }); assert.ok(seen.signal);
+  await assert.rejects(createPeopleAccountsClient(sdkFor(async () => ({ version: 1, entries: [], pad: "a".repeat(contract.LIMITS.responseBytes) }))).roster(), e => e.kind === "malformed");
   let transport;
   const hanging = createPeopleAccountsClient(sdkFor(({ signal }) => { transport = signal; return new Promise(() => {}); }), undefined, { callMs: 10 });
   await assert.rejects(hanging.roster(), e => e.kind === "timeout");
@@ -263,11 +246,31 @@ test("client validates before transport, targets the injected owner, enforces bu
   await assert.rejects(pending, e => e.kind === "cancelled");
   assert.throws(() => createPeopleAccountsClient(sdkFor(async () => null), undefined, { callMs: 5001 }), /Budget/);
   assert.equal(classifyCallError({ name: "AbortError" }), "cancelled");
-  assert.equal(classifyCallError({ code: "invalid_input", status: 400 }), "incompatible");
+  assert.equal(classifyCallError({ code: "invalid_input", status: 400 }), "malformed");
 });
 
 test("normalizeAliasKey trims, NFC-normalizes, lower-cases and strips one leading @", () => {
   assert.equal(contract.normalizeAliasKey("  @Ada-L "), "ada-l");
   assert.equal(contract.normalizeAliasKey("é"), contract.normalizeAliasKey("é"));
   assert.equal(contract.normalizeAliasKey("@@x"), "@x");
+});
+
+test("opaque keys and resolver inputs share a 512 UTF-8 byte boundary", () => {
+  for (const key of ["x".repeat(512), "é".repeat(256)]) {
+    assert.equal(contract.personKeySchema.parse(key), key);
+    assert.deepEqual(contract.resolveInputSchema.parse({version: 1, inputs: [key]}).inputs, [key]);
+  }
+  for (const key of ["x".repeat(513), "é".repeat(257)]) {
+    assert.equal(contract.personKeySchema.safeParse(key).success, false);
+    assert.equal(contract.resolveInputSchema.safeParse({version: 1, inputs: [key]}).success, false);
+  }
+});
+test("human summary deduplicates logins case-insensitively without credential policy", () => {
+  const other = {...bea, githubLogin: ada.githubLogin.toUpperCase()};
+  const results = [ada, other].map(row => ({input: row.personKey, status: "resolved", person: contract.personSummaryOf(row), matchedBy: "person-key"}));
+  const result = contract.summarizeAttribution(results);
+  assert.deepEqual(result.assignees, [ada.githubLogin]);
+  assert.equal(result.others[0].person.personKey, bea.personKey);
+  assert.equal(result.fallbackReason, null);
+  assert.equal("postAs" in result, false);
 });

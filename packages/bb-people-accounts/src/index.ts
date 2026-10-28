@@ -13,7 +13,7 @@ export const PROTOCOL_VERSION = 1 as const;
 export const LIMITS = Object.freeze({
   /** Names in one resolve request. */
   inputs: 16,
-  inputBytes: 320,
+  inputBytes: 512,
   /** Thread participant labels echoed into a fallback reason. */
   participants: 32,
   participantBytes: 128,
@@ -21,7 +21,7 @@ export const LIMITS = Object.freeze({
   aliasesPerKind: 32,
   aliasBytes: 320,
   displayNameBytes: 128,
-  personKeyLength: 512,
+  personKeyBytes: 512,
   committerNameBytes: 128,
   emailBytes: 254,
   ambiguousCandidates: 8,
@@ -32,15 +32,12 @@ export const LIMITS = Object.freeze({
   /** Names listed in one reason clause before "and N more". */
   reasonNames: 8,
   tokenBytes: 1024,
-  describeVersions: 16,
   /** Decoded canonical JSON bytes admitted from any one call. */
   responseBytes: 262_144,
-  describeMs: 1_000,
   callMs: 5_000,
 });
 
 export const RPC_METHODS = Object.freeze({
-  describe: "peopleAccountsDescribe",
   resolve: "peopleAccountsV1Resolve",
   roster: "peopleAccountsV1Roster",
   credential: "peopleAccountsV1Credential",
@@ -64,8 +61,7 @@ export const githubLoginSchema = z.string().regex(GITHUB_LOGIN, "Must be a GitHu
 const EMAIL = /^[^\s@<>,;"]+@[^\s@<>,;"]+$/;
 export const emailSchema = text(LIMITS.emailBytes, "Email").pipe(z.string().regex(EMAIL, "Must be an email address"));
 /** A bb-identity `IdentityKey`, carried opaquely (same bounds as its codec). */
-export const personKeySchema = z.string().min(1).max(LIMITS.personKeyLength)
-  .refine(value => !CONTROL.test(value), "Person key must not contain control characters");
+export const personKeySchema = text(LIMITS.personKeyBytes, "Person key");
 const committerNameSchema = text(LIMITS.committerNameBytes, "Committer name")
   .refine(value => !/[<>]/.test(value), "Committer name must not contain < or >");
 export const committerSchema = z.strictObject({ name: committerNameSchema, email: emailSchema });
@@ -133,15 +129,13 @@ export const personSummaryV1Schema = z.object({
   githubLogin: githubLoginSchema.nullable(),
   botLogin: githubLoginSchema.nullable(),
   committer: looseCommitter.nullable(),
-  credentialState: credentialStateSchema,
 });
 export type PersonSummaryV1 = z.infer<typeof personSummaryV1Schema>;
 
-export function personSummaryOf(row: Pick<RosterRowV1, "personKey" | "displayName" | "githubLogin" | "botLogin" | "committer" | "credential">): PersonSummaryV1 {
+export function personSummaryOf(row: Pick<RosterRowV1, "personKey" | "displayName" | "githubLogin" | "botLogin" | "committer">): PersonSummaryV1 {
   return {
     personKey: row.personKey, displayName: row.displayName, githubLogin: row.githubLogin,
     botLogin: row.botLogin, committer: row.committer === null ? null : { name: row.committer.name, email: row.committer.email },
-    credentialState: row.credential.state,
   };
 }
 
@@ -168,14 +162,12 @@ export type SkippedV1 = Exclude<ResolutionV1, { status: "resolved" }>;
 
 const namedPerson = z.object({ input: z.string(), person: personSummaryV1Schema });
 export const attributionV1Schema = z.object({
-  /** First resolved input, in request order. Supplies the posting account. */
+  /** First resolved human, in request order. */
   primary: namedPerson.nullable(),
   /** Other distinct resolved people, in request order. */
   others: z.array(namedPerson).max(LIMITS.inputs),
   /** Every input that did not resolve, in request order. */
   skipped: z.array(resolutionV1Schema).max(LIMITS.inputs),
-  /** Bot login to post as; null means the consumer's default account. */
-  postAs: githubLoginSchema.nullable(),
   /** Human GitHub logins of every resolved person, deduplicated, in order. */
   assignees: z.array(githubLoginSchema).max(LIMITS.inputs),
   coAuthors: z.array(looseCommitter).max(LIMITS.inputs),
@@ -185,14 +177,6 @@ export const attributionV1Schema = z.object({
 export type AttributionV1 = z.infer<typeof attributionV1Schema>;
 
 // --- Wire ---------------------------------------------------------------------
-
-export const describeInputSchema = z.null();
-/** Parsed tolerantly (added fields stripped); details are decoded only under a negotiated version. */
-export const describeEnvelopeSchema = z.object({
-  protocol: z.literal(PEOPLE_ACCOUNTS_PROTOCOL),
-  versions: z.array(z.number().int().min(1).max(1000)).min(1).max(LIMITS.describeVersions),
-});
-export type DescribeEnvelope = z.infer<typeof describeEnvelopeSchema>;
 
 export const resolveInputSchema = z.strictObject({
   version: z.literal(1),
@@ -229,22 +213,10 @@ export const credentialResultSchema = z.discriminatedUnion("status", [
 export type CredentialResult = z.infer<typeof credentialResultSchema>;
 
 export const peopleAccountsRpcSchemas = Object.freeze({
-  [RPC_METHODS.describe]: { input: describeInputSchema, output: describeEnvelopeSchema },
   [RPC_METHODS.resolve]: { input: resolveInputSchema, output: resolveResultSchema },
   [RPC_METHODS.roster]: { input: rosterInputSchema, output: rosterResultSchema },
   [RPC_METHODS.credential]: { input: credentialInputSchema, output: credentialResultSchema },
 } as const);
-
-export type Negotiation =
-  | { kind: "ok"; version: 1; versions: number[] }
-  | { kind: "incompatible"; reason: "schema" | "version"; versions?: number[] };
-export function negotiateVersion(envelope: unknown, supported: readonly number[] = [PROTOCOL_VERSION]): Negotiation {
-  const parsed = describeEnvelopeSchema.safeParse(envelope);
-  if (!parsed.success) return { kind: "incompatible", reason: "schema" };
-  const shared = parsed.data.versions.filter(v => supported.includes(v));
-  if (!shared.includes(1)) return { kind: "incompatible", reason: "version", versions: parsed.data.versions };
-  return { kind: "ok", version: 1, versions: parsed.data.versions };
-}
 
 // --- Pure functions -----------------------------------------------------------
 
@@ -288,7 +260,7 @@ function joinClauses(clauses: readonly string[]): string {
 
 /**
  * Deterministic attribution: the first resolved input is primary and supplies
- * the posting account; every resolved person's GitHub login is an assignee;
+ * the human order; every resolved person's GitHub login is an assignee;
  * repeated people collapse to their first mention; ambiguous inputs never pick.
  */
 export function summarizeAttribution(results: readonly ResolutionV1[], participants?: readonly string[]): AttributionV1 {
@@ -302,8 +274,13 @@ export function summarizeAttribution(results: readonly ResolutionV1[], participa
     people.push({ input: result.input, person: result.person });
   }
   const primary = people[0] ?? null;
-  const postAs = primary?.person.botLogin && primary.person.credentialState !== "missing" ? primary.person.botLogin : null;
-  const assignees = [...new Set(people.flatMap(p => p.person.githubLogin === null ? [] : [p.person.githubLogin]))];
+  const logins = new Set<string>();
+  const assignees = people.flatMap(({ person }) => {
+    const login = person.githubLogin;
+    if (login === null || logins.has(login.toLowerCase())) return [];
+    logins.add(login.toLowerCase());
+    return [login];
+  });
   const emails = new Set<string>();
   const coAuthors = people.flatMap(({ person: { committer } }) => {
     if (committer === null || emails.has(committer.email.toLowerCase())) return [];
@@ -311,28 +288,24 @@ export function summarizeAttribution(results: readonly ResolutionV1[], participa
     return [{ name: committer.name, email: committer.email }];
   });
   let outcome = "";
-  if (results.length === 0) outcome = "No people were named, so authorship defaulted to the default account.";
-  else if (primary === null) outcome = "Nobody named matched the roster, so authorship defaulted to the default account.";
-  else if (postAs === null) {
-    const why = primary.person.botLogin === null ? "has no bot account" : `has no token configured for ${primary.person.botLogin}`;
-    outcome = `${shortName(primary.person.displayName)} ${why}, so authorship defaulted to the default account.`;
-  }
+  if (results.length === 0) outcome = "No people were named.";
+  else if (primary === null) outcome = "Nobody named matched the roster.";
   const skippedClause = skipped.length ? clipBytes(`Skipped: ${namesClause(skipped.map(describeSkipped))}.`, REASON_BUDGET.skipped) : "";
   const fallbackReason = outcome || skippedClause
     ? joinClauses([clipBytes(outcome, REASON_BUDGET.outcome), skippedClause, participantsClause(participants)])
     : null;
-  return { primary, others: people.slice(1), skipped, postAs, assignees, coAuthors, fallbackReason };
+  return { primary, others: people.slice(1), skipped, assignees, coAuthors, fallbackReason };
 }
 
 /** Reason for a consumer whose supplier could not be reached at all. */
 export function unavailableReason(kind: string, inputs: readonly string[], participants?: readonly string[]): string {
   const named = inputs.length ? clipBytes(`Named: ${namesClause(inputs.map(i => `"${shortName(i)}"`))}.`, REASON_BUDGET.named) : "";
-  return joinClauses([clipBytes(`People accounts were unavailable (${shortName(kind)}), so authorship defaulted to the default account.`, REASON_BUDGET.outcome), named, participantsClause(participants)]);
+  return joinClauses([clipBytes(`People accounts were unavailable (${shortName(kind)}).`, REASON_BUDGET.outcome), named, participantsClause(participants)]);
 }
 
 /** Attribution for an unreachable supplier: nobody resolved, reason set. */
 export function unavailableAttribution(kind: string, request: ResolveRequest): AttributionV1 {
-  return { primary: null, others: [], skipped: [], postAs: null, assignees: [], coAuthors: [], fallbackReason: unavailableReason(kind, request.inputs, request.participants) };
+  return { primary: null, others: [], skipped: [], assignees: [], coAuthors: [], fallbackReason: unavailableReason(kind, request.inputs, request.participants) };
 }
 
 /** Co-Authored-By trailer lines, one per co-author, in attribution order. */

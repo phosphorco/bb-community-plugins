@@ -1,23 +1,16 @@
 # @phosphorco/bb-people-accounts
 
-People Accounts v1: roster DTOs, per-name resolution, deterministic
-attribution (posting bot, assignees, Co-Authored-By), a fixed RPC protocol, an
-owner-bound client and a conformance kit. The `people-accounts` plugin owns
-the roster, tokens and matching; consumers own their default account and
-wording. Explicit names are trusted attribution; nothing here verifies callers.
+Package 0.1.0 / fixed wire v1 for trusted human attribution.
 
-```ts
-import { coAuthorTrailers } from "@phosphorco/bb-people-accounts";
-import { createPeopleAccountsClient, resolveAttributionFailOpen } from "@phosphorco/bb-people-accounts/bb";
+Root exports schemas, 512-byte key/input bounds, alias normalization, the shared
+summarizeAttribution human summary, trailers and reasons. /bb exports the
+owner-bound client/registration; /testing drives real SDK handlers.
 
-const client = createPeopleAccountsClient(bb.sdk);
-const { attribution } = await resolveAttributionFailOpen(client, { inputs: ["flo"], participants });
-if (attribution.postAs) {
-  // Server only: never log or render the token.
-  const credential = await client.credential(attribution.postAs);
-}
-// attribution.assignees, coAuthorTrailers(attribution), attribution.fallbackReason
-```
+The summary owns primary/others, case-insensitive human assignees and co-authors.
+It has no posting-account or credential/health policy. Consumers combine ordered
+results with the same helper and choose actual credentials/default accounts.
 
-Suppliers: `registerPeopleAccountsSupplier(bb, port)` from `/bb`; prove it
-with `runPeopleAccountsConformance` from `/testing`. See [CONTRACT.md](CONTRACT.md).
+There is no describe/negotiation path. Supplier absence fails open; malformed
+installed v1 contracts throw clear fixed PeopleAccountsCallError messages.
+
+See CONTRACT.md for ownership, exact RPCs, bounds and proof levels.

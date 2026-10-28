@@ -2,9 +2,9 @@ import type { BbPluginApi, JsonValue, StandardSchemaV1 } from "@get-bb/plugin-sd
 import type { PluginBrowserBbSdk } from "@get-bb/plugin-sdk/app";
 import { z } from "zod";
 import {
-  LIMITS, PEOPLE_ACCOUNTS_PLUGIN_ID, PEOPLE_ACCOUNTS_PROTOCOL, PROTOCOL_VERSION, RPC_METHODS,
-  credentialInputSchema, credentialResultSchema, describeEnvelopeSchema, describeInputSchema,
-  negotiateVersion, resolutionOutcomeV1Schema, resolveInputSchema, resolveResultSchema,
+  LIMITS, PEOPLE_ACCOUNTS_PLUGIN_ID, RPC_METHODS,
+  credentialInputSchema, credentialResultSchema,
+  resolutionOutcomeV1Schema, resolveInputSchema, resolveResultSchema,
   rosterInputSchema, rosterResultSchema, rosterRowV1Schema, summarizeAttribution, tokenSchema,
   unavailableAttribution, utf8ByteLength,
   type AttributionV1, type CredentialResult, type PersonSummaryV1, type ResolutionOutcomeV1, type ResolutionV1,
@@ -13,8 +13,8 @@ import {
 
 export type PeopleAccountsSdk = Pick<BbPluginApi["sdk"], "plugins"> | Pick<PluginBrowserBbSdk, "plugins">;
 
-/** Closed per-call failure kinds. Every kind is a normal state for a consumer. */
-export type CallErrorKind = "absent" | "disabled" | "unknown-method" | "timeout" | "incompatible" | "malformed" | "cancelled" | "failed";
+/** Closed transport and contract failure kinds; malformed installed contracts are surfaced. */
+export type CallErrorKind = "absent" | "disabled" | "timeout" | "malformed" | "cancelled" | "failed";
 
 /**
  * Carries only a kind and a fixed message. The transport error is deliberately
@@ -41,23 +41,16 @@ export function classifyCallError(error: unknown): CallErrorKind {
   if (e?.name === "ZodError") return "malformed";
   const body = e?.body as { error?: { code?: unknown } } | null | undefined;
   const code = typeof body?.error?.code === "string" ? body.error.code : e?.code;
-  if (code === "unknown_method") return "unknown-method";
+  if (code === "unknown_method") return "malformed";
   if (code === "plugin_not_found" || code === "unknown_plugin") return "absent";
   if (code === "plugin_disabled" || code === "plugin_not_running" || e?.status === 503) return "disabled";
-  if (code === "invalid_input" || code === "invalid_output") return "incompatible";
+  if (code === "invalid_input" || code === "invalid_output") return "malformed";
   if (e?.status === 404) return "absent";
   return "failed";
 }
 
-export interface PeopleAccountsDescription {
-  protocol: typeof PEOPLE_ACCOUNTS_PROTOCOL;
-  version: 1;
-  versions: number[];
-}
-
 export interface PeopleAccountsClient {
   readonly pluginId: string;
-  describe(signal?: AbortSignal): Promise<PeopleAccountsDescription>;
   resolve(request: ResolveRequest, signal?: AbortSignal): Promise<ResolveResult>;
   roster(signal?: AbortSignal): Promise<RosterResult>;
   /**
@@ -70,7 +63,6 @@ export interface PeopleAccountsClient {
 export interface PeopleAccountsClientOptions {
   /** Budgets may only lower the published upper bounds. */
   callMs?: number;
-  describeMs?: number;
 }
 
 function budget(value: number | undefined, maximum: number): number {
@@ -87,7 +79,6 @@ export function createPeopleAccountsClient(
 ): PeopleAccountsClient {
   const pluginId = z.string().min(1).max(256).parse(targetPluginId);
   const callMs = budget(options.callMs, LIMITS.callMs);
-  const describeMs = budget(options.describeMs, LIMITS.describeMs);
 
   async function call<T>(method: string, input: unknown, inputSchema: z.ZodType, outputSchema: z.ZodType<T>, signal?: AbortSignal): Promise<T> {
     const parsedInput = inputSchema.parse(input);
@@ -103,7 +94,7 @@ export function createPeopleAccountsClient(
     const timer = setTimeout(() => {
       rejectCancellation(new PeopleAccountsCallError("timeout", `${method} timed out`));
       controller.abort();
-    }, method === RPC_METHODS.describe ? describeMs : callMs);
+    }, callMs);
     let value: unknown;
     try {
       value = await Promise.race([
@@ -126,19 +117,12 @@ export function createPeopleAccountsClient(
 
   return {
     pluginId,
-    async describe(signal) {
-      const envelope = await call(RPC_METHODS.describe, null, describeInputSchema, z.unknown(), signal);
-      const negotiated = negotiateVersion(envelope);
-      if (negotiated.kind !== "ok") throw new PeopleAccountsCallError("incompatible", `${pluginId} does not offer People Accounts v1 (${negotiated.reason})`);
-      return { protocol: PEOPLE_ACCOUNTS_PROTOCOL, version: 1, versions: negotiated.versions };
-    },
     async resolve(request, signal) {
       const result = await call(RPC_METHODS.resolve, { version: 1, ...request }, resolveInputSchema, resolveResultSchema, signal);
       if (result.results.length !== request.inputs.length || result.results.some((r, i) => r.input !== request.inputs[i])) {
         throw new PeopleAccountsCallError("malformed", `${RPC_METHODS.resolve} results do not echo the requested inputs in order`);
       }
-      // Attribution is a pure function of the results; recompute rather than trust.
-      return { ...result, attribution: summarizeAttribution(result.results, request.participants) };
+      return result;
     },
     roster: signal => call(RPC_METHODS.roster, { version: 1 }, rosterInputSchema, rosterResultSchema, signal),
     async credential(botLogin, signal) {
@@ -154,19 +138,17 @@ export type FailOpenResolution =
   | { source: "unavailable"; error: CallErrorKind; results: []; attribution: AttributionV1 };
 
 /**
- * Describe, then resolve; never throws for supplier failures. An unreachable,
- * incompatible or malformed supplier yields an attribution with nobody
- * resolved and a plain-text reason, so the consumer proceeds on its default.
- * Invalid request input (a caller bug) still throws before any call.
+ * Call v1 directly. Supplier absence and outages fail open; malformed installed
+ * contracts throw a fixed secret-free error. Caller input validates first.
  */
 export async function resolveAttributionFailOpen(client: PeopleAccountsClient, request: ResolveRequest, signal?: AbortSignal): Promise<FailOpenResolution> {
   resolveInputSchema.parse({ version: 1, ...request });
   try {
-    await client.describe(signal);
     const result = await client.resolve(request, signal);
     return { source: "supplier", results: result.results, attribution: result.attribution };
   } catch (error) {
     const kind = classifyCallError(error);
+    if (kind === "malformed") throw new PeopleAccountsCallError("malformed", "Installed people-accounts does not implement the expected v1 contract.");
     return { source: "unavailable", error: kind, results: [], attribution: unavailableAttribution(kind, request) };
   }
 }
@@ -187,7 +169,6 @@ function projectPerson(person: PersonSummaryV1): PersonSummaryV1 {
   return {
     personKey: person.personKey, displayName: person.displayName, githubLogin: person.githubLogin, botLogin: person.botLogin,
     committer: person.committer === null ? null : { name: person.committer.name, email: person.committer.email },
-    credentialState: person.credentialState,
   };
 }
 function projectRosterRow(row: RosterRowV1): RosterRowV1 {
@@ -228,13 +209,12 @@ function sdkSchema<T>(schema: z.ZodType<T>): StandardSchemaV1<T> {
 }
 
 /**
- * Register the fixed describe and v1 methods over a supplier port. The helper
+ * Register the fixed v1 methods over a supplier port. The helper
  * echoes inputs in order, computes attribution with `summarizeAttribution`,
  * and returns credentials by documented convention to backend callers.
  */
 export function registerPeopleAccountsSupplier(bb: Pick<BbPluginApi, "rpc">, port: PeopleAccountsSupplierPort): void {
   const contract = {
-    [RPC_METHODS.describe]: { input: sdkSchema(describeInputSchema), output: sdkSchema(describeEnvelopeSchema) },
     [RPC_METHODS.resolve]: { input: sdkSchema(resolveInputSchema), output: sdkSchema(resolveResultSchema) },
     [RPC_METHODS.roster]: { input: sdkSchema(rosterInputSchema), output: sdkSchema(rosterResultSchema) },
     [RPC_METHODS.credential]: { input: sdkSchema(credentialInputSchema), output: sdkSchema(credentialResultSchema) },
@@ -251,7 +231,6 @@ export function registerPeopleAccountsSupplier(bb: Pick<BbPluginApi, "rpc">, por
     catch { throw new Error(`${method}: the people-accounts supplier failed`); }
   };
   bb.rpc.register(contract, {
-    [RPC_METHODS.describe]: () => ({ protocol: PEOPLE_ACCOUNTS_PROTOCOL, versions: [PROTOCOL_VERSION] }),
     [RPC_METHODS.resolve]: guard(RPC_METHODS.resolve, async (input: z.infer<typeof resolveInputSchema>) => {
       const results: ResolutionV1[] = [];
       for (const name of input.inputs) {
