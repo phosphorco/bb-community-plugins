@@ -1,13 +1,14 @@
 import { createFakePluginHost } from '@get-bb/plugin-sdk/testing';
 import type { BbPluginApi } from '@get-bb/plugin-sdk';
-import { METHODS, LIMITS, readInputSchema, detailInputSchema, describeEnvelopeSchema, parseBounded, negotiateVersion, validateReadResult, validateDetailResult } from './index.js';
-import type { ReadInput, DetailInput } from './index.js';
+import { RECENT_LIMITS,recentSnapshotInputSchema,validateRecentSnapshot,METHODS, LIMITS, readInputSchema, detailInputSchema, describeEnvelopeSchema, parseBounded, negotiateVersion, validateReadResult, validateDetailResult } from './index.js';
+import type { RecentSnapshotInput,ReadInput, DetailInput } from './index.js';
 export interface ConformanceOptions {
  pluginId:string;
  /** The adopter's real factory/registration, never a second implementation. */
  register(bb:BbPluginApi):void|Promise<void>;
  readCases:readonly ReadInput[];
  detailCases?:readonly DetailInput[];
+ recentCases?:readonly RecentSnapshotInput[];
  deadlineMs?:number;
 }
 export interface ConformanceReport {passed:boolean;checks:{name:string;passed:boolean;error?:string}[];proof:'source-conformance'}
@@ -22,8 +23,8 @@ export async function runSupplierConformance(options:ConformanceOptions):Promise
  async function rejectsInput(method:string,input:unknown){try{await call(method,input);}catch(e){if(validationError(e))return;throw new Error('Expected structured invalid_input or ZodError');}throw new Error('Invalid input accepted');}
  try{
   await options.register(host.bb);
-  let detail=false;
-  await check('describe-negotiation',async()=>{const n=negotiateVersion(parseBounded(describeEnvelopeSchema,await call(METHODS.describe,{}),LIMITS.describeBytes));if(n.kind!=='ready')throw new Error('No compatible v1');detail=n.capabilities.detail;});
+  let detail=false,recent=false;
+  await check('describe-negotiation',async()=>{const n=negotiateVersion(parseBounded(describeEnvelopeSchema,await call(METHODS.describe,{}),LIMITS.describeBytes));if(n.kind!=='ready')throw new Error('No compatible v1');detail=n.capabilities.detail;recent=Boolean(n.capabilities.recentSnapshotV1);});
   await check('strict-describe-input',()=>rejectsInput(METHODS.describe,{unexpected:true}));
   for(let i=0;i<options.readCases.length;i++)await check(`read-${i}`,async()=>{const input=parseBounded(readInputSchema,options.readCases[i],LIMITS.inputBytes);validateReadResult(input,await call(METHODS.read,input));});
   await check('strict-read-input',()=>rejectsInput(METHODS.read,{...options.readCases[0],unexpected:true}));
@@ -36,6 +37,7 @@ export async function runSupplierConformance(options:ConformanceOptions):Promise
    if(new TextEncoder().encode(JSON.stringify(oversized)).byteLength<=LIMITS.inputBytes)throw new Error('Byte fixture is not oversized');
    await rejectsInput(METHODS.read,oversized);
   });
+  if(recent){if(!options.recentCases?.length)checks.push({name:'recent-cases-required',passed:false,error:'Advertised recent snapshot needs real cases'});for(let i=0;i<(options.recentCases?.length??0);i++)await check(`recent-${i}`,async()=>{const input=parseBounded(recentSnapshotInputSchema,options.recentCases![i],RECENT_LIMITS.inputBytes);validateRecentSnapshot(input,await call(METHODS.recentSnapshot,input));});await check('strict-recent-input',()=>rejectsInput(METHODS.recentSnapshot,{unexpected:true}));}
   if(detail){if(!options.detailCases?.length)checks.push({name:'detail-cases-required',passed:false,error:'Advertised detail needs real cases'});for(let i=0;i<(options.detailCases?.length??0);i++)await check(`detail-${i}`,async()=>{const input=parseBounded(detailInputSchema,options.detailCases![i],LIMITS.inputBytes);validateDetailResult(input,await call(METHODS.detail,input));});await check('strict-detail-input',()=>rejectsInput(METHODS.detail,{...options.detailCases?.[0],unexpected:true}));}
  }finally{await host.harness.lifecycle.dispose();}
  return {passed:checks.every(c=>c.passed),checks,proof:'source-conformance'};

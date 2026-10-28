@@ -1,8 +1,8 @@
 import { z } from 'zod';
 import type { BbPluginApi, JsonValue, StandardSchemaV1 } from '@get-bb/plugin-sdk';
 import type { PluginBrowserBbSdk } from '@get-bb/plugin-sdk/app';
-import { LIMITS, METHODS, describeInputSchema, describeEnvelopeSchema, capabilitiesSchema, readInputSchema, detailInputSchema, parseBounded, negotiateVersion, validateReadResult, validateDetailResult, classifyOwnerError } from './index.js';
-import type { ReadInput, ReadResult, DetailInput, DetailResult, Capabilities, OwnerErrorKind } from './index.js';
+import { RECENT_LIMITS,recentSnapshotInputSchema,validateRecentSnapshot,LIMITS, METHODS, describeInputSchema, describeEnvelopeSchema, capabilitiesSchema, readInputSchema, detailInputSchema, parseBounded, negotiateVersion, validateReadResult, validateDetailResult, classifyOwnerError } from './index.js';
+import type { RecentSnapshotInput,RecentSnapshotResult,ReadInput, ReadResult, DetailInput, DetailResult, Capabilities, OwnerErrorKind } from './index.js';
 export type MetricsSdk={readonly plugins:Pick<BbPluginApi['sdk']['plugins'],'list'|'callRpc'>}|{readonly plugins:Pick<PluginBrowserBbSdk['plugins'],'list'|'callRpc'>};
 function sdkSchema<T>(schema:z.ZodType<T>,maxBytes?:number):StandardSchemaV1<T>{
  return {'~standard':{version:1,vendor:'bb-thread-metrics',jsonSchema:{input:()=>z.toJSONSchema(schema,{io:'input',unrepresentable:'any'}),output:()=>z.toJSONSchema(schema,{io:'output',unrepresentable:'any'})},validate(value){try{return {value:maxBytes===undefined?schema.parse(value):parseBounded(schema,value,maxBytes)};}catch(e){return {issues:e instanceof z.ZodError?e.issues.map(i=>({message:i.message,path:i.path})):[{message:'Payload byte limit'}]};}}}};
@@ -11,9 +11,11 @@ export interface MetricsPort {
  capabilities:Capabilities;
  read(input:ReadInput):Promise<ReadResult>;
  detail?(input:DetailInput):Promise<DetailResult>;
+ recentSnapshot?(input:RecentSnapshotInput):Promise<RecentSnapshotResult>;
 }
 export function registerThreadMetricsOwner(bb:Pick<BbPluginApi,'rpc'>,port:MetricsPort):void{
  const capabilities=capabilitiesSchema.parse(port.capabilities);
+ if(Boolean(capabilities.recentSnapshotV1)!==Boolean(port.recentSnapshot))throw new Error('Recent snapshot capability/handler mismatch');
  if(capabilities.detail!==Boolean(port.detail))throw new Error('Detail capability/handler mismatch');
  const describe=()=>({protocol:'bb-thread-metrics' as const,versions:[1],capabilities});
  // Unknown schemas preserve the full wire object until byte admission and semantic validation.
@@ -30,6 +32,9 @@ export function registerThreadMetricsOwner(bb:Pick<BbPluginApi,'rpc'>,port:Metri
   },
  };
  bb.rpc.register(contract,handlers,{experimental_discoverable:true});
+ if(port.recentSnapshot)bb.rpc.register({threadMetricsRecentSnapshotV1:{input:sdkSchema(recentSnapshotInputSchema,RECENT_LIMITS.inputBytes),output:sdkSchema(z.unknown())}},{threadMetricsRecentSnapshotV1:async(raw:unknown)=>{
+  const input=parseBounded(recentSnapshotInputSchema,raw,RECENT_LIMITS.inputBytes);return validateRecentSnapshot(input,await port.recentSnapshot!(input));
+ }},{experimental_discoverable:true});
  if(port.detail)bb.rpc.register({threadMetricsDetailV1:{input:sdkSchema(detailInputSchema,LIMITS.inputBytes),output:sdkSchema(z.unknown())}},{threadMetricsDetailV1:async(raw:unknown)=>{
   const input=parseBounded(detailInputSchema,raw,LIMITS.inputBytes);return validateDetailResult(input,await port.detail!(input));
  }},{experimental_discoverable:true});
@@ -42,6 +47,7 @@ export function createThreadMetricsClient(sdk:MetricsSdk,pluginId:string){
  return {
   pluginId,
   async describe(signal?:AbortSignal){const raw=await call(METHODS.describe,{},signal);return negotiateVersion(parseBounded(describeEnvelopeSchema,raw,LIMITS.describeBytes));},
+  async recentSnapshot(raw:RecentSnapshotInput={},signal?:AbortSignal){const input=parseBounded(recentSnapshotInputSchema,raw,RECENT_LIMITS.inputBytes);return validateRecentSnapshot(input,await call(METHODS.recentSnapshot,input,signal));},
   async read(raw:ReadInput,signal?:AbortSignal){const input=parseBounded(readInputSchema,raw,LIMITS.inputBytes);return validateReadResult(input,await call(METHODS.read,input,signal));},
   async detail(raw:DetailInput,signal?:AbortSignal){const input=parseBounded(detailInputSchema,raw,LIMITS.inputBytes);return validateDetailResult(input,await call(METHODS.detail,input,signal));},
  };
