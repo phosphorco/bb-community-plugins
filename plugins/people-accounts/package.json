@@ -1,0 +1,82 @@
+{
+  "name": "@phosphorco/bb-plugin-people-accounts",
+  "version": "0.1.0",
+  "type": "module",
+  "license": "MIT",
+  "description": "Resolve people to GitHub bots and human commit attribution with self-service token diagnostics.",
+  "author": "Phosphor",
+  "homepage": "https://github.com/phosphorco/bb-community-plugins/tree/main/plugins/people-accounts#readme",
+  "bugs": {
+    "url": "https://github.com/phosphorco/bb-community-plugins/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/phosphorco/bb-community-plugins.git",
+    "directory": "plugins/people-accounts"
+  },
+  "keywords": [
+    "bb",
+    "bb-plugin",
+    "github",
+    "attribution"
+  ],
+  "engines": {
+    "bb": ">=0.46.1 <1.0.0",
+    "bbPluginSdk": ">=0.6.52"
+  },
+  "bb": {
+    "name": "People Accounts",
+    "description": "Your roster row, bot token and attribution diagnostics.",
+    "branding": {
+      "icon": "Users"
+    },
+    "server": "./server.ts",
+    "app": "./app.tsx",
+    "skills": []
+  },
+  "files": [
+    "dist/",
+    "README.md",
+    "LICENSE",
+    "server.ts",
+    "rpc-contract.ts",
+    "resolver.ts",
+    "model.ts",
+    "cli/",
+    "test/",
+    "app.tsx",
+    "app.css",
+    "lib/"
+  ],
+  "dependencies": {
+    "@phosphorco/bb-identity": "0.4.1",
+    "@phosphorco/bb-people-accounts": "0.1.0-attribution.0",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@get-bb/plugin-sdk": "0.6.52",
+    "@testing-library/react": "^16.3.2",
+    "@types/better-sqlite3": "^7.6.12",
+    "@types/bun": "1.3.14",
+    "@types/jsdom": "^27.0.0",
+    "@types/node": "^22",
+    "@types/react": "19.2.2",
+    "@types/react-dom": "19.2.2",
+    "better-sqlite3": "^12.0.0",
+    "bun": "1.3.14",
+    "jsdom": "^27.0.0",
+    "react": "19.2.1",
+    "react-dom": "19.2.1",
+    "typescript": "^5.9.3"
+  },
+  "scripts": {
+    "build": "node ../../tools/bb-target-cli.mjs plugin build .",
+    "dev": "node ../../tools/bb-target-cli.mjs plugin dev .",
+    "test": "bun test test/*.test.ts test/*.test.tsx",
+    "typecheck": "tsc --noEmit"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org"
+  }
+}

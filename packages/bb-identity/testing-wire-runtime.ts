@@ -115,7 +115,6 @@ function createMultiUserProtocol(instanceId: string, initial: ActorSnapshot & { 
     async historyContributions() { return ok({ status: 'unavailable' as const, reason: 'unsupported' as const }); },
     async historyAttempts() { return ok({ status: 'unavailable' as const, reason: 'unsupported' as const }); },
     directorySources: () => [directory],
-    participants: unsupported,
     async forwardRpc(_scope, _destination, input) { return input; },
     registerProvider: unsupported,
     subscribe(listener) { listeners.add(listener); return () => listeners.delete(listener); },
