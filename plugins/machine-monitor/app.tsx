@@ -1301,13 +1301,15 @@ function MachineSectionsEditor({ text, storedErrors, sections, counts, machines 
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState(text);
   const [status, setStatus] = useState<Readonly<{ saving: boolean; message: string | null; error: boolean }>>({ saving: false, message: null, error: false });
-  const savedText = useRef(text);
+  const [baseline, setBaseline] = useState(text);
   const saveToken = useRef(0);
-  // Adopt the authoritative text unless this draft has local edits.
-  useEffect(() => {
-    setDraft((current) => current === savedText.current ? text : current);
-    savedText.current = text;
-  }, [text]);
+  // Adopt new authoritative text (a settings load after mount, another
+  // user's save) unless this draft has local edits. Compared during render
+  // against rendered values, so no deferred updater can read a moved ref.
+  if (text !== baseline) {
+    setBaseline(text);
+    if (draft === baseline) setDraft(text);
+  }
   const preview = useMemo(() => parseMachineSections(draft), [draft]);
   const dirty = draft !== text;
   const save = () => {
@@ -1317,10 +1319,9 @@ function MachineSectionsEditor({ text, storedErrors, sections, counts, machines 
     setStatus({ saving: true, message: null, error: false });
     void rpc.call("saveMachineSections", { text: submitted }).then((result) => {
       if (token !== saveToken.current) return;
-      // Treat the acknowledged value as the baseline; the draft adopts it
-      // only if nothing was typed while the save was in flight.
+      // The baseline stays the authoritative settings text; it catches up
+      // when the saved value arrives. Keep anything typed during the save.
       setDraft((current) => current === submitted ? result.text : current);
-      savedText.current = result.text;
       setStatus({ saving: false, message: "Saved for everyone.", error: false });
     }).catch((cause) => {
       if (token === saveToken.current) setStatus({ saving: false, message: errorText(cause, "Could not save sections."), error: true });

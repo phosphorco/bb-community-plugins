@@ -265,6 +265,23 @@ test("another user's saved sections reach an open reader through realtime", asyn
   slot.lifecycle.unmount();
 });
 
+test("the editor adopts saved sections that load after it mounts", async () => {
+  const app = await loadPluginApp(() => import("../app.tsx"));
+  // No settings yet: the page starts from the built-in default, as it does
+  // while the real settings snapshot loads.
+  const slot = renderSlot(app.navPanels[0]!, { subPath: "" }, {
+    rpc: fleetRpc(() => overview([machine(alpha, "b1-hel")]), (request) => timeline(request)),
+  } as any);
+  const editor = await slot.findByRole("textbox", { name: "Machine sections" }) as HTMLTextAreaElement;
+  expect(editor.value).toBe(`* "All"`);
+  const loaded = `* "All"\nb*-hel "Hetzner Builder"`;
+  await slot.behavior.emitRealtime("machine-monitor-sections", { text: loaded });
+  await waitFor(() => expect(editor.value).toBe(loaded));
+  expect((slot.getByRole("button", { name: "Save sections" }) as HTMLButtonElement).disabled).toBe(true);
+  expect((slot.getByRole("button", { name: "Discard" }) as HTMLButtonElement).disabled).toBe(true);
+  slot.lifecycle.unmount();
+});
+
 test("configured sections filter the compact list and save edits for everyone", async () => {
   const app = await loadPluginApp(() => import("../app.tsx"));
   const saved: string[] = [];
