@@ -31,6 +31,12 @@ export type MachineSectionsParseResult = Readonly<{
 }>;
 
 const MAX_ALTERNATIVES = 64;
+/**
+ * Matching cost grows with the total expanded pattern length (every machine
+ * is tested against every alternative on each overview), so bound it across
+ * the whole configuration rather than per line.
+ */
+export const MAX_EXPANDED_PATTERN_CHARS = 1024;
 
 /** Expand `{a,b}` (nested allowed) into brace-free alternatives. */
 function expandBraces(pattern: string, start: number, closing: boolean): { alternatives: string[]; end: number } {
@@ -145,6 +151,11 @@ export function parseMachineSections(text: string): MachineSectionsParseResult {
       errors.push(`Line ${lineNumber} ${cause instanceof Error ? cause.message : String(cause)}.`);
     }
   });
+  const expanded = sections.reduce((total, section) => total + section.alternatives.reduce((sum, alternative) => sum + alternative.length, 0), 0);
+  if (expanded > MAX_EXPANDED_PATTERN_CHARS) {
+    errors.push(`Patterns expand to ${expanded} characters in total; simplify them to at most ${MAX_EXPANDED_PATTERN_CHARS}.`);
+  }
+  if (sections.length === 0 && errors.length === 0) errors.push("Add at least one section.");
   return { sections, errors };
 }
 
@@ -162,6 +173,11 @@ export function machineInSection(section: MachineSection, machine: Readonly<{ la
 
 type SectionMember = Readonly<{ label: string; machine: Readonly<{ machineId: string }> }>;
 
+/** Membership of one machine in each section, in configuration order. */
+export function sectionMembership(sections: readonly MachineSection[], machine: SectionMember): boolean[] {
+  return sections.map((section) => machineInSection(section, machine));
+}
+
 const machineNameCollator = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" });
 
 /**
@@ -171,8 +187,12 @@ const machineNameCollator = new Intl.Collator(undefined, { numeric: true, sensit
  * most specific first, so the narrowest section groups machines and broader
  * ones subdivide them; names then sort naturally (b2 before b10).
  */
-export function orderMachinesBySections<T extends SectionMember>(machines: readonly T[], sections: readonly MachineSection[]): T[] {
-  const membership = machines.map((machine) => sections.map((section) => machineInSection(section, machine)));
+export function orderMachinesBySections<T extends SectionMember>(
+  machines: readonly T[],
+  sections: readonly MachineSection[],
+  membershipOf: (machine: T) => readonly boolean[] = (machine) => sectionMembership(sections, machine),
+): T[] {
+  const membership = machines.map(membershipOf);
   const rankOf = new Map(sections
     .map((section, index) => ({ index, size: membership.filter((row) => row[index]).length }))
     .sort((left, right) => left.size - right.size || left.index - right.index)
@@ -187,8 +207,10 @@ export function orderMachinesBySections<T extends SectionMember>(machines: reado
       const delta = left.ranks[index]! - right.ranks[index]!;
       if (delta !== 0) return delta;
     }
-    // Machines in no section at all sort after every sectioned machine.
-    if ((left.ranks.length === 0) !== (right.ranks.length === 0)) return left.ranks.length === 0 ? 1 : -1;
+    // On a shared prefix the more categorized machine comes first (and
+    // machines in no section last). Deciding here, before names, keeps the
+    // comparison a total order when sections overlap.
+    if (left.ranks.length !== right.ranks.length) return right.ranks.length - left.ranks.length;
     return machineNameCollator.compare(left.machine.label, right.machine.label)
       || machineNameCollator.compare(left.machine.machine.machineId, right.machine.machine.machineId)
       || left.position - right.position;

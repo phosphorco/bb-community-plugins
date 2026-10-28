@@ -29,9 +29,9 @@ import {
 } from "./fleet-contract.ts";
 import {
   DEFAULT_MACHINE_SECTIONS,
-  machineInSection,
   orderMachinesBySections,
   parseMachineSections,
+  sectionMembership,
   type MachineSection,
 } from "./machine-sections.ts";
 import type { MachineMonitorHealth, rpcContract } from "./rpc-contract.ts";
@@ -665,10 +665,14 @@ function useFleetMonitor(route: MonitorRoute) {
     if (source == null) return;
     const routed = routeKey == null ? undefined : source.machines.find((machine) => machineIdentityKey(machine.machine) === routeKey);
     const target = routed ?? selectedMachine() ?? source.machines[0];
-    if (target == null || machineIdentityKey(target.machine) === selectedKeyRef.current) return;
-    // Entering from a section: history should end at the latest overview.
-    if (selectedKeyRef.current == null) anchorRange(source.generatedAtMs);
-    chooseMachine(target);
+    if (target == null) return;
+    if (machineIdentityKey(target.machine) !== selectedKeyRef.current) {
+      // Entering from a section: history should end at the latest overview.
+      if (selectedKeyRef.current == null) anchorRange(source.generatedAtMs);
+      chooseMachine(target);
+    }
+    // Mark the fallback even when the shown machine is unchanged (A → absent
+    // B keeps A) so B's later arrival still replaces it.
     fallbackSelectionRef.current = routed == null && routeKey != null;
   }, [anchorRange, chooseMachine, route.kind, routeKey, selectedMachine]);
 
@@ -1093,10 +1097,11 @@ const MachineNoticeRail = memo(function MachineNoticeRail({ machine, connection,
   </aside>;
 });
 
-const SelectedMachineOverview = memo(function SelectedMachineOverview({ machine, machines, sections, rangeHours, timelineView, timelineLoading, timelineError, inventory, inventoryLoading, inventoryError, connection, onSwitch, onRange, onActivateEvent }: {
+const SelectedMachineOverview = memo(function SelectedMachineOverview({ machine, machines, sections, sectionCounts, rangeHours, timelineView, timelineLoading, timelineError, inventory, inventoryLoading, inventoryError, connection, onSwitch, onRange, onActivateEvent }: {
   machine: FleetMachine;
   machines: readonly FleetMachine[];
   sections: readonly MachineSection[];
+  sectionCounts: readonly number[];
   rangeHours: RangeHours;
   timelineView: TimelineView;
   timelineLoading: boolean;
@@ -1130,7 +1135,7 @@ const SelectedMachineOverview = memo(function SelectedMachineOverview({ machine,
     <header>
       <div>
         <h2 id="machine-monitor-selected-heading" className="machine-monitor__visually-hidden">{machine.label}</h2>
-        <MachineSwitcher label="Selected machine" value={`machine:${selectedMachineKey}`} machines={machines} sections={sections} onSwitch={onSwitch} />
+        <MachineSwitcher label="Selected machine" value={`machine:${selectedMachineKey}`} machines={machines} sections={sections} counts={sectionCounts} onSwitch={onSwitch} />
         <p>{`${connectionText(machine)} · ${generationText(machine)}`}</p>
       </div>
       <div className="machine-monitor__selected-controls">
@@ -1172,12 +1177,44 @@ const SelectedMachineOverview = memo(function SelectedMachineOverview({ machine,
 
 type SwitchTarget = Readonly<{ kind: "section"; section: MachineSection }> | Readonly<{ kind: "machine"; machine: FleetMachine }>;
 
+type SectionMembership = Readonly<{
+  /** Membership per section in configuration order. */
+  of: (machine: FleetMachine) => readonly boolean[];
+  counts: readonly number[];
+}>;
+
+const MEMBERSHIP_CACHE_LIMIT = 1_024;
+
+/**
+ * Overviews arrive every collection while names and sections rarely change,
+ * so membership is matched once per (sections, name, ID) and shared by the
+ * ordering, switcher counts, and section table.
+ */
+function useSectionMembership(sections: readonly MachineSection[], machines: readonly FleetMachine[]): SectionMembership {
+  const cache = useRef<{ sections: readonly MachineSection[]; rows: Map<string, readonly boolean[]> }>({ sections, rows: new Map() });
+  if (cache.current.sections !== sections || cache.current.rows.size > MEMBERSHIP_CACHE_LIMIT) cache.current = { sections, rows: new Map() };
+  const rows = cache.current.rows;
+  return useMemo(() => {
+    const of = (machine: FleetMachine) => {
+      const key = `${machine.label}\u0000${machine.machine.machineId}`;
+      let row = rows.get(key);
+      if (row == null) {
+        row = sectionMembership(sections, machine);
+        rows.set(key, row);
+      }
+      return row;
+    };
+    return { of, counts: sections.map((_, index) => machines.filter((machine) => of(machine)[index]).length) };
+  }, [machines, rows, sections]);
+}
+
 /** One control for both page kinds: configured sections, then machines. */
-const MachineSwitcher = memo(function MachineSwitcher({ label, value, machines, sections, onSwitch }: {
+const MachineSwitcher = memo(function MachineSwitcher({ label, value, machines, sections, counts, onSwitch }: {
   label: string;
   value: string;
   machines: readonly FleetMachine[];
   sections: readonly MachineSection[];
+  counts: readonly number[];
   onSwitch: (target: SwitchTarget) => void;
 }) {
   const change = useCallback((event: ChangeEvent<HTMLSelectElement>) => {
@@ -1195,7 +1232,7 @@ const MachineSwitcher = memo(function MachineSwitcher({ label, value, machines, 
     <span className="machine-monitor__visually-hidden">{label}</span>
     <select id="machine-monitor-selected-title" value={value} onChange={change}>
       <optgroup label="Sections">
-        {sections.map((section) => <option key={section.slug} value={`section:${section.slug}`}>{`${section.title} (${machines.filter((machine) => machineInSection(section, machine)).length})`}</option>)}
+        {sections.map((section, index) => <option key={section.slug} value={`section:${section.slug}`}>{`${section.title} (${counts[index] ?? 0})`}</option>)}
       </optgroup>
       <optgroup label="Machines">
         {machines.map((candidate) => <option key={machineIdentityKey(candidate.machine)} value={`machine:${machineIdentityKey(candidate.machine)}`}>{candidate.label}</option>)}
@@ -1251,13 +1288,17 @@ const CompactMachineRow = memo(function CompactMachineRow({ machine, recency, hr
   </tr>;
 });
 
-function MachineSectionsEditor({ text, storedErrors, sections, machines }: {
+function MachineSectionsEditor({ text, storedErrors, sections, counts, machines }: {
   text: string;
   storedErrors: readonly string[];
   sections: readonly MachineSection[];
+  counts: readonly number[];
   machines: readonly FleetMachine[];
 }) {
   const rpc = useRpc<typeof rpcContract>();
+  const helpId = useId();
+  const errorsId = useId();
+  const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState(text);
   const [status, setStatus] = useState<Readonly<{ saving: boolean; message: string | null; error: boolean }>>({ saving: false, message: null, error: false });
   const savedText = useRef(text);
@@ -1285,19 +1326,27 @@ function MachineSectionsEditor({ text, storedErrors, sections, machines }: {
       if (token === saveToken.current) setStatus({ saving: false, message: errorText(cause, "Could not save sections."), error: true });
     });
   };
+  // Matching a draft costs one pass per machine, so only while it is shown.
+  const previewCounts = useMemo(() => !open ? [] : dirty
+    ? preview.sections.map((_, index) => machines.filter((machine) => sectionMembership(preview.sections, machine)[index]).length)
+    : counts, [counts, dirty, machines, open, preview.sections]);
   const previewSections = dirty ? preview.sections : sections;
-  return <details className="machine-monitor__sections-editor">
+  const invalid = preview.errors.length > 0;
+  const storedInvalid = storedErrors.length > 0 && !dirty;
+  return <details className="machine-monitor__sections-editor" open={open} onToggle={(event) => setOpen((event.currentTarget as HTMLDetailsElement).open)}>
     <summary>Edit sections <span>{`${sections.length} section${sections.length === 1 ? "" : "s"} · shared with everyone`}</span></summary>
     <div>
-      <p>One section per line: a name pattern, then a quoted title. <code>*</code> and <code>?</code> are wildcards and <code>{"{a,b}"}</code> matches either name; patterns match machine names or IDs, ignoring case. The first section is the default page.</p>
-      <textarea aria-label="Machine sections" spellCheck={false} rows={Math.min(12, Math.max(4, draft.split("\n").length + 1))} value={draft} onChange={(event) => { setDraft(event.target.value); setStatus((current) => ({ ...current, message: null, error: false })); }} />
-      {storedErrors.length > 0 && !dirty && <p className="machine-monitor__sections-errors" role="alert">{`The saved sections are invalid, so the default "All" section is shown until they are fixed. ${storedErrors.join(" ")}`}</p>}
-      {preview.errors.length > 0 && <ul className="machine-monitor__sections-errors" role="alert">{preview.errors.map((error) => <li key={error}>{error}</li>)}</ul>}
+      <p id={helpId}>One section per line: a name pattern, then a quoted title. <code>*</code> and <code>?</code> are wildcards and <code>{"{a,b}"}</code> matches either name; patterns match machine names or IDs, ignoring case. The first section is the default page.</p>
+      <textarea aria-label="Machine sections" aria-invalid={invalid || undefined} aria-describedby={invalid || storedInvalid ? `${helpId} ${errorsId}` : helpId} spellCheck={false} rows={Math.min(12, Math.max(4, draft.split("\n").length + 1))} value={draft} onChange={(event) => { setDraft(event.target.value); setStatus((current) => ({ ...current, message: null, error: false })); }} />
+      <div id={errorsId} role="alert">
+        {storedInvalid && <p className="machine-monitor__sections-errors">{`The saved sections are invalid, so the default "All" section is shown until they are fixed. ${storedErrors.join(" ")}`}</p>}
+        {invalid && <ul className="machine-monitor__sections-errors">{preview.errors.map((error) => <li key={error}>{error}</li>)}</ul>}
+      </div>
       <ul className="machine-monitor__sections-preview" aria-label="Section matches">
-        {previewSections.map((section) => <li key={section.slug}><strong>{section.title}</strong><code>{section.pattern}</code><span>{`${machines.filter((machine) => machineInSection(section, machine)).length} machines`}</span></li>)}
+        {open && previewSections.map((section, index) => <li key={section.slug}><strong>{section.title}</strong><code>{section.pattern}</code><span>{`${previewCounts[index] ?? 0} machines`}</span></li>)}
       </ul>
       <div className="machine-monitor__sections-actions">
-        <button type="button" disabled={!dirty || status.saving || preview.errors.length > 0 || preview.sections.length === 0} onClick={save}>{status.saving ? "Saving…" : "Save sections"}</button>
+        <button type="button" disabled={!dirty || status.saving || invalid} onClick={save}>{status.saving ? "Saving…" : "Save sections"}</button>
         <button type="button" disabled={!dirty || status.saving} onClick={() => setDraft(text)}>Discard</button>
         <button type="button" disabled={status.saving || draft === DEFAULT_MACHINE_SECTIONS} onClick={() => setDraft(DEFAULT_MACHINE_SECTIONS)}>Use default</button>
         {status.message != null && <span role={status.error ? "alert" : "status"} data-error={status.error || undefined}>{status.message}</span>}
@@ -1306,8 +1355,9 @@ function MachineSectionsEditor({ text, storedErrors, sections, machines }: {
   </details>;
 }
 
-const MachineSectionView = memo(function MachineSectionView({ section, sections, sectionsText, storedErrors, machines, nowMs, onSwitch, onIntent }: {
+const MachineSectionView = memo(function MachineSectionView({ section, sections, membership, sectionsText, storedErrors, machines, nowMs, onSwitch, onIntent }: {
   section: MachineSection;
+  membership: SectionMembership;
   storedErrors: readonly string[];
   nowMs: number;
   sections: readonly MachineSection[];
@@ -1317,7 +1367,8 @@ const MachineSectionView = memo(function MachineSectionView({ section, sections,
   onIntent: (machine: FleetMachine) => void;
 }) {
   const pluginId = experimental_usePluginId();
-  const members = useMemo(() => machines.filter((machine) => machineInSection(section, machine)), [machines, section]);
+  const sectionIndex = sections.indexOf(section);
+  const members = useMemo(() => machines.filter((machine) => membership.of(machine)[sectionIndex]), [machines, membership, sectionIndex]);
   const attention = members.filter((machine) => fleetAtlasPresentation(machine).utilization.state === "attention").length;
   const measured = members.filter((machine) => fleetAtlasPresentation(machine).utilization.state !== "unavailable").length;
   const signals = members.filter((machine) => {
@@ -1329,7 +1380,7 @@ const MachineSectionView = memo(function MachineSectionView({ section, sections,
     <header>
       <div>
         <h2 id="machine-monitor-section-heading" className="machine-monitor__visually-hidden">{section.title}</h2>
-        <MachineSwitcher label="Machine Monitor view" value={`section:${section.slug}`} machines={machines} sections={sections} onSwitch={onSwitch} />
+        <MachineSwitcher label="Machine Monitor view" value={`section:${section.slug}`} machines={machines} sections={sections} counts={membership.counts} onSwitch={onSwitch} />
         <p>{`${members.length} machine${members.length === 1 ? "" : "s"} matching ${section.pattern}`}</p>
       </div>
       <span className="machine-monitor__fleet-generation">{members.length === 0 ? "No matching machines" : attention > 0 ? `${attention} at ≥${FLEET_UTILIZATION_ATTENTION_PERCENT}%` : measured === 0 ? "Utilization unavailable" : `Utilization below ${FLEET_UTILIZATION_ATTENTION_PERCENT}%${measured < members.length ? ` · ${members.length - measured} unmeasured` : ""}`}{signals > 0 ? ` · ${signals} health signal${signals === 1 ? "" : "s"}` : ""}</span>
@@ -1343,7 +1394,7 @@ const MachineSectionView = memo(function MachineSectionView({ section, sections,
         })}</tbody>
       </table>
     </div>}
-    <MachineSectionsEditor text={sectionsText} storedErrors={storedErrors} sections={sections} machines={machines} />
+    <MachineSectionsEditor text={sectionsText} storedErrors={storedErrors} sections={sections} counts={membership.counts} machines={machines} />
   </section>;
 });
 
@@ -1373,6 +1424,8 @@ function useMachineSections(): Readonly<{ text: string; sections: readonly Machi
   }, [text]);
 }
 
+const NO_MACHINES: readonly FleetMachine[] = [];
+
 function MachineMonitorPanel({ subPath = "" }: { subPath?: string }) {
   const navigate = useBbNavigate();
   const route = useMemo(() => parseRoute(subPath), [subPath]);
@@ -1381,7 +1434,8 @@ function MachineMonitorPanel({ subPath = "" }: { subPath?: string }) {
   // Every list (section table, switcher, atlas) shares one section-derived
   // order; rows keep their identity so memoized rows still skip renders.
   const overview = fleet.overview;
-  const orderedOverview = useMemo(() => overview == null ? null : { ...overview, machines: orderMachinesBySections(overview.machines, sections) }, [overview, sections]);
+  const membership = useSectionMembership(sections, overview?.machines ?? NO_MACHINES);
+  const orderedOverview = useMemo(() => overview == null ? null : { ...overview, machines: orderMachinesBySections(overview.machines, sections, membership.of) }, [membership, overview, sections]);
   const activateEvent = useCallback((activation: TimelineEventActivation) => {
     if (activation.bbReference == null || !fleet.canActivateEvent(activation)) return;
     navigate.toThread(activation.bbReference.threadId);
@@ -1392,7 +1446,25 @@ function MachineMonitorPanel({ subPath = "" }: { subPath?: string }) {
     ? sections.find((candidate) => candidate.slug === route.slug) ?? sections[0]!
     : null;
   const { chooseMachine } = fleet;
+  // A route change can unmount the focused link or switcher; hand focus to
+  // the destination view's switcher instead of dropping it on the body.
+  const restoreFocus = useRef(false);
+  useEffect(() => {
+    if (!restoreFocus.current) return;
+    const active = document.activeElement;
+    if (active != null && active !== document.body && active.isConnected) {
+      restoreFocus.current = false;
+      return;
+    }
+    // The destination may mount a render later (a machine is selected
+    // after the route changes), so keep the request until it exists.
+    const switcher = document.getElementById("machine-monitor-selected-title");
+    if (switcher == null) return;
+    restoreFocus.current = false;
+    switcher.focus();
+  }, [subPath, selected != null]);
   const switchView = useCallback((target: SwitchTarget) => {
+    restoreFocus.current = true;
     if (target.kind === "section") {
       navigate.toPluginPanel(PANEL_PATH, { subPath: sectionSubPath(target.section.slug) });
       return;
@@ -1414,6 +1486,7 @@ function MachineMonitorPanel({ subPath = "" }: { subPath?: string }) {
     {section != null && orderedOverview != null && <MachineSectionView
       section={section}
       sections={sections}
+      membership={membership}
       sectionsText={sectionsText}
       storedErrors={storedErrors}
       machines={orderedOverview.machines}
@@ -1425,6 +1498,7 @@ function MachineMonitorPanel({ subPath = "" }: { subPath?: string }) {
       machine={selected}
       machines={orderedOverview?.machines ?? [selected]}
       sections={sections}
+      sectionCounts={membership.counts}
       rangeHours={fleet.rangeHours}
       timelineView={fleet.timelineView}
       timelineLoading={fleet.timelineLoading}

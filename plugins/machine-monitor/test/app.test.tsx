@@ -191,9 +191,11 @@ test("defaults to a compact all-machines section that reads no timeline and link
   expect(view.selectedOptions[0]?.textContent).toBe("All (2)");
   const link = slot.getByRole("link", { name: /Bravo/ }) as HTMLAnchorElement;
   expect(link.getAttribute("href")).toBe("/plugins/machine-monitor/machine-monitor/machine/enrolled-host%3Amachine-bravo");
+  expect(timelines).toEqual([]);
+  // Focus intentionally prefetches this machine's timeline (bounded intent).
+  link.focus();
   fireEvent.click(link);
   expect(slot.navigateCalls.at(-1)).toEqual({ method: "toPluginPanel", path: "machine-monitor", options: { subPath: "machine/enrolled-host:machine-bravo", replace: false } });
-  expect(timelines).toEqual([]);
   expect(Array.from(table.querySelectorAll("tbody .machine-monitor__compact-seen")).map((cell) => cell.textContent)).toEqual(["Now", "Now"]);
 
   const Panel = app.navPanels[0]!.component as import("react").ComponentType<{ subPath: string }>;
@@ -204,6 +206,8 @@ test("defaults to a compact all-machines section that reads no timeline and link
   expect(ranges).toEqual([{ startMs: 0, endMs: 1_000 }]);
   const selected = slot.getByRole("combobox", { name: "Selected machine" }) as HTMLSelectElement;
   expect(selected.selectedOptions[0]?.textContent).toBe("Bravo");
+  // The focused link unmounted with the section; focus lands on the switcher.
+  expect(document.activeElement).toBe(selected);
   fireEvent.change(selected, { target: { value: "section:all" } });
   expect(slot.navigateCalls.at(-1)).toEqual({ method: "toPluginPanel", path: "machine-monitor", options: { subPath: "section/all" } });
   slot.lifecycle.unmount();
@@ -220,6 +224,44 @@ test("an explicitly routed machine that appears later replaces the fallback sele
   void slot.behavior.emitRealtime("machine-monitor-fleet", { machine: bravo, dataRevision: 2, settingsRevision: 1, kinds: ["collection"] });
   await slot.findByRole("img", { name: /Operational history for machine-bravo/ });
   expect((slot.getByRole("combobox", { name: "Selected machine" }) as HTMLSelectElement).selectedOptions[0]?.textContent).toBe("Bravo");
+  slot.lifecycle.unmount();
+});
+
+test("a routed machine missing at navigation replaces the retained selection when it appears", async () => {
+  const app = await loadPluginApp(() => import("../app.tsx"));
+  const Panel = app.navPanels[0]!.component as import("react").ComponentType<{ subPath: string }>;
+  let machines = [machine(alpha, "Alpha")];
+  const slot = renderSlot(app.navPanels[0]!, { subPath: "machine/enrolled-host:machine-alpha" }, {
+    rpc: fleetRpc(() => overview(machines), (request) => timeline(request)),
+  } as any);
+  await slot.findByRole("img", { name: /Operational history for machine-alpha/ });
+  slot.lifecycle.rerender(<Panel subPath="machine/enrolled-host:machine-bravo" />);
+  machines = [machine(alpha, "Alpha"), machine(bravo, "Bravo")];
+  void slot.behavior.emitRealtime("machine-monitor-fleet", { machine: bravo, dataRevision: 2, settingsRevision: 1, kinds: ["collection"] });
+  await slot.findByRole("img", { name: /Operational history for machine-bravo/ });
+  slot.lifecycle.unmount();
+});
+
+test("another user's saved sections reach an open reader through realtime", async () => {
+  const app = await loadPluginApp(() => import("../app.tsx"));
+  const machines = [machine(alpha, "b1-hel"), machine(bravo, "palani-gort")];
+  const slot = renderSlot(app.navPanels[0]!, { subPath: "" }, {
+    settings: { machineSections: `* "All"` },
+    rpc: fleetRpc(() => overview(machines), (request) => timeline(request)),
+  } as any);
+  const view = await slot.findByRole("combobox", { name: "Machine Monitor view" }) as HTMLSelectElement;
+  const sectionOptions = () => Array.from(view.querySelectorAll('optgroup[label="Sections"] option')).map((option) => option.textContent);
+  expect(sectionOptions()).toEqual(["All (2)"]);
+  await slot.behavior.emitRealtime("machine-monitor-sections", { text: `b*-hel "Builders"\n* "All"` });
+  await waitFor(() => expect(sectionOptions()).toEqual(["Builders (1)", "All (2)"]));
+  // The default page follows the new first section.
+  expect(slot.getByRole("table", { name: "Builders machines" }).querySelectorAll("tbody tr")).toHaveLength(1);
+  const editor = slot.getByRole("textbox", { name: "Machine sections" }) as HTMLTextAreaElement;
+  expect(editor.value).toBe(`b*-hel "Builders"\n* "All"`);
+  fireEvent.change(editor, { target: { value: "" } });
+  expect(editor.getAttribute("aria-invalid")).toBe("true");
+  expect(document.getElementById(editor.getAttribute("aria-describedby")!.split(" ")[1]!)?.textContent).toContain("Add at least one section.");
+  expect((slot.getByRole("button", { name: "Save sections" }) as HTMLButtonElement).disabled).toBe(true);
   slot.lifecycle.unmount();
 });
 

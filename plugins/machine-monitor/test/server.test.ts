@@ -323,17 +323,40 @@ test("machine sections save as one shared presentation setting without advancing
   });
   t.after(async () => host.harness.dispose());
   await plugin(host.bb);
-  const before = await host.harness.callRpc("fleetOverview", { contractVersion: FLEET_CONTRACT_VERSION }) as FleetOverviewResult;
+  // Collection must be running with a registered machine, or an accidental
+  // settingsChanged() would advance nothing and this test could not fail.
+  const service = host.harness.runService("machine-monitor-fleet");
+  try {
+    const overview = async () => host.harness.callRpc("fleetOverview", { contractVersion: FLEET_CONTRACT_VERSION }) as Promise<FleetOverviewResult>;
+    let before = await overview();
+    for (let attempt = 0; attempt < 200 && before.machines.length === 0; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      before = await overview();
+    }
+    assert.ok(before.machines.length > 0, "the fixture has a registered machine");
 
-  const text = `* "All"\nb*-hel "Hetzner Builder"\n{palani,cole}-* "Dev Machines"`;
-  assert.deepEqual(await host.harness.callRpc("saveMachineSections", { text }), { text });
-  await waitFor(() => host.harness.realtimeSignals.some((signal) => signal.channel === "machine-monitor-sections"));
-  assert.deepEqual(
-    host.harness.realtimeSignals.filter((signal) => signal.channel === "machine-monitor-sections").map((signal) => signal.payload),
-    [{ text }],
-  );
-  const after = await host.harness.callRpc("fleetOverview", { contractVersion: FLEET_CONTRACT_VERSION }) as FleetOverviewResult;
-  assert.deepEqual(after.generation, before.generation, "presentation sections never invalidate collection settings");
+    const text = `* "All"\nb*-hel "Hetzner Builder"\n{palani,cole}-* "Dev Machines"`;
+    assert.deepEqual(await host.harness.callRpc("saveMachineSections", { text }), { text });
+    await waitFor(() => host.harness.realtimeSignals.some((signal) => signal.channel === "machine-monitor-sections"));
+    assert.deepEqual(
+      host.harness.realtimeSignals.filter((signal) => signal.channel === "machine-monitor-sections").map((signal) => signal.payload),
+      [{ text }],
+    );
+    const after = await overview();
+    assert.deepEqual(after.machines.map((machine) => machine.generation.settingsRevision), before.machines.map((machine) => machine.generation.settingsRevision), "presentation sections never advance machine settings revisions");
 
-  await assert.rejects(host.harness.callRpc("saveMachineSections", { text: `{b1,b2 "Broken"` }), /Line 1 has an unclosed \{/);
+    // Positive control: a collection setting does advance them.
+    await host.harness.setSettings({ cpuWarningPercent: "80" });
+    const controlled = await overview();
+    assert.ok(controlled.machines.every((machine, index) => machine.generation.settingsRevision > before.machines[index]!.generation.settingsRevision));
+    assert.equal(host.harness.realtimeSignals.filter((signal) => signal.channel === "machine-monitor-sections").length, 1, "collection settings do not republish sections");
+
+    for (const invalid of [`{b1,b2 "Broken"`, "", "# only comments"]) {
+      await assert.rejects(host.harness.callRpc("saveMachineSections", { text: invalid }), /Line 1 has an unclosed \{|Add at least one section/);
+    }
+    await assert.rejects(host.harness.setSettings({ machineSections: "" }), /Add at least one section/, "native settings saves share the validator");
+  } finally {
+    service.controller.abort();
+    await service.done;
+  }
 });

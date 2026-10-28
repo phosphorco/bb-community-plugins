@@ -139,6 +139,7 @@ export default async function machineMonitorPlugin(bb: BbPluginApi): Promise<voi
     machineSections: {
       type: "string" as const,
       label: "Machine sections",
+      experimental_multiline: true,
       description: "Fleet pages shared by every user, one per line: a glob matched against machine names, then a quoted title, for example `b*-hel \"Hetzner Builder\"` or `{palani,cole}-* \"Dev Machines\"`. The first section is the default page. Blank lines and # comments are ignored.",
       experimental_schema: z.string().superRefine((value, context) => {
         const error = machineSectionsError(value);

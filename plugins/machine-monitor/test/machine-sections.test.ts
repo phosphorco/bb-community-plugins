@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { DEFAULT_MACHINE_SECTIONS, machineInSection, machineSectionsError, orderMachinesBySections, parseMachineSections } from "../machine-sections.ts";
+import { DEFAULT_MACHINE_SECTIONS, machineInSection, machineSectionsError, MAX_EXPANDED_PATTERN_CHARS, orderMachinesBySections, parseMachineSections } from "../machine-sections.ts";
 
 function machine(label: string, machineId = label) {
   return { label, machine: { machineId } };
@@ -72,4 +72,28 @@ test("orders machines by their most specific sections, then natural names", () =
   ]);
   const unsectioned = parseMachineSections(`b*-hel "Hetzner Builder"`).sections;
   assert.deepEqual(orderMachinesBySections([machine("alpha"), machine("b1-hel")], unsectioned).map((entry) => entry.label), ["b1-hel", "alpha"]);
+});
+
+test("orders overlapping sections the same way for every input permutation", () => {
+  const { sections } = parseMachineSections(`{m,z,a} "Common"\n{z,x1,x2} "X"\n{a,y1,y2} "Y"`);
+  const labels = ["m", "z", "a", "x1", "x2", "y1", "y2"];
+  const expected = orderMachinesBySections(labels.map((label) => machine(label)), sections).map((entry) => entry.label);
+  for (let shift = 1; shift < labels.length; shift += 1) {
+    const rotated = [...labels.slice(shift), ...labels.slice(0, shift)];
+    assert.deepEqual(orderMachinesBySections(rotated.map((label) => machine(label)), sections).map((entry) => entry.label), expected);
+    assert.deepEqual(orderMachinesBySections([...rotated].reverse().map((label) => machine(label)), sections).map((entry) => entry.label), expected);
+  }
+});
+
+test("rejects empty and over-complex configurations in the shared validator", () => {
+  for (const text of ["", "   \n\t", "# only a comment"]) assert.equal(machineSectionsError(text), "Add at least one section.");
+  const heavy = Array.from({ length: 32 }, (_, index) => `*${"a".repeat(80)}${"{b,c}".repeat(6)} "S${index}"`).join("\n");
+  assert.match(machineSectionsError(heavy) ?? "", new RegExp(`at most ${MAX_EXPANDED_PATTERN_CHARS}`));
+  const fleet = Array.from({ length: 256 }, (_, index) => machine(`${"a".repeat(90)}${index}`));
+  const started = performance.now();
+  // Heaviest accepted shape: wildcard-dense lines filling the budget.
+  const accepted = parseMachineSections(Array.from({ length: 4 }, (_, index) => `*${"a*".repeat(124)}b "Edge ${index}"`).join("\n"));
+  assert.deepEqual(accepted.errors, []);
+  orderMachinesBySections(fleet, accepted.sections);
+  assert.ok(performance.now() - started < 1_000, "an accepted configuration orders 256 long names promptly");
 });
