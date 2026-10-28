@@ -65,6 +65,13 @@
     "type-tests/editing-react-app.tsx",
     "type-tests/editing-react.mts",
     "type-tests/native-parent-instance.test-d.ts",
-    "type-tests/native-supported-peer.test-d.ts"
+    "type-tests/native-supported-peer.test-d.ts",
+    "react-core.d.ts",
+    "react-core-runtime.ts",
+    "react-core-entry-runtime.ts",
+    "react-native-runtime.ts",
+    "type-tests/react-core.test-d.ts",
+    "type-tests/react-core-browser-app.tsx",
+    "type-tests/react-core-browser.mts"
   ]
 }

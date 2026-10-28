@@ -1,0 +1,18 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "lib": [
+      "ES2023",
+      "DOM"
+    ],
+    "types": [
+      "bun"
+    ]
+  },
+  "include": [
+    "src/index.ts",
+    "src/bb.ts",
+    "src/testing.ts",
+    "test/*.ts"
+  ]
+}

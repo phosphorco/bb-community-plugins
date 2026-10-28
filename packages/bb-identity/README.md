@@ -120,6 +120,33 @@ hooks for continued local typing across unknown publication, conflicts and backu
 failures. See [EDITING.md](EDITING.md) for the independent editing/v1 contract and
 proof limits; existing state protocol and default behavior remain unchanged.
 
+## Borrowed React core (0.5.0)
+
+`@phosphorco/bb-identity/react-core` provides the same `BbIdentity.Provider`,
+`BbIdentity.Context`, view-as controls, presentation, state/editing hooks and
+preservation-failure hooks as `/react`. Supply the feature owner's stable
+`IdentityClient` to the Provider; it borrows that client and never acquires the
+current BB plugin slot. Native `useBbIdentityConnection` and `useBbIdentityClient`
+remain available only from `/react`.
+
+The full emitted core graph imports React and framework-neutral identity code,
+with no SDK value hooks. Both entries reexport the exact same components and
+hooks. They are built together as browser ESM with one `react-core-shared.js`
+chunk, so a Provider/Context imported from either entry works with borrowed
+hooks imported from the other. Do not rebuild the two React entrypoints as
+independent standalone bundles or omit the shared chunk when packaging.
+
+Existing `/react` names, native hook acquisition, controller/draft ownership,
+view-as read-only behavior and recovery semantics are unchanged. Separate
+independently installed copies of this package still require ordinary React
+package/module deduplication; there is no global or cross-plugin context registry.
+
+Version0.5.0 adds this entry while retaining the published0.4.1 native-person
+reader and0.4.2-native-marker.0 opaque-snapshot fix. Consumers adopt an exact
+release explicitly; older installed versions do not gain the entry implicitly.
+Packed mixed-entry/browser/source checks remain distinct from actual hosted
+Inbox/product and registry acceptance.
+
 ## Entry points
 
 | Import suffix | Runtime/declaration status | Responsibility |
@@ -405,11 +432,6 @@ it. Partial/unknown provenance is explicit. Participants aggregate roles across
 retained visible durable history, including external authors and mentioned-only
 people. Queue-only drafts are not participants. Pages and previews report
 coverage. Profile snapshots for mentions need no invented authorship evidence.
-The enhanced `/bb` binding composes native facet membership with paged retained
-request snapshots and public contribution history; see
-[retained participants](CONSUMERS.md#retained-participants). The obsolete host
-`protocol.participants` answer is ignored. Portable singleton participant
-history remains unsupported; its ordinary identity and state behavior is unchanged.
 
 ## State and transition semantics
 

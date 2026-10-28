@@ -1,13 +1,12 @@
 # @phosphorco/bb-identity changelog
 
-## 0.4.1 (next)
+## 0.5.0
 
-- Compose one enhanced `/bb` ParticipantReader from public native facets, exhaustive retained request-event pages and bounded public contribution evidence.
-- Preserve exact stored identity/presentation, machine/author/editor/mentioned distinctions, deterministic first-authorship order and honest partial coverage; remove the obsolete host participant delegation.
-- Bind output cursors to normalized evidence and the request cutoff; propagate cancellation and disposal through source reads and previews.
-- Publish this participant-reader correction under `next` only; `latest` remains0.3.1 until the identity campaign promotes it.
+- Add `/react-core` for borrowed-client Provider/Context/view-as/state/editing without SDK slot-hook value imports.
+- Share exact React components/hooks/context between `/react` and `/react-core` through one jointly built ESM chunk; keep native acquisition in `/react`.
+- Preserve controller, binding and recovery behavior, including the published0.4.1 native-person reader and0.4.2-native-marker.0 opaque timeline-marker fix. The optional SDK peer is ^0.6.31; React/dependencies are unchanged.
 
-## 0.4.0 (next)
+## 0.4.0 (historical source candidate)
 
 - Add isolated `/native` evidence adapter and `/native/testing` conformance kit over injected public SDK snapshots.
 - Preserve native source basis, independent coverage and author/editor/mention/origin distinctions, with exact terminal/turn and timeline/item joins.
