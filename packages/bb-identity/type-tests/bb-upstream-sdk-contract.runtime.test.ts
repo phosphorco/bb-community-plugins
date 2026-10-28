@@ -24,3 +24,8 @@ void installedRequest;
 void installedResponse;
 void installedHasDelivery;
 void installedRpcCall;
+
+/** The participant binding consumes real public SDK ports, without copying host declarations. */
+export function participantSdkPortWitness(bb: InstalledBbPluginApi): import('../bb.js').BbIdentityApi['sdk']['threads'] {
+  return bb.sdk.threads;
+}

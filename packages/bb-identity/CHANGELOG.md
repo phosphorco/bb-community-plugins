@@ -1,6 +1,13 @@
 # @phosphorco/bb-identity changelog
 
-## 0.4.0 (source candidate)
+## 0.4.1 (next)
+
+- Compose one enhanced `/bb` ParticipantReader from public native facets, exhaustive retained request-event pages and bounded public contribution evidence.
+- Preserve exact stored identity/presentation, machine/author/editor/mentioned distinctions, deterministic first-authorship order and honest partial coverage; remove the obsolete host participant delegation.
+- Bind output cursors to normalized evidence and the request cutoff; propagate cancellation and disposal through source reads and previews.
+- Publish this participant-reader correction under `next` only; `latest` remains0.3.1 until the identity campaign promotes it.
+
+## 0.4.0 (next)
 
 - Add isolated `/native` evidence adapter and `/native/testing` conformance kit over injected public SDK snapshots.
 - Preserve native source basis, independent coverage and author/editor/mention/origin distinctions, with exact terminal/turn and timeline/item joins.

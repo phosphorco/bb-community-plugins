@@ -1,0 +1,17 @@
+.people-accounts { display: grid; gap: 0.75rem; color: var(--foreground); font-size: 0.875rem; }
+.people-accounts p { margin: 0; }
+.people-muted { color: var(--muted-foreground); font-size: 0.8125rem; }
+.people-mismatch { font-weight: 600; }
+.people-error { color: var(--destructive); }
+.people-actions { display: flex; flex-wrap: wrap; align-items: end; gap: 0.5rem; }
+.people-accounts button, .people-accounts input { font: inherit; color: var(--foreground); background: var(--background); border: 1px solid var(--border); border-radius: 0.375rem; padding: 0.375rem 0.625rem; }
+.people-accounts button { cursor: pointer; }
+.people-accounts button:disabled { opacity: 0.5; cursor: default; }
+.people-accounts button:focus-visible, .people-accounts input:focus-visible, .people-accounts summary:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+.people-accounts label { display: grid; gap: 0.25rem; }
+.people-account-list { list-style: none; padding: 0; margin: 0; display: grid; }
+.people-account-row { display: grid; gap: 0.375rem; padding: 0.75rem 0; border-bottom: 1px solid var(--border); min-width: 0; }
+.people-accounts code, .people-accounts li { overflow-wrap: anywhere; }
+.people-accounts summary { cursor: pointer; }
+.people-accounts form { margin-top: 0.5rem; }
+.people-accounts a { color: var(--foreground); text-decoration: underline; text-underline-offset: 0.125rem; }

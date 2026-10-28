@@ -4,6 +4,7 @@
  */
 import type { PluginRpcContract, PluginRpcHandlers, StandardSchemaV1, StandardSchemaV1InferInput, StandardSchemaV1InferOutput } from '@get-bb/plugin-sdk';
 import type { BbIdentityApi, BbIdentityBinding, BbInvocation, BbInvocationServer, BbInvocationEndpoint, BbPromptInput, IdentityRpcHandlers } from './bb.js';
+import { createNativeParticipantReader } from './participant-reader-runtime.js';
 import { retainIdentityHttpResponse } from './http-lifetime-runtime.js';
 import type { BbPortableIdentityHandlers, BbPortableInvocation, BbPortableRpcFoundation } from './bb-runtime.js';
 import { createBbUpstreamDriver, renderExternalPrompt, type BbUpstreamBinding, type ExternalMessageRendering } from './bb-upstream-runtime.js';
@@ -174,7 +175,11 @@ export function createBbIdentityServerBinding(options: BbIdentityServerBindingOp
       return err('incompatible', 'Enhanced identity host could not enable producer-owned external message rendering.');
     }
   }
-  const host: IdentityHost<unknown, unknown, BbPromptInput> = createHostAdapter({ upstream: upstream.value.driver, extension });
+  const adapter = createHostAdapter({ upstream: upstream.value.driver, extension });
+  const participants = extension.status === 'supported'
+    ? createNativeParticipantReader({ threads: () => options.bb.sdk.threads, history: adapter.history, instanceId: adapter.instanceId }) : null;
+  const host: IdentityHost<unknown, unknown, BbPromptInput> = participants
+    ? { ...adapter, participants, dispose() { participants.dispose(); adapter.dispose(); } } : adapter;
   const server = createIdentityServer({ host });
   let disposed = false;
   const publish = (event: unknown) => { if (!disposed) try { options.bb.realtime.publish('bb-identity/v1', event); } catch {} };
@@ -264,8 +269,8 @@ export function createBbIdentityServerBinding(options: BbIdentityServerBindingOp
     selfProfile: invocation => guardEndpoint(invocation, request => endpoint.selfProfile(request)),
     search: (invocation, input) => guardEndpoint(invocation, request => endpoint.search(request, input)),
     profiles: (invocation, input) => guardEndpoint(invocation, request => endpoint.profiles(request, input)),
-    participants: (invocation, input) => guardEndpoint(invocation, request => endpoint.participants(request, input)),
-    participantPreviews: (invocation, input) => guardEndpoint(invocation, request => endpoint.participantPreviews(request, input)),
+    participants: (invocation, input) => guardEndpoint(invocation, request => endpoint.participants(request, input, { signal: invocation.signal })),
+    participantPreviews: (invocation, input) => guardEndpoint(invocation, request => endpoint.participantPreviews(request, input, { signal: invocation.signal })),
     dispose: () => disposeBinding(),
   };
   const endpointContract = {
@@ -281,8 +286,8 @@ export function createBbIdentityServerBinding(options: BbIdentityServerBindingOp
     [identityRpcMethods[identityRoutes.selfProfile]]: { origin: 'interactive-user', handle: async (input, context) => { const decoded = decodeEmpty(input); return decoded.ok ? jsonResult(await endpoint.selfProfile(context.request)) : invalid(decoded.error.message); } },
     [identityRpcMethods[identityRoutes.search]]: { origin: 'interactive-user', handle: async (input, context) => { const decoded = decodeDirectory(input); return decoded.ok ? jsonResult(await endpoint.search(context.request, decoded.value)) : invalid(decoded.error.message); } },
     [identityRpcMethods[identityRoutes.profiles]]: { origin: 'interactive-user', handle: async (input, context) => { const decoded = decodeProfiles(input); return decoded.ok ? jsonResult(await endpoint.profiles(context.request, decoded.value)) : invalid(decoded.error.message); } },
-    [identityRpcMethods[identityRoutes.participants]]: { origin: 'interactive-user', handle: async (input, context) => { const decoded = decodeParticipants(input); return decoded.ok ? jsonResult(await endpoint.participants(context.request, decoded.value)) : invalid(decoded.error.message); } },
-    [identityRpcMethods[identityRoutes.participantPreviews]]: { origin: 'interactive-user', handle: async (input, context) => { const decoded = decodePreviews(input); return decoded.ok ? jsonResult(await endpoint.participantPreviews(context.request, decoded.value)) : invalid(decoded.error.message); } },
+    [identityRpcMethods[identityRoutes.participants]]: { origin: 'interactive-user', handle: async (input, context) => { const decoded = decodeParticipants(input); return decoded.ok ? jsonResult(await endpoint.participants(context.request, decoded.value, { signal: context.signal })) : invalid(decoded.error.message); } },
+    [identityRpcMethods[identityRoutes.participantPreviews]]: { origin: 'interactive-user', handle: async (input, context) => { const decoded = decodePreviews(input); return decoded.ok ? jsonResult(await endpoint.participantPreviews(context.request, decoded.value, { signal: context.signal })) : invalid(decoded.error.message); } },
   });
   if (!endpointRegistered.ok) { state.value.dispose(); foundation.value.dispose(); endpoint.dispose(); server.dispose(); host.dispose(); upstream.value.dispose(); return endpointRegistered; }
   const createInvocation = (context: BbPortableInvocation) => {
