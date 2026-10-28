@@ -44,3 +44,32 @@
   font-size: 9px;
   white-space: nowrap;
 }
+
+/* Owned Mentions composition; native navigation/chrome remain host-owned. */
+.mentions { display: grid; align-content: start; gap: 14px; max-width: 900px; padding: 20px; color: var(--foreground); background: var(--background); overflow-wrap: anywhere; }
+.mentions h1 { margin: 0; font-size: 18px; }
+.mentions form { display: grid; gap: 8px; }
+.mentions label { display: grid; gap: 5px; font-size: 12px; }
+.mentions input, .mentions select { min-width: 0; width: 100%; box-sizing: border-box; padding: 7px 9px; border: 1px solid var(--input); border-radius: 6px; color: var(--foreground); background: var(--background); font: inherit; }
+.mentions button, .mentions__results button { min-height: 28px; padding: 5px 8px; border: 1px solid var(--border); border-radius: 6px; color: var(--foreground); background: var(--background); font: inherit; font-size: 12px; cursor: pointer; }
+.mentions button:hover, .mentions__results button:hover { color: var(--accent-foreground); background: var(--accent); }
+.mentions button:disabled, .mentions__results button:disabled { opacity: .58; cursor: default; }
+.mentions :is(button, input, select, a, summary):focus-visible, .mentions__results :is(button, a, summary):focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+.mentions p, .mentions__results p { margin: 0; }
+.mentions [role="alert"], .mentions__results [role="alert"] { color: var(--destructive); }
+.mentions__results { display: grid; gap: 10px; min-width: 0; font-size: 12px; overflow-wrap: anywhere; }
+.mentions__coverage, .mentions__note { color: var(--muted-foreground); font-size: 11px; }
+.mentions__coverage { display: grid; gap: 5px; }
+.mentions__groups, .mentions__groups > li > ul { display: grid; gap: 10px; margin: 0; padding: 0; list-style: none; }
+.mentions__groups > li { display: grid; gap: 7px; min-width: 0; padding: 10px 0; border-top: 1px solid var(--border); }
+.mentions__groups small, .mentions__row small { display: block; color: var(--muted-foreground); font-size: 11px; }
+.mentions__row { display: grid; gap: 5px; padding: 8px; border-left: 2px solid var(--border); }
+.mentions__row a { color: var(--foreground); text-decoration: underline; text-underline-offset: 2px; }
+.mentions__excerpt { white-space: pre-wrap; }
+.mentions__excerpt mark { color: var(--accent-foreground); background: var(--accent); font-weight: 600; text-decoration: underline; text-underline-offset: 2px; }
+.mentions__results nav { display: flex; flex-wrap: wrap; gap: 8px; }
+.cross-references__trigger > svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.8; }
+.cross-references__popover .mentions__results { padding: 8px; }
+@media (max-width: 480px) { .mentions { padding: 12px; gap: 10px; } }
+
+.mentions__results:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }

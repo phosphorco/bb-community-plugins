@@ -102,3 +102,65 @@ test("recency handles unknown, invalid, future and day-old source timestamps", (
   assert.equal(referenceRecency(100, 90)?.text, "just now");
   assert.equal(referenceRecency(0, 3 * 86_400_000)?.text, "3d ago");
 });
+
+import {
+  mentionsSubPath, parseMentionsSubPath, mentionMessageHref, mentionExcerptParts,
+  mentionClaimKey, mentionItemKey, type MentionItem,
+} from "../presentation.ts";
+import { listMentionsOutputV2Schema } from "@phosphorco/bb-cross-references";
+
+const uiSource = { provider: "bb", keys: { project: "proj_ui", thread: "thr_ui" }, presentation: { label: "Source" } };
+function uiItem(): MentionItem {
+  const hash = "a".repeat(64);
+  const output = listMentionsOutputV2Schema.parse({ version: 2, status: "page", snapshot: hash, nextCursor: null,
+    coverage: { scope: "known-sources", collectionIncomplete: false, retentionLimited: false, capHistoryUnknown: false, legacyClaimsPresent: false, evidenceStateUnknown: false, authoredUrlCoverage: { state: "complete-for-known-locations", unknownLocations: 0, scope: "known-locations", watermark: hash }, reasons: [], reasonsClipped: false, checkedAt: null },
+    counts: { retainedOccurrences: 1, confirmedOccurrences: 1, unconfirmedOccurrences: 0, producerClaims: 1, indexedSources: 1, claimsWithoutLocations: 0, excerptUnavailable: 0 },
+    items: [{ kind: "occurrence", source: uiSource, target: uiSource, producerPluginId: "fixture", graphRevision: 1, evidenceRevision: 1, cap: { state: "uncapped", limit: 100, sourceHistoryUnknown: false }, occurrenceKey: hash, locator: { kind: "conversation", threadId: "thr_ui", messageId: "different_row_id", messageSeq: 41, anchorSeq: 99, role: "user" }, sourceContentRevision: hash, span: { start: 2, end: 7 }, excerpt: { state: "ready", text: "😀 hello after", sourceSpan: { start: 0, end: 14 }, matchSpan: { start: 3, end: 8 }, clippedBefore: false, clippedAfter: false, matchClippedBefore: false, matchClippedAfter: false, codecVersion: 1 }, messageCreatedAt: 0, observedAt: 0, confirmation: "observed", authoredUrlState: "not-url", provenance: { pluginId: "fixture", origin: "builtin", confidence: "high", recognition: { basis: "explicit", explanation: "Fixture" }, source: { provider: "bb.thread", id: "thr_ui", kind: "thread" } } }],
+  });
+  if (output.status !== "page") throw Error("Expected page");
+  return output.items[0]!;
+}
+test("Mentions routes roundtrip Unicode, maximum admitted identity and literal URL without double-encoding", () => {
+  const queries = [
+    { kind: "authored-url" as const, href: "https://example.test/😀?q=one#two" },
+    { kind: "resource" as const, target: { provider: "custom", keys: Object.fromEntries(Array.from({ length: 16 }, (_, i) => [`k${i}`, "界".repeat(100)])) }, relation: "self" as const },
+  ];
+  for (const query of queries) {
+    const route = { v: 1 as const, kind: "query" as const, input: { version: 2 as const, query } };
+    const path = mentionsSubPath(route);
+    assert.match(path, /^v1\/[A-Za-z0-9_-]+$/);
+    assert.deepEqual(parseMentionsSubPath(path), route);
+  }
+  const route = { v: 1 as const, kind: "lookup" as const, href: "https://example.test/x", mode: "recognize" as const };
+  assert.deepEqual(parseMentionsSubPath(mentionsSubPath(route)), route);
+  assert.equal(parseMentionsSubPath(""), null);
+});
+test("Mentions route admission rejects unsafe, malformed, invalid UTF8, oversized and cursor-bearing inputs", () => {
+  const enc = (raw: string) => `v1/${Buffer.from(raw).toString("base64url")}`;
+  for (const path of ["v2/eA", "v1/%%%", "v1/a/b", "v1/" + "a".repeat(200000), "v1/_w", enc('{"v":1}'), enc('{"v":1,"kind":"lookup","href":"https://example.test/?token=secret","mode":"recognize"}'), enc('{"v":1,"kind":"query","input":{"version":2,"query":{"kind":"authored-url","href":"https://example.test/"},"cursor":"old"}}')]) assert.throws(() => parseMentionsSubPath(path));
+  assert.throws(() => mentionsSubPath({ v: 1, kind: "lookup", href: "https://example.test/" + "x".repeat(4096), mode: "recognize" }));
+});
+test("original message links use exact messageSeq and highlight original UTF16 text", () => {
+  const item = uiItem();
+  assert.equal(mentionMessageHref(item), "/projects/proj_ui/threads/thr_ui#msg=41");
+  assert.deepEqual(mentionExcerptParts(item), { before: "😀 ", match: "hello", after: " after" });
+  assert.equal(mentionMessageHref({ ...item, source: { ...uiSource, keys: { ...uiSource.keys, thread: "thr_other" } } }), null);
+  assert.equal(mentionMessageHref({ ...item, source: { provider: "custom", keys: {}, presentation: { label: "Other" } } }), null);
+  const other = { ...item, producerPluginId: "another" };
+  assert.notEqual(mentionClaimKey(item), mentionClaimKey(other));
+  if (item.kind === "occurrence") assert.notEqual(mentionItemKey(item, 0), mentionItemKey({ ...item, occurrenceKey: "b".repeat(64) }, 0));
+});
+
+test("future/claim slots remain distinct while known occurrence identity survives page reorder", () => {
+  const item = uiItem();
+  if (item.kind !== "occurrence") throw Error("Expected known occurrence");
+  assert.equal(mentionItemKey(item, 0), JSON.stringify([mentionClaimKey(item), "occurrence", item.occurrenceKey]));
+  assert.equal(mentionItemKey(item, 0), mentionItemKey(item, 99));
+  const future: MentionItem = { kind: "unsupported", reason: "unsupported-format", source: item.source, target: item.target, producerPluginId: item.producerPluginId, graphRevision: item.graphRevision, cap: item.cap };
+  assert.notEqual(mentionItemKey(future, 0), mentionItemKey(future, 1));
+  assert.equal(mentionItemKey(future, 0), mentionItemKey({ ...future, unknownMetadata: { rawId: "not-an-identity" } }, 0));
+  assert.notEqual(mentionItemKey(future, 0), mentionItemKey({ ...future, producerPluginId: "another" }, 0));
+  const claim: MentionItem = { ...future, kind: "claim-without-evidence", reason: "legacy", matchBasis: "primary-resource" };
+  assert.notEqual(mentionItemKey(claim, 0), mentionItemKey(claim, 1));
+  for (const slot of [-1, 100, NaN, 0.5]) assert.throws(() => mentionItemKey(future, slot));
+});

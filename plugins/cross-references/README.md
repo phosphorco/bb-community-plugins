@@ -11,7 +11,7 @@ It is the shared navigation layer built from observed and authored references.
 
 ## Shared package
 
-`@phosphorco/bb-cross-references@0.2.0` provides the canonical resource/projection
+`@phosphorco/bb-cross-references@0.3.0` provides the canonical resource/projection
 contract, explicit SDK client, conformance kit, and `LinkedReferences` React
 editor. This plugin owns the graph service and persistence; Machine Monitor and
 Prompt Rules own their local attachments and delivery. See the
@@ -359,3 +359,37 @@ These are backend/contract seams; snippet layout and the later three-visible-ent
 UI are separate work. Existing50-page scan, source-discovery limits, retained legacy
 claims and100-location/edge retention remain disclosed. Recognition remains exact
 0.5.0, no Brief/Linky integration. Source/private-emission checks are not live proof.
+
+## Mentions: resource lookup and original context
+
+Use **Mentions** beside a BB Browser tab's address bar to look up the current
+URL. The click snapshots that URL; later tab navigation does not silently
+change an open lookup. The **Mentions** navigation page also accepts pasted
+resources and URLs. **Recognize** uses the shared recognition service and
+supported PR-family codec. **Exact URL** searches the literal authored URL;
+it does not merge aliases. Ambiguous recognition asks you to choose, and
+incomplete recognition stays labelled. Shared lookup routes contain validated
+queries, never arbitrary pasted prose. Invalid, unsafe or oversized routes
+show the form and an explanation instead of claiming there are no matches.
+
+The existing References popover offers resource pivots and **Show context**
+beneath backlinks. Only one backlink context is open at a time; closed controls
+do not read mention evidence. Results are paged, 25 rows at a time. **Next page**
+replaces the current page and **First page** starts over. Initially three
+locations per producer claim are shown **on that page**; disclosure reveals
+all its remaining admitted locations. A claim can continue on another page.
+
+Counts describe retained locations, confirmation, producer claims and sources
+across the query, not just the visible page or all-time mentions. Coverage is
+limited to known sources. Capped or unknown retention, unconfirmed locations,
+legacy/no-evidence claims and unavailable excerpts remain visible. Historical
+unknown authored URLs can make an Exact URL search incomplete even when no
+matching stored result is found.
+
+Snippets are inert original text, with the stored UTF-16 match highlighted and
+clipping labelled. They are not reparsed as Markdown. Original-message links
+use the actual timeline message sequence and BB's public URL navigation,
+including the exact message fragment. When exact message navigation is not
+available, the source remains usable and that limitation is stated. Reads are
+lazy and refresh through mounted realtime/reconnect events without idle polling;
+transient failures preserve the last good results for the same query.

@@ -111,3 +111,65 @@ export function referenceRecency(timestamp: number | null | undefined, now = Dat
   const text = minutes < 1 ? "just now" : minutes < 60 ? `${minutes}m ago` : minutes < 1_440 ? `${Math.floor(minutes / 60)}h ago` : `${Math.floor(minutes / 1_440)}d ago`;
   return { text, iso: date.toISOString(), title: `Last linked ${date.toLocaleString()}` };
 }
+
+// Mentions routes contain validated queries, never arbitrary pasted prose.
+import { z } from "zod";
+import {
+  listMentionsInputV2Schema, resolveLookupInputV2Schema, safeAuthoredHrefSchema,
+  type ListMentionsInputV2, type ListMentionsOutputV2,
+} from "@phosphorco/bb-cross-references";
+
+export type MentionItem = Extract<ListMentionsOutputV2, { status: "page" }>["items"][number];
+export type MentionSelection = Omit<ListMentionsInputV2, "cursor" | "ifSnapshot" | "pageSize">;
+const routeSchema = z.discriminatedUnion("kind", [
+  z.strictObject({ v: z.literal(1), kind: z.literal("query"), input: listMentionsInputV2Schema.refine(input => input.cursor === undefined && input.ifSnapshot === undefined && input.pageSize === undefined) }),
+  z.strictObject({ v: z.literal(1), kind: z.literal("lookup"), href: safeAuthoredHrefSchema, mode: z.enum(["recognize", "exact-url"]) }),
+]);
+export type MentionsRoute = z.infer<typeof routeSchema>;
+const ROUTE_JSON_BYTES = 131072;
+const ROUTE_ENCODED_CHARS = Math.ceil(ROUTE_JSON_BYTES / 3) * 4;
+const encoder = new TextEncoder();
+function validatedRoute(value: unknown): MentionsRoute {
+  const route = routeSchema.parse(value);
+  if (route.kind === "lookup") resolveLookupInputV2Schema.parse({ version: 2, text: route.href, mode: route.mode });
+  else if (encoder.encode(JSON.stringify(route.input)).length > 65536) throw new Error("Lookup input is too large.");
+  return route;
+}
+export function mentionsSubPath(value: MentionsRoute): string {
+  const bytes = encoder.encode(JSON.stringify(validatedRoute(value)));
+  if (bytes.length > ROUTE_JSON_BYTES) throw new Error("Lookup is too large to share.");
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return `v1/${btoa(binary).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/, "")}`;
+}
+export function parseMentionsSubPath(subPath: string): MentionsRoute | null {
+  if (subPath === "") return null;
+  // Check BEFORE decoding/allocation; reject padding, extra segments and malformed UTF8.
+  if (!subPath.startsWith("v1/") || subPath.length > ROUTE_ENCODED_CHARS + 3) throw new Error("Invalid or oversized lookup route.");
+  const encoded = subPath.slice(3);
+  if (!/^[A-Za-z0-9_-]+$/.test(encoded)) throw new Error("Invalid lookup route.");
+  const binary = atob(encoded.replaceAll("-", "+").replaceAll("_", "/"));
+  if (binary.length > ROUTE_JSON_BYTES) throw new Error("Lookup route is too large.");
+  const bytes = Uint8Array.from(binary, character => character.charCodeAt(0));
+  if (btoa(binary).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/, "") !== encoded) throw new Error("Invalid lookup encoding.");
+  return validatedRoute(JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)));
+}
+export function mentionClaimKey(item: Pick<MentionItem, "source" | "target" | "producerPluginId">): string {
+  return JSON.stringify([referenceIdentityKey(item.source), item.producerPluginId, referenceIdentityKey(item.target)]);
+}
+export function mentionItemKey(item: MentionItem, pageSlot: number): string {
+  if (item.kind === "occurrence") return JSON.stringify([mentionClaimKey(item), item.kind, item.occurrenceKey]);
+  // Future formats deliberately lose opaque metadata in the public decoder.
+  // Preserve each admitted slot without inventing a durable identity for it.
+  if (!Number.isSafeInteger(pageSlot) || pageSlot < 0 || pageSlot >= 100) throw new Error("Invalid mention page slot.");
+  return JSON.stringify([mentionClaimKey(item), item.kind, "slot", pageSlot]);
+}
+export function mentionMessageHref(item: MentionItem): string | null {
+  if (item.kind !== "occurrence" || item.source.provider !== "bb" || item.source.keys.thread !== item.locator.threadId || !item.source.keys.project) return null;
+  return `/projects/${encodeURIComponent(item.source.keys.project)}/threads/${encodeURIComponent(item.locator.threadId)}#msg=${item.locator.messageSeq}`;
+}
+export function mentionExcerptParts(item: MentionItem): { before: string; match: string; after: string } | null {
+  if (item.kind !== "occurrence" || item.excerpt.state !== "ready") return null;
+  const { text, matchSpan } = item.excerpt;
+  return { before: text.slice(0, matchSpan.start), match: text.slice(matchSpan.start, matchSpan.end), after: text.slice(matchSpan.end) };
+}

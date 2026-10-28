@@ -1,11 +1,15 @@
 import { createPortal } from "react-dom";
-import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, useMemo } from "react";
 import {
   definePluginApp,
   useBbNavigate,
   useRealtime,
   useRealtimeConnectionState,
   useRpc,
+  useSdk,
+  UrlLink,
+  type ExperimentalPluginBrowserToolbarActionProps,
+  type PluginNavPanelProps,
 } from "@get-bb/plugin-sdk/app";
 
 import type {
@@ -17,7 +21,15 @@ import type {
 } from "./model.ts";
 import type { rpcContract } from "./rpc-contract.ts";
 import "./app.css";
-import { displayLabel, mergeReferenceRows, referenceIdentityKey, referenceRecency } from "./presentation.ts";
+import { displayLabel, mergeReferenceRows, referenceIdentityKey, referenceRecency,
+  mentionsSubPath, parseMentionsSubPath, mentionClaimKey, mentionItemKey, mentionMessageHref, mentionExcerptParts,
+  type MentionItem, type MentionSelection,
+} from "./presentation.ts";
+import { createCrossReferencesV2Client, type CrossReferencesV2Client } from "@phosphorco/bb-cross-references/bb";
+import {
+  canonicalizeIdentity, MENTIONS_V2_CHANNEL, mentionsChangedV2Schema, resolveLookupInputV2Schema,
+  listMentionsInputV2Schema, type ListMentionsOutputV2, type ResolveLookupOutputV2,
+} from "@phosphorco/bb-cross-references";
 
 const EMPTY_BACKLINKS: ListBacklinksResponse = { rows: [], total: 0, nextCursor: null };
 const EMPTY_FORWARDS: ListForwardReferencesResponse = { rows: [], total: 0, nextCursor: null };
@@ -325,7 +337,8 @@ function ResourceLink({
     : <span className="cross-references__source-link">{content}</span>;
 }
 
-function ReferenceSection({ heading, rows, total, nextCursor, loadingMore, onLoadMore, direction, checks, checking, checkError }: {
+function ReferenceSection({ heading, rows, total, nextCursor, loadingMore, onLoadMore, direction, checks, checking, checkError, target }: {
+  target: { provider: string; keys: Record<string, string> };
   heading: string;
   rows: readonly (ForwardReferenceRow | BacklinkRow)[];
   total: number;
@@ -338,6 +351,8 @@ function ReferenceSection({ heading, rows, total, nextCursor, loadingMore, onLoa
   checkError: boolean;
 }) {
   const checksByUrl = new Map(checks.map((check) => [check.url, check]));
+  const navigate = useBbNavigate();
+  const [expanded, setExpanded] = useState<string | null>(null);
   return <section className="cross-references__section" aria-label={heading}>
     <header><strong>{heading}</strong><span>{total}</span></header>
     {rows.length === 0 && <p className="cross-references__message">No {direction === "forward" ? "forward references" : "backlinks"}.</p>}
@@ -351,13 +366,19 @@ function ReferenceSection({ heading, rows, total, nextCursor, loadingMore, onLoa
         check={direction === "forward" && url !== undefined ? checksByUrl.get(url) : undefined}
         checking={direction === "forward" && url !== undefined ? checking : undefined}
         checkError={direction === "forward" && url !== undefined ? checkError : undefined}
-      /></li>;
+      />
+        {direction === "forward"
+          ? <button type="button" className="cross-references__close" onClick={() => navigate.toPluginPanel("mentions", { subPath: mentionsSubPath({ v: 1, kind: "query", input: { version: 2, query: { kind: "resource", target: { provider: resource.provider, keys: resource.keys }, relation: "self" } } }) })}>Mentions of this resource</button>
+          : <><button type="button" className="cross-references__close" aria-expanded={expanded === referenceIdentityKey(resource)} onClick={() => setExpanded(current => current === referenceIdentityKey(resource) ? null : referenceIdentityKey(resource))}>Show context</button>
+            {expanded === referenceIdentityKey(resource) && <MentionResults key={JSON.stringify([target, referenceIdentityKey(resource), row.producerPluginId])} selection={{ version: 2, query: { kind: "resource", target, relation: "self" }, source: { provider: resource.provider, keys: resource.keys }, producerPluginId: row.producerPluginId }} />}</>}
+      </li>;
     })}</ul>}
     {nextCursor != null && <button type="button" onClick={onLoadMore} disabled={loadingMore} aria-busy={loadingMore}>{loadingMore ? "Loading more…" : `Load more ${direction === "forward" ? "forward references" : "backlinks"}`}</button>}
   </section>;
 }
 
-function ReferencesDetail({ pages, loading, error, stale, loadingMore, checks, checking, checkError, trigger, popoverId, onClose, onLoadMore }: {
+function ReferencesDetail({ target, pages, loading, error, stale, loadingMore, checks, checking, checkError, trigger, popoverId, onClose, onLoadMore }: {
+  target: { provider: string; keys: Record<string, string> };
   pages: ReferencePages;
   loading: boolean;
   error: string | null;
@@ -371,6 +392,7 @@ function ReferencesDetail({ pages, loading, error, stale, loadingMore, checks, c
   onClose: () => void;
   onLoadMore: (direction: Direction) => void;
 }) {
+  const navigate = useBbNavigate();
   const contentRef = useRef<HTMLDivElement | null>(null);
   const [position, setPosition] = useState<PopoverPosition>({ top: 8, left: 8 });
   const updatePosition = useCallback(() => {
@@ -404,12 +426,13 @@ function ReferencesDetail({ pages, loading, error, stale, loadingMore, checks, c
   return createPortal(
     <div ref={contentRef} className="cross-references__popover" id={popoverId} role="dialog" aria-label="References" tabIndex={-1} style={{ top: position.top, left: position.left }}>
       <header><strong>References</strong><button type="button" className="cross-references__close" onClick={onClose} aria-label="Close references">Close</button></header>
+      <button type="button" className="cross-references__close" onClick={() => { onClose(); navigate.toPluginPanel("mentions", { subPath: mentionsSubPath({ v: 1, kind: "query", input: { version: 2, query: { kind: "resource", target, relation: "self" } } }) }); }}>View mentions</button>
       <p className="cross-references__message">Coverage is limited to known sources and at most 50 timeline pages per scan. Supplier failures and scan budgets can leave retained, unconfirmed locations. Legacy Thread Links claims remain until source deletion. Up to 256 targets per source and the newest 100 locations per producer edge are retained; counts show distinct resources, not all mentions.</p>
       {stale && <p className="cross-references__stale" role="status">The connection is recovering; this may be briefly out of date.</p>}
       {loading && pages.forward.rows.length === 0 && pages.backlink.rows.length === 0 && <p className="cross-references__message" role="status">Checking references…</p>}
       {error != null && <p className="cross-references__error" role="alert">{error}</p>}
-      <ReferenceSection heading="Forward references" rows={pages.forward.rows} total={pages.forward.total} nextCursor={pages.forward.nextCursor} loadingMore={loadingMore.forward} onLoadMore={() => onLoadMore("forward")} direction="forward" checks={checks} checking={checking} checkError={checkError} />
-      <ReferenceSection heading="Backlinks" rows={pages.backlink.rows} total={pages.backlink.total} nextCursor={pages.backlink.nextCursor} loadingMore={loadingMore.backlink} onLoadMore={() => onLoadMore("backlink")} direction="backlink" checks={[]} checking={false} checkError={false} />
+      <ReferenceSection target={target} heading="Forward references" rows={pages.forward.rows} total={pages.forward.total} nextCursor={pages.forward.nextCursor} loadingMore={loadingMore.forward} onLoadMore={() => onLoadMore("forward")} direction="forward" checks={checks} checking={checking} checkError={checkError} />
+      <ReferenceSection target={target} heading="Backlinks" rows={pages.backlink.rows} total={pages.backlink.total} nextCursor={pages.backlink.nextCursor} loadingMore={loadingMore.backlink} onLoadMore={() => onLoadMore("backlink")} direction="backlink" checks={[]} checking={false} checkError={false} />
     </div>,
     document.body,
   );
@@ -437,10 +460,296 @@ function ThreadHeaderAction({ threadId, projectId }: { threadId: string; project
       {forwardCount > 0 && <span className="cross-references__metric" aria-hidden="true"><LinkGlyph /><span className="cross-references__count">{forwardCount}</span></span>}
       {backlinkCount > 0 && <span className="cross-references__metric" aria-hidden="true"><BacklinkGlyph /><span className="cross-references__count">{backlinkCount}</span></span>}
     </button>
-    {open && triggerRef.current != null && <ReferencesDetail pages={pages} loading={loading} loadingMore={loadingMore} error={error} stale={stale} checks={checks} checking={checking} checkError={checkError} trigger={triggerRef.current} popoverId={popoverId} onClose={close} onLoadMore={loadMore} />}
+    {open && triggerRef.current != null && <ReferencesDetail target={{ provider: "bb", keys: { project: projectId, thread: threadId } }} pages={pages} loading={loading} loadingMore={loadingMore} error={error} stale={stale} checks={checks} checking={checking} checkError={checkError} trigger={triggerRef.current} popoverId={popoverId} onClose={close} onLoadMore={loadMore} />}
   </>;
 }
 
 export default definePluginApp((app) => {
   app.slots.experimental_threadHeaderAction({ id: "cross-references", title: "References", component: ThreadHeaderAction });
+  app.slots.experimental_browserToolbarAction({ id: "mentions", title: "Mentions", component: BrowserMentionsAction });
+  app.slots.navPanel({ id: "mentions", title: "Mentions", icon: "Link", path: "mentions", component: MentionsPanel });
 });
+
+// One mounted reader owns one page, one flight and one invalidation timer.
+// Closed toolbar buttons and collapsed rows never instantiate this component.
+type MentionPage = Extract<ListMentionsOutputV2, { status: "page" }>;
+function useMentionClient(): CrossReferencesV2Client {
+  const sdk = useSdk();
+  return useMemo(() => createCrossReferencesV2Client(sdk), [sdk]);
+}
+function MentionResults({ selection }: { selection: MentionSelection }) {
+  return <MentionResultOwner key={JSON.stringify(selection)} selection={selection} />;
+}
+function MentionResultOwner({ selection }: { selection: MentionSelection }) {
+  const client = useMentionClient();
+  const resultRef = useRef<HTMLElement | null>(null);
+  const [view, setView] = useState<{ page: MentionPage | null; loading: boolean; error: string | null; stale: boolean }>({ page: null, loading: true, error: null, stale: false });
+  const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
+  const page = useRef<MentionPage | null>(null);
+  const lifetime = useRef(false);
+  const flight = useRef<AbortController | null>(null);
+  const pending = useRef(false);
+  const described = useRef(false);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const run = useRef<(cursor?: string, conditional?: boolean) => void>(() => {});
+  const schedule = useRef<() => void>(() => {});
+  const connection = useRealtimeConnectionState();
+  const previousConnection = useRef(connection);
+  const scope = useMemo(() => ({
+    target: selection.query.kind === "resource" ? canonicalizeIdentity(selection.query.target).identityDigest : null,
+    source: selection.source ? canonicalizeIdentity(selection.source).identityDigest : null,
+  }), [selection]);
+
+  run.current = (cursor, conditional = false) => {
+    if (!lifetime.current) return;
+    if (document.hidden) { pending.current = true; return; }
+    if (flight.current) { pending.current = true; return; }
+    if (timer.current) { clearTimeout(timer.current); timer.current = null; }
+    pending.current = false;
+    const controller = new AbortController();
+    flight.current = controller;
+    setView(current => ({ ...current, loading: true }));
+    void (async () => {
+      try {
+        if (!described.current) { await client.describe(controller.signal); described.current = true; }
+        const input = { ...selection, pageSize: 25,
+          ...(cursor ? { cursor } : conditional && page.current ? { ifSnapshot: page.current.snapshot } : {}),
+        };
+        let result = await client.listMentions(input, controller.signal);
+        if (result.status === "restart") {
+          // Exactly one recovery read; no repeated cursor/restart loop.
+          result = await client.listMentions({ ...selection, pageSize: 25 }, controller.signal);
+        }
+        if (!lifetime.current || controller.signal.aborted) return;
+        // A refresh queued during pagination supersedes that obsolete page.
+        if (cursor && pending.current) return;
+        if (result.status === "page") {
+          page.current = result;
+          setExpanded(new Set());
+          setView({ page: result, loading: false, error: null, stale: false });
+        } else if (result.status === "not-modified" && page.current) {
+          page.current = { ...page.current, coverage: result.coverage };
+          setView({ page: page.current, loading: false, error: null, stale: false });
+        } else {
+          const message = result.status === "unavailable"
+            ? result.reason === "read-budget" ? "Mentions are temporarily unavailable: read limit reached." : "Mention evidence is not available yet."
+            : "Mentions changed while loading. Try again.";
+          setView(current => ({ ...current, loading: false, error: message, stale: current.page !== null }));
+        }
+      } catch {
+        if (lifetime.current && !controller.signal.aborted) setView(current => ({ ...current, loading: false, error: "Could not read mentions. The connection or V2 service is unavailable.", stale: current.page !== null }));
+      } finally {
+        if (flight.current === controller) flight.current = null;
+        if (lifetime.current && pending.current) schedule.current();
+      }
+    })();
+  };
+  schedule.current = () => {
+    pending.current = true;
+    if (!lifetime.current || document.hidden || flight.current || timer.current) return;
+    timer.current = setTimeout(() => { timer.current = null; if (pending.current) run.current(undefined, true); }, 250);
+  };
+  const invalidate = useCallback((raw: unknown) => {
+    const parsed = mentionsChangedV2Schema.safeParse(raw);
+    if (!parsed.success) return;
+    const signal = parsed.data;
+    if (selection.producerPluginId && signal.producerPluginId !== selection.producerPluginId) return;
+    if (scope.source && signal.sourceIdentityDigest !== scope.source) return;
+    if (scope.target && !signal.scopeListClipped && !signal.affectedIdentityDigests.includes(scope.target)) return;
+    schedule.current();
+  }, [selection.producerPluginId, scope]);
+  useRealtime(MENTIONS_V2_CHANNEL, invalidate);
+  useEffect(() => {
+    lifetime.current = true;
+    resultRef.current?.focus();
+    run.current();
+    const visibility = () => {
+      if (document.hidden) {
+        if (timer.current) { clearTimeout(timer.current); timer.current = null; }
+      } else if (pending.current) schedule.current();
+    };
+    document.addEventListener("visibilitychange", visibility);
+    return () => {
+      lifetime.current = false;
+      pending.current = false;
+      flight.current?.abort();
+      flight.current = null;
+      if (timer.current) clearTimeout(timer.current);
+      timer.current = null;
+      document.removeEventListener("visibilitychange", visibility);
+    };
+  }, [client]);
+  useEffect(() => {
+    if (connection !== "connected") setView(current => ({ ...current, stale: current.page !== null }));
+    else if (previousConnection.current !== "connected") schedule.current();
+    previousConnection.current = connection;
+  }, [connection]);
+
+  const groups = new Map<string, { item: MentionItem; pageSlot: number }[]>();
+  for (const [pageSlot, item] of (view.page?.items ?? []).entries()) {
+    const key = mentionClaimKey(item);
+    const group = groups.get(key);
+    const slot = { item, pageSlot };
+    if (group) group.push(slot); else groups.set(key, [slot]);
+  }
+  return <section ref={resultRef} tabIndex={-1} className="mentions__results" aria-label="Mention results" aria-busy={view.loading}>
+    {view.loading && <p role="status">Loading mentions…</p>}
+    {view.stale && <p role="status">Showing the last available results; they may be out of date.</p>}
+    {view.error && <p role="alert">{view.error}</p>}
+    {view.error && <button type="button" disabled={view.loading} onClick={() => run.current(undefined, true)}>Retry mentions</button>}
+    {view.page && <>
+      <MentionCoverage page={view.page} />
+      {view.page.items.length === 0 && <p>No matching stored mentions in known sources.</p>}
+      <ul className="mentions__groups">{[...groups].map(([key, items]) => {
+        const first = items[0]!.item;
+        const occurrences = items.filter(({ item }) => item.kind === "occurrence");
+        const hidden = Math.max(0, occurrences.length - 3);
+        let shown = 0;
+        return <li key={key}>
+          <strong>{first.source.presentation.label}</strong>
+          <small>Producer: {first.producerPluginId} · {first.cap.state === "uncapped" ? "No known location clipping" : first.cap.state === "capped" ? "Locations capped at 100" : "Location cap history unknown"}{first.cap.sourceHistoryUnknown ? " · Source clipping history unknown" : ""}</small>
+          <ul>{items.map(({ item, pageSlot }) => {
+            if (item.kind === "occurrence" && ++shown > 3 && !expanded.has(key)) return null;
+            return <li key={mentionItemKey(item, pageSlot)}><MentionRow item={item} /></li>;
+          })}</ul>
+          {hidden > 0 && <button type="button" aria-expanded={expanded.has(key)} onClick={() => setExpanded(current => { const next = new Set(current); if (next.has(key)) next.delete(key); else next.add(key); return next; })}>{expanded.has(key) ? "Show three locations on this page" : `Show ${hidden} more locations on this page`}</button>}
+        </li>;
+      })}</ul>
+      <nav aria-label="Mention pages">
+        <button type="button" disabled={view.loading} onClick={() => run.current()}>First page</button>
+        <button type="button" disabled={view.loading || view.page.nextCursor === null} onClick={() => { if (page.current?.nextCursor) run.current(page.current.nextCursor); }}>Next page</button>
+      </nav>
+      <p className="mentions__note">This page contains {view.page.items.length} rows. Groups follow their first result; locations within each group are newest first. Three locations per claim are initially shown on this page; disclosure reveals the rest of this page.</p>
+    </>}
+  </section>;
+}
+function MentionCoverage({ page }: { page: MentionPage }) {
+  const { counts, coverage } = page;
+  return <div className="mentions__coverage">
+    <p>{counts.retainedOccurrences} stored locations · {counts.confirmedOccurrences} confirmed · {counts.unconfirmedOccurrences} unconfirmed · {counts.producerClaims} producer claims · {counts.indexedSources} sources</p>
+    <p>Known sources only. Counts cover the query, not just this page or all-time mentions.</p>
+    {coverage.collectionIncomplete && <p>Collection is incomplete; unvisited evidence may be retained.</p>}
+    {coverage.retentionLimited && <p>Retention limits have clipped stored evidence.</p>}
+    {coverage.capHistoryUnknown && <p>Some source clipping history is unknown.</p>}
+    {coverage.legacyClaimsPresent && <p>Legacy claims are included.</p>}
+    {coverage.evidenceStateUnknown && <p>Some claims have unknown or unbound evidence.</p>}
+    <p>{counts.claimsWithoutLocations} claims without locations · {counts.excerptUnavailable} locations without excerpts</p>
+    {coverage.authoredUrlCoverage.state === "partial" && <p>Historical authored URLs are unknown for {coverage.authoredUrlCoverage.unknownLocations} known locations; an Exact URL search may miss them.</p>}
+    {coverage.reasons.length > 0 && <details><summary>Coverage details</summary><ul>{coverage.reasons.map(reason => <li key={reason}>{reason}</li>)}</ul></details>}
+    {coverage.reasonsClipped && <p>Additional coverage reasons were clipped.</p>}
+  </div>;
+}
+function MentionRow({ item }: { item: MentionItem }) {
+  const href = mentionMessageHref(item);
+  const sourceUrl = item.source.presentation.url;
+  const parts = mentionExcerptParts(item);
+  return <article className="mentions__row">
+    {href ? <UrlLink href={href}>{item.kind === "occurrence" ? `${item.locator.role === "user" ? "User" : "Assistant"} message ${item.locator.messageSeq}` : "Original message"}</UrlLink>
+      : <>{sourceUrl && <UrlLink href={sourceUrl}>Open source</UrlLink>}<span>Exact message location unavailable.</span></>}
+    {item.kind === "occurrence" ? <>
+      {parts && item.excerpt.state === "ready" ? <p className="mentions__excerpt">
+        {item.excerpt.clippedBefore && <span aria-label="Excerpt clipped before">…</span>}{parts.before}<mark>{parts.match}</mark>{parts.after}{item.excerpt.clippedAfter && <span aria-label="Excerpt clipped after">…</span>}
+      </p> : <p>Excerpt unavailable: {item.excerpt.state === "unavailable" ? ({ "not-materialized": "not collected", "indivisible-word": "a word exceeds the excerpt limit", "no-eligible-context": "no eligible safe context" }[item.excerpt.reason]) : "unsupported"}.</p>}
+      {item.excerpt.state === "ready" && (item.excerpt.matchClippedBefore || item.excerpt.matchClippedAfter) && <small>The highlighted match is clipped; the link opens the full original location.</small>}
+      <small>{item.confirmation === "retained-unconfirmed" ? "Retained, unconfirmed location" : "Observed location"} · {item.provenance.origin === "contributed" ? "Supplier recognition" : "Native recognition"} · {item.provenance.confidence} confidence · {item.provenance.recognition.basis}</small>
+      {item.provenance.authoredHref && <UrlLink href={item.provenance.authoredHref}>Authored destination</UrlLink>}
+    </> : <p>{item.kind === "unsupported" ? "Evidence format unsupported; this claim is still included." : item.reason === "legacy" ? "Legacy claim: no collected location or excerpt." : item.reason === "producer-no-evidence" ? "This producer supplied a claim without location evidence." : "Location evidence has not been collected yet."}</p>}
+  </article>;
+}
+
+function BrowserMentionsAction({ url, isCompactViewport }: ExperimentalPluginBrowserToolbarActionProps) {
+  const navigate = useBbNavigate();
+  return <button type="button" className="cross-references__trigger" aria-label="Mentions of current page" title="Mentions of current page" onClick={() => {
+    let subPath = "";
+    try { subPath = mentionsSubPath({ v: 1, kind: "lookup", href: url, mode: "recognize" }); } catch { subPath = "unavailable"; }
+    navigate.toPluginPanel("mentions", { subPath });
+  }}>{isCompactViewport ? <LinkGlyph /> : "Mentions"}</button>;
+}
+function MentionsPanel({ subPath }: PluginNavPanelProps) {
+  const navigate = useBbNavigate();
+  const client = useMentionClient();
+  const route = useMemo(() => {
+    try { return { value: parseMentionsSubPath(subPath), invalid: false }; }
+    catch { return { value: null, invalid: true }; }
+  }, [subPath]);
+  const [text, setText] = useState("");
+  const [mode, setMode] = useState<"recognize" | "exact-url">("recognize");
+  const [lookup, setLookup] = useState<ResolveLookupOutputV2 | null>(null);
+  const [selection, setSelection] = useState<MentionSelection | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const flight = useRef<AbortController | null>(null);
+  const described = useRef(false);
+  const generation = useRef(0);
+  const fieldId = useId();
+  const choose = useCallback((option: ResolveLookupOutputV2["options"][number]) => {
+    try {
+      // Outputs tolerate additions; only current input fields enter a strict query.
+      // Manual choices must contain projection/validation failures just like auto-selection.
+      const query = option.query.kind === "authored-url" ? { kind: "authored-url" as const, href: option.query.href }
+        : { kind: "resource" as const, target: { provider: option.query.target.provider, keys: option.query.target.keys }, relation: option.query.relation };
+      const input = listMentionsInputV2Schema.parse({ version: 2, query });
+      const next = mentionsSubPath({ v: 1, kind: "query", input });
+      navigate.toPluginPanel("mentions", { subPath: next });
+      setSelection(input);
+      setError(null);
+    } catch {
+      setSelection(null);
+      setError("This lookup choice is invalid or too large to open. Choose another resource.");
+    }
+  }, [navigate]);
+  const resolve = useCallback((value: string, nextMode: "recognize" | "exact-url") => {
+    flight.current?.abort();
+    const controller = new AbortController();
+    flight.current = controller;
+    const request = ++generation.current;
+    setSelection(null); setLookup(null); setBusy(true); setError(null);
+    void (async () => {
+      try {
+        const input = resolveLookupInputV2Schema.parse({ version: 2, text: value, mode: nextMode });
+        if (!described.current) { await client.describe(controller.signal); described.current = true; }
+        const result = await client.resolveLookup(input, controller.signal);
+        if (controller.signal.aborted || generation.current !== request) return;
+        setLookup(result);
+        if (result.state === "ready" && result.options.length === 1) choose(result.options[0]!);
+      } catch {
+        if (!controller.signal.aborted && generation.current === request) setError("Could not resolve this lookup. Check its size, URL safety and V2 service availability.");
+      } finally {
+        if (!controller.signal.aborted && generation.current === request) setBusy(false);
+      }
+    })();
+  }, [client, choose]);
+  useEffect(() => {
+    ++generation.current;
+    flight.current?.abort();
+    setBusy(false); setError(null); setSelection(null);
+    if (route.value?.kind === "query") {
+      const input = route.value.input;
+      setSelection(input);
+      setLookup(current => current?.options.some(option => JSON.stringify(option.query) === JSON.stringify(input.query)) ? current : null);
+    }
+    else if (route.value?.kind === "lookup") {
+      setLookup(null);
+      setText(route.value.href); setMode(route.value.mode);
+      resolve(route.value.href, route.value.mode);
+    } else setLookup(null);
+    return () => { ++generation.current; flight.current?.abort(); };
+  }, [route, resolve]);
+  return <main className="mentions" aria-label="Mentions">
+    <h1>Mentions</h1>
+    <form onSubmit={event => { event.preventDefault(); resolve(text, mode); }}>
+      <label htmlFor={fieldId}>Find mentions of a resource or URL</label>
+      <input id={fieldId} value={text} onChange={event => setText(event.target.value)} placeholder="Paste a resource or URL" />
+      <label>Lookup mode <select value={mode} onChange={event => setMode(event.target.value === "exact-url" ? "exact-url" : "recognize")}><option value="recognize">Recognize</option><option value="exact-url">Exact URL</option></select></label>
+      <button type="submit" disabled={busy}>{busy ? "Resolving…" : "Find mentions"}</button>
+    </form>
+    <p className="mentions__note">Recognize finds typed resources, including supported PR families. Exact URL searches the literal authored URL without merging aliases.</p>
+    {route.invalid && <p role="alert">This lookup route is invalid, unsupported or too large. Paste a supported resource or URL.</p>}
+    {error && <p role="alert">{error}</p>}
+    {lookup && <section aria-label="Lookup choices">
+      {lookup.state !== "ready" && <p role="status">{lookup.state === "ambiguous" ? "Choose the intended resource." : lookup.state === "incomplete" ? "Recognition is incomplete. Available choices may not cover every interpretation." : "No recognized resource. Try Exact URL for a supported URL."}</p>}
+      {lookup.options.length > 1 || lookup.state !== "ready" ? lookup.options.map((option, index) => <button key={index} type="button" onClick={() => choose(option)}>{option.label} · {option.basis}{option.query.kind === "resource" && option.query.relation === "github-pr-family" ? " · PR family" : option.query.kind === "authored-url" ? " · Exact authored URL" : " · Exact resource"}</button>) : null}
+    </section>}
+    {selection && <><p className="mentions__note">{selection.query.kind === "authored-url" ? selection.query.href : selection.query.target.provider === "url" ? selection.query.target.keys.href : selection.query.target.provider === "bb" ? selection.query.target.keys.thread ?? selection.query.target.keys.project : "Selected stored resource"}</p><p role="status">{selection.query.kind === "authored-url" ? "Exact authored URL" : selection.query.relation === "github-pr-family" ? "Recognized PR family" : "Exact resource"}</p><MentionResults selection={selection} /></>}
+  </main>;
+}
