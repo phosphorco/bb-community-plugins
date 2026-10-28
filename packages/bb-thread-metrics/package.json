@@ -1,6 +1,6 @@
 {
   "name": "@phosphorco/bb-thread-metrics",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Bounded thread dollar metrics contracts and pure family and heat operations.",
   "type": "module",
   "license": "MIT",

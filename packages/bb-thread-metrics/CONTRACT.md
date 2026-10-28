@@ -1,4 +1,4 @@
-# Thread metrics wire v1 (@phosphorco/bb-thread-metrics 0.1.0)
+# Thread metrics wire v1 (@phosphorco/bb-thread-metrics 0.2.0 candidate)
 
 | Supplier owns | Package owns | Host owns |
 | --- | --- | --- |
@@ -316,3 +316,85 @@ obsolete outcomes. These post-await fences are required even when the SDK claims
 cancellation support. Keep last good data during failure according to the host's
 staleness policy; a late response cannot revive a disposed/replaced demand.
 No package-global lifecycle or client cancellation machinery is introduced.
+
+
+## Additive recent snapshot capability (package0.2)
+
+The new optional boolean `recentSnapshotV1` capability requires the exact fixed
+`threadMetricsRecentSnapshotV1` handler; registration rejects either mismatch.
+Input is strict `{ifRevision?:string}` within1024 canonical UTF-8 JSON bytes.
+Full replies have wire version1, `unchanged:false`, opaque revision, immutable
+publication time, rank time,72h recent window, a published config revision/value,
+explicit coverage/materialization-pending/cap state and rows. Unchanged replies
+have version1, `unchanged:true`, revision and no recognized full-only payload.
+Recognized rows/config/times/population/coverage/cap fields are rejected BEFORE
+stripping; unrelated future additive fields remain allowed within the byte cap. The revision
+must exactly match requested ifRevision. A new supplier instance must not reuse a
+revision for different content. Reads do not advance revision or run fold,
+closure, rank or materializer work; suppliers serve a held published object.
+Adapters validate shape/bytes but cannot prove supplier implementation purity.
+
+Each row has independent own/family last-fold timestamps, asOf and content
+revision; at least one activity timestamp must be in the envelope's72h window.
+The row score-config revision must match the published envelope config. Own and
+family each carry memberCount/coverage/priceVersion, compact approximation
+provenance, four raw dollar windows and
+provider-attributed dollar windows, omitted-provider count, four weighted-score
+windows, and separately named dollar/score percentile ranks. `estimate`/`floor`
+values are finite nonnegative amounts; `unavailable` has null amount. Explicit
+floor0 is a supplier attestation; unsupported root zeros must be unavailable,
+never inferred from a partial population or a missing row. Family providers must
+represent deduplicated actual members, not sums of other family rows.
+
+Full canonical JSON is capped at4MiB including additive unknown fields,1000 rows,
+8KiB per raw row before stripping, and32 provider entries per scope. Omitted
+providers/rows, uncertain omission counts (`exact:false`, even lower-bound0),
+and pending materialization cannot claim complete coverage. These
+are post-transport decoded bounds, not raw-network/preparse allocation limits.
+Providers select most recent rows within both row/byte caps, publish cutoff and
+honest omission state; row omission alone proves neither absence nor zero. The
+codec always checks finite known provider subtotals and weighted arithmetic,
+including when other providers are unavailable or omitted. Available totals must
+cover every known subtotal within eight relative machine epsilons (no absolute
+small-dollar epsilon); incomplete provider sets or contributing floors
+require a floor rather than an estimate. Unknown components may yield unavailable
+totals, never invented zero. Complete provider sets reconcile exact totals.
+
+Each scope AND provider has `approximation:{approximate,reasons}` independently
+of observation coverage. Compact bounded reasons retain `closest-model`,
+`provider-default`, `model-attribution`, `bucket-boundary`, `missing-price`, and
+`source-gap`; aggregate provenance must include contributing provider reasons.
+Unavailable prices require `missing-price`. Unavailable observations are different:
+a partial/unknown projection with source-gap approximation and source-gap,
+root-unattested, history-unavailable or missing-thread coverage may retain
+unavailable values without claiming a price failure. Any explicit unpriced
+coverage still requires missing-price, and provider missing-price reasons must
+remain in aggregate approximation. Suppliers must not label an actual pricing
+gap as an observation gap. This is the lossless reason mapping
+from readV1; per-model rate associations remain in on-demand read/detail and are
+not copied into listing rows. `priceVersion` still identifies the price table.
+Real materializer conformance remains necessary before release.
+
+Scoring-config schemaVersion2 is versioned separately from normalization semantics.
+Default mode is percentile with gates .9 m20/h24/d7; omitted provider weights mean1.
+Absolute mode supplies thresholds for all four windows. `weightedScoreV2` sums
+provider dollars times weights, returns unknown when a component is unavailable,
+and rejects invalid/duplicate provider values and arithmetic overflow. Weighting
+never reprices the raw-dollar fields. UI, settings CAS and scoring policy remain
+ledger/surface-owned; this package contains no settings storage or sliders.
+
+Ranks cannot be non-null for an empty population; a positive singleton ranks0.
+When rankAsOf is at or after the row value epoch, zero or unavailable amounts require null rank.
+Older rank epochs may deliberately remain while newer amounts change; consumers
+must gate heat on supported positive CURRENT amounts as well as ranks.
+`recentPercentileHeat` applies that current weighted-score gate; legacy
+`heat(ranks)` alone is insufficient for recent rows. This codec does not rebuild
+or prove actual population percentiles.
+
+Supplier ranks recompute at most once/minute outside reads. A publication binds
+configuration and scored content atomically; pending changes retain explicit
+coverage. Consumers hold the object by SDK-owner identity and use keyed row
+selectors. They may conditionally poll at30s while interested/visible/connected,
+coalescing existing hints without a per-thread request. Covered listing rows need
+no readV1; explicit inspection outside the window may use the existing bounded
+read/detail lane. The contract package itself never polls or retries.

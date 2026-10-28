@@ -1,6 +1,6 @@
 # @phosphorco/bb-thread-metrics
 
-Version 0.1.0: bounded dollar summaries, family closure, heat ranks and optional
+Version0.2.0 candidate (not released): adds a bounded recent snapshot and scoring-configv2. Existing wirev1 summaries, family closure, heat ranks and optional
 on-demand breakdowns for independent BB plugins. See [CONTRACT.md](CONTRACT.md)
 for ownership, wire semantics and proof limits.
 
@@ -29,3 +29,30 @@ checks emitted declaration compatibility with server and browser SDKs. The
 `/testing` entry's `runSupplierConformance` accepts the adopter's real registration
 factory and representative read/detail cases. It returns explicit source
 conformance checks, never live host acceptance.
+
+
+## Recent snapshot (0.2 candidate)
+
+Owners may advertise `capabilities.recentSnapshotV1:true` with a matching
+`recentSnapshot(input)` handler. `createThreadMetricsClient(...).recentSnapshot({ifRevision?})`
+returns the immutable precomputed object or an unchanged revision. Absence of this
+optional capability leaves the0.1 read/detail contract intact. Old consumers may
+ignore it. The adapter does not add refresh timers, caches or materialization.
+
+The full response holds own/family raw estimated-dollar windows and provider
+contributions, separately named weighted scores, raw dollar ranks and score ranks,
+activity/materialization/rank times, coverage/cap/pending flags and the published
+scoring configuration. Zero is explicit supplier evidence; omission/unavailable is
+not zero. Config weights affect heat scores, never retained dollars. Defaults are
+weight1 and current p90 percentile gates. Raw/scored populations remain distinct.
+
+Bounds:72h recent activity,1000 rows,4MiB canonical JSON and8KiB/row,32 provider
+entries per projection/config. Bounds include unknown additive fields before
+schema stripping; the SDK has already parsed transport JSON. Providers enforce
+materializer work/storage and publication bounds independently. Clients must not
+turn row omission into an eager per-ID read storm. The planned coordinator uses
+one held snapshot/mount+30s conditional cadence; the package schedules nothing.
+
+Current source tests are package/adapter proof only. Registry release, ledger
+materialization, live byte/time measurement, all consumer adoptions and native
+host/freshness proof remain separate gates.
