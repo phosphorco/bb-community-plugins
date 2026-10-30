@@ -398,3 +398,133 @@ selectors. They may conditionally poll at30s while interested/visible/connected,
 coalescing existing hints without a per-thread request. Covered listing rows need
 no readV1; explicit inspection outside the window may use the existing bounded
 read/detail lane. The contract package itself never polls or retries.
+
+### Optional recent token/count observations
+
+A recent scope may carry `usage` with aggregate and per-provider token windows,
+explicit `estimate`/`floor`/`unavailable` values, matching provider omissions,
+and a descendant count with an exactness flag. Missing `usage` is unsupported,
+not zero. Positive tokens do not depend on a price match or lifetime dollar
+observations: wholly unpriced and bucket-only tokens can remain floors while
+USD is unavailable. Unknown/legacy token inputs stay unavailable. A supplied
+zero is an explicit observation attestation.
+
+Provider identities must match the displayed dollar providers. The codec checks
+componentwise conservation of known token observations and reconciles descendant
+count with the loaded membership; it does not certify unseen global membership.
+Omitted providers permit a larger aggregate supported subtotal, never a smaller
+one. Presentation fitting removes dollar/token provider entries together and
+retains aggregate supported observations with an explicit cap qualification.
+
+Per-provider dollar contributions are the primary money presentation. Aggregate
+cross-provider dollar windows remain internal reconciliation/ranking inputs and
+must not be presented as a grand total. Weighted attention scores are unitless,
+not currency; token counts and descendants are secondary to provider dollars.
+
+An aggregate token `estimate` requires estimate-kind tokens for every displayed
+provider and no omitted providers in that window. A floor or unavailable provider
+cannot be upgraded by numerical equality alone. This requirement is independent
+of USD pricing coverage: completely observed zero or positive tokens may remain
+estimates while dollars are unpriced. Explicit member-cap, depth-cap or edge-cap
+coverage cannot carry `descendants.exact=true`; other supplier membership
+attestations still require evidence the codec cannot reconstruct.
+
+
+### Unique seven-day root inputs (unpublished0.2 producer extension)
+
+Optional `heatInputs` is a unique all-window root-family table captured in the SAME durable rank publication as `heat`. It is independent of `rows`, whose actual fold activity covers only72h and whose money may be newer. Never join current display money into captured ranks by ID, infer missing activity timestamps, or compare cross-epoch money as equal. Each input carries its financial `asOf`, config revision, explicit attested root topology, root-domain dollar/weighted ranks and all three decisions. `family.dollarRanks/scoreRanks` retain their original scoped meaning; root ranks live only under `heat`. Unknown metadata remains absent/null; title/native personal-or-project navigation is only bounded already-collected data, not identity/membership proof.
+
+`cohortComplete` attests the supplied ROOT table, not complete source observation or exact spend. It requires no pending or omitted input and exact omission accounting. Per-window context population coverage and each family value/attribution remain independent. Full certified windows reconcile exact supported-positive counts and first-tie ordering against the complete table; partial transport preserves published ranks but cannot give exact reweighted draft percentiles. A five-day root can appear here without any72h display row. Hidden/archive activity is included; child/deleted/unknown topology never enters this table.
+
+Display rows PLUS captured input rows share one aggregate1000 physical-entry budget, whole4MiB canonical JSON,8KiB per entry; duplicate IDs across these two DIFFERENT captures still consume two physical entries. Raw additive fields count before output stripping. Producer packing may retain only a subset; omissions/capped membership are explicit and prevent a complete input attestation. It never reconstructs from display rows or adds a per-ID population endpoint.
+
+Optional scope `attribution` carries per-window `unknownProvider`, `attributionComplete` and `unpriced` evidence. Known provider USD is primary presentation. Cross-provider `windows` and unitless weighted `scores` are INTERNAL reconciliation/ranking inputs, not a dollar grand total. Unknown remainder is a lower bound/unavailable reconciliation amount, NEVER an invented provider at weight1. No omitted provider IDs and exact zero remainder are required for complete attribution; complete observation/price are separately required for estimates. Explicit unpriced usage retains missing-price provenance. Legacy scopes lacking this extension remain readable diagnostics; they cannot populate the new certified heat input table. No numeric evidence is invented on migration.
+
+The supplier still attests actual membership and ordering; codecs prove internal coherence, not unseen global source truth. Bounds are post-transport parsing containment. The optional producer remains source-only until reviewed publication, exact registry pins, fresh composition gates and host byte/time measurement; the contract extension alone is no activation/adoption/freshness proof.
+
+
+### Full publication identity and ordered consumer admission
+
+An additive full-only `publication:{instance,sequence}` header exposes the
+supplier's committed publication identity. `instance` is an opaque1–128-character
+string; `sequence` is a positive safe integer. Old stored/full responses may omit
+this header and remain readable for legacy diagnostics. New changed publications
+from the ledger include it. A Heat capture adopter requires the header; absence
+is unavailable, never inferred by parsing `revision`, rank time or a request
+ordinal. Unchanged replies carry only the previously requested opaque revision,
+never a new identity or recognized full-only fields.
+
+Within one durable source history, changed committed publications strictly
+increase sequence across writer-instance changes. No-op attempts and reopening
+retain the exact held revision/pair/content. The publisher injects revision and
+pair inside its guarded commit and excludes BOTH from the semantic digest. The
+pair is validated against the stored instance/counter on hydration; reads return
+the stored payload identity, not the newly registered writer. Actual encoded
+header bytes count toward the same4MiB cap; no new allowance is created.
+
+A retained owner resource, outside component mounts, must order validated full
+responses by sequence before feeding Heat: lower is stale; equal accepts only
+the same immutable pair/revision/content; greater with a new instance is an
+ordered writer successor. Null, ordinary reconnect, facade changes and timeouts
+do not reset this watermark or release actual transport admission. Source
+replacement fences captured old callbacks. These are adopter obligations, not
+facts proved by a stateless wire decoder or the presence of this header.
+
+The persisted counter does NOT attest order across external database rollback,
+reset or replacement. Such images may repeat or lower sequences while changed
+writer UUIDs keep revisions distinct. A UUID alone must never authorize a reset;
+a retained consumer holds/reports lower or equal-conflicting data until an
+explicit authoritative selected-source replacement. This unit adds no restore
+protocol or automatic reset. Counter exhaustion is explicit refusal, never wrap.
+Settings Save CAS remains keyed by config version, not publication sequence;
+settings published metadata must describe the exact held publication/config.
+
+
+### Retained snapshot client session (unpublished0.2)
+
+The optional `/bb` `createRecentSnapshotSession(ownerBoundClient)` helper is an
+imperative admission and ordering boundary, owned by the existing selected-source
+resource outside React. The surface owns discovery, source-selection authority,
+refresh cadence, retries, observable state and rendering. The helper creates no
+subscription, refresh loop, retry queue or shared global store; construction is
+quiet. It holds at most one decoded immutable full snapshot and one actual read.
+A native adopter must retain the SAME session through zero interest, remount,
+ordinary reconnect and facade/writer changes while a read remains outstanding.
+Independent factories do not share admission. This helper alone does not prove
+an adopter's resource lifetime.
+
+`read()` sends the held opaque revision conditionally; `read({full:true})` requests
+a full response. Original full envelopes are publicly validated before ordering.
+A full response requires the publication pair: lower sequences fail, equal
+sequences require the same immutable pair/revision/decoded content, and greater
+sequences must use a new opaque revision. An ordered new writer advances the
+private owner generation once; an ordinary same-source facade update does not.
+Valid unchanged content returns the exact held observation object, allowing the
+caller to confirm recovery without allocating or notifying for changed data.
+Null, invalid, missing-identity, stale or failed responses preserve last content
+and highwater. Validation/content comparison still costs bounded payload work;
+this is not a claim of constant-time end-to-end decoding.
+
+The default local observation deadline is the existing2000ms contract call
+limit (configurable1–2000ms). Timeout, caller abort, inactive state or explicit
+replacement rejects local observation and aborts its signal, but the actual slot
+remains held until the underlying source Promise settles, even if abort is
+ignored. Busy/inactive/already-aborted reads return typed local
+`RecentSnapshotNotStarted` without invoking the source. A source-thrown instance
+of that type is wrapped and cannot claim this session's pre-invocation proof.
+There is no queued replay. A permanently held transport keeps this lane
+unavailable; caller deadline never proves remote cancellation.
+
+`updateSource` is only a same-plugin facade update and retains ordering.
+`replaceSource` requires authoritative selected-source replacement, fences old
+callbacks and clears held lineage while retaining any actual old transport slot.
+Do not invoke it for a new UUID, timeout, remount, lower sequence or an ordinary
+reconnect. External restored/reset images require authority supplied by the
+native resource; this API does not establish that authority. `setActive` changes
+interest without clearing the lineage. Only admitted observations may feed Heat
+owner-generation transitions. Publication identity is independent of matching
+Save config bytes/version, which the retained Heat adapter must still check.
+
+These are client source conformance guarantees, not released pins, native
+resource adoption, host latency/freshness or live bytes/time acceptance. No
+existing consumer is switched merely by exporting this helper.

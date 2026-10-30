@@ -2,6 +2,30 @@ import { createFakePluginHost } from '@get-bb/plugin-sdk/testing';
 import type { BbPluginApi } from '@get-bb/plugin-sdk';
 import { RECENT_LIMITS,recentSnapshotInputSchema,validateRecentSnapshot,METHODS, LIMITS, readInputSchema, detailInputSchema, describeEnvelopeSchema, parseBounded, negotiateVersion, validateReadResult, validateDetailResult } from './index.js';
 import type { RecentSnapshotInput,ReadInput, DetailInput } from './index.js';
+import { createHeatSettingsClient } from './bb.js';
+import { HEAT_SETTINGS_METHODS } from './index.js';
+import type { HeatSettingsSaveInput,ScoringConfigV3 } from './index.js';
+/** Drives the adopter's actual registration/storage. Uses a caller-supplied
+ * valid candidate; never touches a runtime owner or discovers suppliers. */
+export async function runHeatSettingsConformance(options:{pluginId:string;register(bb:BbPluginApi):void|Promise<void>;candidate:ScoringConfigV3}):Promise<ConformanceReport> {
+ const host=createFakePluginHost({pluginId:options.pluginId}),checks:ConformanceReport['checks']=[];
+ const client=createHeatSettingsClient({plugins:{list:async()=>({plugins:[]}),callRpc:async<T>(args:{method:string;input?:unknown})=>await host.harness.behavior.callRpc(args.method,args.input) as T}},options.pluginId);
+ const check=async(name:string,fn:()=>Promise<void>)=>{try{await fn();checks.push({name,passed:true});}catch(e){checks.push({name,passed:false,error:String(e)});}};
+ try {
+  await options.register(host.bb);
+  const initial=await client.read({protocolVersion:1});
+  const input:HeatSettingsSaveInput={protocolVersion:1,operationKey:'kit:save',baseConfigVersion:initial.current.version,candidate:options.candidate};
+  let saved:Awaited<ReturnType<typeof client.save>>;
+  await check('heat-CAS-save',async()=>{saved=await client.save(input);if(saved.kind!=='saved'||saved.record.version===initial.current.version)throw new Error('CAS did not publish fresh config version');});
+  await check('heat-root-domain-saved',async()=>{if(saved!.record.value.schemaVersion!==3||saved!.record.value.domain.kind!=='root-family')throw new Error('Root-family domain missing from saved record');});
+  await check('heat-required-domain',async()=>{const {domain,...missing}=options.candidate;let rejected=false;try{await host.harness.behavior.callRpc(HEAT_SETTINGS_METHODS.save,{...input,operationKey:'kit:no-domain',candidate:missing});}catch{rejected=true;}if(!rejected)throw new Error('Domain-less root candidate accepted');});
+  await check('heat-idempotency',async()=>{const repeated=await client.save(input);if(JSON.stringify(repeated)!==JSON.stringify(saved))throw new Error('Idempotency changed result');});
+  await check('heat-stale-base',async()=>{const conflict=await client.save({...input,operationKey:'kit:conflict'});if(conflict.kind!=='conflict'||conflict.record.version!==saved!.record.version)throw new Error('Stale base wrote');});
+  await check('heat-reconciliation',async()=>{const read=await client.read({protocolVersion:1,operationKey:input.operationKey});if(read.outcome?.kind!=='saved'||read.outcome.record.version!==saved!.record.version)throw new Error('Missing operation receipt');});
+  await check('heat-strict-nested-input',async()=>{let rejected=false;try{await host.harness.behavior.callRpc(HEAT_SETTINGS_METHODS.save,{...input,operationKey:'kit:invalid',candidate:{...input.candidate,unexpected:true}});}catch{rejected=true;}if(!rejected)throw new Error('Nested unknown field accepted');});
+ } finally {await host.harness.lifecycle.dispose();}
+ return {passed:checks.every(c=>c.passed),checks,proof:'source-conformance'};
+}
 export interface ConformanceOptions {
  pluginId:string;
  /** The adopter's real factory/registration, never a second implementation. */
