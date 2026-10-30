@@ -21,6 +21,7 @@ on:
           - bb-identity
           - bb-provider-settings
           - bb-context-recognition
+          - bb-markdown
           - bb-cross-references
           - bb-agent-connection
           - bb-people-accounts
@@ -42,19 +43,19 @@ on:
         description: Exact checked-out commit for a pinned reviewed release
         type: string
       expected_version:
-        description: Exact approved version (identity 0.4.0/0.4.1/0.4.2-native-marker.0/0.5.0, membership 0.1.0)
+        description: Exact approved version (identity 0.4.0/0.4.1/0.4.2-native-marker.0/0.5.0, membership/Markdown 0.1.0)
         type: string
       proof_run_id:
-        description: Reviewed successful dry-run ID; required for pinned-next publish
+        description: Reviewed successful dry-run ID; required for pinned reviewed publish
         type: string
       expected_payload_sha256:
-        description: Reviewed dry-run tgz SHA256; required for pinned-next publish
+        description: Reviewed tgz SHA256; Markdown requires this for dry run and publication
         type: string
       expected_preflight_tags:
         description: Exact owner-approved preflight dist-tags JSON for final publish
         type: string
       expected_receipt_sha256:
-        description: Reviewed dry-run receipt SHA256; required for pinned-next publish
+        description: Reviewed dry-run receipt SHA256; required for pinned reviewed publish
         type: string
   push:
     tags:
@@ -108,7 +109,7 @@ jobs:
           fetch-depth: 0
 
       - name: Acquire the exact fork SDK release artifact
-        if: ${{ !(github.event_name == 'workflow_dispatch' && !inputs.dry_run && ((inputs.plugin == 'bb-identity' && inputs.dist_tag == 'next') || inputs.plugin == 'bb-thread-membership')) }}
+        if: ${{ !(github.event_name == 'workflow_dispatch' && !inputs.dry_run && ((inputs.plugin == 'bb-identity' && inputs.dist_tag == 'next') || inputs.plugin == 'bb-thread-membership' || inputs.plugin == 'bb-markdown')) }}
         # SDK archives are retained outside Git. Verify immutable selected bytes.
         shell: bash
         run: |
@@ -129,6 +130,13 @@ jobs:
 
       - name: Upgrade npm for trusted publishing
         run: npm install -g npm@^11.5.1
+
+      - name: Check release gates offline
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.plugin == 'bb-markdown' }}
+        run: |
+          python3 .github/scripts/test-pinned-release.py
+          python3 .github/scripts/test-context-recognition-publish.py
+          python3 .github/scripts/test-markdown-release.py
 
       - name: Select and verify the release source
         id: release
@@ -155,6 +163,7 @@ jobs:
             bb-identity) workspace="@phosphorco/bb-identity" ;;
             bb-provider-settings) workspace="@phosphorco/bb-provider-settings" ;;
             bb-context-recognition) workspace="@phosphorco/bb-context-recognition" ;;
+            bb-markdown) workspace="@phosphorco/bb-markdown" ;;
             bb-cross-references) workspace="@phosphorco/bb-cross-references" ;;
             bb-agent-connection) workspace="@phosphorco/bb-agent-connection" ;;
             bb-people-accounts) workspace="@phosphorco/bb-people-accounts" ;;
@@ -166,7 +175,7 @@ jobs:
             *) echo "Unsupported release plugin: $plugin" >&2; exit 1 ;;
           esac
           case "$plugin" in
-            bb-identity|bb-provider-settings|bb-context-recognition|bb-cross-references|bb-agent-connection|bb-people-accounts|bb-usage-algebra|bb-thread-metrics|bb-thread-membership|bb-thread-context|bb-thread-filters) path="packages/$plugin" ;;
+            bb-identity|bb-provider-settings|bb-context-recognition|bb-markdown|bb-cross-references|bb-agent-connection|bb-people-accounts|bb-usage-algebra|bb-thread-metrics|bb-thread-membership|bb-thread-context|bb-thread-filters) path="packages/$plugin" ;;
             *) path="plugins/$plugin" ;;
           esac
           package_version="$(npm pkg get version --workspace "$workspace" | node -e 'let input=""; process.stdin.on("data", chunk => input += chunk); process.stdin.on("end", () => console.log(Object.values(JSON.parse(input))[0]))')"
@@ -177,16 +186,21 @@ jobs:
           if [ "$plugin" = bb-thread-membership ]; then
             test "$package_version" = 0.1.0 || { echo "Unapproved membership release version" >&2; exit 1; }
           fi
+          if [ "$plugin" = bb-markdown ]; then
+            test "$GITHUB_EVENT_NAME" = workflow_dispatch || { echo "Markdown tag/default publication refused; manual proof required" >&2; exit 1; }
+            test "$package_version" = 0.1.0 && test "$dist_tag" = latest || { echo "Only reviewed Markdown 0.1.0/latest is supported" >&2; exit 1; }
+            [[ "$EXPECTED_PAYLOAD_SHA256" =~ ^[0-9a-f]{64}$ ]] || { echo "Markdown requires the reviewed local archive hash even for dry run" >&2; exit 1; }
+          fi
           pinned_next=false
           pinned_row=false
           case "$plugin@$package_version" in
-            bb-identity@0.4.0|bb-identity@0.4.1|bb-identity@0.4.2-native-marker.0|bb-identity@0.5.0|bb-thread-membership@0.1.0) pinned_row=true ;;
+            bb-identity@0.4.0|bb-identity@0.4.1|bb-identity@0.4.2-native-marker.0|bb-identity@0.5.0|bb-thread-membership@0.1.0|bb-markdown@0.1.0) pinned_row=true ;;
           esac
           case "$plugin@$package_version" in
             bb-identity@0.5.0) test "$dist_tag" = next || { echo "Identity 0.5.0 requires next" >&2; exit 1; } ;;
             bb-thread-membership@0.1.0) test "$dist_tag" = latest || { echo "First membership release requires latest" >&2; exit 1; } ;;
           esac
-          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ] && { { [ "$plugin" = "bb-identity" ] && [ "$dist_tag" = "next" ]; } || [ "$plugin@$package_version" = "bb-thread-membership@0.1.0" ]; }; then
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ] && { { [ "$plugin" = "bb-identity" ] && [ "$dist_tag" = "next" ]; } || [ "$plugin@$package_version" = "bb-thread-membership@0.1.0" ] || [ "$plugin@$package_version" = "bb-markdown@0.1.0" ]; }; then
             [[ "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "Expected an exact lower-case source SHA" >&2; exit 1; }
             test "$pinned_row" = true && test "$package_version" = "$EXPECTED_VERSION" || { echo "Pinned package version drift" >&2; exit 1; }
             test "$(git rev-parse HEAD)" = "$EXPECTED_SHA" && test "$GITHUB_SHA" = "$EXPECTED_SHA" || { echo "Pinned checkout SHA drift" >&2; exit 1; }
@@ -235,6 +249,8 @@ jobs:
           esac
           if [ "$plugin@$package_version" = "bb-thread-membership@0.1.0" ]; then
             echo "pinned_route=membership-bootstrap" >> "$GITHUB_OUTPUT"
+          elif [ "$plugin@$package_version" = "bb-markdown@0.1.0" ]; then
+            echo "pinned_route=markdown-bootstrap" >> "$GITHUB_OUTPUT"
           else
             echo "pinned_route=oidc" >> "$GITHUB_OUTPUT"
           fi
@@ -247,7 +263,14 @@ jobs:
       - name: Build shared packages for tests
         if: ${{ steps.release.outputs.pinned_next != 'true' || inputs.dry_run }}
         # Packages test against their own dist, and plugins import the workspace-linked packages' dist.
-        run: npm run build --workspace packages/bb-identity --workspace packages/bb-provider-settings --workspace packages/bb-context-recognition --workspace packages/bb-cross-references --workspace packages/bb-agent-connection --workspace packages/bb-people-accounts --workspace packages/bb-usage-algebra --workspace packages/bb-thread-metrics --workspace packages/bb-thread-membership --workspace packages/bb-thread-context --workspace packages/bb-thread-filters
+        shell: bash
+        run: |
+          if [ "${{ steps.release.outputs.plugin }}" = bb-markdown ]; then
+            # Its runtime dependencies are exact registry packages; no sibling draft emission is needed.
+            npm run build --workspace packages/bb-markdown
+          else
+            npm run build --workspace packages/bb-identity --workspace packages/bb-provider-settings --workspace packages/bb-context-recognition --workspace packages/bb-cross-references --workspace packages/bb-agent-connection --workspace packages/bb-people-accounts --workspace packages/bb-usage-algebra --workspace packages/bb-thread-metrics --workspace packages/bb-thread-membership --workspace packages/bb-thread-context --workspace packages/bb-thread-filters
+          fi
 
       - name: Test
         if: ${{ steps.release.outputs.pinned_next != 'true' || inputs.dry_run }}
@@ -264,6 +287,10 @@ jobs:
       - name: Inspect package contents
         if: ${{ steps.release.outputs.pinned_next != 'true' }}
         run: npm pack --dry-run --ignore-scripts --workspace "${{ steps.release.outputs.workspace }}"
+
+      - name: Verify Markdown packed consumer and public SDK peers
+        if: ${{ steps.release.outputs.plugin == 'bb-markdown' && inputs.dry_run }}
+        run: npm run test:packed-consumer --workspace @phosphorco/bb-markdown
 
       - name: Pack the pinned-next dry-run payload once
         if: ${{ steps.release.outputs.pinned_next == 'true' && inputs.dry_run }}
@@ -336,7 +363,7 @@ jobs:
           NODE_AUTH_TOKEN: ''
 
       - name: Publish public package
-        if: ${{ !inputs.dry_run && steps.release.outputs.plugin != 'bb-context-recognition' && steps.release.outputs.pinned_next != 'true' }}
+        if: ${{ !inputs.dry_run && steps.release.outputs.plugin != 'bb-context-recognition' && steps.release.outputs.plugin != 'bb-markdown' && steps.release.outputs.pinned_next != 'true' }}
         # The repository is public, so every release carries SLSA provenance.
         run: npm publish --ignore-scripts --access public --provenance --workspace "$RELEASE_WORKSPACE" --tag "$RELEASE_DIST_TAG"
         env:
@@ -380,6 +407,29 @@ jobs:
         if: ${{ steps.release.outputs.pinned_next == 'true' && steps.release.outputs.pinned_route == 'membership-bootstrap' && steps.release.outputs.plugin == 'bb-thread-membership' && !inputs.dry_run }}
         env:
           # First package publish only; missing repository credential fails closed.
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          RELEASE_PLUGIN: ${{ steps.release.outputs.plugin }}
+          RELEASE_DIST_TAG: ${{ steps.release.outputs.dist_tag }}
+        shell: bash
+        run: |
+          python3 .github/scripts/bb-identity-next-release.py preflight
+          publish_status=0
+          python3 .github/scripts/bb-identity-next-release.py publish > publication-result.json 2> publication-error.log || publish_status=$?
+          printf '{"exitCode":%s}\n' "$publish_status" > publication-status.json
+          postflight_status=0
+          python3 .github/scripts/bb-identity-next-release.py postflight || postflight_status=$?
+          printf '{"exitCode":%s}\n' "$postflight_status" > postflight-status.json
+          if [ "$publish_status" -ne 0 ]; then
+            echo "Publish returned $publish_status; postflight ran once; inspect retained receipts before any retry" >&2
+            exit "$publish_status"
+          fi
+          exit "$postflight_status"
+
+      - name: Bootstrap Markdown from the exact reviewed tgz
+        if: ${{ steps.release.outputs.pinned_next == 'true' && steps.release.outputs.pinned_route == 'markdown-bootstrap' && steps.release.outputs.plugin == 'bb-markdown' && !inputs.dry_run }}
+        env:
+          # First package publish only; missing repository credential fails closed.
+          GH_TOKEN: ${{ github.token }}
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           RELEASE_PLUGIN: ${{ steps.release.outputs.plugin }}
           RELEASE_DIST_TAG: ${{ steps.release.outputs.dist_tag }}

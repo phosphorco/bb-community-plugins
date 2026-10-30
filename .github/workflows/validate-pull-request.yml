@@ -34,6 +34,12 @@ jobs:
           node-version: "24"
           package-manager-cache: false
 
+      - name: Check release gates offline
+        run: |
+          python3 .github/scripts/test-pinned-release.py
+          python3 .github/scripts/test-context-recognition-publish.py
+          python3 .github/scripts/test-markdown-release.py
+
       - name: Install locked dependencies
         run: npm ci
 
@@ -42,6 +48,7 @@ jobs:
           npm run build --workspace @phosphorco/bb-identity
           npm run build --workspace @phosphorco/bb-provider-settings
           npm run build --workspace @phosphorco/bb-context-recognition
+          npm run build --workspace @phosphorco/bb-markdown
           npm run build --workspace @phosphorco/bb-cross-references
           npm run build --workspace @phosphorco/bb-agent-connection
           npm run build --workspace @phosphorco/bb-people-accounts
@@ -90,6 +97,12 @@ jobs:
 
       - name: Inspect BB Context Recognition package
         run: npm pack --dry-run --ignore-scripts --workspace @phosphorco/bb-context-recognition
+
+      - name: Inspect BB Markdown package
+        run: npm pack --dry-run --ignore-scripts --workspace @phosphorco/bb-markdown
+
+      - name: Verify BB Markdown packed consumer and public SDK peers
+        run: npm run test:packed-consumer --workspace @phosphorco/bb-markdown
 
       - name: Inspect BB Agent Connection package
         run: npm pack --dry-run --ignore-scripts --workspace @phosphorco/bb-agent-connection

@@ -9,9 +9,10 @@
     "plugins/*"
   ],
   "scripts": {
-    "build": "npm run build --workspaces --if-present",
-    "test": "npm run test --workspaces --if-present && node --test tools/icon-names.test.mjs",
-    "typecheck": "npm run typecheck --workspaces --if-present"
+    "build": "npm run markdown:check && npm run build --workspaces --if-present",
+    "test": "npm run markdown:check && npm run test --workspaces --if-present && node --test tools/icon-names.test.mjs",
+    "typecheck": "npm run markdown:check && npm run typecheck --workspaces --if-present",
+    "markdown:check": "npm run build --workspace @phosphorco/bb-markdown && node packages/bb-markdown/tools/check-sources.mjs --root community=."
   },
   "devDependencies": {
     "bb-app": "0.46.1",

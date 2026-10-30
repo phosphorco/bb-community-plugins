@@ -1,7 +1,7 @@
 """CI helper for pinned reviewed payloads: a closed (plugin, version) table.
 
-All existing identity hotfix rows remain next/OIDC-only. Membership has one explicit
-first-publish token bootstrap; no row rebuilds or repacks during actual publication."""
+All existing identity hotfix rows remain next/OIDC-only. Membership and Markdown
+have exact first-publish bootstrap rows; no row rebuilds or repacks during actual publication."""
 import base64
 import hashlib
 import gzip
@@ -30,6 +30,7 @@ PINNED = {
     ('bb-identity', '0.4.2-native-marker.0'): ('packages/bb-identity', '@phosphorco/bb-identity', 'next', 'oidc', 'bb-identity-next'),
     ('bb-identity', '0.5.0'): ('packages/bb-identity', '@phosphorco/bb-identity', 'next', 'oidc', 'reviewed-bb-identity-0.5.0'),
     ('bb-thread-membership', '0.1.0'): ('packages/bb-thread-membership', '@phosphorco/bb-thread-membership', 'latest', 'membership-bootstrap', 'reviewed-bb-thread-membership-0.1.0'),
+    ('bb-markdown', '0.1.0'): ('packages/bb-markdown', '@phosphorco/bb-markdown', 'latest', 'markdown-bootstrap', 'reviewed-bb-markdown-0.1.0'),
 }
 
 PLUGIN = VERSION = PACKAGE = NAME = ARTIFACT = TGZ = ''
@@ -66,6 +67,10 @@ def expected():
     sha = os.environ['EXPECTED_SHA']
     require(re.fullmatch('[0-9a-f]{40}', sha), 'Invalid expected source SHA')
     require(os.environ['EXPECTED_VERSION'] == VERSION and (PLUGIN, VERSION) in PINNED, 'Only a pinned table version is approved for this path')
+    if PLUGIN == 'bb-markdown':
+        require(os.environ.get('GITHUB_EVENT_NAME') == 'workflow_dispatch', 'Markdown requires a manual reviewed release')
+        require(os.environ.get('RELEASE_DIST_TAG') == DIST_TAG, 'Markdown dist-tag drift')
+        require(re.fullmatch('[0-9a-f]{64}', os.environ.get('EXPECTED_PAYLOAD_SHA256', '')), 'Markdown requires reviewed local archive hash')
     require(os.environ['GITHUB_REPOSITORY'] == REPOSITORY, 'Wrong repository')
     require(os.environ['GITHUB_SHA'] == sha == command('git', 'rev-parse', 'HEAD'), 'Checked-out source drift')
     require(json.loads(Path(PACKAGE, 'package.json').read_text())['version'] == VERSION, 'Package version drift')
@@ -136,9 +141,13 @@ def payload(path):
 
 def capture():
     sha = expected()
+    if PLUGIN == 'bb-markdown':
+        require(os.environ.get('DRY_RUN') == 'true', 'Markdown capture requires explicit dry-run context')
     pack = json.loads(Path(OUT, 'pack.json').read_text())
     require(len(pack) == 1 and pack[0]['filename'] == TGZ, 'Expected exactly one selected release archive')
     result = payload(OUT / TGZ)
+    if PLUGIN == 'bb-markdown':
+        require(result['sha256'] == os.environ['EXPECTED_PAYLOAD_SHA256'], 'Markdown dry-run differs from reviewed local archive hash')
     require(pack[0]['shasum'] == result['shasum'] and pack[0]['integrity'] == result['integrity'], 'npm pack integrity mismatch')
     receipt = {'schema': 1, 'repository': REPOSITORY, 'workflow': WORKFLOW, 'sourceCommit': sha, 'sourceTree': command('git', 'rev-parse', 'HEAD^{tree}'), 'packageTree': command('git', 'rev-parse', 'HEAD:' + PACKAGE), 'sourceFiles': sources(), 'package': NAME, 'version': VERSION, 'distTag': DIST_TAG, 'dryRun': True, 'runId': os.environ['GITHUB_RUN_ID'], 'runAttempt': os.environ['GITHUB_RUN_ATTEMPT'], 'payload': result}
     (OUT / RECEIPT).write_text(json.dumps(receipt, sort_keys=True, indent=2) + '\n')
@@ -154,6 +163,15 @@ def api(path, binary=False):
             raise ValueError('Oversized GitHub API response')
         require(process.wait() == 0, 'GitHub artifact read failed')
     return data if binary else json.loads(data)
+
+def proof_files(archive):
+    """Read the exact two bounded artifact members, without extracting paths."""
+    with zipfile.ZipFile(io.BytesIO(archive)) as zipped:
+        members = zipped.infolist()
+        require(len(members) == 2 and {m.filename for m in members} == {TGZ, RECEIPT}, 'Unexpected artifact files')
+        require(sum(m.file_size for m in members) <= LIMIT, 'Oversized extracted artifact')
+        require(all(not stat.S_ISLNK(m.external_attr >> 16) for m in members), 'Artifact link refused')
+        return {member.filename: zipped.read(member) for member in members}
 
 def download():
     sha = expected()
@@ -172,13 +190,8 @@ def download():
     require(artifact['workflow_run']['id'] == int(run_id) and artifact['workflow_run']['head_sha'] == sha, 'Artifact source/run mismatch')
     archive = api(f"repos/{REPOSITORY}/actions/artifacts/{artifact['id']}/zip", binary=True)
     OUT.mkdir()
-    with zipfile.ZipFile(io.BytesIO(archive)) as zipped:
-        members = zipped.infolist()
-        require(len(members) == 2 and {m.filename for m in members} == {TGZ, RECEIPT}, 'Unexpected artifact files')
-        require(sum(m.file_size for m in members) <= LIMIT, 'Oversized extracted artifact')
-        for member in members:
-            require(not stat.S_ISLNK(member.external_attr >> 16), 'Artifact link refused')
-            (OUT / member.filename).write_bytes(zipped.read(member))
+    for member_name, content in proof_files(archive).items():
+        (OUT / member_name).write_bytes(content)
     (Path('artifact-selection.json')).write_text(json.dumps({'runId': run_id, 'artifactId': artifact['id'], 'name': name, 'sourceCommit': sha}, sort_keys=True) + '\n')
     verify()
 
@@ -211,9 +224,10 @@ def registry_read(selector, field):
 def publishable():
     # Owner decisions must be encoded in the table before anything reaches the registry.
     require(DIST_TAG in ('latest', 'next'), 'Owner dist-tag decision not encoded for this row; publication refused')
-    require(ROUTE == 'oidc' or ((PLUGIN, VERSION) == ('bb-thread-membership', '0.1.0') and ROUTE == 'membership-bootstrap'), 'Publish route not approved for this row')
-    if ROUTE == 'membership-bootstrap':
-        require(bool(os.environ.get('NODE_AUTH_TOKEN')), 'Membership first publish requires repository NPM_TOKEN; bootstrap credential is missing')
+    require(ROUTE == 'oidc' or ((PLUGIN, VERSION) == ('bb-thread-membership', '0.1.0') and ROUTE == 'membership-bootstrap') or ((PLUGIN, VERSION) == ('bb-markdown', '0.1.0') and ROUTE == 'markdown-bootstrap'), 'Publish route not approved for this row')
+    if ROUTE in ('membership-bootstrap', 'markdown-bootstrap'):
+        label = 'Markdown' if PLUGIN == 'bb-markdown' else 'Membership'
+        require(bool(os.environ.get('NODE_AUTH_TOKEN')), f'{label} first publish requires repository NPM_TOKEN; bootstrap credential is missing')
     require(os.environ.get('RELEASE_DIST_TAG', DIST_TAG) == DIST_TAG, 'Requested dist-tag differs from the reviewed row')
 
 def package_missing(code, value):
@@ -238,11 +252,12 @@ def preflight():
     approved = json.loads(approved_text)
     require(type(approved) is dict and len(approved) <= 100 and all(isinstance(k, str) and 0 < len(k) <= 128 and isinstance(v, str) and 0 < len(v) <= 128 for k, v in approved.items()), 'Invalid owner-approved preflight tags')
     code, tags = registry_read(NAME, 'dist-tags')
-    if ROUTE == 'membership-bootstrap':
-        require(approved == {}, 'First membership publish requires explicitly approved empty tags')
-        require(package_missing(code, tags), 'Membership package already exists or absence is unresolved; bootstrap refused')
+    if ROUTE in ('membership-bootstrap', 'markdown-bootstrap'):
+        label = 'Markdown' if PLUGIN == 'bb-markdown' else 'Membership'
+        require(approved == {}, f'First {label.lower()} publish requires explicitly approved empty tags')
+        require(package_missing(code, tags), f'{label} package already exists or absence is unresolved; bootstrap refused')
         code, version = registry_read(NAME + '@' + VERSION, 'version')
-        require(package_missing(code, version), 'Membership version exists or absence is unresolved; bootstrap refused')
+        require(package_missing(code, version), f'{label} version exists or absence is unresolved; bootstrap refused')
         before = {'tags': {}, 'versionAbsent': VERSION, 'packageAbsent': True, 'route': ROUTE}
     else:
         require('latest' in approved, 'Existing identity package requires approved latest tag')
@@ -274,20 +289,45 @@ def postflight():
     receipt = json.loads((OUT / RECEIPT).read_text())
     require(dist.get('exitCode') == 0 and isinstance(dist.get('value'), dict) and dist['value'].get('integrity') == receipt['payload']['integrity'] and dist['value'].get('shasum') == receipt['payload']['shasum'], 'Published integrity differs or is unresolved; inspect without retry')
 
+def verify_markdown_proof():
+    """Recheck the selected successful proof immediately before Markdown's write.
+
+    The receipt alone cannot attest a GitHub run/artifact. Read only fixed repo
+    endpoints, with bounded IDs and the existing bounded API transport.
+    """
+    sha = expected()
+    run_id = os.environ.get('PROOF_RUN_ID', '')
+    require(re.fullmatch('[1-9][0-9]{0,19}', run_id), 'Invalid Markdown proof run ID')
+    selection = json.loads(bounded_file(Path('artifact-selection.json')))
+    name = f'{ARTIFACT}-{sha}-{run_id}'
+    artifact_id = selection.get('artifactId')
+    require(selection.get('runId') == run_id and selection.get('sourceCommit') == sha and selection.get('name') == name and type(artifact_id) is int and 0 < artifact_id < 10 ** 20, 'Missing selected Markdown proof download')
+    run = api(f'repos/{REPOSITORY}/actions/runs/{run_id}')
+    require(str(run['id']) == run_id and run['repository']['full_name'] == REPOSITORY and run['head_repository']['full_name'] == REPOSITORY, 'Wrong Markdown proof repository/run')
+    require(run['path'] == WORKFLOW and run['head_sha'] == sha and run['event'] == 'workflow_dispatch' and run['status'] == 'completed' and run['conclusion'] == 'success', 'Markdown proof is not successful same-source manual workflow')
+    artifact = api(f'repos/{REPOSITORY}/actions/artifacts/{artifact_id}')
+    require(artifact['id'] == artifact_id and artifact['name'] == name and not artifact['expired'] and artifact['size_in_bytes'] <= LIMIT and artifact['workflow_run']['id'] == int(run_id) and artifact['workflow_run']['head_sha'] == sha, 'Markdown proof artifact provenance mismatch')
+    files = proof_files(api(f'repos/{REPOSITORY}/actions/artifacts/{artifact_id}/zip', binary=True))
+    for field, filename in [('EXPECTED_PAYLOAD_SHA256', TGZ), ('EXPECTED_RECEIPT_SHA256', RECEIPT)]:
+        require(digest(files[filename]) == os.environ[field] and files[filename] == bounded_file(OUT / filename), 'Reviewed Markdown proof body hash mismatch')
+
 def publish():
     require(os.environ.get('DRY_RUN') == 'false', 'Actual publication requires explicit non-dry-run context')
     publishable()
+    if PLUGIN == 'bb-markdown':
+        verify()
+        verify_markdown_proof()
     archive = (OUT / TGZ).resolve(strict=True)
     require(digest(bounded_file(archive)) == os.environ['EXPECTED_PAYLOAD_SHA256'], 'Reviewed publish payload drift')
     require(not any(os.path.lexists(p) for p in ('.npmrc', PACKAGE + '/.npmrc')), 'Unexpected project npmrc; refuse publish')
     require(json.loads(Path(PACKAGE, 'package.json').read_text()).get('publishConfig') == {'access': 'public'}, 'Unexpected publishConfig')
-    if ROUTE == 'membership-bootstrap':
+    if ROUTE in ('membership-bootstrap', 'markdown-bootstrap'):
         before = json.loads(Path('registry-before.json').read_text())
         require(before == {'tags': {}, 'versionAbsent': VERSION, 'packageAbsent': True, 'route': ROUTE}, 'Missing exact first-publish preflight evidence')
     with tempfile.TemporaryDirectory(prefix='pinned-publish-') as isolated:
         user = Path(isolated, 'user.npmrc')
         global_config = Path(isolated, 'global.npmrc')
-        user.write_text('//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}\n' if ROUTE == 'membership-bootstrap' else '')
+        user.write_text('//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}\n' if ROUTE in ('membership-bootstrap', 'markdown-bootstrap') else '')
         user.chmod(0o600)
         global_config.write_text('')
         # No inherited npm settings, credentials or direct token overrides.
@@ -295,7 +335,9 @@ def publish():
         blocked = {'NODE_AUTH_TOKEN', 'NPM_TOKEN', 'NPM_AUTH_TOKEN', 'NPM_ID_TOKEN', 'SIGSTORE_ID_TOKEN', 'NPM_USERNAME', 'NPM_PASSWORD'}
         env = {k: v for k, v in os.environ.items() if not k.lower().startswith('npm_config_') and k.upper() not in blocked}
         env.update(NODE_AUTH_TOKEN='', NPM_TOKEN='', NPM_ID_TOKEN='')
-        if ROUTE == 'membership-bootstrap':
+        if PLUGIN == 'bb-markdown':
+            env.pop('GH_TOKEN', None)  # Proof read credential is not an npm credential.
+        if ROUTE in ('membership-bootstrap', 'markdown-bootstrap'):
             # Only this exact first-package row receives the repository bootstrap
             # credential; the npmrc references it without writing its value.
             env['NODE_AUTH_TOKEN'] = os.environ['NODE_AUTH_TOKEN']

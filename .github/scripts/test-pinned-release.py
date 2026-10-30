@@ -42,11 +42,11 @@ def select(*, plugin, version, event='workflow_dispatch', tag='latest', dry=True
 
 class PinnedTable(unittest.TestCase):
     def test_table_is_closed_and_exact(self):
-        self.assertEqual(set(helper.PINNED), {('bb-identity', '0.4.0'), ('bb-identity', '0.4.1'), ('bb-identity', '0.4.2-native-marker.0'), ('bb-thread-membership', '0.1.0'), ('bb-identity', '0.5.0')})
+        self.assertEqual(set(helper.PINNED), {('bb-identity', '0.4.0'), ('bb-identity', '0.4.1'), ('bb-identity', '0.4.2-native-marker.0'), ('bb-thread-membership', '0.1.0'), ('bb-identity', '0.5.0'), ('bb-markdown', '0.1.0')})
         for plugin, version in [('perspectives', '0.3.0'), ('bb-identity', '0.3.1'), ('bb-context-recognition', '0.6.0'), ('bb-thread-membership', '0.1.1')]:
             with self.assertRaises(ValueError):
                 helper.bind(plugin, version)
-        self.assertRegex(SELECT, r'bb-identity@0\.4\.0\|bb-identity@0\.4\.1\|bb-identity@0\.4\.2-native-marker\.0\|bb-identity@0\.5\.0\|bb-thread-membership@0\.1\.0\) pinned_row=true')
+        self.assertRegex(SELECT, r'bb-identity@0\.4\.0\|bb-identity@0\.4\.1\|bb-identity@0\.4\.2-native-marker\.0\|bb-identity@0\.5\.0\|bb-thread-membership@0\.1\.0\|bb-markdown@0\.1\.0\) pinned_row=true')
 
     def test_identity_040_row_keeps_original_names_and_next(self):
         helper.bind('bb-identity', '0.4.0')

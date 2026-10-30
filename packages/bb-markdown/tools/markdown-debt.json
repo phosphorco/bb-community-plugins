@@ -1,0 +1,1508 @@
+{
+  "version": 1,
+  "entries": [
+    {
+      "root": "org",
+      "path": "plugins/bb-bug-reporter/lib/beacon.ts",
+      "rule": "html-sink",
+      "sha256": "583e6700adf46bf6c2933eb775bea42d7938a56a2245b4f8fe839277f1ae1e8b",
+      "count": 1,
+      "kind": "reviewed-exception",
+      "intent": "Fixed inline SVG bug-report launcher icon; no prose or variable HTML."
+    },
+    {
+      "root": "org",
+      "path": "plugins/codex-session-viewer/server.ts",
+      "rule": "html-template",
+      "sha256": "2404c9d23bd73d1f9e31413754ec046e9fcd92f511203fa9ec87da35000651af",
+      "count": 1,
+      "kind": "reviewed-exception",
+      "intent": "Historical Codex transcript unavailable-page HTML; local transcript product exception, not general prose rendering."
+    },
+    {
+      "root": "org",
+      "path": "plugins/codex-session-viewer/vendor/template.cjs",
+      "rule": "html-template",
+      "sha256": "0aa64b2c55154db8077ab7078a96a4a61b12727056d226677ac0a107e63bca65",
+      "count": 1,
+      "kind": "reviewed-exception",
+      "intent": "Active historical Codex rollout transcript/export template. Exact CLIENT_JS token, script assembly, regex md function and HTML sinks reviewed; any change requires renewed review."
+    },
+    {
+      "root": "org",
+      "path": "plugins/codex-session-viewer/vendor/template.cjs",
+      "rule": "html-template",
+      "sha256": "9ec840d52125b4e254146cee34cfb6054e5458275a9856cfc2484a02e51c20b5",
+      "count": 1,
+      "kind": "reviewed-exception",
+      "intent": "Active historical Codex rollout transcript/export template. Exact CLIENT_JS token, script assembly, regex md function and HTML sinks reviewed; any change requires renewed review."
+    },
+    {
+      "root": "org",
+      "path": "plugins/codex-session-viewer/vendor/template.cjs",
+      "rule": "served-template",
+      "sha256": "fbfa9a83de2de73a7e4389a306fd823992ef6e7e698ca36e7c544c1d8683725b",
+      "count": 1,
+      "kind": "reviewed-exception",
+      "intent": "Active historical Codex rollout transcript/export template. Exact CLIENT_JS token, script assembly, regex md function and HTML sinks reviewed; any change requires renewed review."
+    },
+    {
+      "root": "org",
+      "path": "plugins/codex-session-viewer/vendor/template.cjs",
+      "rule": "html-sink",
+      "sha256": "457909e417f6bba5e021c992add858660ca18a0c13867d3a1ef028517cc0d7bb",
+      "count": 1,
+      "kind": "reviewed-exception",
+      "intent": "Active historical Codex rollout transcript/export template. Exact CLIENT_JS token, script assembly, regex md function and HTML sinks reviewed; any change requires renewed review."
+    },
+    {
+      "root": "org",
+      "path": "plugins/codex-session-viewer/vendor/template.cjs",
+      "rule": "dynamic-element",
+      "sha256": "9332ac7d504217a51d75cb4375bed2333a09c5f994a84dde9adc223823d15b4a",
+      "count": 1,
+      "kind": "reviewed-exception",
+      "intent": "Active historical Codex rollout transcript/export template. Exact CLIENT_JS token, script assembly, regex md function and HTML sinks reviewed; any change requires renewed review."
+    },
+    {
+      "root": "org",
+      "path": "plugins/codex-session-viewer/vendor/template.cjs",
+      "rule": "html-sink",
+      "sha256": "c49e13ed306a71950ed7eee6a807ad8a018681d5fb349cd23cce14cb1af831c2",
+      "count": 1,
+      "kind": "reviewed-exception",
+      "intent": "Active historical Codex rollout transcript/export template. Exact CLIENT_JS token, script assembly, regex md function and HTML sinks reviewed; any change requires renewed review."
+    },
+    {
+      "root": "org",
+      "path": "plugins/codex-session-viewer/vendor/template.cjs",
+      "rule": "local-renderer",
+      "sha256": "b0c0d585c0884ea629dfe30ffe2e61d979671fb589bfde07d46016494c68937b",
+      "count": 1,
+      "kind": "reviewed-exception",
+      "intent": "Active historical Codex rollout transcript/export template. Exact CLIENT_JS token, script assembly, regex md function and HTML sinks reviewed; any change requires renewed review."
+    },
+    {
+      "root": "org",
+      "path": "plugins/codex-session-viewer/vendor/template.cjs",
+      "rule": "html-template",
+      "sha256": "4cbb6d564f283063cda547b1ae8cedaff676ce9182c4fec8c3cb9a95032e3360",
+      "count": 1,
+      "kind": "reviewed-exception",
+      "intent": "Active historical Codex rollout transcript/export template. Exact CLIENT_JS token, script assembly, regex md function and HTML sinks reviewed; any change requires renewed review."
+    },
+    {
+      "root": "org",
+      "path": "plugins/codex-session-viewer/vendor/template.cjs",
+      "rule": "html-template",
+      "sha256": "326b4276fad54bc77f38ed620c5d84d870adad6fe25266559d9a8fbf663a6bfe",
+      "count": 1,
+      "kind": "reviewed-exception",
+      "intent": "Active historical Codex rollout transcript/export template. Exact CLIENT_JS token, script assembly, regex md function and HTML sinks reviewed; any change requires renewed review."
+    },
+    {
+      "root": "org",
+      "path": "plugins/codex-session-viewer/vendor/template.cjs",
+      "rule": "html-template",
+      "sha256": "024afd54ea75dfc02523de0da3a43f8bb90c2f89d3968a86eee160d141b22ee8",
+      "count": 1,
+      "kind": "reviewed-exception",
+      "intent": "Active historical Codex rollout transcript/export template. Exact CLIENT_JS token, script assembly, regex md function and HTML sinks reviewed; any change requires renewed review."
+    },
+    {
+      "root": "org",
+      "path": "plugins/codex-session-viewer/vendor/template.cjs",
+      "rule": "html-template",
+      "sha256": "5699cb0f72c3774af9b45507d202e4a65928aef67fb9c4ceca4cbc26da5a3bd4",
+      "count": 1,
+      "kind": "reviewed-exception",
+      "intent": "Active historical Codex rollout transcript/export template. Exact CLIENT_JS token, script assembly, regex md function and HTML sinks reviewed; any change requires renewed review."
+    },
+    {
+      "root": "org",
+      "path": "plugins/codex-session-viewer/vendor/template.cjs",
+      "rule": "html-template",
+      "sha256": "02c9ce6d54326faf42a46cd8f6d4a040502a0a39f6138d4732d87370aa1b64bc",
+      "count": 1,
+      "kind": "reviewed-exception",
+      "intent": "Active historical Codex rollout transcript/export template. Exact CLIENT_JS token, script assembly, regex md function and HTML sinks reviewed; any change requires renewed review."
+    },
+    {
+      "root": "org",
+      "path": "plugins/codex-session-viewer/vendor/template.cjs",
+      "rule": "html-template",
+      "sha256": "4a2fec9f3985dffd1da11c68d74936bf017911f04f47322521c35fbe8905751b",
+      "count": 1,
+      "kind": "reviewed-exception",
+      "intent": "Active historical Codex rollout transcript/export template. Exact CLIENT_JS token, script assembly, regex md function and HTML sinks reviewed; any change requires renewed review."
+    },
+    {
+      "root": "org",
+      "path": "plugins/codex-session-viewer/vendor/template.cjs",
+      "rule": "html-template",
+      "sha256": "a4e763c6f4de99bd75dceb9aeb0933eedd125e6e208a46b0b944c0b53bd6d384",
+      "count": 1,
+      "kind": "reviewed-exception",
+      "intent": "Active historical Codex rollout transcript/export template. Exact CLIENT_JS token, script assembly, regex md function and HTML sinks reviewed; any change requires renewed review."
+    },
+    {
+      "root": "org",
+      "path": "plugins/codex-session-viewer/vendor/template.cjs",
+      "rule": "html-template",
+      "sha256": "0c9c36f2753c7e482aeb5b38122d9769b3e199f993d6a44c0abccd8c638de020",
+      "count": 1,
+      "kind": "reviewed-exception",
+      "intent": "Active historical Codex rollout transcript/export template. Exact CLIENT_JS token, script assembly, regex md function and HTML sinks reviewed; any change requires renewed review."
+    },
+    {
+      "root": "org",
+      "path": "plugins/codex-session-viewer/vendor/template.cjs",
+      "rule": "html-template",
+      "sha256": "8ae26b58fef069e6b8c06e85de2924d58bc6f8f2186c273be8acd169e12b9591",
+      "count": 2,
+      "kind": "reviewed-exception",
+      "intent": "Active historical Codex rollout transcript/export template. Exact CLIENT_JS token, script assembly, regex md function and HTML sinks reviewed; any change requires renewed review."
+    },
+    {
+      "root": "org",
+      "path": "plugins/codex-session-viewer/vendor/template.cjs",
+      "rule": "html-template",
+      "sha256": "67fb5ad8aca042a309a921760d48d94f62c0380223ab1db059091da957c9e368",
+      "count": 1,
+      "kind": "reviewed-exception",
+      "intent": "Active historical Codex rollout transcript/export template. Exact CLIENT_JS token, script assembly, regex md function and HTML sinks reviewed; any change requires renewed review."
+    },
+    {
+      "root": "org",
+      "path": "plugins/codex-session-viewer/vendor/template.cjs",
+      "rule": "html-template",
+      "sha256": "d08c0ba94d26d05046b04567fa3bb8c62663c91b95ae2ad7e890fb88e1bca3a5",
+      "count": 1,
+      "kind": "reviewed-exception",
+      "intent": "Active historical Codex rollout transcript/export template. Exact CLIENT_JS token, script assembly, regex md function and HTML sinks reviewed; any change requires renewed review."
+    },
+    {
+      "root": "org",
+      "path": "plugins/codex-session-viewer/vendor/template.cjs",
+      "rule": "html-template",
+      "sha256": "350b56da96ea5cf4c62bc93f3a0aec5cae74e4a859a4585af65698c4dc7cf06d",
+      "count": 1,
+      "kind": "reviewed-exception",
+      "intent": "Active historical Codex rollout transcript/export template. Exact CLIENT_JS token, script assembly, regex md function and HTML sinks reviewed; any change requires renewed review."
+    },
+    {
+      "root": "org",
+      "path": "plugins/codex-session-viewer/vendor/template.cjs",
+      "rule": "html-sink",
+      "sha256": "3bad7f33b5cfd2554fa9b6382ef209f433b78fe17a7b5ec027a90766dead28ce",
+      "count": 1,
+      "kind": "reviewed-exception",
+      "intent": "Active historical Codex rollout transcript/export template. Exact CLIENT_JS token, script assembly, regex md function and HTML sinks reviewed; any change requires renewed review."
+    },
+    {
+      "root": "org",
+      "path": "plugins/codex-session-viewer/vendor/template.cjs",
+      "rule": "html-sink",
+      "sha256": "e3e66c3ff0c13e159b1c04f7d27aa06ae741fb4cefc37b5a887568d5194c35c7",
+      "count": 1,
+      "kind": "reviewed-exception",
+      "intent": "Active historical Codex rollout transcript/export template. Exact CLIENT_JS token, script assembly, regex md function and HTML sinks reviewed; any change requires renewed review."
+    },
+    {
+      "root": "org",
+      "path": "plugins/codex-session-viewer/vendor/template.cjs",
+      "rule": "html-sink",
+      "sha256": "6cc6d325af63589f91c48bd2780b49b90729be2aa994a607394cb197abca811e",
+      "count": 1,
+      "kind": "reviewed-exception",
+      "intent": "Active historical Codex rollout transcript/export template. Exact CLIENT_JS token, script assembly, regex md function and HTML sinks reviewed; any change requires renewed review."
+    },
+    {
+      "root": "org",
+      "path": "plugins/codex-session-viewer/vendor/template.cjs",
+      "rule": "html-sink",
+      "sha256": "fafa812fc22e1bb0037d994c0729efe30468e058a816b725ae73a62dd4eec197",
+      "count": 1,
+      "kind": "reviewed-exception",
+      "intent": "Active historical Codex rollout transcript/export template. Exact CLIENT_JS token, script assembly, regex md function and HTML sinks reviewed; any change requires renewed review."
+    },
+    {
+      "root": "org",
+      "path": "plugins/codex-session-viewer/vendor/template.cjs",
+      "rule": "html-sink",
+      "sha256": "68d7cc07823222be64dae57d0648c809f5250fd4d9898e126d8c2f09c92f8506",
+      "count": 1,
+      "kind": "reviewed-exception",
+      "intent": "Active historical Codex rollout transcript/export template. Exact CLIENT_JS token, script assembly, regex md function and HTML sinks reviewed; any change requires renewed review."
+    },
+    {
+      "root": "org",
+      "path": "plugins/codex-session-viewer/vendor/template.cjs",
+      "rule": "html-template",
+      "sha256": "cb7930ebe90cb0dfff5d1da39a0f7786a058c3a2724be155deee68cdd51b5a3b",
+      "count": 1,
+      "kind": "reviewed-exception",
+      "intent": "Active historical Codex rollout transcript/export template. Exact CLIENT_JS token, script assembly, regex md function and HTML sinks reviewed; any change requires renewed review."
+    },
+    {
+      "root": "org",
+      "path": "plugins/codex-session-viewer/vendor/template.cjs",
+      "rule": "served-template",
+      "sha256": "d21f50cc26d80447b84cfc304012c5a6fba69e285d292760b76282357fdeacdd",
+      "count": 1,
+      "kind": "reviewed-exception",
+      "intent": "Active historical Codex rollout transcript/export template. Exact CLIENT_JS token, script assembly, regex md function and HTML sinks reviewed; any change requires renewed review."
+    },
+    {
+      "root": "org",
+      "path": "plugins/codex-session-viewer/vendor/template.cjs",
+      "rule": "served-template",
+      "sha256": "4a701b67c262817e7800830f8cf5d308b2701ae0e1280e58e7c736fa79e0b400",
+      "count": 1,
+      "kind": "reviewed-exception",
+      "intent": "Active historical Codex rollout transcript/export template. Exact CLIENT_JS token, script assembly, regex md function and HTML sinks reviewed; any change requires renewed review."
+    },
+    {
+      "root": "org",
+      "path": "plugins/future-threads/app.tsx",
+      "rule": "sdk-markdown",
+      "sha256": "0e52f6b9d02515c59bb4fdeec2762fdbe701080c82986fc4dfbefcb1e2389817",
+      "count": 1,
+      "kind": "debt",
+      "intent": "Existing prompt-details SDK prose in active/used/shelf rows; source frame needs separate migration."
+    },
+    {
+      "root": "org",
+      "path": "plugins/future-threads/app.tsx",
+      "rule": "local-prose-component",
+      "sha256": "57ba5c4cfefe8530e65a8444fdfd0492ee5cf06626cfc4405a209772d83cff58",
+      "count": 1,
+      "kind": "debt",
+      "intent": "Existing prompt-details SDK prose in active/used/shelf rows; source frame needs separate migration."
+    },
+    {
+      "root": "org",
+      "path": "plugins/future-threads/app.tsx",
+      "rule": "sdk-use",
+      "sha256": "57ba5c4cfefe8530e65a8444fdfd0492ee5cf06626cfc4405a209772d83cff58",
+      "count": 1,
+      "kind": "debt",
+      "intent": "Existing prompt-details SDK prose in active/used/shelf rows; source frame needs separate migration."
+    },
+    {
+      "root": "org",
+      "path": "plugins/future-threads/app.tsx",
+      "rule": "sdk-use",
+      "sha256": "61033253847f1c166f8d4a8d25c03094da5104226b02b60bfbb46dc49aa0d57a",
+      "count": 1,
+      "kind": "debt",
+      "intent": "Existing prompt-details SDK prose in active/used/shelf rows; source frame needs separate migration."
+    },
+    {
+      "root": "org",
+      "path": "plugins/future-threads/app.tsx",
+      "rule": "sdk-use",
+      "sha256": "36e49f346be5f2e98418dc7d4148af3c2dc1637968ab7e26d88e6b9476ecc989",
+      "count": 1,
+      "kind": "debt",
+      "intent": "Existing prompt-details SDK prose in active/used/shelf rows; source frame needs separate migration."
+    },
+    {
+      "root": "org",
+      "path": "plugins/future-threads/app.tsx",
+      "rule": "local-prose-component",
+      "sha256": "ba5d0be66e37dc7fe2175692458c6848a698305629cdf6e0637c5615a3464bdb",
+      "count": 1,
+      "kind": "debt",
+      "intent": "Existing prompt-details SDK prose in active/used/shelf rows; source frame needs separate migration."
+    },
+    {
+      "root": "org",
+      "path": "plugins/future-threads/app.tsx",
+      "rule": "sdk-use",
+      "sha256": "ba5d0be66e37dc7fe2175692458c6848a698305629cdf6e0637c5615a3464bdb",
+      "count": 1,
+      "kind": "debt",
+      "intent": "Existing prompt-details SDK prose in active/used/shelf rows; source frame needs separate migration."
+    },
+    {
+      "root": "org",
+      "path": "plugins/github-review/markdown-prose.ts",
+      "rule": "parser-import",
+      "sha256": "ef4a6350bca9aec73deb121dca8ad49b3540f9ef14059e1e9cb65ea322214c2d",
+      "count": 1,
+      "kind": "parser-only",
+      "intent": "GFM source-position masks preserve outbound GitHub Markdown entities byte-for-byte; no UI HTML rendering."
+    },
+    {
+      "root": "org",
+      "path": "plugins/github-review/markdown-prose.ts",
+      "rule": "parser-import",
+      "sha256": "02b9f5baf7c050df4d0778aaf16423aae70ae5f7487e2c1e47e47090453d9a5b",
+      "count": 1,
+      "kind": "parser-only",
+      "intent": "GFM source-position masks preserve outbound GitHub Markdown entities byte-for-byte; no UI HTML rendering."
+    },
+    {
+      "root": "org",
+      "path": "plugins/github-review/markdown-prose.ts",
+      "rule": "parser-import",
+      "sha256": "66e5e3784fdec0644094fc696b609227e9529dbf3af86eba3a97d9930af27f3b",
+      "count": 1,
+      "kind": "parser-only",
+      "intent": "GFM source-position masks preserve outbound GitHub Markdown entities byte-for-byte; no UI HTML rendering."
+    },
+    {
+      "root": "org",
+      "path": "plugins/github-review/markdown-prose.ts",
+      "rule": "parser-use",
+      "sha256": "3db67b624d113ad4607fe325e5bd2b47b6e4ce229619bf2c937ef9e9aa021ad3",
+      "count": 1,
+      "kind": "parser-only",
+      "intent": "GFM source-position masks preserve outbound GitHub Markdown entities byte-for-byte; no UI HTML rendering."
+    },
+    {
+      "root": "org",
+      "path": "plugins/github-review/markdown-prose.ts",
+      "rule": "parser-use",
+      "sha256": "a52dea55ae05f3f38add975fe524fd86f84adbabc3b6bc80f9d44b85b2ef7395",
+      "count": 1,
+      "kind": "parser-only",
+      "intent": "GFM source-position masks preserve outbound GitHub Markdown entities byte-for-byte; no UI HTML rendering."
+    },
+    {
+      "root": "org",
+      "path": "plugins/github-review/markdown-prose.ts",
+      "rule": "parser-use",
+      "sha256": "95958c1d63937a6434e5bde66f8ff85fee5fd5d22973f67beae4dd9b1cdc6f66",
+      "count": 1,
+      "kind": "parser-only",
+      "intent": "GFM source-position masks preserve outbound GitHub Markdown entities byte-for-byte; no UI HTML rendering."
+    },
+    {
+      "root": "org",
+      "path": "plugins/jev-topics/document/compiler.ts",
+      "rule": "parser-import",
+      "sha256": "ef4a6350bca9aec73deb121dca8ad49b3540f9ef14059e1e9cb65ea322214c2d",
+      "count": 1,
+      "kind": "parser-only",
+      "intent": "Structural topic-map compiler consumes positioned mdast with GFM table/fence extensions for authoring validation; no UI HTML rendering."
+    },
+    {
+      "root": "org",
+      "path": "plugins/jev-topics/document/compiler.ts",
+      "rule": "parser-import",
+      "sha256": "66e5e3784fdec0644094fc696b609227e9529dbf3af86eba3a97d9930af27f3b",
+      "count": 1,
+      "kind": "parser-only",
+      "intent": "Structural topic-map compiler consumes positioned mdast with GFM table/fence extensions for authoring validation; no UI HTML rendering."
+    },
+    {
+      "root": "org",
+      "path": "plugins/jev-topics/document/compiler.ts",
+      "rule": "parser-import",
+      "sha256": "02b9f5baf7c050df4d0778aaf16423aae70ae5f7487e2c1e47e47090453d9a5b",
+      "count": 1,
+      "kind": "parser-only",
+      "intent": "Structural topic-map compiler consumes positioned mdast with GFM table/fence extensions for authoring validation; no UI HTML rendering."
+    },
+    {
+      "root": "org",
+      "path": "plugins/jev-topics/document/compiler.ts",
+      "rule": "parser-use",
+      "sha256": "759aa3cab53b4852562b664f049456632d878b8bdf54160509dbd709994db243",
+      "count": 1,
+      "kind": "parser-only",
+      "intent": "Structural topic-map compiler consumes positioned mdast with GFM table/fence extensions for authoring validation; no UI HTML rendering."
+    },
+    {
+      "root": "org",
+      "path": "plugins/jev-topics/document/compiler.ts",
+      "rule": "parser-use",
+      "sha256": "a52dea55ae05f3f38add975fe524fd86f84adbabc3b6bc80f9d44b85b2ef7395",
+      "count": 1,
+      "kind": "parser-only",
+      "intent": "Structural topic-map compiler consumes positioned mdast with GFM table/fence extensions for authoring validation; no UI HTML rendering."
+    },
+    {
+      "root": "org",
+      "path": "plugins/jev-topics/document/compiler.ts",
+      "rule": "parser-use",
+      "sha256": "95958c1d63937a6434e5bde66f8ff85fee5fd5d22973f67beae4dd9b1cdc6f66",
+      "count": 1,
+      "kind": "parser-only",
+      "intent": "Structural topic-map compiler consumes positioned mdast with GFM table/fence extensions for authoring validation; no UI HTML rendering."
+    },
+    {
+      "root": "org",
+      "path": "plugins/jev-topics/ui/canvas/inline-editor.tsx",
+      "rule": "sdk-markdown",
+      "sha256": "0e52f6b9d02515c59bb4fdeec2762fdbe701080c82986fc4dfbefcb1e2389817",
+      "count": 1,
+      "kind": "debt",
+      "intent": "Existing SDK Markdown injected as full map authoring Preview component."
+    },
+    {
+      "root": "org",
+      "path": "plugins/jev-topics/ui/canvas/inline-editor.tsx",
+      "rule": "sdk-use",
+      "sha256": "9a1f5c35ebbb0a7d0dcae19756cdca32e5ae98fd34dcbab61a3909a1bf69c66d",
+      "count": 1,
+      "kind": "debt",
+      "intent": "Existing SDK Markdown injected as full map authoring Preview component."
+    },
+    {
+      "root": "org",
+      "path": "plugins/jev-topics/ui/canvas/rail.tsx",
+      "rule": "sdk-markdown",
+      "sha256": "0e52f6b9d02515c59bb4fdeec2762fdbe701080c82986fc4dfbefcb1e2389817",
+      "count": 1,
+      "kind": "debt",
+      "intent": "Existing selected topic description and supporting-passage SDK injection; map and passage provenance need explicit migration."
+    },
+    {
+      "root": "org",
+      "path": "plugins/jev-topics/ui/canvas/rail.tsx",
+      "rule": "sdk-use",
+      "sha256": "0df30a8b6f1fc2938b88a9840596d295ddacc5f0212e4313cba12dfbd0f60991",
+      "count": 1,
+      "kind": "debt",
+      "intent": "Existing selected topic description and supporting-passage SDK injection; map and passage provenance need explicit migration."
+    },
+    {
+      "root": "org",
+      "path": "plugins/jev-topics/ui/canvas/rail.tsx",
+      "rule": "local-prose-component",
+      "sha256": "cd1061f3eec72b4f277c23dfb6588ec38a4ec1a94d4edf69ffe4b6baf8905a8f",
+      "count": 1,
+      "kind": "debt",
+      "intent": "Existing selected topic description and supporting-passage SDK injection; map and passage provenance need explicit migration."
+    },
+    {
+      "root": "org",
+      "path": "plugins/jev-topics/ui/canvas/rail.tsx",
+      "rule": "sdk-use",
+      "sha256": "cd1061f3eec72b4f277c23dfb6588ec38a4ec1a94d4edf69ffe4b6baf8905a8f",
+      "count": 1,
+      "kind": "debt",
+      "intent": "Existing selected topic description and supporting-passage SDK injection; map and passage provenance need explicit migration."
+    },
+    {
+      "root": "org",
+      "path": "plugins/jev-topics/ui/canvas/source-edit.ts",
+      "rule": "parser-import",
+      "sha256": "ef4a6350bca9aec73deb121dca8ad49b3540f9ef14059e1e9cb65ea322214c2d",
+      "count": 1,
+      "kind": "parser-only",
+      "intent": "Positioned GFM parse locates source edits for map authoring; no UI HTML rendering."
+    },
+    {
+      "root": "org",
+      "path": "plugins/jev-topics/ui/canvas/source-edit.ts",
+      "rule": "parser-import",
+      "sha256": "66e5e3784fdec0644094fc696b609227e9529dbf3af86eba3a97d9930af27f3b",
+      "count": 1,
+      "kind": "parser-only",
+      "intent": "Positioned GFM parse locates source edits for map authoring; no UI HTML rendering."
+    },
+    {
+      "root": "org",
+      "path": "plugins/jev-topics/ui/canvas/source-edit.ts",
+      "rule": "parser-import",
+      "sha256": "02b9f5baf7c050df4d0778aaf16423aae70ae5f7487e2c1e47e47090453d9a5b",
+      "count": 1,
+      "kind": "parser-only",
+      "intent": "Positioned GFM parse locates source edits for map authoring; no UI HTML rendering."
+    },
+    {
+      "root": "org",
+      "path": "plugins/jev-topics/ui/canvas/source-edit.ts",
+      "rule": "parser-use",
+      "sha256": "8e5bd02ff204268f8ca11aecc3076f42b5f59e7880d0df573b5db8f74a2d7ed0",
+      "count": 1,
+      "kind": "parser-only",
+      "intent": "Positioned GFM parse locates source edits for map authoring; no UI HTML rendering."
+    },
+    {
+      "root": "org",
+      "path": "plugins/jev-topics/ui/canvas/source-edit.ts",
+      "rule": "parser-use",
+      "sha256": "a52dea55ae05f3f38add975fe524fd86f84adbabc3b6bc80f9d44b85b2ef7395",
+      "count": 1,
+      "kind": "parser-only",
+      "intent": "Positioned GFM parse locates source edits for map authoring; no UI HTML rendering."
+    },
+    {
+      "root": "org",
+      "path": "plugins/jev-topics/ui/canvas/source-edit.ts",
+      "rule": "parser-use",
+      "sha256": "95958c1d63937a6434e5bde66f8ff85fee5fd5d22973f67beae4dd9b1cdc6f66",
+      "count": 1,
+      "kind": "parser-only",
+      "intent": "Positioned GFM parse locates source edits for map authoring; no UI HTML rendering."
+    },
+    {
+      "root": "org",
+      "path": "plugins/jev-topics/ui/discovery/live.tsx",
+      "rule": "sdk-markdown",
+      "sha256": "0e52f6b9d02515c59bb4fdeec2762fdbe701080c82986fc4dfbefcb1e2389817",
+      "count": 1,
+      "kind": "debt",
+      "intent": "Existing SDK Markdown injected into topic browser/inspector; consumers must migrate alongside source-frame plumbing."
+    },
+    {
+      "root": "org",
+      "path": "plugins/jev-topics/ui/discovery/live.tsx",
+      "rule": "sdk-use",
+      "sha256": "0df30a8b6f1fc2938b88a9840596d295ddacc5f0212e4313cba12dfbd0f60991",
+      "count": 2,
+      "kind": "debt",
+      "intent": "Existing SDK Markdown injected into topic browser/inspector; consumers must migrate alongside source-frame plumbing."
+    },
+    {
+      "root": "org",
+      "path": "plugins/jev-topics/ui/discovery/views.tsx",
+      "rule": "local-prose-component",
+      "sha256": "4d61795fa0e181e1aa5b8a1c835add832d613c46ef0e64cd0cbc186d0892848e",
+      "count": 1,
+      "kind": "debt",
+      "intent": "Existing injected topic definition/context and retained supporting-passage prose; frame semantics belong to later Topics migration."
+    },
+    {
+      "root": "org",
+      "path": "plugins/jev-topics/ui/discovery/views.tsx",
+      "rule": "local-prose-component",
+      "sha256": "f52fc1228f91732c5547a12c3974a8011ebad170e63bb3b9bcc9fa902dad9455",
+      "count": 1,
+      "kind": "debt",
+      "intent": "Existing injected topic definition/context and retained supporting-passage prose; frame semantics belong to later Topics migration."
+    },
+    {
+      "root": "org",
+      "path": "plugins/jev-topics/ui/discovery/views.tsx",
+      "rule": "local-prose-component",
+      "sha256": "a44b28a48007c22e1fcbafde45b3beaa5c25554492daa25599ad2bbfc45de4fc",
+      "count": 1,
+      "kind": "debt",
+      "intent": "Existing injected topic definition/context and retained supporting-passage prose; frame semantics belong to later Topics migration."
+    },
+    {
+      "root": "org",
+      "path": "plugins/jev-topics/ui/discovery/views.tsx",
+      "rule": "local-prose-component",
+      "sha256": "9dbc3fa0c50ee23427890cedd942d3819b81dc31641c5e87a83c3c37dc607218",
+      "count": 1,
+      "kind": "debt",
+      "intent": "Existing injected topic definition/context and retained supporting-passage prose; frame semantics belong to later Topics migration."
+    },
+    {
+      "root": "org",
+      "path": "plugins/jev-topics/ui/discovery/views.tsx",
+      "rule": "local-prose-component",
+      "sha256": "1ab16b7ebe8b0fa19c387797c69d842c806628a2e3ef9ece60280a78f331290a",
+      "count": 1,
+      "kind": "debt",
+      "intent": "Existing injected topic definition/context and retained supporting-passage prose; frame semantics belong to later Topics migration."
+    },
+    {
+      "root": "org",
+      "path": "plugins/jev-topics/ui/editor/editor.tsx",
+      "rule": "local-prose-component",
+      "sha256": "acc87cdd41bfd87a22e9d7aad6c61e731939dac67eac3077f0cc79b3eb31a40d",
+      "count": 1,
+      "kind": "debt",
+      "intent": "Existing injected full source Markdown authoring preview; saved/conflict literal source remains separate."
+    },
+    {
+      "root": "org",
+      "path": "plugins/jev-topics/ui/editor/native-editor.tsx",
+      "rule": "sdk-markdown",
+      "sha256": "0e52f6b9d02515c59bb4fdeec2762fdbe701080c82986fc4dfbefcb1e2389817",
+      "count": 1,
+      "kind": "debt",
+      "intent": "Existing SDK Markdown injected as map editor Preview component."
+    },
+    {
+      "root": "org",
+      "path": "plugins/jev-topics/ui/editor/native-editor.tsx",
+      "rule": "sdk-use",
+      "sha256": "9a1f5c35ebbb0a7d0dcae19756cdca32e5ae98fd34dcbab61a3909a1bf69c66d",
+      "count": 1,
+      "kind": "debt",
+      "intent": "Existing SDK Markdown injected as map editor Preview component."
+    },
+    {
+      "root": "org",
+      "path": "plugins/notifications/app.tsx",
+      "rule": "sdk-markdown",
+      "sha256": "0e52f6b9d02515c59bb4fdeec2762fdbe701080c82986fc4dfbefcb1e2389817",
+      "count": 1,
+      "kind": "debt",
+      "intent": "Existing notification-summary prose; subject thread is not necessarily producer text source."
+    },
+    {
+      "root": "org",
+      "path": "plugins/notifications/app.tsx",
+      "rule": "local-prose-component",
+      "sha256": "d7e6aea37bfe77ce78412df6de3f1364757e87d3aef31d4877cdb7c9c6f19a30",
+      "count": 1,
+      "kind": "debt",
+      "intent": "Existing notification-summary prose; subject thread is not necessarily producer text source."
+    },
+    {
+      "root": "org",
+      "path": "plugins/notifications/app.tsx",
+      "rule": "sdk-use",
+      "sha256": "d7e6aea37bfe77ce78412df6de3f1364757e87d3aef31d4877cdb7c9c6f19a30",
+      "count": 1,
+      "kind": "debt",
+      "intent": "Existing notification-summary prose; subject thread is not necessarily producer text source."
+    },
+    {
+      "root": "org",
+      "path": "plugins/plan-graph/components/MermaidDiagram.tsx",
+      "rule": "diagram-import",
+      "sha256": "5208d2a259c44ce5dc6004889160eddbdfc513deb0142ea7369289cf6e3a2399",
+      "count": 1,
+      "kind": "reviewed-exception",
+      "intent": "Generated Mermaid SVG only: exact import, strict security configuration, render call and SVG assignment; no general prose renderer."
+    },
+    {
+      "root": "org",
+      "path": "plugins/plan-graph/components/MermaidDiagram.tsx",
+      "rule": "diagram-use",
+      "sha256": "d176c78efc92582660d214add24b7218cf16958c88c643779754f22147d9d567",
+      "count": 1,
+      "kind": "reviewed-exception",
+      "intent": "Generated Mermaid SVG only: exact import, strict security configuration, render call and SVG assignment; no general prose renderer."
+    },
+    {
+      "root": "org",
+      "path": "plugins/plan-graph/components/MermaidDiagram.tsx",
+      "rule": "diagram-use",
+      "sha256": "feb0f2fdb8ba0cb0efc71199913edc3d6ccffb99d0934303fd01c8e67e50232c",
+      "count": 1,
+      "kind": "reviewed-exception",
+      "intent": "Generated Mermaid SVG only: exact import, strict security configuration, render call and SVG assignment; no general prose renderer."
+    },
+    {
+      "root": "org",
+      "path": "plugins/plan-graph/components/MermaidDiagram.tsx",
+      "rule": "html-sink",
+      "sha256": "eb59e78c23302db86f5084ec747aa543571f68607e421bb0de5a4946522762e8",
+      "count": 1,
+      "kind": "reviewed-exception",
+      "intent": "Generated Mermaid SVG only: exact import, strict security configuration, render call and SVG assignment; no general prose renderer."
+    },
+    {
+      "root": "org",
+      "path": "plugins/review-to-disposition/policy.ts",
+      "rule": "local-renderer",
+      "sha256": "724784ab70bac110658223b39ae54e2cea785b664c0ae202aa08609b98c886ca",
+      "count": 1,
+      "kind": "parser-only",
+      "intent": "Parse local reviewer policy frontmatter/body for execution configuration; does not render UI Markdown."
+    },
+    {
+      "root": "org",
+      "path": "plugins/rosetta-slack/thread-brief-preview.ts",
+      "rule": "parser-import",
+      "sha256": "a3c42d15a4bdf88e8c23635804e5e56e1e7630ce36634f1636dc33ca878124e7",
+      "count": 1,
+      "kind": "parser-only",
+      "intent": "Marked Lexer extracts headings/plain block text for outbound Slack preview DTO; no local HTML/UI renderer."
+    },
+    {
+      "root": "org",
+      "path": "plugins/rosetta-slack/thread-brief-preview.ts",
+      "rule": "parser-use",
+      "sha256": "ad393883274dab2673214881911bdd101cc65bbd88b83922882340b25a1535e7",
+      "count": 1,
+      "kind": "parser-only",
+      "intent": "Marked Lexer extracts headings/plain block text for outbound Slack preview DTO; no local HTML/UI renderer."
+    },
+    {
+      "root": "org",
+      "path": "plugins/thread-brief/app.tsx",
+      "rule": "local-prose-component",
+      "sha256": "68e85716d7da1f8ff91d9caaa84e223f13402b2503e51898f69b426936e558c4",
+      "count": 1,
+      "kind": "reviewed-exception",
+      "intent": "BriefStatusSlot content prop is a data model/status value, not string prose or a renderer injection."
+    },
+    {
+      "root": "org",
+      "path": "plugins/thread-brief/components/AnsweredQuestions.tsx",
+      "rule": "local-prose-component",
+      "sha256": "1e1f40be23ae05d32df7cefe876d86613d0d87368f41bc03a58437759052d0c5",
+      "count": 1,
+      "kind": "reviewed-exception",
+      "intent": "BriefContentScrollAnchor content prop tracks element identity/revision for scroll; it does not render/parse Markdown."
+    },
+    {
+      "root": "org",
+      "path": "plugins/thread-brief/components/BriefDocument.tsx",
+      "rule": "sdk-markdown",
+      "sha256": "0e52f6b9d02515c59bb4fdeec2762fdbe701080c82986fc4dfbefcb1e2389817",
+      "count": 1,
+      "kind": "reviewed-exception",
+      "intent": "Native Mermaid code-only delegate: exact SDK import/memo, safeMermaidFence function and content={safeMermaidFence(source)} JSX. Prose remains separate renderer debt."
+    },
+    {
+      "root": "org",
+      "path": "plugins/thread-brief/components/BriefDocument.tsx",
+      "rule": "sdk-use",
+      "sha256": "35c371e4113d924fd599526720d9bb339d25b653382b8c1b92552901d7f460d8",
+      "count": 1,
+      "kind": "reviewed-exception",
+      "intent": "Native Mermaid code-only delegate: exact SDK import/memo, safeMermaidFence function and content={safeMermaidFence(source)} JSX. Prose remains separate renderer debt."
+    },
+    {
+      "root": "org",
+      "path": "plugins/thread-brief/components/BriefDocument.tsx",
+      "rule": "local-renderer",
+      "sha256": "c55c0e2e3b341f5b406916be05ea484c83228f9b2c80633fb21710618cbf04ac",
+      "count": 1,
+      "kind": "reviewed-exception",
+      "intent": "Native Mermaid code-only delegate: exact SDK import/memo, safeMermaidFence function and content={safeMermaidFence(source)} JSX. Prose remains separate renderer debt."
+    },
+    {
+      "root": "org",
+      "path": "plugins/thread-brief/components/BriefDocument.tsx",
+      "rule": "sdk-use",
+      "sha256": "d652f6fd453f7ef5052cca8d71d20fd8f7f13d711ba0fbfeb84a94197154be26",
+      "count": 1,
+      "kind": "debt",
+      "intent": "Existing sanitized document-DTO element tree and depth-one excerpt renderer; later reader/file-preview migration."
+    },
+    {
+      "root": "org",
+      "path": "plugins/thread-brief/components/BriefDocument.tsx",
+      "rule": "local-prose-component",
+      "sha256": "c5362dcd7c42a84f9065f5c29f723cd29293bf0e619f739685e4c1c006262375",
+      "count": 1,
+      "kind": "reviewed-exception",
+      "intent": "Native Mermaid code-only delegate: exact SDK import/memo, safeMermaidFence function and content={safeMermaidFence(source)} JSX. Prose remains separate renderer debt."
+    },
+    {
+      "root": "org",
+      "path": "plugins/thread-brief/components/BriefDocument.tsx",
+      "rule": "sdk-use",
+      "sha256": "c5362dcd7c42a84f9065f5c29f723cd29293bf0e619f739685e4c1c006262375",
+      "count": 1,
+      "kind": "reviewed-exception",
+      "intent": "Native Mermaid code-only delegate: exact SDK import/memo, safeMermaidFence function and content={safeMermaidFence(source)} JSX. Prose remains separate renderer debt."
+    },
+    {
+      "root": "org",
+      "path": "plugins/thread-brief/components/BriefDocument.tsx",
+      "rule": "sdk-use",
+      "sha256": "1a569307bf5c8e60915ec4737984a324a4c689dfb2f729f22d77571a97f63dbc",
+      "count": 1,
+      "kind": "debt",
+      "intent": "Existing sanitized document-DTO element tree and depth-one excerpt renderer; later reader/file-preview migration."
+    },
+    {
+      "root": "org",
+      "path": "plugins/thread-brief/components/BriefDocument.tsx",
+      "rule": "dynamic-element",
+      "sha256": "caa0014aa9f1e24e5f28516a93f36eebd17a5cc23a33c0e94aad306f17c1cf84",
+      "count": 1,
+      "kind": "debt",
+      "intent": "Existing sanitized document-DTO element tree and depth-one excerpt renderer; later reader/file-preview migration."
+    },
+    {
+      "root": "org",
+      "path": "plugins/thread-brief/components/BriefDocument.tsx",
+      "rule": "dynamic-element",
+      "sha256": "d1403ec3a7b8b599553a75230f86fe54ac5c7c7d0ae70712816d0daf42489dfd",
+      "count": 1,
+      "kind": "debt",
+      "intent": "Existing sanitized document-DTO element tree and depth-one excerpt renderer; later reader/file-preview migration."
+    },
+    {
+      "root": "org",
+      "path": "plugins/thread-brief/components/BriefDocument.tsx",
+      "rule": "sdk-use",
+      "sha256": "6c6a5d55b03c673c0d4f1812193a4208c3ce5473ed4afa7d46474d1539f7bcb1",
+      "count": 1,
+      "kind": "debt",
+      "intent": "Existing sanitized document-DTO element tree and depth-one excerpt renderer; later reader/file-preview migration."
+    },
+    {
+      "root": "org",
+      "path": "plugins/thread-brief/components/LatestAgentMessage.tsx",
+      "rule": "local-prose-component",
+      "sha256": "d18d8584e4598dab939519cb49b2da35da3a7e55a4cdf8f147f6616c1285d1d2",
+      "count": 1,
+      "kind": "reviewed-exception",
+      "intent": "BriefContentScrollAnchor content prop tracks retained message/element identity for scroll; it does not render Markdown."
+    },
+    {
+      "root": "org",
+      "path": "plugins/thread-brief/lib/document-model.ts",
+      "rule": "parser-import",
+      "sha256": "090c2bd5de6fcec3b4c1660edb63e5932464f662a0ebb57f44f70374aa11e148",
+      "count": 1,
+      "kind": "debt",
+      "intent": "Existing server GFM -> sanitized document DTO compiler feeding live Brief/file preview; renderer debt, not parser-only extraction."
+    },
+    {
+      "root": "org",
+      "path": "plugins/thread-brief/lib/document-model.ts",
+      "rule": "parser-import",
+      "sha256": "aad5921fe11128fcb570012f7d4202f463c33a3377ada2a69d3e9644318ab2ff",
+      "count": 1,
+      "kind": "debt",
+      "intent": "Existing server GFM -> sanitized document DTO compiler feeding live Brief/file preview; renderer debt, not parser-only extraction."
+    },
+    {
+      "root": "org",
+      "path": "plugins/thread-brief/lib/document-model.ts",
+      "rule": "parser-import",
+      "sha256": "9360f7d8fb405a0baa78dd557110a9a15a339c851211d87185d658abdd8d914c",
+      "count": 1,
+      "kind": "debt",
+      "intent": "Existing server GFM -> sanitized document DTO compiler feeding live Brief/file preview; renderer debt, not parser-only extraction."
+    },
+    {
+      "root": "org",
+      "path": "plugins/thread-brief/lib/document-model.ts",
+      "rule": "parser-import",
+      "sha256": "2cfe18c415e5b9f3edb27fba5dd7bda33236ade02c5f0bb6c98d8e0001083e81",
+      "count": 1,
+      "kind": "debt",
+      "intent": "Existing server GFM -> sanitized document DTO compiler feeding live Brief/file preview; renderer debt, not parser-only extraction."
+    },
+    {
+      "root": "org",
+      "path": "plugins/thread-brief/lib/document-model.ts",
+      "rule": "parser-import",
+      "sha256": "88abad888af81cbed77efa391fd7db5c34b1b729bf505375ee528a63e8de8184",
+      "count": 1,
+      "kind": "debt",
+      "intent": "Existing server GFM -> sanitized document DTO compiler feeding live Brief/file preview; renderer debt, not parser-only extraction."
+    },
+    {
+      "root": "org",
+      "path": "plugins/thread-brief/lib/document-model.ts",
+      "rule": "parser-use",
+      "sha256": "d607c575a28facedf635e4659594e7835a02d4ae8aaf6766b4d5607539332705",
+      "count": 2,
+      "kind": "debt",
+      "intent": "Existing server GFM -> sanitized document DTO compiler feeding live Brief/file preview; renderer debt, not parser-only extraction."
+    },
+    {
+      "root": "org",
+      "path": "plugins/thread-brief/lib/document-model.ts",
+      "rule": "parser-use",
+      "sha256": "fddee034ead72385768dbe587be025e3d75d36b7a8f511ee436d0409999a41b3",
+      "count": 1,
+      "kind": "debt",
+      "intent": "Existing server GFM -> sanitized document DTO compiler feeding live Brief/file preview; renderer debt, not parser-only extraction."
+    },
+    {
+      "root": "org",
+      "path": "plugins/thread-brief/lib/document-model.ts",
+      "rule": "parser-use",
+      "sha256": "dc2b15030aaee58d709fa89ffe0c74aaca01eb6f6c13a80892f20a5cd8c9b5d6",
+      "count": 1,
+      "kind": "debt",
+      "intent": "Existing server GFM -> sanitized document DTO compiler feeding live Brief/file preview; renderer debt, not parser-only extraction."
+    },
+    {
+      "root": "org",
+      "path": "plugins/thread-brief/lib/document-model.ts",
+      "rule": "parser-use",
+      "sha256": "18b39c3c701da730042ae8dd155ff83977dbf16e3efa61775d891b12e19002d9",
+      "count": 1,
+      "kind": "debt",
+      "intent": "Existing server GFM -> sanitized document DTO compiler feeding live Brief/file preview; renderer debt, not parser-only extraction."
+    },
+    {
+      "root": "org",
+      "path": "plugins/thread-brief/lib/document-model.ts",
+      "rule": "parser-use",
+      "sha256": "bcdf954d102206db5e5cfa63ec241ef95309ed54ae617c418b9b2a47b02b2ea7",
+      "count": 1,
+      "kind": "debt",
+      "intent": "Existing server GFM -> sanitized document DTO compiler feeding live Brief/file preview; renderer debt, not parser-only extraction."
+    },
+    {
+      "root": "org",
+      "path": "plugins/thread-brief/lib/document-model.ts",
+      "rule": "parser-use",
+      "sha256": "2839e750236c1e19752ee0ddcbebf784d65f1c0a92655a35f34286cfadf45de4",
+      "count": 1,
+      "kind": "debt",
+      "intent": "Existing server GFM -> sanitized document DTO compiler feeding live Brief/file preview; renderer debt, not parser-only extraction."
+    },
+    {
+      "root": "org",
+      "path": "plugins/thread-brief/lib/document-model.ts",
+      "rule": "parser-use",
+      "sha256": "5d0a6796679c0cb96ed28419d3750778ca2884222ac3fde4d4bec91e74f353f6",
+      "count": 1,
+      "kind": "debt",
+      "intent": "Existing server GFM -> sanitized document DTO compiler feeding live Brief/file preview; renderer debt, not parser-only extraction."
+    },
+    {
+      "root": "org",
+      "path": "plugins/thread-brief/lib/document-model.ts",
+      "rule": "parser-use",
+      "sha256": "714c8659feffcaf425de944c2772a307f9b3c5637c1c2b9e06d17636c65eae42",
+      "count": 2,
+      "kind": "debt",
+      "intent": "Existing server GFM -> sanitized document DTO compiler feeding live Brief/file preview; renderer debt, not parser-only extraction."
+    },
+    {
+      "root": "org",
+      "path": "plugins/thread-brief/lib/question-commit-source.ts",
+      "rule": "parser-import",
+      "sha256": "090c2bd5de6fcec3b4c1660edb63e5932464f662a0ebb57f44f70374aa11e148",
+      "count": 1,
+      "kind": "parser-only",
+      "intent": "Positioned GFM parse preserves authored question source during edits; no UI HTML renderer."
+    },
+    {
+      "root": "org",
+      "path": "plugins/thread-brief/lib/question-commit-source.ts",
+      "rule": "parser-import",
+      "sha256": "aad5921fe11128fcb570012f7d4202f463c33a3377ada2a69d3e9644318ab2ff",
+      "count": 1,
+      "kind": "parser-only",
+      "intent": "Positioned GFM parse preserves authored question source during edits; no UI HTML renderer."
+    },
+    {
+      "root": "org",
+      "path": "plugins/thread-brief/lib/question-commit-source.ts",
+      "rule": "parser-import",
+      "sha256": "9360f7d8fb405a0baa78dd557110a9a15a339c851211d87185d658abdd8d914c",
+      "count": 1,
+      "kind": "parser-only",
+      "intent": "Positioned GFM parse preserves authored question source during edits; no UI HTML renderer."
+    },
+    {
+      "root": "org",
+      "path": "plugins/thread-brief/lib/question-commit-source.ts",
+      "rule": "parser-use",
+      "sha256": "d607c575a28facedf635e4659594e7835a02d4ae8aaf6766b4d5607539332705",
+      "count": 1,
+      "kind": "parser-only",
+      "intent": "Positioned GFM parse preserves authored question source during edits; no UI HTML renderer."
+    },
+    {
+      "root": "org",
+      "path": "plugins/thread-brief/lib/question-commit-source.ts",
+      "rule": "parser-use",
+      "sha256": "fddee034ead72385768dbe587be025e3d75d36b7a8f511ee436d0409999a41b3",
+      "count": 1,
+      "kind": "parser-only",
+      "intent": "Positioned GFM parse preserves authored question source during edits; no UI HTML renderer."
+    },
+    {
+      "root": "org",
+      "path": "plugins/thread-brief/lib/question-commit-source.ts",
+      "rule": "parser-use",
+      "sha256": "dc2b15030aaee58d709fa89ffe0c74aaca01eb6f6c13a80892f20a5cd8c9b5d6",
+      "count": 1,
+      "kind": "parser-only",
+      "intent": "Positioned GFM parse preserves authored question source during edits; no UI HTML renderer."
+    },
+    {
+      "root": "org",
+      "path": "plugins/thread-brief/lib/question-commit-source.ts",
+      "rule": "parser-use",
+      "sha256": "06f514af02caf6dfbdb34c0ce3ad0fa92785d2f37063acf8c48c306f7f891777",
+      "count": 1,
+      "kind": "parser-only",
+      "intent": "Positioned GFM parse preserves authored question source during edits; no UI HTML renderer."
+    },
+    {
+      "root": "org",
+      "path": "plugins/thread-peek/app.tsx",
+      "rule": "parser-import",
+      "sha256": "d9b2fe68b6c253e250b14667fe79d988b4d2ac568f7fd62357330b906c30a49d",
+      "count": 1,
+      "kind": "debt",
+      "intent": "Existing content-script DOM preview uses marked GFM and DOMPurify HTML assignment; requires a supported shared DOM adapter or bounded redesign."
+    },
+    {
+      "root": "org",
+      "path": "plugins/thread-peek/app.tsx",
+      "rule": "local-renderer",
+      "sha256": "a73bf26208794fb6aad8bed778add5d9d6871ba68db50c0a5700dc36e765d133",
+      "count": 1,
+      "kind": "debt",
+      "intent": "Existing content-script DOM preview uses marked GFM and DOMPurify HTML assignment; requires a supported shared DOM adapter or bounded redesign."
+    },
+    {
+      "root": "org",
+      "path": "plugins/thread-peek/app.tsx",
+      "rule": "parser-use",
+      "sha256": "41fbf25a678fd31788e8d77b5ca0441e7fcb7aeb04a603b677b7048982616346",
+      "count": 1,
+      "kind": "debt",
+      "intent": "Existing content-script DOM preview uses marked GFM and DOMPurify HTML assignment; requires a supported shared DOM adapter or bounded redesign."
+    },
+    {
+      "root": "org",
+      "path": "plugins/thread-peek/app.tsx",
+      "rule": "html-sink",
+      "sha256": "42f1a92ff9fd5bea76b103ed773af46901c64f1784e607e64af6fcd1afdda0c7",
+      "count": 1,
+      "kind": "debt",
+      "intent": "Existing content-script DOM preview uses marked GFM and DOMPurify HTML assignment; requires a supported shared DOM adapter or bounded redesign."
+    },
+    {
+      "root": "community",
+      "path": "plugins/bb-ui-reference/app.tsx",
+      "rule": "dynamic-element",
+      "sha256": "9332ac7d504217a51d75cb4375bed2333a09c5f994a84dde9adc223823d15b4a",
+      "count": 1,
+      "kind": "reviewed-exception",
+      "intent": "Reference catalog generic HTMLElement factory assigns supplied text via textContent; no Markdown parsing or HTML injection."
+    },
+    {
+      "root": "community",
+      "path": "plugins/compact-display/tools/mobile-inputs.mjs",
+      "rule": "dynamic-element",
+      "sha256": "9332ac7d504217a51d75cb4375bed2333a09c5f994a84dde9adc223823d15b4a",
+      "count": 1,
+      "kind": "reviewed-exception",
+      "intent": "Browser-only synthetic mobile control fixture iterates textarea/select/div; diagnostic tool, not a prose UI."
+    },
+    {
+      "root": "community",
+      "path": "plugins/cross-references/assistant-links.ts",
+      "rule": "parser-import",
+      "sha256": "d9b2fe68b6c253e250b14667fe79d988b4d2ac568f7fd62357330b906c30a49d",
+      "count": 1,
+      "kind": "parser-only",
+      "intent": "Marked lexer/walkTokens extracts validated assistant links into resource observations; no HTML output."
+    },
+    {
+      "root": "community",
+      "path": "plugins/cross-references/assistant-links.ts",
+      "rule": "parser-use",
+      "sha256": "42a5892e01c2a1e91d209239d61c221e0eea46a3880d5eb3ee3678ffc30d1366",
+      "count": 1,
+      "kind": "parser-only",
+      "intent": "Marked lexer/walkTokens extracts validated assistant links into resource observations; no HTML output."
+    },
+    {
+      "root": "community",
+      "path": "plugins/cross-references/assistant-links.ts",
+      "rule": "parser-use",
+      "sha256": "c3ea39a2420b5a0a1dec8e4dd6555d75a31dc3e12e3dc63ae630c5895c348878",
+      "count": 1,
+      "kind": "parser-only",
+      "intent": "Marked lexer/walkTokens extracts validated assistant links into resource observations; no HTML output."
+    },
+    {
+      "root": "community",
+      "path": "plugins/cross-references/mention-markdown.ts",
+      "rule": "parser-import",
+      "sha256": "090c2bd5de6fcec3b4c1660edb63e5932464f662a0ebb57f44f70374aa11e148",
+      "count": 1,
+      "kind": "parser-only",
+      "intent": "Remark positioned grammar computes mention exclusions, source spans and privacy holes; no UI/HTML rendering."
+    },
+    {
+      "root": "community",
+      "path": "plugins/cross-references/mention-markdown.ts",
+      "rule": "parser-import",
+      "sha256": "aad5921fe11128fcb570012f7d4202f463c33a3377ada2a69d3e9644318ab2ff",
+      "count": 1,
+      "kind": "parser-only",
+      "intent": "Remark positioned grammar computes mention exclusions, source spans and privacy holes; no UI/HTML rendering."
+    },
+    {
+      "root": "community",
+      "path": "plugins/cross-references/mention-markdown.ts",
+      "rule": "parser-import",
+      "sha256": "9360f7d8fb405a0baa78dd557110a9a15a339c851211d87185d658abdd8d914c",
+      "count": 1,
+      "kind": "parser-only",
+      "intent": "Remark positioned grammar computes mention exclusions, source spans and privacy holes; no UI/HTML rendering."
+    },
+    {
+      "root": "community",
+      "path": "plugins/cross-references/mention-markdown.ts",
+      "rule": "parser-use",
+      "sha256": "d607c575a28facedf635e4659594e7835a02d4ae8aaf6766b4d5607539332705",
+      "count": 1,
+      "kind": "parser-only",
+      "intent": "Remark positioned grammar computes mention exclusions, source spans and privacy holes; no UI/HTML rendering."
+    },
+    {
+      "root": "community",
+      "path": "plugins/cross-references/mention-markdown.ts",
+      "rule": "parser-use",
+      "sha256": "fddee034ead72385768dbe587be025e3d75d36b7a8f511ee436d0409999a41b3",
+      "count": 1,
+      "kind": "parser-only",
+      "intent": "Remark positioned grammar computes mention exclusions, source spans and privacy holes; no UI/HTML rendering."
+    },
+    {
+      "root": "community",
+      "path": "plugins/cross-references/mention-markdown.ts",
+      "rule": "parser-use",
+      "sha256": "dc2b15030aaee58d709fa89ffe0c74aaca01eb6f6c13a80892f20a5cd8c9b5d6",
+      "count": 1,
+      "kind": "parser-only",
+      "intent": "Remark positioned grammar computes mention exclusions, source spans and privacy holes; no UI/HTML rendering."
+    },
+    {
+      "root": "community",
+      "path": "plugins/cross-references/mention-markdown.ts",
+      "rule": "parser-use",
+      "sha256": "2839e750236c1e19752ee0ddcbebf784d65f1c0a92655a35f34286cfadf45de4",
+      "count": 1,
+      "kind": "parser-only",
+      "intent": "Remark positioned grammar computes mention exclusions, source spans and privacy holes; no UI/HTML rendering."
+    },
+    {
+      "root": "community",
+      "path": "plugins/cross-references/mention-markdown.ts",
+      "rule": "parser-use",
+      "sha256": "4d38aaf5c0b1522db96c4ecc313a7e8b01abcf029af606623badb746782d7e25",
+      "count": 1,
+      "kind": "parser-only",
+      "intent": "Remark positioned grammar computes mention exclusions, source spans and privacy holes; no UI/HTML rendering."
+    },
+    {
+      "root": "community",
+      "path": "packages/bb-markdown/src/grammar.ts",
+      "rule": "shared-policy-boundary",
+      "sha256": "b4b01cac500baad98a518929c24184ef20bf8f6a9d43818acb0829ae3a79bf96",
+      "count": 1,
+      "kind": "reviewed-exception",
+      "intent": "Authoritative shared server Markdown compiler/renderer: positioned GFM/math grammar -> sanitized bounded semantic tree, source exclusions, safe external/app/local destinations and correlated file/image targets. Exact whole-module policy pins sanitizer/configuration/helpers/containment/mapping; this is not extraction-only."
+    },
+    {
+      "root": "community",
+      "path": "packages/bb-markdown/src/grammar.ts",
+      "rule": "parser-import",
+      "sha256": "090c2bd5de6fcec3b4c1660edb63e5932464f662a0ebb57f44f70374aa11e148",
+      "count": 1,
+      "kind": "reviewed-exception",
+      "intent": "Authoritative shared server Markdown compiler/renderer: positioned GFM/math grammar -> sanitized bounded semantic tree, source exclusions, safe external/app/local destinations and correlated file/image targets. Exact whole-module policy pins sanitizer/configuration/helpers/containment/mapping; this is not extraction-only."
+    },
+    {
+      "root": "community",
+      "path": "packages/bb-markdown/src/grammar.ts",
+      "rule": "parser-import",
+      "sha256": "aad5921fe11128fcb570012f7d4202f463c33a3377ada2a69d3e9644318ab2ff",
+      "count": 1,
+      "kind": "reviewed-exception",
+      "intent": "Authoritative shared server Markdown compiler/renderer: positioned GFM/math grammar -> sanitized bounded semantic tree, source exclusions, safe external/app/local destinations and correlated file/image targets. Exact whole-module policy pins sanitizer/configuration/helpers/containment/mapping; this is not extraction-only."
+    },
+    {
+      "root": "community",
+      "path": "packages/bb-markdown/src/grammar.ts",
+      "rule": "parser-import",
+      "sha256": "9360f7d8fb405a0baa78dd557110a9a15a339c851211d87185d658abdd8d914c",
+      "count": 1,
+      "kind": "reviewed-exception",
+      "intent": "Authoritative shared server Markdown compiler/renderer: positioned GFM/math grammar -> sanitized bounded semantic tree, source exclusions, safe external/app/local destinations and correlated file/image targets. Exact whole-module policy pins sanitizer/configuration/helpers/containment/mapping; this is not extraction-only."
+    },
+    {
+      "root": "community",
+      "path": "packages/bb-markdown/src/grammar.ts",
+      "rule": "parser-import",
+      "sha256": "309cd6735babf663d0e399d80fcdbfae112ef97434764eace292d4f3d9d99280",
+      "count": 1,
+      "kind": "reviewed-exception",
+      "intent": "Authoritative shared server Markdown compiler/renderer: positioned GFM/math grammar -> sanitized bounded semantic tree, source exclusions, safe external/app/local destinations and correlated file/image targets. Exact whole-module policy pins sanitizer/configuration/helpers/containment/mapping; this is not extraction-only."
+    },
+    {
+      "root": "community",
+      "path": "packages/bb-markdown/src/grammar.ts",
+      "rule": "parser-import",
+      "sha256": "2cfe18c415e5b9f3edb27fba5dd7bda33236ade02c5f0bb6c98d8e0001083e81",
+      "count": 1,
+      "kind": "reviewed-exception",
+      "intent": "Authoritative shared server Markdown compiler/renderer: positioned GFM/math grammar -> sanitized bounded semantic tree, source exclusions, safe external/app/local destinations and correlated file/image targets. Exact whole-module policy pins sanitizer/configuration/helpers/containment/mapping; this is not extraction-only."
+    },
+    {
+      "root": "community",
+      "path": "packages/bb-markdown/src/grammar.ts",
+      "rule": "parser-import",
+      "sha256": "590d36dee00bd1d7c0981b65bb5c3a71c61ad5b09d46fd1243a00cba1889cad3",
+      "count": 1,
+      "kind": "reviewed-exception",
+      "intent": "Authoritative shared server Markdown compiler/renderer: positioned GFM/math grammar -> sanitized bounded semantic tree, source exclusions, safe external/app/local destinations and correlated file/image targets. Exact whole-module policy pins sanitizer/configuration/helpers/containment/mapping; this is not extraction-only."
+    },
+    {
+      "root": "community",
+      "path": "packages/bb-markdown/src/grammar.ts",
+      "rule": "parser-import",
+      "sha256": "8a591be04e2f601c4adb56a366a1adfa21e11b5ef9491fa9b28b6a43eb010eb8",
+      "count": 1,
+      "kind": "reviewed-exception",
+      "intent": "Authoritative shared server Markdown compiler/renderer: positioned GFM/math grammar -> sanitized bounded semantic tree, source exclusions, safe external/app/local destinations and correlated file/image targets. Exact whole-module policy pins sanitizer/configuration/helpers/containment/mapping; this is not extraction-only."
+    },
+    {
+      "root": "community",
+      "path": "packages/bb-markdown/src/grammar.ts",
+      "rule": "parser-import",
+      "sha256": "9512e9363a5a642c5aecb3b23d9b215aedde11cf14d0b76aab305016ec17b1d1",
+      "count": 1,
+      "kind": "reviewed-exception",
+      "intent": "Authoritative shared server Markdown compiler/renderer: positioned GFM/math grammar -> sanitized bounded semantic tree, source exclusions, safe external/app/local destinations and correlated file/image targets. Exact whole-module policy pins sanitizer/configuration/helpers/containment/mapping; this is not extraction-only."
+    },
+    {
+      "root": "community",
+      "path": "packages/bb-markdown/src/grammar.ts",
+      "rule": "parser-use",
+      "sha256": "d607c575a28facedf635e4659594e7835a02d4ae8aaf6766b4d5607539332705",
+      "count": 2,
+      "kind": "reviewed-exception",
+      "intent": "Authoritative shared server Markdown compiler/renderer: positioned GFM/math grammar -> sanitized bounded semantic tree, source exclusions, safe external/app/local destinations and correlated file/image targets. Exact whole-module policy pins sanitizer/configuration/helpers/containment/mapping; this is not extraction-only."
+    },
+    {
+      "root": "community",
+      "path": "packages/bb-markdown/src/grammar.ts",
+      "rule": "parser-use",
+      "sha256": "fddee034ead72385768dbe587be025e3d75d36b7a8f511ee436d0409999a41b3",
+      "count": 1,
+      "kind": "reviewed-exception",
+      "intent": "Authoritative shared server Markdown compiler/renderer: positioned GFM/math grammar -> sanitized bounded semantic tree, source exclusions, safe external/app/local destinations and correlated file/image targets. Exact whole-module policy pins sanitizer/configuration/helpers/containment/mapping; this is not extraction-only."
+    },
+    {
+      "root": "community",
+      "path": "packages/bb-markdown/src/grammar.ts",
+      "rule": "parser-use",
+      "sha256": "dc2b15030aaee58d709fa89ffe0c74aaca01eb6f6c13a80892f20a5cd8c9b5d6",
+      "count": 1,
+      "kind": "reviewed-exception",
+      "intent": "Authoritative shared server Markdown compiler/renderer: positioned GFM/math grammar -> sanitized bounded semantic tree, source exclusions, safe external/app/local destinations and correlated file/image targets. Exact whole-module policy pins sanitizer/configuration/helpers/containment/mapping; this is not extraction-only."
+    },
+    {
+      "root": "community",
+      "path": "packages/bb-markdown/src/grammar.ts",
+      "rule": "parser-use",
+      "sha256": "b5cd15bc0a859d95fc929a6a7f1c4d601cba9049e6c31937021bc7a853b63062",
+      "count": 1,
+      "kind": "reviewed-exception",
+      "intent": "Authoritative shared server Markdown compiler/renderer: positioned GFM/math grammar -> sanitized bounded semantic tree, source exclusions, safe external/app/local destinations and correlated file/image targets. Exact whole-module policy pins sanitizer/configuration/helpers/containment/mapping; this is not extraction-only."
+    },
+    {
+      "root": "community",
+      "path": "packages/bb-markdown/src/grammar.ts",
+      "rule": "parser-use",
+      "sha256": "c282b75a882a14efd15b383aa2c092f2433c64bc7c71b4a98fac4ac5331574a8",
+      "count": 1,
+      "kind": "reviewed-exception",
+      "intent": "Authoritative shared server Markdown compiler/renderer: positioned GFM/math grammar -> sanitized bounded semantic tree, source exclusions, safe external/app/local destinations and correlated file/image targets. Exact whole-module policy pins sanitizer/configuration/helpers/containment/mapping; this is not extraction-only."
+    },
+    {
+      "root": "community",
+      "path": "packages/bb-markdown/src/grammar.ts",
+      "rule": "parser-use",
+      "sha256": "18f72f09ef59f11b82073b6c7660c4f4e5933b0ff2995767405c913358b1967a",
+      "count": 1,
+      "kind": "reviewed-exception",
+      "intent": "Authoritative shared server Markdown compiler/renderer: positioned GFM/math grammar -> sanitized bounded semantic tree, source exclusions, safe external/app/local destinations and correlated file/image targets. Exact whole-module policy pins sanitizer/configuration/helpers/containment/mapping; this is not extraction-only."
+    },
+    {
+      "root": "community",
+      "path": "packages/bb-markdown/src/grammar.ts",
+      "rule": "parser-use",
+      "sha256": "7087a2c05892d0178c743d765c362a8da7ce66849cf49d0bd48cee5888b73269",
+      "count": 1,
+      "kind": "reviewed-exception",
+      "intent": "Authoritative shared server Markdown compiler/renderer: positioned GFM/math grammar -> sanitized bounded semantic tree, source exclusions, safe external/app/local destinations and correlated file/image targets. Exact whole-module policy pins sanitizer/configuration/helpers/containment/mapping; this is not extraction-only."
+    },
+    {
+      "root": "community",
+      "path": "packages/bb-markdown/src/grammar.ts",
+      "rule": "parser-use",
+      "sha256": "b9abec7d425aa7bd7ad486c66da8ed47f4fe714ed843d120ecfcf95cf65161a0",
+      "count": 2,
+      "kind": "reviewed-exception",
+      "intent": "Authoritative shared server Markdown compiler/renderer: positioned GFM/math grammar -> sanitized bounded semantic tree, source exclusions, safe external/app/local destinations and correlated file/image targets. Exact whole-module policy pins sanitizer/configuration/helpers/containment/mapping; this is not extraction-only."
+    },
+    {
+      "root": "community",
+      "path": "packages/bb-markdown/src/grammar.ts",
+      "rule": "parser-use",
+      "sha256": "ba1eb2fffe1e3fe5db6715ce66959e8ce497789dfc6c77e17bebcff59e244da4",
+      "count": 1,
+      "kind": "reviewed-exception",
+      "intent": "Authoritative shared server Markdown compiler/renderer: positioned GFM/math grammar -> sanitized bounded semantic tree, source exclusions, safe external/app/local destinations and correlated file/image targets. Exact whole-module policy pins sanitizer/configuration/helpers/containment/mapping; this is not extraction-only."
+    },
+    {
+      "root": "community",
+      "path": "packages/bb-markdown/src/native.tsx",
+      "rule": "shared-policy-boundary",
+      "sha256": "2f876879a163233d5e53b606c74d1a189f867bd7dd155067a9e0938feb03cf82",
+      "count": 1,
+      "kind": "reviewed-exception",
+      "intent": "Authoritative generated technical leaves only: bounded defensive code fences, validated dollar math and correlated source-contained generated image syntax, with literal fallback. Raw prose never delegated. Exact whole-module/function/helper/limit/use fingerprints pin all defensive policy and SDK sites."
+    },
+    {
+      "root": "community",
+      "path": "packages/bb-markdown/src/native.tsx",
+      "rule": "native-delegate",
+      "sha256": "9336761d69a9e31c274d443be099b477c8e1f67905532663815ff98cfda9863c",
+      "count": 1,
+      "kind": "reviewed-exception",
+      "intent": "Authoritative generated technical leaves only: bounded defensive code fences, validated dollar math and correlated source-contained generated image syntax, with literal fallback. Raw prose never delegated. Exact whole-module/function/helper/limit/use fingerprints pin all defensive policy and SDK sites."
+    },
+    {
+      "root": "community",
+      "path": "packages/bb-markdown/src/native.tsx",
+      "rule": "native-delegate",
+      "sha256": "1e96c7234032223ff9677ccfc48c0b04aac5214ffd9c48d7988c7cc9baabf926",
+      "count": 1,
+      "kind": "reviewed-exception",
+      "intent": "Authoritative generated technical leaves only: bounded defensive code fences, validated dollar math and correlated source-contained generated image syntax, with literal fallback. Raw prose never delegated. Exact whole-module/function/helper/limit/use fingerprints pin all defensive policy and SDK sites."
+    },
+    {
+      "root": "community",
+      "path": "packages/bb-markdown/src/native.tsx",
+      "rule": "native-helper-use",
+      "sha256": "50ca558166521abbb9c4f12c6576f450d55e3c6a00720363a163264dfe612c87",
+      "count": 1,
+      "kind": "reviewed-exception",
+      "intent": "Authoritative generated technical leaves only: bounded defensive code fences, validated dollar math and correlated source-contained generated image syntax, with literal fallback. Raw prose never delegated. Exact whole-module/function/helper/limit/use fingerprints pin all defensive policy and SDK sites."
+    },
+    {
+      "root": "community",
+      "path": "packages/bb-markdown/src/native.tsx",
+      "rule": "native-delegate",
+      "sha256": "9128a3e4a16c1b012a2df9549f0dd8cc851d6711b67d13533ab3612e34ab27e5",
+      "count": 1,
+      "kind": "reviewed-exception",
+      "intent": "Authoritative generated technical leaves only: bounded defensive code fences, validated dollar math and correlated source-contained generated image syntax, with literal fallback. Raw prose never delegated. Exact whole-module/function/helper/limit/use fingerprints pin all defensive policy and SDK sites."
+    },
+    {
+      "root": "community",
+      "path": "packages/bb-markdown/src/native.tsx",
+      "rule": "native-delegate",
+      "sha256": "3bd2b207a9bade05034114736ee61079c726cba1509c643176ddbb353162dfec",
+      "count": 1,
+      "kind": "reviewed-exception",
+      "intent": "Authoritative generated technical leaves only: bounded defensive code fences, validated dollar math and correlated source-contained generated image syntax, with literal fallback. Raw prose never delegated. Exact whole-module/function/helper/limit/use fingerprints pin all defensive policy and SDK sites."
+    },
+    {
+      "root": "community",
+      "path": "packages/bb-markdown/src/native.tsx",
+      "rule": "native-helper-use",
+      "sha256": "bf9003dfb74bb7aeff775316403a645fcc23610ea26e18795a01ba03231f3800",
+      "count": 1,
+      "kind": "reviewed-exception",
+      "intent": "Authoritative generated technical leaves only: bounded defensive code fences, validated dollar math and correlated source-contained generated image syntax, with literal fallback. Raw prose never delegated. Exact whole-module/function/helper/limit/use fingerprints pin all defensive policy and SDK sites."
+    },
+    {
+      "root": "community",
+      "path": "packages/bb-markdown/src/native.tsx",
+      "rule": "native-helper-use",
+      "sha256": "b074d3b78254105422140e212813ca18c9048bc53dea8cdc8b2e16ea8d3d9518",
+      "count": 1,
+      "kind": "reviewed-exception",
+      "intent": "Authoritative generated technical leaves only: bounded defensive code fences, validated dollar math and correlated source-contained generated image syntax, with literal fallback. Raw prose never delegated. Exact whole-module/function/helper/limit/use fingerprints pin all defensive policy and SDK sites."
+    },
+    {
+      "root": "community",
+      "path": "packages/bb-markdown/src/native.tsx",
+      "rule": "sdk-use",
+      "sha256": "01b64e410b2cabc68e949296dcc04fc10cb3c1b1afd2641e739424770a936681",
+      "count": 2,
+      "kind": "reviewed-exception",
+      "intent": "Authoritative generated technical leaves only: bounded defensive code fences, validated dollar math and correlated source-contained generated image syntax, with literal fallback. Raw prose never delegated. Exact whole-module/function/helper/limit/use fingerprints pin all defensive policy and SDK sites."
+    },
+    {
+      "root": "community",
+      "path": "packages/bb-markdown/src/native.tsx",
+      "rule": "native-delegate",
+      "sha256": "8af95932506ebaf4c6fc7689f87836d73a77c33b651c14d839a5b44693a1b1ab",
+      "count": 1,
+      "kind": "reviewed-exception",
+      "intent": "Authoritative generated technical leaves only: bounded defensive code fences, validated dollar math and correlated source-contained generated image syntax, with literal fallback. Raw prose never delegated. Exact whole-module/function/helper/limit/use fingerprints pin all defensive policy and SDK sites."
+    },
+    {
+      "root": "community",
+      "path": "packages/bb-markdown/src/native.tsx",
+      "rule": "native-helper-use",
+      "sha256": "a4c7a4b4e982ab3d9ccc9cd130a9c46b10d1a397b17829f69c231901d2ac36a1",
+      "count": 1,
+      "kind": "reviewed-exception",
+      "intent": "Authoritative generated technical leaves only: bounded defensive code fences, validated dollar math and correlated source-contained generated image syntax, with literal fallback. Raw prose never delegated. Exact whole-module/function/helper/limit/use fingerprints pin all defensive policy and SDK sites."
+    },
+    {
+      "root": "community",
+      "path": "packages/bb-markdown/src/native.tsx",
+      "rule": "native-delegate",
+      "sha256": "e4f2d1a3d5109d77b1ab08000589fe8ab8349f51d3d4b2f04ca34993e59fef39",
+      "count": 1,
+      "kind": "reviewed-exception",
+      "intent": "Authoritative generated technical leaves only: bounded defensive code fences, validated dollar math and correlated source-contained generated image syntax, with literal fallback. Raw prose never delegated. Exact whole-module/function/helper/limit/use fingerprints pin all defensive policy and SDK sites."
+    },
+    {
+      "root": "community",
+      "path": "packages/bb-markdown/src/native.tsx",
+      "rule": "sdk-use",
+      "sha256": "3e321e949f69959568b28c2cc44e5ead30c9af9600ba8d133e0df7fc1025ff0a",
+      "count": 1,
+      "kind": "reviewed-exception",
+      "intent": "Authoritative generated technical leaves only: bounded defensive code fences, validated dollar math and correlated source-contained generated image syntax, with literal fallback. Raw prose never delegated. Exact whole-module/function/helper/limit/use fingerprints pin all defensive policy and SDK sites."
+    },
+    {
+      "root": "community",
+      "path": "packages/bb-markdown/src/react.tsx",
+      "rule": "shared-policy-boundary",
+      "sha256": "d741aa95cb313401ef8cf72707457bd0db763366cc355e9193875c49b1fa964a",
+      "count": 1,
+      "kind": "reviewed-exception",
+      "intent": "Authoritative shared prepared-tree React renderer, not a consumer bypass: runtime source+intent admission, inert literal fallback, bounded decoded semantic nodes, explicit FileLink/UrlLink targets and technical leaves; no recursive recognition or raw HTML sink. Exact full module and dynamic dispatch/invocation pin rendering/admission policy."
+    },
+    {
+      "root": "community",
+      "path": "packages/bb-markdown/src/react.tsx",
+      "rule": "local-prose-component",
+      "sha256": "6cf6d15f8411bcc014001d05a041fc78406c3a3eef1fe445a5334332b9caf5d0",
+      "count": 1,
+      "kind": "reviewed-exception",
+      "intent": "Authoritative shared prepared-tree React renderer, not a consumer bypass: runtime source+intent admission, inert literal fallback, bounded decoded semantic nodes, explicit FileLink/UrlLink targets and technical leaves; no recursive recognition or raw HTML sink. Exact full module and dynamic dispatch/invocation pin rendering/admission policy."
+    },
+    {
+      "root": "community",
+      "path": "packages/bb-markdown/src/react.tsx",
+      "rule": "dynamic-element",
+      "sha256": "a548a9ea6ad1265f726fd4fc2e945714c89fc5a9c0523267cf2734bda234a923",
+      "count": 1,
+      "kind": "reviewed-exception",
+      "intent": "Authoritative shared prepared-tree React renderer, not a consumer bypass: runtime source+intent admission, inert literal fallback, bounded decoded semantic nodes, explicit FileLink/UrlLink targets and technical leaves; no recursive recognition or raw HTML sink. Exact full module and dynamic dispatch/invocation pin rendering/admission policy."
+    },
+    {
+      "root": "community",
+      "path": "packages/bb-markdown/tools/check-native.mjs",
+      "rule": "technical-oracle-boundary",
+      "sha256": "e0ad6fc004dd65d98bbd12803f0c573cf976e5569e427c8f660e0e4c4ad3d0ed",
+      "count": 1,
+      "kind": "reviewed-exception",
+      "intent": "Development-only actual-SDK technical oracle: extracts the real host PluginMarkdown function, injects declared environment/navigation seams and generated wrapper, resolves actual host preview/routing modules, runs tests in cleaned scratch. Exact tool/template policy fingerprint; never a shipped prose renderer or unqualified live-host proof."
+    },
+    {
+      "root": "community",
+      "path": "packages/bb-markdown/tools/check-native.mjs",
+      "rule": "html-template",
+      "sha256": "fd84b7df82807a30e8ff96d811b9e1445875303963f567717e60a13319255ad6",
+      "count": 1,
+      "kind": "reviewed-exception",
+      "intent": "Development-only actual-SDK technical oracle: extracts the real host PluginMarkdown function, injects declared environment/navigation seams and generated wrapper, resolves actual host preview/routing modules, runs tests in cleaned scratch. Exact tool/template policy fingerprint; never a shipped prose renderer or unqualified live-host proof."
+    },
+    {
+      "root": "org",
+      "path": "plugins/thread-brief/components/QuestionDraftRecovery.tsx",
+      "rule": "local-prose-component",
+      "sha256": "b7a5bee79b1e221a9e13a57312a38b224630be2d736d3bcabf63cd5de6072fa1",
+      "count": 1,
+      "kind": "reviewed-exception",
+      "intent": "BriefContentScrollAnchor content is an HTMLElement ref used only for scroll/focus lifecycle; it returns existing children and does not parse or render Markdown."
+    }
+  ]
+}
