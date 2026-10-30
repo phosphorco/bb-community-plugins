@@ -1,5 +1,10 @@
 # @phosphorco/bb-people-accounts changelog
 
+## 0.1.1
+
+- Re-release of 0.1.0 through GitHub trusted publishing with provenance; no
+  source changes.
+
 ## 0.1.0-attribution.0
 
 - Initial prerelease: People Accounts wire v1 (`peopleAccountsDescribe`,

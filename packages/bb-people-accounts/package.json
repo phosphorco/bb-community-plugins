@@ -1,6 +1,6 @@
 {
   "name": "@phosphorco/bb-people-accounts",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "type": "module",
   "license": "MIT",
   "description": "People-accounts attribution contract: roster DTOs, resolution codecs, a fixed RPC protocol, an owner-bound client and a conformance kit.",
