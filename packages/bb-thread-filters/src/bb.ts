@@ -1,6 +1,6 @@
 import type { BbPluginApi, StandardSchemaV1 } from '@get-bb/plugin-sdk';
 import { z } from 'zod';
-import { PROTOCOL, METHODS, LIMITS, describeEnvelopeSchema, describeSchema, choicesInputSchema, choicesOutputSchema, matchInputSchema, matchOutputSchema, parseBounded, validateMatch, type Dimension, type ChoicesInput, type ChoicesOutput, type MatchInput, type MatchOutput } from './index.js';
+import { PROTOCOL, METHODS, LIMITS, describeEnvelopeSchema, describeSchema, choicesInputSchema, choicesOutputSchema, matchInputSchema, matchOutputSchema, valuesInputSchema, valuesOutputSchema, validateValuesInput, validateValues, parseBounded, validateMatch, type ValuesInput, type ValuesOutput, type Dimension, type ChoicesInput, type ChoicesOutput, type MatchInput, type MatchOutput } from './index.js';
 function sdkSchema<T>(schema: z.ZodType<T>): StandardSchemaV1<T> {
   return { '~standard': { version: 1, vendor: PROTOCOL, jsonSchema: { input: () => schema.toJSONSchema({io: 'input', unrepresentable: 'any'}), output: () => schema.toJSONSchema({io: 'output', unrepresentable: 'any'}) }, validate(value: unknown) { const r = schema.safeParse(value); return r.success ? { value: r.data } : { issues: r.error.issues }; } } } as StandardSchemaV1<T>;
 }
@@ -9,11 +9,16 @@ export interface FilterSupplier<Context = void> {
   choices(input: ChoicesInput, context?: Context): ChoicesOutput | Promise<ChoicesOutput>;
   match(input: MatchInput, context?: Context): MatchOutput | Promise<MatchOutput>;
 }
+/** One registration supplies both filtering and columns for every dimension. */
+export interface AttributeSupplier<Context = void> extends FilterSupplier<Context> {
+  values(input: ValuesInput, context?: Context): ValuesOutput | Promise<ValuesOutput>;
+}
 export const threadFilterRpcContract = {
   [METHODS.describe]: { input: sdkSchema(z.null()), output: sdkSchema(z.unknown()) },
   [METHODS.choices]: { input: sdkSchema(choicesInputSchema), output: sdkSchema(z.unknown()) },
   [METHODS.match]: { input: sdkSchema(matchInputSchema), output: sdkSchema(z.unknown()) },
 };
+export const threadAttributeRpcContract = {...threadFilterRpcContract,[METHODS.values]:{input:sdkSchema(valuesInputSchema),output:sdkSchema(z.unknown())}};
 export function createThreadFilterHandlers<Context>(supplier: FilterSupplier<Context>) {
   const description = parseBounded(describeSchema,{ protocol: PROTOCOL, versions: [1], dimensions: supplier.dimensions },LIMITS.describeBytes);
   if (new Set(description.dimensions.map(d => d.id)).size !== description.dimensions.length) throw Error('Duplicate filter dimensions.');
@@ -24,6 +29,22 @@ export function createThreadFilterHandlers<Context>(supplier: FilterSupplier<Con
     async match(raw: unknown, context?: Context) { const input = parseBounded(matchInputSchema, raw, LIMITS.inputBytes); checkDimension(input.selection.dimensionId); const dimension = description.dimensions.find(d => d.id === input.selection.dimensionId)!; if (!dimension.multiple && input.selection.values.length !== 1) throw Error('Filter requires one choice.'); return validateMatch(input, parseBounded(matchOutputSchema, await supplier.match(input,context), LIMITS.outputBytes)); },
   };
 }
+export function createThreadAttributeHandlers<Context>(supplier: AttributeSupplier<Context>) {
+  if(typeof supplier.values!=='function')throw Error('Attributes require display values together with filtering.');
+  const filters=createThreadFilterHandlers(supplier);
+  return {...filters,describe:()=>({...filters.describe(),valueVersions:[1]}),async values(raw:unknown,context?:Context){
+    const input=validateValuesInput(parseBounded(valuesInputSchema,raw,LIMITS.inputBytes));
+    for(const id of input.dimensionIds)if(!supplier.dimensions.some(d=>d.id===id))throw Error('Unknown attribute dimension.');
+    const output=validateValues(input,parseBounded(valuesOutputSchema,await supplier.values(input,context),LIMITS.outputBytes));
+    for(const row of output.rows)for(const cell of row.cells)if(!supplier.dimensions.find(d=>d.id===cell.dimensionId)!.multiple&&cell.values.length>1)throw Error('Single-valued attribute returned multiple values.');
+    return output;
+  }};
+}
+export function registerThreadAttributeSupplier(bb: Pick<BbPluginApi,'rpc'>,supplier:AttributeSupplier):void {
+  const handlers=createThreadAttributeHandlers(supplier);
+  bb.rpc.register(threadAttributeRpcContract,{[METHODS.describe]:handlers.describe,[METHODS.choices]:(input:unknown)=>handlers.choices(input),[METHODS.match]:(input:unknown)=>handlers.match(input),[METHODS.values]:(input:unknown)=>handlers.values(input)} as never,{experimental_discoverable:true});
+}
+/** Legacy filter-only registration. New attributes use registerThreadAttributeSupplier. */
 export function registerThreadFilterSupplier(bb: Pick<BbPluginApi, 'rpc'>, supplier: FilterSupplier): void {
   const handlers = createThreadFilterHandlers(supplier);
   bb.rpc.register(threadFilterRpcContract, {
@@ -32,7 +53,7 @@ export function registerThreadFilterSupplier(bb: Pick<BbPluginApi, 'rpc'>, suppl
     [METHODS.match]: (input: unknown) => handlers.match(input),
   } as never, { experimental_discoverable: true });
 }
-export type FilterCall = { pluginId: string; method: string; input: null | ChoicesInput | MatchInput; signal: AbortSignal };
+export type FilterCall = { pluginId: string; method: string; input: null | ChoicesInput | MatchInput | ValuesInput; signal: AbortSignal };
 export type FilterTransport = (call: FilterCall) => Promise<unknown>;
 export function createThreadFilterClient(transport: FilterTransport, pluginId: string) {
   let outstanding = false;
@@ -74,6 +95,13 @@ export function createThreadFilterClient(transport: FilterTransport, pluginId: s
   }
   return {
     pluginId,
+    async describeAttributes(signal?:AbortSignal) {
+      const raw=await call(METHODS.describe,null,signal),envelope=parseBounded(describeEnvelopeSchema,raw,LIMITS.describeBytes);
+      if(!envelope.versions.includes(1))throw Error('Unsupported filter protocol version.');
+      const result=parseBounded(describeSchema,raw,LIMITS.describeBytes);
+      if(new Set(result.dimensions.map(d=>d.id)).size!==result.dimensions.length)throw Error('Duplicate dimensions.');
+      return {dimensions:result.dimensions,values:result.valueVersions?.includes(1)??false};
+    },
     async describe(signal?: AbortSignal) {
       const raw = await call(METHODS.describe, null, signal), envelope = parseBounded(describeEnvelopeSchema, raw, LIMITS.describeBytes);
       if (!envelope.versions.includes(1)) throw Error('Unsupported filter protocol version.');
@@ -83,5 +111,6 @@ export function createThreadFilterClient(transport: FilterTransport, pluginId: s
     },
     async choices(input: ChoicesInput, signal?: AbortSignal) { const valid = parseBounded(choicesInputSchema,input,LIMITS.inputBytes); const result = parseBounded(choicesOutputSchema, await call(METHODS.choices, valid, signal), LIMITS.outputBytes); if ((result.nextCursor !== null && result.nextCursor === valid.cursor) || result.choices.length > valid.limit || new Set(result.choices.map(c => c.id)).size !== result.choices.length) throw Error('Invalid choices page.'); return result; },
     async match(input: MatchInput, signal?: AbortSignal) { const valid = parseBounded(matchInputSchema,input,LIMITS.inputBytes); return validateMatch(valid, parseBounded(matchOutputSchema, await call(METHODS.match, valid, signal), LIMITS.outputBytes)); },
+    async values(input:ValuesInput,signal?:AbortSignal){const valid=validateValuesInput(parseBounded(valuesInputSchema,input,LIMITS.inputBytes));return validateValues(valid,parseBounded(valuesOutputSchema,await call(METHODS.values,valid,signal),LIMITS.outputBytes));},
   };
 }

@@ -1,9 +1,9 @@
 {
   "name": "@phosphorco/bb-thread-filters",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "type": "module",
   "license": "MIT",
-  "description": "Composable thread filter contributions between independently installed BB plugins.",
+  "description": "Composable thread attributes with filters and display values between independently installed BB plugins.",
   "author": "Phosphor",
   "homepage": "https://github.com/phosphorco/bb-community-plugins/tree/main/packages/bb-thread-filters#readme",
   "bugs": {
