@@ -45,6 +45,7 @@ jobs:
           npm run build --workspace @phosphorco/bb-cross-references
           npm run build --workspace @phosphorco/bb-agent-connection
           npm run build --workspace @phosphorco/bb-people-accounts
+          npm run build --workspace @phosphorco/bb-thread-context
 
       - name: Test
         run: npm run test
@@ -90,3 +91,6 @@ jobs:
 
       - name: Inspect BB Agent Connection package
         run: npm pack --dry-run --ignore-scripts --workspace @phosphorco/bb-agent-connection
+
+      - name: Inspect Thread Context package
+        run: npm pack --dry-run --ignore-scripts --workspace @phosphorco/bb-thread-context
