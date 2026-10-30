@@ -1,6 +1,6 @@
 {
   "name": "@phosphorco/bb-thread-membership",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "type": "module",
   "license": "MIT",
   "description": "Bounded, versioned thread-membership pages between independently installed BB plugins.",

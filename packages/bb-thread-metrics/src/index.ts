@@ -1,4 +1,5 @@
 export * from './recent.js';
+export * from './heat-settings.js';
 import { z } from 'zod';
 import { UsageVectorSchema } from '@phosphorco/bb-usage-algebra/vector';
 export type { UsageVector } from '@phosphorco/bb-usage-algebra/vector';
@@ -60,7 +61,7 @@ export const detailRowSchema=z.discriminatedUnion('axis',[
 export const detailResultSchema=z.object({version:z.literal(1),threadId:id,scope,axis:z.enum(['model','time']),window:windowSchema,asOf:time,revision:text,priceVersion:text,currency:z.literal('USD'),estimated:z.literal(true),coverage:coverageSchema,coverageReasons:reasons,excluded:z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional(),approximation:approximationSchema,total:windowValueSchema,rows:z.array(detailRowSchema).max(LIMITS.detailRows),nextCursor:z.string().min(1).max(1024).optional()}).strip();
 export const describeInputSchema=z.object({}).strict();
 export const describeEnvelopeSchema=z.object({protocol:z.literal('bb-thread-metrics'),versions:z.array(z.number().int().positive()).max(16)}).passthrough();
-export const capabilitiesSchema=z.object({summary:z.literal(true),series:z.boolean(),detail:z.boolean(),recentSnapshotV1:z.boolean().optional()}).strip();
+export const capabilitiesSchema=z.object({summary:z.literal(true),series:z.boolean(),detail:z.boolean(),recentSnapshotV1:z.boolean().optional(),heatSettingsV1:z.boolean().optional()}).strip();
 export const describeV1Schema=describeEnvelopeSchema.extend({capabilities:capabilitiesSchema});
 export type ReadInput=z.infer<typeof readInputSchema>;
 export type ReadResult=z.infer<typeof readResultSchema>;

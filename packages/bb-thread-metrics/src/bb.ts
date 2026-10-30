@@ -1,9 +1,31 @@
 import { z } from 'zod';
 import type { BbPluginApi, JsonValue, StandardSchemaV1 } from '@get-bb/plugin-sdk';
 import type { PluginBrowserBbSdk } from '@get-bb/plugin-sdk/app';
+import { HEAT_SETTINGS_METHODS,HEAT_SETTINGS_LIMITS,bounded,validateHeatSaveInput,heatSettingsReadInputSchema,heatSettingsSaveInputSchema,heatSettingsReadResultSchema,heatSettingsSaveResultSchema } from './index.js';
+import type { HeatSettingsPort,HeatSettingsReadInput,HeatSettingsSaveInput } from './index.js';
 import { RECENT_LIMITS,recentSnapshotInputSchema,validateRecentSnapshot,LIMITS, METHODS, describeInputSchema, describeEnvelopeSchema, capabilitiesSchema, readInputSchema, detailInputSchema, parseBounded, negotiateVersion, validateReadResult, validateDetailResult, classifyOwnerError } from './index.js';
 import type { RecentSnapshotInput,RecentSnapshotResult,ReadInput, ReadResult, DetailInput, DetailResult, Capabilities, OwnerErrorKind } from './index.js';
 export type MetricsSdk={readonly plugins:Pick<BbPluginApi['sdk']['plugins'],'list'|'callRpc'>}|{readonly plugins:Pick<PluginBrowserBbSdk['plugins'],'list'|'callRpc'>};
+export function registerHeatSettingsOwner(bb:Pick<BbPluginApi,'rpc'>,port:HeatSettingsPort):void {
+ bb.rpc.register({
+  threadMetricsHeatSettingsReadV1:{input:sdkSchema(heatSettingsReadInputSchema,HEAT_SETTINGS_LIMITS.inputBytes),output:sdkSchema(z.unknown())},
+  threadMetricsHeatSettingsSaveV1:{input:sdkSchema(heatSettingsSaveInputSchema,HEAT_SETTINGS_LIMITS.inputBytes),output:sdkSchema(z.unknown())},
+ },{
+  threadMetricsHeatSettingsReadV1:async(raw:unknown)=>bounded(heatSettingsReadResultSchema,await port.read(bounded(heatSettingsReadInputSchema,raw,HEAT_SETTINGS_LIMITS.inputBytes)),HEAT_SETTINGS_LIMITS.outputBytes),
+  threadMetricsHeatSettingsSaveV1:async(raw:unknown)=>bounded(heatSettingsSaveResultSchema,await port.save(validateHeatSaveInput(raw)),HEAT_SETTINGS_LIMITS.outputBytes),
+ },{experimental_discoverable:true});
+}
+export function createHeatSettingsClient(sdk:MetricsSdk,pluginId:string):HeatSettingsPort {
+ if(!pluginId||pluginId.length>200)throw new Error('Invalid target plugin id');
+ const call=async(method:string,input:unknown,signal?:AbortSignal)=>sdk.plugins.callRpc({pluginId,method,input:input as JsonValue,outputSchema:z.unknown(),...(signal?{signal}:{})});
+ return {
+  read:async(input:HeatSettingsReadInput,signal?:AbortSignal)=>bounded(heatSettingsReadResultSchema,await call(HEAT_SETTINGS_METHODS.read,bounded(heatSettingsReadInputSchema,input,HEAT_SETTINGS_LIMITS.inputBytes),signal),HEAT_SETTINGS_LIMITS.outputBytes),
+  save:async(input:HeatSettingsSaveInput,signal?:AbortSignal)=>{
+   const result=bounded(heatSettingsSaveResultSchema,await call(HEAT_SETTINGS_METHODS.save,validateHeatSaveInput(input),signal),HEAT_SETTINGS_LIMITS.outputBytes);
+   if(result.operationKey!==input.operationKey)throw new Error('Save operation mismatch');return result;
+  },
+ };
+}
 function sdkSchema<T>(schema:z.ZodType<T>,maxBytes?:number):StandardSchemaV1<T>{
  return {'~standard':{version:1,vendor:'bb-thread-metrics',jsonSchema:{input:()=>z.toJSONSchema(schema,{io:'input',unrepresentable:'any'}),output:()=>z.toJSONSchema(schema,{io:'output',unrepresentable:'any'})},validate(value){try{return {value:maxBytes===undefined?schema.parse(value):parseBounded(schema,value,maxBytes)};}catch(e){return {issues:e instanceof z.ZodError?e.issues.map(i=>({message:i.message,path:i.path})):[{message:'Payload byte limit'}]};}}}};
 }
@@ -12,10 +34,12 @@ export interface MetricsPort {
  read(input:ReadInput):Promise<ReadResult>;
  detail?(input:DetailInput):Promise<DetailResult>;
  recentSnapshot?(input:RecentSnapshotInput):Promise<RecentSnapshotResult>;
+ heatSettings?:HeatSettingsPort;
 }
 export function registerThreadMetricsOwner(bb:Pick<BbPluginApi,'rpc'>,port:MetricsPort):void{
  const capabilities=capabilitiesSchema.parse(port.capabilities);
  if(Boolean(capabilities.recentSnapshotV1)!==Boolean(port.recentSnapshot))throw new Error('Recent snapshot capability/handler mismatch');
+ if(Boolean(capabilities.heatSettingsV1)!==Boolean(port.heatSettings))throw new Error('Heat settings capability/handler mismatch');
  if(capabilities.detail!==Boolean(port.detail))throw new Error('Detail capability/handler mismatch');
  const describe=()=>({protocol:'bb-thread-metrics' as const,versions:[1],capabilities});
  // Unknown schemas preserve the full wire object until byte admission and semantic validation.
@@ -32,6 +56,7 @@ export function registerThreadMetricsOwner(bb:Pick<BbPluginApi,'rpc'>,port:Metri
   },
  };
  bb.rpc.register(contract,handlers,{experimental_discoverable:true});
+ if(port.heatSettings)registerHeatSettingsOwner(bb,port.heatSettings);
  if(port.recentSnapshot)bb.rpc.register({threadMetricsRecentSnapshotV1:{input:sdkSchema(recentSnapshotInputSchema,RECENT_LIMITS.inputBytes),output:sdkSchema(z.unknown())}},{threadMetricsRecentSnapshotV1:async(raw:unknown)=>{
   const input=parseBounded(recentSnapshotInputSchema,raw,RECENT_LIMITS.inputBytes);return validateRecentSnapshot(input,await port.recentSnapshot!(input));
  }},{experimental_discoverable:true});
@@ -122,3 +147,6 @@ export function createThreadMetricsDiscovery(sdk:MetricsSdk){
   },
  };
 }
+
+export {createRecentSnapshotSession,RecentSnapshotSessionError,RecentSnapshotNotStarted} from './recent-session.js';
+export type {RecentSnapshotSource,RecentSnapshotObservation,RecentSnapshotSession,RecentSessionClock,RecentSessionFailure} from './recent-session.js';

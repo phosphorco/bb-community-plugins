@@ -1,6 +1,6 @@
 {
   "name": "@phosphorco/bb-thread-metrics",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Bounded thread dollar metrics contracts and pure family and heat operations.",
   "type": "module",
   "license": "MIT",
@@ -12,7 +12,7 @@
   },
   "files": ["dist/", "CONTRACT.md", "README.md", "LICENSE"],
   "publishConfig": {"access":"public"},
-  "dependencies": {"zod":"^4.3.6","@phosphorco/bb-usage-algebra":"0.1.0"},
+  "dependencies": {"zod":"^4.3.6","@phosphorco/bb-usage-algebra":"0.1.1"},
   "peerDependencies": {"@get-bb/plugin-sdk":">=0.5.29 <0.6 || ^0.6.29"},
   "peerDependenciesMeta": {"@get-bb/plugin-sdk":{"optional":true}},
   "devDependencies": {"@get-bb/plugin-sdk":"0.6.52","@types/bun":"1.3.14","bun":"1.3.14","typescript":"^5.9.3"},

@@ -1,6 +1,6 @@
 {
   "name": "@phosphorco/bb-usage-algebra",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Pure disjoint usage counters, windows, and versioned dollar estimates.",
   "type": "module",
   "license": "MIT",
