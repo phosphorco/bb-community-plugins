@@ -1,4 +1,4 @@
-"""Offline checks for the CR-only tokenless workflow branch; never publishes."""
+"""Offline checks for the two-package tokenless workflow branch; never publishes."""
 from pathlib import Path
 import json
 import os
@@ -10,7 +10,7 @@ import unittest
 WORKFLOW = Path(__file__).resolve().parents[1] / 'workflows' / 'publish.yml'
 TEXT = WORKFLOW.read_text()
 STEPS = dict(re.findall(r'^      - name: ([^\n]+)\n(.*?)(?=^      - name: |\Z)', TEXT, re.M | re.S))
-CR = STEPS['Publish context recognition through trusted publisher']
+CR = STEPS['Publish context recognition and cross references through trusted publishers']
 REGULAR = STEPS['Publish public package']
 PINNED = STEPS['Publish only the reviewed pinned-next tgz']
 BOOTSTRAP = STEPS['Bootstrap membership from the reviewed tgz']
@@ -34,22 +34,23 @@ def selected(step, *, plugin, dry=False, pinned=False, route='oidc'):
 
 class TrustedRecognitionPublishing(unittest.TestCase):
     def test_exact_package_has_one_tokenless_branch(self):
-        self.assertTrue(selected(CR, plugin='bb-context-recognition'))
-        self.assertFalse(selected(REGULAR, plugin='bb-context-recognition'))
-        self.assertFalse(selected(PINNED, plugin='bb-context-recognition'))
+        for plugin in ['bb-context-recognition', 'bb-cross-references']:
+            self.assertTrue(selected(CR, plugin=plugin))
+            self.assertFalse(selected(REGULAR, plugin=plugin))
+            self.assertFalse(selected(PINNED, plugin=plugin))
         self.assertIn("NODE_AUTH_TOKEN: ''", CR)
         self.assertNotIn('secrets.', CR)
-        self.assertIn("test \"$RELEASE_WORKSPACE\" = '@phosphorco/bb-context-recognition'", CR)
+        self.assertIn('@phosphorco/bb-context-recognition|@phosphorco/bb-cross-references)', CR)
 
     def test_other_packages_keep_regular_token_behavior(self):
-        for plugin in ['bb-identity', 'bb-cross-references', 'bb-provider-settings', 'perspectives', 'bb-context-recognition-other']:
+        for plugin in ['bb-identity', 'bb-turn-results', 'bb-provider-settings', 'perspectives', 'bb-context-recognition-other']:
             with self.subTest(plugin=plugin):
                 self.assertFalse(selected(CR, plugin=plugin))
                 self.assertTrue(selected(REGULAR, plugin=plugin))
         self.assertIn('NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}', REGULAR)
 
     def test_dry_run_never_publishes(self):
-        for plugin in ['bb-context-recognition', 'bb-identity', 'bb-thread-membership', 'perspectives']:
+        for plugin in ['bb-context-recognition', 'bb-cross-references', 'bb-turn-results', 'bb-identity', 'bb-thread-membership', 'perspectives']:
             for step in [CR, REGULAR, PINNED, BOOTSTRAP]:
                 for route in ['oidc', 'membership-bootstrap']:
                     self.assertFalse(selected(step, plugin=plugin, dry=True, pinned=True, route=route))
@@ -88,15 +89,17 @@ class TrustedRecognitionPublishing(unittest.TestCase):
             npm.chmod(0o700)
             receipt = root / 'called.json'
             env = {**os.environ, 'PATH': directory + os.pathsep + os.environ['PATH'], 'NODE_AUTH_TOKEN': '', 'RELEASE_WORKSPACE': '@phosphorco/bb-context-recognition', 'RELEASE_DIST_TAG': 'next', 'CALL_RECEIPT': str(receipt)}
-            result = subprocess.run(['bash', '-e', '-c', script], env=env, capture_output=True)
-            self.assertEqual(result.returncode, 0, result.stderr)
-            called = json.loads(receipt.read_text())
-            self.assertEqual(called['token'], '')
-            self.assertEqual(called['args'], ['publish','--ignore-scripts','--access','public','--provenance','--workspace','@phosphorco/bb-context-recognition','--tag','next'])
-            receipt.unlink()
-            result = subprocess.run(['bash', '-e', '-c', script], env={**env,'RELEASE_WORKSPACE':'@phosphorco/bb-identity'}, capture_output=True)
-            self.assertNotEqual(result.returncode, 0)
-            self.assertFalse(receipt.exists())
+            for workspace in ['@phosphorco/bb-context-recognition', '@phosphorco/bb-cross-references']:
+                result = subprocess.run(['bash', '-e', '-c', script], env={**env, 'RELEASE_WORKSPACE': workspace}, capture_output=True)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                called = json.loads(receipt.read_text())
+                self.assertEqual(called['token'], '')
+                self.assertEqual(called['args'], ['publish','--ignore-scripts','--access','public','--provenance','--workspace',workspace,'--tag','next'])
+                receipt.unlink()
+            for workspace in ['@phosphorco/bb-identity', '@phosphorco/bb-turn-results', '@phosphorco/bb-context-recognition-other', '@phosphorco/bb-cross-references-other']:
+                result = subprocess.run(['bash', '-e', '-c', script], env={**env, 'RELEASE_WORKSPACE': workspace}, capture_output=True)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertFalse(receipt.exists())
             result = subprocess.run(['bash', '-e', '-c', script], env={**env,'FAKE_NPM_EXIT':'42'}, capture_output=True)
             self.assertEqual(result.returncode, 42)
 

@@ -21,6 +21,7 @@ on:
           - bb-identity
           - bb-provider-settings
           - bb-context-recognition
+          - bb-turn-results
           - bb-markdown
           - bb-cross-references
           - bb-agent-connection
@@ -72,6 +73,7 @@ on:
       - "bb-identity/v*"
       - "bb-provider-settings/v*"
       - "bb-context-recognition/v*"
+      - "bb-turn-results/v*"
       - "bb-cross-references/v*"
       - "bb-agent-connection/v*"
       - "bb-people-accounts/v*"
@@ -163,6 +165,7 @@ jobs:
             bb-identity) workspace="@phosphorco/bb-identity" ;;
             bb-provider-settings) workspace="@phosphorco/bb-provider-settings" ;;
             bb-context-recognition) workspace="@phosphorco/bb-context-recognition" ;;
+            bb-turn-results) workspace="@phosphorco/bb-turn-results" ;;
             bb-markdown) workspace="@phosphorco/bb-markdown" ;;
             bb-cross-references) workspace="@phosphorco/bb-cross-references" ;;
             bb-agent-connection) workspace="@phosphorco/bb-agent-connection" ;;
@@ -175,7 +178,7 @@ jobs:
             *) echo "Unsupported release plugin: $plugin" >&2; exit 1 ;;
           esac
           case "$plugin" in
-            bb-identity|bb-provider-settings|bb-context-recognition|bb-markdown|bb-cross-references|bb-agent-connection|bb-people-accounts|bb-usage-algebra|bb-thread-metrics|bb-thread-membership|bb-thread-context|bb-thread-filters) path="packages/$plugin" ;;
+            bb-identity|bb-provider-settings|bb-context-recognition|bb-turn-results|bb-markdown|bb-cross-references|bb-agent-connection|bb-people-accounts|bb-usage-algebra|bb-thread-metrics|bb-thread-membership|bb-thread-context|bb-thread-filters) path="packages/$plugin" ;;
             *) path="plugins/$plugin" ;;
           esac
           package_version="$(npm pkg get version --workspace "$workspace" | node -e 'let input=""; process.stdin.on("data", chunk => input += chunk); process.stdin.on("end", () => console.log(Object.values(JSON.parse(input))[0]))')"
@@ -269,7 +272,7 @@ jobs:
             # Its runtime dependencies are exact registry packages; no sibling draft emission is needed.
             npm run build --workspace packages/bb-markdown
           else
-            npm run build --workspace packages/bb-identity --workspace packages/bb-provider-settings --workspace packages/bb-context-recognition --workspace packages/bb-cross-references --workspace packages/bb-agent-connection --workspace packages/bb-people-accounts --workspace packages/bb-usage-algebra --workspace packages/bb-thread-metrics --workspace packages/bb-thread-membership --workspace packages/bb-thread-context --workspace packages/bb-thread-filters
+            npm run build --workspace packages/bb-identity --workspace packages/bb-provider-settings --workspace packages/bb-context-recognition --workspace packages/bb-turn-results --workspace packages/bb-cross-references --workspace packages/bb-agent-connection --workspace packages/bb-people-accounts --workspace packages/bb-usage-algebra --workspace packages/bb-thread-metrics --workspace packages/bb-thread-membership --workspace packages/bb-thread-context --workspace packages/bb-thread-filters
           fi
 
       - name: Test
@@ -287,6 +290,22 @@ jobs:
       - name: Inspect package contents
         if: ${{ steps.release.outputs.pinned_next != 'true' }}
         run: npm pack --dry-run --ignore-scripts --workspace "${{ steps.release.outputs.workspace }}"
+
+      - name: Verify turn-results archive and entry peers
+        if: ${{ steps.release.outputs.plugin == 'bb-turn-results' && steps.release.outputs.pinned_next != 'true' }}
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          npm run verify:packed --workspace @phosphorco/bb-turn-results
+          case "$RELEASE_VERSION" in
+            0.1.0) expected_sha='d4fe422fb67017fa01176ffc99647761eda3226533dbd67b75e2d2bf4a30e873' ;;
+            *) echo 'Turn Results reviewed payload hash required for this version' >&2; exit 1 ;;
+          esac
+          pack_dir="$(mktemp -d "$RUNNER_TEMP/turn-results-reviewed.XXXXXX")"
+          trap 'rm -rf -- "$pack_dir"' EXIT
+          npm pack --ignore-scripts --json --workspace @phosphorco/bb-turn-results --pack-destination "$pack_dir" > "$pack_dir/pack.json"
+          printf '%s  %s\n' "$expected_sha" "$pack_dir/phosphorco-bb-turn-results-$RELEASE_VERSION.tgz" | sha256sum --check
 
       - name: Verify Markdown packed consumer and public SDK peers
         if: ${{ steps.release.outputs.plugin == 'bb-markdown' && inputs.dry_run }}
