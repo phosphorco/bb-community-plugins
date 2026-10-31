@@ -393,3 +393,39 @@ including the exact message fragment. When exact message navigation is not
 available, the source remains usable and that limitation is stated. Reads are
 lazy and refresh through mounted realtime/reconnect events without idle polling;
 transient failures preserve the last good results for the same query.
+
+### Thread Brief producer ingress (source implementation, activation pending)
+
+A separate producer family atomically accepts a complete fixed BRIEF.md projection
+with primary evidence, or records a safe blocked desired-state status while
+retaining the last good graph. Over-limit and identity-unrepresentable statuses
+remain visible in References even with zero relationships. Actual fixed hit codes
+are shown; a failed update never manufactures a graph edge or changes legacy
+counts. One V1 prospective revision allocator fences newer failed intent from a
+delayed older replacement. Ordinary V1 compatibility and unconfirmed retained
+binding are explicitly preserved.
+
+Migration15 appends three primary tables: one producer/source evidence header,
+full producer/source/target occurrence children and full canonical source-keyed
+blocked status (no resource needed for status-only). The14 shipped migration
+statements remain unchanged. Queries directly join active claims with primary
+children; no read index/bootstrap/service/timer/outbox or reader enqueue/fetch.
+Boundaries are512 total/100 per edge; rejection retains the whole last good state.
+
+Brief rows preserve ref-N, raw SHA, original UTF16 frame/bodyBase/BOM/native line
+and explicit intro/named/withheld heading. They have no ready excerpts. Safe
+metadata is exact; unsafe optional heading/label/detail/provenance/codec/authored
+URL has only a role-domain digest and fixed generic display. Required unsafe
+identity rejects the whole update. The shared pure package classifier is also
+recomputed at ingress. Withheld originals are not copied into storage/errors or
+reconstructed for literal URL lookup.
+
+One surface-shared navigation owner keeps native FileLink anchored at fixed
+BRIEF top. Unmodified primary may request one negotiated fresh same-revision TB
+proof, then open once at its validated original line. Modified/menu/aux actions
+cancel prior proof and retain native top behavior. Unknown/stale/ambiguous proof
+falls back to top with a note. The TB accepted raw-read/accessor/frame/provider
+repairs and exact published0.4 adoption are prerequisites owned by TB, not
+implemented here. FileLink/cache/rawRevision equality alone is not a freshness
+claim; a file can change after a successful read. No new live/UI/fixture proof is
+claimed, and the earlier toolbar acceptance item remains separate.

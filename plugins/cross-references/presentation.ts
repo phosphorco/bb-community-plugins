@@ -158,7 +158,7 @@ export function mentionClaimKey(item: Pick<MentionItem, "source" | "target" | "p
   return JSON.stringify([referenceIdentityKey(item.source), item.producerPluginId, referenceIdentityKey(item.target)]);
 }
 export function mentionItemKey(item: MentionItem, pageSlot: number): string {
-  if (item.kind === "occurrence") return JSON.stringify([mentionClaimKey(item), item.kind, item.occurrenceKey]);
+  if (item.kind === "occurrence" || item.kind === "brief-occurrence") return JSON.stringify([mentionClaimKey(item), item.kind, item.occurrenceKey]);
   // Future formats deliberately lose opaque metadata in the public decoder.
   // Preserve each admitted slot without inventing a durable identity for it.
   if (!Number.isSafeInteger(pageSlot) || pageSlot < 0 || pageSlot >= 100) throw new Error("Invalid mention page slot.");

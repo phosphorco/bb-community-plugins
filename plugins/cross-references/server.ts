@@ -1,3 +1,5 @@
+import { registerCrossReferencesProducer } from '@phosphorco/bb-cross-references/bb';
+import { producerDescribe, canonicalizeIdentity } from '@phosphorco/bb-cross-references';
 import { registerCrossReferencesV2 } from '@phosphorco/bb-cross-references/bb';
 import { MENTIONS_V2_CHANNEL } from '@phosphorco/bb-cross-references';
 import { createMentionReader, mentionsChangedSignal } from './mention-query.ts';
@@ -29,6 +31,20 @@ export default function crossReferencesPlugin(bb: BbPluginApi): void {
   const lookup=createMentionLookup({snapshot:()=>collector.lookupSnapshot(),getThread:(id,signal)=>bb.sdk.threads.get({threadId:id,signal}),
     ...(bb.server?.experimental_appUrl?{appUrl:bb.server.experimental_appUrl}:{})});
   registerCrossReferencesV2(bb,{crossReferencesV2ListMentions:input=>reader.read(input),crossReferencesV2ResolveLookup:lookup});
+  registerCrossReferencesProducer(bb,{
+    'crossReferencesProducer.describe':producerDescribe,
+    crossReferencesProducerV1GetState:input=>store.getProducerState(input),
+    crossReferencesProducerV1Apply:input=>{
+      const result=store.applyProducer(input);
+      if(result.signal){bb.realtime.publish(REALTIME_CHANNEL,result.signal);bb.realtime.publish(MENTIONS_V2_CHANNEL,mentionsChangedSignal(db,{provider:input.projection.source.provider,keys:input.projection.source.keys},result.signal));}
+      return result.response;
+    },
+    crossReferencesProducerV1ReportStatus:input=>{
+      const result=store.reportProducerStatus(input);
+      if(result.changed){const state=result.response.state;bb.realtime.publish(MENTIONS_V2_CHANNEL,{version:2,producerPluginId:'thread-brief',sourceIdentityDigest:canonicalizeIdentity(input.source).identityDigest,graphRevision:state.projection?.revision??0,evidenceRevision:state.evidence?.graphRevision??null,affectedIdentityDigests:(state.projection?.targets??[]).map(t=>canonicalizeIdentity({provider:t.provider,keys:t.keys}).identityDigest),scopeListClipped:false});}
+      return result.response;
+    },
+  });
   for (const event of ["thread.idle", "thread.failed"] as const) {
     bb.events.on(event, ({ thread }) => collector.enqueue(thread.projectId, thread.id, false, true, 1));
   }

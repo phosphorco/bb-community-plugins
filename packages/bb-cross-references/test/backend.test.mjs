@@ -144,3 +144,20 @@ test('V2 registration preserves schema validation and exact SDK issue paths',asy
  registerCrossReferencesV2({rpc:{register(contract,registered){registrations++;assert.equal(contract,crossReferencesV2RpcContract);assert.equal(registered,handlers);}}},handlers);
  assert.equal(registrations,1);
 });
+
+test('producer SDK boundary is strict before handlers, tolerant on outputs and byte admitted before decode',async()=>{
+ const {crossReferencesProducerRpcContract,createCrossReferencesProducerClient,registerCrossReferencesProducer}=await import('../dist/bb.js');
+ const method=crossReferencesProducerRpcContract[contract.PRODUCER_METHODS.getState],source=contract.verifiedFileIdentity({kind:'thread-storage',threadId:'thr_client',path:'BRIEF.md'}),input={version:1,producerPluginId:'thread-brief',source};
+ assert.deepEqual(await method.input['~standard'].validate(input),{value:input});assert.ok((await method.input['~standard'].validate({...input,extra:true})).issues.length);assert.ok((await method.input['~standard'].validate({...input,padding:'x'.repeat(16384)})).issues.length);
+ const state={version:1,projection:null,evidence:null,status:null,revisionHighWater:0,future:true};assert.deepEqual(await method.output['~standard'].validate(state),{value:state});let calls=0;
+ const client=createCrossReferencesProducerClient(sdkFor(async({method,pluginId})=>{calls++;assert.equal(pluginId,'fixture-owner');return method===contract.PRODUCER_METHODS.describe?{...contract.producerDescribe(),future:true}:state;}),'fixture-owner');await client.describe();assert.equal((await client.getState(input)).future,true);assert.equal(calls,2);
+ await assert.rejects(createCrossReferencesProducerClient(sdkFor(async()=>{throw {code:'unknown_method'};})).describe(),e=>e.code==='unknown_method');
+ const tooBig=createCrossReferencesProducerClient(sdkFor(async()=>({...state,padding:'x'.repeat(1048576)})));await assert.rejects(tooBig.getState(input),/byte bound/);
+ let registered;const handlers={'crossReferencesProducer.describe':contract.producerDescribe,crossReferencesProducerV1GetState:()=>state,crossReferencesProducerV1Apply:()=>{throw Error('not invoked');},crossReferencesProducerV1ReportStatus:()=>{throw Error('not invoked');}};registerCrossReferencesProducer({rpc:{register:(schema,h)=>{assert.equal(schema,crossReferencesProducerRpcContract);registered=h;}}},handlers);assert.equal(registered,handlers);
+});
+test('producer write timeout/cancellation is one transport attempt, without legacy fallback',async()=>{
+ const {createCrossReferencesProducerClient}=await import('../dist/bb.js');let calls=0,signal;
+ const client=createCrossReferencesProducerClient(sdkFor(request=>{calls++;signal=request.signal;return new Promise(()=>{});}),undefined,{callMs:10});
+ const file={kind:'thread-storage',threadId:'thr_client',path:'BRIEF.md'},source=contract.verifiedFileIdentity(file),status={state:'over-limit',sourceContentRevision:contract.sha256Hex('new'),limits:['target-count']};
+ const input={version:1,producerPluginId:'thread-brief',source,sourceFile:file,attemptRevision:2,expectedRevision:0,status,statusDigest:contract.briefStatusDigest('thread-brief',source,file,status)};await assert.rejects(client.reportStatus(input),e=>e.code==='timeout');assert.equal(calls,1);assert.equal(signal.aborted,true);
+});

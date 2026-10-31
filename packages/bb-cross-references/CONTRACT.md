@@ -265,3 +265,108 @@ committed source; old strict V1 signals are unchanged. Clipped/coarse wakes can
 refresh mounted literal-URL coverage conditionally. No idle polling/factory SDK
 subscription/new worker. Later consumers share lazy mounted queries, cancel on
 teardown and retain rows/cursors when only coverage changes.
+
+## Producer ingress reservation (0.4, wire family1)
+
+The separately negotiated producer family has four methods:
+`crossReferencesProducer.describe`, `crossReferencesProducerV1GetState`,
+`crossReferencesProducerV1Apply`, and `crossReferencesProducerV1ReportStatus`.
+Use the exported schemas/client/registration helpers. Inputs are strict; outputs
+admit bounded additive object fields. The existing V1 graph methods, digests,
+claim uniqueness and counts retain their meaning. These source additions do not
+establish registry availability of0.4 or compatibility with an older advertised SDK.
+
+The first source kind is `thread-brief`, producer `thread-brief`, fixed verified
+thread-storage `BRIEF.md`. One complete replacement contains the V1 projection,
+its full primary evidence and an independently computed evidence digest. Existing
+V1 resource/presentation validation remains authoritative. Limits are1MiB total,
+256 targets/256KiB V1 payload,512 locations/100 per target and256UTF8 bytes per
+named heading. Presentation limits remain256/1024/2048UTF8 bytes and4096 JSON
+bytes. The preflight returns the actual closed hit codes; it never truncates,
+splits, silently withholds an overlong safe presentation or partially installs.
+
+Let G be current graph revision and S retained blocked attempt; high-water is
+max(G,S). A prospective producer Apply must exceed that high-water and satisfy
+unchanged graph CAS. Exact current bound graph/evidence replay is nonmutating,
+ignores stale CAS like V1 duplicate/equal, and exposes rather than clears newer
+status. Same graph payload with different/unbound evidence cannot graft evidence.
+`currentRevision` always means G. Apply commits graph, evidence, mappings and
+superseded status deletion atomically, before any invalidation. Status-only
+writes create no graph resources/claims/evidence, including a first-ever source.
+
+ReportStatus precedence is exact stored attempt+digest replay; nonreplay<=G
+stale; lower prior status stale/same attempt different content conflict; then
+expectedRevision graph CAS. Its digest excludes attempt/CAS/clocks. Unknown
+write outcomes require exact GetState reconciliation, never an automatic retry.
+Ordinary V1 writes remain compatible and unfenced by S: retained evidence can
+become unconfirmed and retained status can become superseded-by-graph. There
+is one prospective V1 allocator, not a separate evidence/status revision clock.
+
+Blocked states are `over-limit` (actual hit codes) and `identity-unrepresentable`
+(fixed identity codes and any actual limit hits). UI text is exactly “brief
+references not updated: over limit” or “brief references not updated: identity
+cannot be represented safely”. Neither status transports raw errors or metadata.
+
+### Display safety and original locations
+
+`classifyBriefDisplayTextV1` and `classifyBriefDisplayFieldsV1` are one pure bounded
+lexical display-policy implementation, independent of recognition and Markdown.
+They reuse existing safe URL/credential parameter policy, inspect raw plus at
+most three strict security decode views, and return safe, unsafe or unclassified
+with fixed reasons/work counters. URL userinfo, query/fragment parameters and
+query-shaped sensitive-name assignments are covered. Percent UTF8, textual JSON
+escapes and the closed numeric/ASCII HTML entity set are security views only.
+Unknown, ambiguous, deep, malformed, control or budget-limited data is never safe.
+No host/provider/resource discovery/parser call or cross-acceptance cache exists.
+Bulk work admits required identities first, memoizes exact final values across
+roles, and has fixed8192-field/4096-distinct/2MiB-original/8MiB-work limits.
+
+Explicit B slots distinguish exact safe data, absent data and withheld digest plus
+fixed generic display. Intro is null; named-empty is still a named heading.
+Withheld digest is SHA256 of canonical `['brief-withheld',1,role,originalKnownValue]`.
+Raw withheld values are never transported/stored. CR independently classifies
+received safe/available fields; it cannot attest unseen originals behind digests.
+Unsafe required identity rejects the whole revision. Optional unsafe metadata
+keeps safe primary claims/counts/locations with explicit withholding; withheld
+codec metadata supplies no new raw mapping/family authority. Exact authored URL
+proof is separate from canonical identity and uses only safe original spelling.
+Withheld/unknown URL proof contributes conservative coverage, never reconstruction.
+
+Brief V2 rows are `brief-occurrence` with original ref-N, raw SHA/frame/bodyBase,
+B section, original line/span and producer-attested/retained-unconfirmed binding.
+They have no invented conversation role/messageSeq/time, and excerpts are only
+unavailable/not-materialized. Direct active full producer/source/target joins,
+query-relevant semantic tokens, keysets/counts/shared1MiB response admission and
+independent coverage-on-not-modified remain. No derived postings or bootstrap.
+
+### Navigation provider seam
+
+`registerBriefNavigation` and `createBriefNavigationClient` negotiate the separate
+Thread Brief provider. A strict request pins the fixed file, raw revision, full
+UTF16/BOM/bodyBase/native-line frame and explicit section/original line. A ready
+proof must match all of them and the same complete accepted revision. Otherwise
+open only fixed BRIEF top with a bounded note. FileLink alone is not freshness.
+
+The TB adopter must implement one fresh bounded contained RAW read/hash per
+explicit primary click, bypass stat/idle caches, and reuse accepted section/native
+facts only after source/raw/frame equality. No hidden parse/recognition/model
+construction or newer-heading relocation. Intro needs explicit same-pass intro
+facts. Source/service generation guards are independent of viewer teardown. BOM
+and LF/CRLF/loneCR mapping require actual adopter proof; unknown means top.
+
+One mounted CR surface owns pending proof and dispatch entitlement across all
+rows. New modifier/defaultPrevented/download/nonprimary/aux/context-menu intent
+cancels prior proof before native top dispatch, without interception/new read.
+Identical in-flight primary shares one read AND open. Primary prevents default
+synchronously; current validated continuation opens once, with no automatic retry.
+The public provider/accessor repairs and exact published0.4 TB adoption remain
+separate work; source schemas do not claim that provider is already installed.
+
+PR-family membership requires authority on each admitted record, recomputed to
+the same canonical target. A PR sibling never promotes issue/kindless/withheld
+siblings. An own available typed descriptor can support the real claim sentinel
+when no admitted family location exists. Resource-level kindless mappings are
+insufficient. Missing authority is independently scoped partial coverage using
+`pr-family-authority-unknown`, including an all-unknown empty result; known issue
+alone is excluded without fabricated unknown. Exact-self/literal semantics stay
+unchanged, and no parser/secondary graph edge/target enumeration is added.

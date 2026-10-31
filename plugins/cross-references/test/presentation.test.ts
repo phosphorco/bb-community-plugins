@@ -164,3 +164,9 @@ test("future/claim slots remain distinct while known occurrence identity survive
   assert.notEqual(mentionItemKey(claim, 0), mentionItemKey(claim, 1));
   for (const slot of [-1, 100, NaN, 0.5]) assert.throws(() => mentionItemKey(future, slot));
 });
+
+test('Brief occurrence keeps full claim/key identity and never fabricates a conversation message link',()=>{
+ const original=uiItem(),hash='b'.repeat(64),file={kind:'thread-storage' as const,threadId:'thr_ui',path:'BRIEF.md' as const};
+ const brief:Extract<MentionItem,{kind:'brief-occurrence'}>={kind:'brief-occurrence',source:original.source,target:original.target,producerPluginId:'thread-brief',graphRevision:1,evidenceRevision:1,cap:original.cap,occurrenceKey:hash,sourceOccurrenceId:'ref-0',locator:{kind:'thread-brief',threadId:'thr_ui',file,sourceContentRevision:hash,section:{heading:null,line:1},location:{kind:'line',line:1,column:null,endLine:null}},sourceContentRevision:hash,frame:{codec:'utf8-fatal-bom-consumed-v1',rawBytes:10,bomBytes:0,fileUtf16Length:10,bodyBase:{startUtf16:0,startLine:1,utf16Length:10},lineMapping:{codec:'native-file-lines-v1',fileLineCount:1}},excerpt:{state:'unavailable',reason:'not-materialized',codecVersion:1},authoredUrlState:'unknown',authoredUrl:{state:'unknown'},confirmation:'producer-attested',provenance:{state:'withheld',digest:hash,display:'Recognition details withheld',cause:'unclassified',summary:{pluginId:'thread-brief',origin:'builtin',confidence:'high',basis:'explicit'}}};
+ assert.equal(mentionItemKey(brief,0),mentionItemKey(brief,25));assert.notEqual(mentionItemKey(brief,0),mentionItemKey(original,0));assert.equal(mentionMessageHref(brief),null);assert.equal(mentionExcerptParts(brief),null);
+});

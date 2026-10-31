@@ -1,3 +1,5 @@
+import { admitBriefApply, readBriefSnapshot } from './brief-evidence.ts';
+import { producerGetStateInputSchema, producerStateSchema, producerReportStatusInputSchema, blockedBriefStatusSchema, briefStatusDigest, briefFileSchema, classifyBriefDisplayFieldsV1, BRIEF_LIMITS, type DisplayFieldV1, type ProducerGetStateInput, type ProducerState, type ProducerApplyInput, type ProducerApplyOutput, type ProducerReportStatusInput, type ProducerReportStatusOutput } from '@phosphorco/bb-cross-references';
 import { Buffer } from "node:buffer";
 import { randomUUID } from "node:crypto";
 import type Database from "better-sqlite3";
@@ -236,6 +238,55 @@ export const crossReferencesMigrations = [
      WHERE authored_url_state='unknown';
    CREATE INDEX mention_target_time_v2_idx ON mention_occurrences(target_resource_id,message_created_at DESC,
      source_resource_id,producer_plugin_id,occurrence_key)`,
+  `CREATE TABLE brief_evidence_streams (
+     producer_plugin_id TEXT NOT NULL CHECK(producer_plugin_id='thread-brief'),
+     source_resource_id INTEGER NOT NULL REFERENCES resources(id) ON DELETE RESTRICT,
+     graph_revision INTEGER NOT NULL CHECK(typeof(graph_revision)='integer' AND graph_revision BETWEEN 1 AND 9007199254740991),
+     graph_payload_digest TEXT NOT NULL CHECK(length(graph_payload_digest)=64),
+     evidence_digest TEXT NOT NULL CHECK(length(evidence_digest)=64),
+     source_file_json TEXT NOT NULL CHECK(length(CAST(source_file_json AS BLOB))<=16384),
+     source_state TEXT NOT NULL CHECK(source_state IN ('present','absent','empty')),
+     raw_sha TEXT CHECK(raw_sha IS NULL OR length(raw_sha)=64),
+     frame_json TEXT CHECK(frame_json IS NULL OR length(CAST(frame_json AS BLOB))<=4096),
+     metadata_json TEXT NOT NULL CHECK(length(CAST(metadata_json AS BLOB))<=1048576),
+     occurrence_count INTEGER NOT NULL CHECK(typeof(occurrence_count)='integer' AND occurrence_count BETWEEN 0 AND 512),
+     accepted_at INTEGER NOT NULL CHECK(typeof(accepted_at)='integer' AND accepted_at BETWEEN 0 AND 8640000000000000),
+     PRIMARY KEY(producer_plugin_id,source_resource_id),
+     CHECK((source_state='absent' AND raw_sha IS NULL AND frame_json IS NULL AND occurrence_count=0)
+       OR(source_state IN ('present','empty') AND raw_sha IS NOT NULL AND frame_json IS NOT NULL AND(source_state<>'empty' OR occurrence_count=0)))
+   );
+   CREATE TABLE brief_evidence_occurrences (
+     producer_plugin_id TEXT NOT NULL,source_resource_id INTEGER NOT NULL,
+     target_resource_id INTEGER NOT NULL REFERENCES resources(id) ON DELETE RESTRICT,
+     occurrence_key TEXT NOT NULL CHECK(length(occurrence_key)=64),
+     source_occurrence_id TEXT NOT NULL CHECK(length(CAST(source_occurrence_id AS BLOB)) BETWEEN 1 AND 256),
+     locator_json TEXT NOT NULL CHECK(length(CAST(locator_json AS BLOB))<=4096),
+     provenance_json TEXT NOT NULL CHECK(length(CAST(provenance_json AS BLOB))<=65536),
+     authored_url_json TEXT NOT NULL CHECK(length(CAST(authored_url_json AS BLOB))<=17408),
+     authored_url_state TEXT NOT NULL CHECK(authored_url_state IN ('unknown','not-url','exact','withheld')),
+     exact_authored_href TEXT CHECK(exact_authored_href IS NULL OR length(CAST(exact_authored_href AS BLOB)) BETWEEN 1 AND 16384),
+     PRIMARY KEY(producer_plugin_id,source_resource_id,target_resource_id,occurrence_key),
+     UNIQUE(producer_plugin_id,source_resource_id,source_occurrence_id),
+     FOREIGN KEY(producer_plugin_id,source_resource_id) REFERENCES brief_evidence_streams ON DELETE CASCADE,
+     CHECK((authored_url_state='exact' AND exact_authored_href IS NOT NULL) OR(authored_url_state IN ('unknown','not-url','withheld') AND exact_authored_href IS NULL))
+   );
+   CREATE INDEX brief_target_seek ON brief_evidence_occurrences(target_resource_id,source_resource_id,producer_plugin_id,occurrence_key);
+   CREATE INDEX brief_exact_href ON brief_evidence_occurrences(exact_authored_href COLLATE BINARY,source_resource_id,producer_plugin_id,target_resource_id,occurrence_key) WHERE authored_url_state='exact' AND exact_authored_href IS NOT NULL;
+   CREATE INDEX brief_unknown_href ON brief_evidence_occurrences(producer_plugin_id,source_resource_id,target_resource_id,occurrence_key) WHERE authored_url_state IN ('unknown','withheld');
+   CREATE TABLE brief_producer_status (
+     producer_plugin_id TEXT NOT NULL CHECK(producer_plugin_id='thread-brief'),source_provider TEXT NOT NULL,
+     canonical_keys_json TEXT NOT NULL CHECK(length(CAST(canonical_keys_json AS BLOB))<=32768),
+     source_file_json TEXT NOT NULL CHECK(length(CAST(source_file_json AS BLOB))<=16384),
+     attempt_revision INTEGER NOT NULL CHECK(typeof(attempt_revision)='integer' AND attempt_revision BETWEEN 1 AND 9007199254740991),
+     status_digest TEXT NOT NULL CHECK(length(status_digest)=64),state TEXT NOT NULL CHECK(state IN ('over-limit','identity-unrepresentable')),
+     raw_sha TEXT NOT NULL CHECK(length(raw_sha)=64),
+     limit_codes_json TEXT NOT NULL CHECK(length(CAST(limit_codes_json AS BLOB))<=1024 AND json_valid(limit_codes_json) AND json_type(limit_codes_json)='array' AND json_array_length(limit_codes_json) BETWEEN 0 AND 10),
+     identity_codes_json TEXT NOT NULL DEFAULT '[]' CHECK(length(CAST(identity_codes_json AS BLOB))<=1024 AND json_valid(identity_codes_json) AND json_type(identity_codes_json)='array' AND json_array_length(identity_codes_json) BETWEEN 0 AND 3),
+     reported_at INTEGER NOT NULL CHECK(typeof(reported_at)='integer' AND reported_at BETWEEN 0 AND 8640000000000000),
+     PRIMARY KEY(producer_plugin_id,source_provider,canonical_keys_json),
+     CHECK((state='over-limit' AND json_array_length(limit_codes_json)>0 AND json_array_length(identity_codes_json)=0)
+       OR(state='identity-unrepresentable' AND json_array_length(identity_codes_json)>0))
+   )`,
 ] as const;
 
 export function enableForeignKeys(db: Sqlite): void {
@@ -682,6 +733,78 @@ export class CrossReferenceStore {
       changed: true,
       signal,
     };
+  }
+
+  /** New producer family: status is a prospective V1 fence, never another clock. */
+  getProducerState(input: ProducerGetStateInput): ProducerState {
+    const admitted=producerGetStateInputSchema.parse(input);
+    return this.db.transaction(()=>this.producerState(admitted))();
+  }
+
+  private producerState(input:ProducerGetStateInput):ProducerState {
+    const source=canonicalizeIdentity(input.source),resource=this.findResource(source);
+    const projection=this.getProjection(input).projection;
+    const statusRow=this.db.prepare(`SELECT * FROM brief_producer_status WHERE producer_plugin_id=? AND source_provider=? AND canonical_keys_json=?`).get(input.producerPluginId,source.provider,source.canonicalKeysJson) as {attempt_revision:number;status_digest:string;source_file_json:string;state:string;raw_sha:string;limit_codes_json:string;identity_codes_json:string}|undefined;
+    const g=projection?.revision??0,s=resource?readBriefSnapshot(this.db,input.producerPluginId,resource.id):null;
+    const status=statusRow?{...blockedBriefStatusSchema.parse({state:statusRow.state,sourceContentRevision:statusRow.raw_sha,limits:JSON.parse(statusRow.limit_codes_json),...(statusRow.state==='identity-unrepresentable'?{identityReasons:JSON.parse(statusRow.identity_codes_json)}:{})}),attemptRevision:statusRow.attempt_revision,statusDigest:statusRow.status_digest,sourceFile:briefFileSchema.parse(JSON.parse(statusRow.source_file_json)),applicability:statusRow.attempt_revision>g?'current' as const:'superseded-by-graph' as const}:null;
+    if(status&&canonicalizeIdentity(verifiedFileIdentity(status.sourceFile)).canonicalIdentityJson!==source.canonicalIdentityJson)throw new Error('Invalid stored Brief status source.');
+    if(status){const {attemptRevision:_attempt,statusDigest,sourceFile,applicability:_applicability,...content}=status;if(briefStatusDigest(input.producerPluginId,input.source,sourceFile,content)!==statusDigest)throw new Error('Invalid stored Brief status digest.');}
+    // Legacy V1 remains writable, but this new reader never returns unclassified display data.
+    if(projection){const fields:DisplayFieldV1[]=[];let n=0;for(const r of [projection.source,...projection.targets])for(const v of [r.provider,...Object.values(r.keys),...Object.values(r.presentation)])if(typeof v==='string')fields.push({key:[n++],role:'required-identity',value:v});
+      const checked=classifyBriefDisplayFieldsV1(fields);if(checked.state!=='classified'||checked.results.some(r=>r.result.state!=='safe'))throw new Error('Stored producer presentation is unavailable.');}
+    return producerStateSchema.parse({version:1,projection,evidence:s?{kind:'thread-brief',graphRevision:s.row.graph_revision,graphPayloadDigest:s.row.graph_payload_digest,evidenceDigest:s.row.evidence_digest,sourceContentRevision:s.row.raw_sha,state:s.row.graph_revision===g&&s.row.graph_payload_digest===projection?.payloadDigest?'bound':'unconfirmed',occurrenceCount:s.row.occurrence_count,sourceState:s.row.source_state}:null,status,revisionHighWater:Math.max(g,status?.attemptRevision??0)});
+  }
+
+  applyProducer(input:ProducerApplyInput):{response:ProducerApplyOutput;signal:CrossReferencesChangedSignal|null} {
+    const started=performance.now(),check=()=>{if(performance.now()-started>=BRIEF_LIMITS.readMs)throw new Error('Producer admission exceeded its work deadline.');};
+    const {command,evidence,evidenceDigest,metadata}=admitBriefApply(input);check();
+    return this.db.transaction(()=>{
+      const source=this.findResource(command.source),current=source?this.findProjection('thread-brief',source.id):null;
+      const stateInput:ProducerGetStateInput={version:1,producerPluginId:'thread-brief',source:{provider:command.source.provider,keys:command.source.keys}};
+      const state=this.producerState(stateInput),g=current?.revision??0;
+      const reply=(outcome:ProducerApplyOutput['outcome'],disposition:ProducerApplyOutput['evidenceDisposition'],signal:CrossReferencesChangedSignal|null=null)=>({response:{version:1 as const,outcome,currentRevision:signal?.revision??g,currentDigest:signal?command.payloadDigest:current?.payload_digest??null,evidenceDisposition:disposition,state:this.producerState(stateInput)},signal});
+      if(command.revision===g){
+        const outcome=current&&current.payload_digest===command.payloadDigest?(current.mutation_id===command.mutationId?'duplicate':'equal'):'conflict';
+        return reply(outcome,outcome!=='conflict'&&state.evidence?.state==='bound'&&state.evidence.evidenceDigest===evidenceDigest?'replayed':'conflict');
+      }
+      if(command.revision<=state.revisionHighWater)return reply('stale','not-applied');
+      if(command.expectedRevision!==g)return reply('cas-mismatch','not-applied');
+      check();const result=this.applyNormalizedProjection(command);
+      if(result.outcome!=='applied'||!result.signal)throw new Error('Producer projection invariant failed.');
+      const sourceId=this.findResource(command.source)!.id;
+      this.db.prepare(`INSERT INTO brief_evidence_streams(producer_plugin_id,source_resource_id,graph_revision,graph_payload_digest,evidence_digest,source_file_json,source_state,raw_sha,frame_json,metadata_json,occurrence_count,accepted_at)
+        VALUES ('thread-brief',?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(producer_plugin_id,source_resource_id) DO UPDATE SET graph_revision=excluded.graph_revision,graph_payload_digest=excluded.graph_payload_digest,evidence_digest=excluded.evidence_digest,source_file_json=excluded.source_file_json,source_state=excluded.source_state,raw_sha=excluded.raw_sha,frame_json=excluded.frame_json,metadata_json=excluded.metadata_json,occurrence_count=excluded.occurrence_count,accepted_at=excluded.accepted_at`)
+        .run(sourceId,command.revision,command.payloadDigest,evidenceDigest,canonicalJson(evidence.sourceFile),evidence.sourceState,evidence.sourceContentRevision,evidence.frame===null?null:canonicalJson(evidence.frame),metadata,evidence.occurrences.length,Date.now());
+      this.db.prepare('DELETE FROM brief_evidence_occurrences WHERE producer_plugin_id=? AND source_resource_id=?').run('thread-brief',sourceId);
+      const insert=this.db.prepare(`INSERT INTO brief_evidence_occurrences(producer_plugin_id,source_resource_id,target_resource_id,occurrence_key,source_occurrence_id,locator_json,provenance_json,authored_url_json,authored_url_state,exact_authored_href) VALUES ('thread-brief',?,?,?,?,?,?,?,?,?)`);
+      const targetIds=new Map(command.targets.map(t=>[t.canonicalIdentityJson,this.findResource(t)!.id]));
+      for(const o of evidence.occurrences)insert.run(sourceId,targetIds.get(canonicalizeIdentity(o.target).canonicalIdentityJson)!,o.occurrenceKey,o.sourceOccurrenceId,canonicalJson(o.locator),canonicalJson(o.provenance),canonicalJson(o.authoredUrl),o.authoredUrl.state,o.authoredUrl.state==='exact'?o.authoredUrl.href:null);
+      const mapping=this.db.prepare(`INSERT INTO recognized_resources(resource_id,source_identity_json,codec_version) VALUES (?,?,1) ON CONFLICT(resource_id) DO NOTHING`);
+      mapping.run(sourceId,verifiedFileIdentityRecord(evidence.sourceFile));
+      for(const d of evidence.targetDescriptors)if(d.codec.state==='available'){
+        const proof=d.codec.value;const record=proof.kind==='file'?verifiedFileIdentityRecord(proof.verified):proof.kind==='recognition'||proof.kind==='thread'?canonicalJson({provider:proof.source.provider,id:proof.source.id,...(proof.source.kind?{kind:proof.source.kind}:{})}):null;
+        if(record!==null)mapping.run(targetIds.get(canonicalizeIdentity(d.target).canonicalIdentityJson)!,record);
+      }
+      this.db.prepare('DELETE FROM brief_producer_status WHERE producer_plugin_id=? AND source_provider=? AND canonical_keys_json=? AND attempt_revision<?').run('thread-brief',command.source.provider,command.source.canonicalKeysJson,command.revision);
+      const accepted=reply('applied','installed',result.signal);check();return accepted;
+    })();
+  }
+
+  reportProducerStatus(input:ProducerReportStatusInput):{response:ProducerReportStatusOutput;changed:boolean} {
+    if(utf8ByteLength(JSON.stringify(input))>BRIEF_LIMITS.statusBytes)throw new Error('Producer status exceeds its byte bound.');
+    const a=producerReportStatusInputSchema.parse(input),source=canonicalizeIdentity(a.source);
+    return this.db.transaction(()=>{
+      const stateInput:ProducerGetStateInput={version:1,producerPluginId:'thread-brief',source:a.source};const state=this.producerState(stateInput),s=state.status,g=state.projection?.revision??0;
+      const reply=(outcome:ProducerReportStatusOutput['outcome'],changed=false)=>({response:{version:1 as const,outcome,state:this.producerState(stateInput)},changed});
+      if(s?.attemptRevision===a.attemptRevision&&s.statusDigest===a.statusDigest)return reply('duplicate');
+      if(a.attemptRevision<=g||s&&a.attemptRevision<s.attemptRevision)return reply('stale');
+      if(s?.attemptRevision===a.attemptRevision)return reply('conflict');
+      if(a.expectedRevision!==g)return reply('cas-mismatch');
+      this.db.prepare(`INSERT INTO brief_producer_status(producer_plugin_id,source_provider,canonical_keys_json,source_file_json,attempt_revision,status_digest,state,raw_sha,limit_codes_json,identity_codes_json,reported_at) VALUES ('thread-brief',?,?,?,?,?,?,?,?,?,?)
+        ON CONFLICT(producer_plugin_id,source_provider,canonical_keys_json) DO UPDATE SET source_file_json=excluded.source_file_json,attempt_revision=excluded.attempt_revision,status_digest=excluded.status_digest,state=excluded.state,raw_sha=excluded.raw_sha,limit_codes_json=excluded.limit_codes_json,identity_codes_json=excluded.identity_codes_json,reported_at=excluded.reported_at`)
+        .run(source.provider,source.canonicalKeysJson,canonicalJson(a.sourceFile),a.attemptRevision,a.statusDigest,a.status.state,a.status.sourceContentRevision,canonicalJson([...a.status.limits].sort()),canonicalJson('identityReasons' in a.status?[...a.status.identityReasons].sort():[]),Date.now());
+      return reply('recorded',true);
+    })();
   }
 
   getProjection(input: { producerPluginId: string; source: { provider: string; keys: Record<string, string> } }): GetProjectionResponse {

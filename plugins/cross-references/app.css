@@ -73,3 +73,7 @@
 @media (max-width: 480px) { .mentions { padding: 12px; gap: 10px; } }
 
 .mentions__results:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+
+.brief-producer__status { border-block-start: 1px solid var(--border, currentColor); padding-block: .75rem; }
+.brief-producer__status p, .brief-producer__mention p { margin-block: .4rem; }
+.brief-producer__status ul { font-size: .85em; overflow-wrap: anywhere; }

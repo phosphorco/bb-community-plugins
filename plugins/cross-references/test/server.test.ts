@@ -88,7 +88,7 @@ test("registers the typed RPCs, verifies FK-backed storage, and publishes commit
   const parsed = await rpcContract.applyProjection.input["~standard"].validate(input);
   assert.equal("issues" in parsed, false);
 
-  assert.deepEqual(Object.keys(handlers ?? {}), ["crossReferencesV2ListMentions", "crossReferencesV2ResolveLookup", "crossReferences.describe", "applyProjection", "getProjection", "listBacklinks", "listForwardReferences", "checkForwardReferences"]);
+  assert.deepEqual(Object.keys(handlers ?? {}), ["crossReferencesV2ListMentions", "crossReferencesV2ResolveLookup", "crossReferencesProducer.describe", "crossReferencesProducerV1GetState", "crossReferencesProducerV1Apply", "crossReferencesProducerV1ReportStatus", "crossReferences.describe", "applyProjection", "getProjection", "listBacklinks", "listForwardReferences", "checkForwardReferences"]);
   assert.equal((await handlers!.applyProjection(input) as { outcome: string }).outcome, "applied");
   assert.equal(signals.length, 2);
   assert.equal(signals[0]?.channel, "cross-references-changed");
@@ -296,4 +296,24 @@ test("factory admits settled/deleted event rank1 and forward demand rank2 withou
   const next = f.db.prepare("SELECT * FROM assistant_link_jobs WHERE thread_id='thr_idle'").get() as any;
   assert.equal(next.version, before.version+1);assert.equal(next.priority, 2);
   assert.equal(next.retry_at, 0);assert.equal(next.attempts, 0);
+});
+
+import {crossReferencesProducerRpcContract} from '@phosphorco/bb-cross-references/bb';
+import {runCrossReferencesProducerConformance} from '@phosphorco/bb-cross-references/testing';
+import {briefFixture,briefStatus} from './brief-evidence.test.ts';
+import {PRODUCER_METHODS,type ProducerApplyOutput,type ProducerState} from '@phosphorco/bb-cross-references';
+test('ACTUAL registered producer handlers: atomic graph/evidence, status-only V2 signal, delayed apply fence and readback kit',async t=>{
+ const db=new Database(':memory:');t.after(()=>db.close());const signals:{channel:string;payload:unknown}[]=[];const handlers:Record<string,(input:unknown)=>unknown>={};
+ crossReferencesPlugin({sdk:{subscribe:()=>()=>{}},onDispose:()=>{},events:{on:()=>{}},background:{service:()=>{}},storage:{database:()=>db,migrate:(_db:unknown,migrations:readonly string[])=>migrations.forEach(m=>db.exec(m))},rpc:{register:(_schema:unknown,h:Record<string,(input:unknown)=>unknown>)=>Object.assign(handlers,h)},realtime:{publish:(channel:string,payload:unknown)=>signals.push({channel,payload})}} as never);
+ const sdk={plugins:{callRpc:async(request:{method:string;input:unknown;outputSchema:{parse(value:unknown):unknown}})=>{
+  const schema=crossReferencesProducerRpcContract[request.method as keyof typeof crossReferencesProducerRpcContract];assert.ok(schema);const input=await schema.input['~standard'].validate(request.input);assert.ok(!('issues' in input));if('issues' in input)throw Error('Invalid input');const output=await handlers[request.method]!(input.value);const checked=await schema.output['~standard'].validate(output);assert.ok(!('issues' in checked));if('issues' in checked)throw Error('Invalid output');return request.outputSchema.parse(checked.value);
+ }}};
+ const first=briefFixture(),blocked=briefStatus(first);const kit=await runCrossReferencesProducerConformance({sdk:sdk as never,command:first,blocked});assert.ok(kit.checks.includes('replay-preserves-newer-status'));
+ assert.deepEqual(signals.map(s=>s.channel),['cross-references-changed','cross-references-mentions-v2-changed','cross-references-mentions-v2-changed']);const count=signals.length;
+ for(const revision of [9,10]){const delayed=await handlers[PRODUCER_METHODS.apply]!(briefFixture(revision,8)) as ProducerApplyOutput;assert.equal(delayed.outcome,'stale');assert.equal(delayed.currentRevision,8);assert.equal(signals.length,count);}
+ const state=await handlers[PRODUCER_METHODS.getState]!({version:1,producerPluginId:'thread-brief',source:blocked.source}) as ProducerState;assert.equal(state.evidence?.state,'bound');assert.equal(state.status?.attemptRevision,10);
+ const read=await handlers.crossReferencesV2ListMentions!({version:2,query:{kind:'authored-url',href:'https://example.test/brief-target'}}) as {status:string;items:{kind:string}[]};assert.equal(read.status,'page');assert.equal(read.items[0]?.kind,'brief-occurrence');
+ const installed=await handlers[PRODUCER_METHODS.apply]!(briefFixture(11,8)) as ProducerApplyOutput;assert.equal(installed.state.status,null);assert.equal(installed.state.evidence?.state,'bound');assert.equal(signals.length,count+2);
+ await handlers[PRODUCER_METHODS.reportStatus]!(briefStatus(first,12,11));const beforeFailure=signals.length;db.exec("CREATE TEMP TRIGGER reject_registered_brief BEFORE INSERT ON brief_evidence_occurrences BEGIN SELECT RAISE(ABORT,'registered child failure'); END");
+ await assert.rejects(async()=>handlers[PRODUCER_METHODS.apply]!(briefFixture(13,11)),/registered child failure/);assert.equal(signals.length,beforeFailure);const retained=await handlers[PRODUCER_METHODS.getState]!({version:1,producerPluginId:'thread-brief',source:blocked.source}) as ProducerState;assert.equal(retained.projection?.revision,11);assert.equal(retained.evidence?.graphRevision,11);assert.equal(retained.status?.attemptRevision,12);
 });

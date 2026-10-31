@@ -69,3 +69,15 @@ not-modified includes current coverage. Existing V1 clients stay unchanged. See
 CONTRACT.md for strict inputs, tolerant bounded outputs, direct-query/time limits,
 no-word-cut behavior and read-only conformance. Package source tests and private
 emission are distinct from a published registry consumer or live host proof.
+
+The unreleased0.4 producer additions are exported through existing root, `/bb`
+and `/testing` entries. Use `createCrossReferencesProducerClient` for complete
+Brief graph/evidence replacement and status/readback, and
+`runCrossReferencesProducerConformance` against an adopter's real registered
+handlers. `runBriefNavigationConformance` requires an actual accepted-reader
+fixture; it never supplies a fake freshness proof. Explicitly compile
+`test/public-producer-types.mts`; ordinary test discovery does not compile it.
+`tools/packed-producer-consumer.mjs` checks actual independent installed native
+ESM imports and physical roots; resolver fixtures are not package/registry proof.
+See CONTRACT.md for display withholding, bounds, revision fencing and the still
+separate TB raw-reader/public navigation adoption duties.

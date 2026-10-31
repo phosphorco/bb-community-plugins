@@ -1,3 +1,5 @@
+import type { ReactNode } from 'react';
+import { BriefNavigationSurface, BriefMentionRow, BriefProducerStatus, useBriefProducerState } from './brief-producer.tsx';
 import { createPortal } from "react-dom";
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, useMemo } from "react";
 import {
@@ -377,7 +379,7 @@ function ReferenceSection({ heading, rows, total, nextCursor, loadingMore, onLoa
   </section>;
 }
 
-function ReferencesDetail({ target, pages, loading, error, stale, loadingMore, checks, checking, checkError, trigger, popoverId, onClose, onLoadMore }: {
+function ReferencesDetail({ target, pages, loading, error, stale, loadingMore, checks, checking, checkError, trigger, popoverId, onClose, onLoadMore, briefStatus }: {
   target: { provider: string; keys: Record<string, string> };
   pages: ReferencePages;
   loading: boolean;
@@ -391,6 +393,7 @@ function ReferencesDetail({ target, pages, loading, error, stale, loadingMore, c
   popoverId: string;
   onClose: () => void;
   onLoadMore: (direction: Direction) => void;
+  briefStatus?: ReactNode;
 }) {
   const navigate = useBbNavigate();
   const contentRef = useRef<HTMLDivElement | null>(null);
@@ -431,6 +434,7 @@ function ReferencesDetail({ target, pages, loading, error, stale, loadingMore, c
       {stale && <p className="cross-references__stale" role="status">The connection is recovering; this may be briefly out of date.</p>}
       {loading && pages.forward.rows.length === 0 && pages.backlink.rows.length === 0 && <p className="cross-references__message" role="status">Checking references…</p>}
       {error != null && <p className="cross-references__error" role="alert">{error}</p>}
+      {briefStatus}
       <ReferenceSection target={target} heading="Forward references" rows={pages.forward.rows} total={pages.forward.total} nextCursor={pages.forward.nextCursor} loadingMore={loadingMore.forward} onLoadMore={() => onLoadMore("forward")} direction="forward" checks={checks} checking={checking} checkError={checkError} />
       <ReferenceSection target={target} heading="Backlinks" rows={pages.backlink.rows} total={pages.backlink.total} nextCursor={pages.backlink.nextCursor} loadingMore={loadingMore.backlink} onLoadMore={() => onLoadMore("backlink")} direction="backlink" checks={[]} checking={false} checkError={false} />
     </div>,
@@ -440,6 +444,7 @@ function ReferencesDetail({ target, pages, loading, error, stale, loadingMore, c
 
 function ThreadHeaderAction({ threadId, projectId }: { threadId: string; projectId: string; isCompactViewport: boolean }) {
   const { pages, loading, loadingMore, error, stale, loadMore } = useThreadReferences(projectId, threadId);
+  const brief=useBriefProducerState(threadId);
   const [open, setOpen] = useState(false);
   const { checks, checking, checkError } = useForwardReferenceChecks(open, projectId, threadId, pages.forward.rows);
   const popoverId = `cross-references-thread-detail-${useId().replaceAll(":", "")}`;
@@ -454,13 +459,15 @@ function ThreadHeaderAction({ threadId, projectId }: { threadId: string; project
   ].filter((label): label is string => label !== null);
   // Keep the header quiet until this exact thread has a relationship to show.
   // Once visible, its dialog owns refresh/loading detail for that relationship.
-  if (loading || count === 0) return null;
+  const hasBrief=brief.state?.status!=null||Boolean(brief.state?.projection?.targets.length);
+  if ((loading || count === 0) && !hasBrief) return null;
   return <>
-    <button ref={triggerRef} type="button" className="cross-references__trigger" aria-label={`Cross-references: ${directionLabels.join(", ")}`} aria-expanded={open} aria-haspopup="dialog" aria-controls={popoverId} title="Show cross-references" onClick={() => setOpen((current) => !current)}>
+    <button ref={triggerRef} type="button" className="cross-references__trigger" aria-label={`Cross-references: ${directionLabels.length?directionLabels.join(", "):"Thread Brief"}`} aria-expanded={open} aria-haspopup="dialog" aria-controls={popoverId} title="Show cross-references" onClick={() => setOpen((current) => !current)}>
+      {count===0&&hasBrief&&<span>Brief references</span>}
       {forwardCount > 0 && <span className="cross-references__metric" aria-hidden="true"><LinkGlyph /><span className="cross-references__count">{forwardCount}</span></span>}
       {backlinkCount > 0 && <span className="cross-references__metric" aria-hidden="true"><BacklinkGlyph /><span className="cross-references__count">{backlinkCount}</span></span>}
     </button>
-    {open && triggerRef.current != null && <ReferencesDetail target={{ provider: "bb", keys: { project: projectId, thread: threadId } }} pages={pages} loading={loading} loadingMore={loadingMore} error={error} stale={stale} checks={checks} checking={checking} checkError={checkError} trigger={triggerRef.current} popoverId={popoverId} onClose={close} onLoadMore={loadMore} />}
+    {open && triggerRef.current != null && <ReferencesDetail target={{ provider: "bb", keys: { project: projectId, thread: threadId } }} pages={pages} loading={loading} loadingMore={loadingMore} error={error} stale={stale} checks={checks} checking={checking} checkError={checkError} trigger={triggerRef.current} popoverId={popoverId} onClose={close} onLoadMore={loadMore} briefStatus={<BriefProducerStatus threadId={threadId} view={brief}/>} />}
   </>;
 }
 
@@ -592,7 +599,7 @@ function MentionResultOwner({ selection }: { selection: MentionSelection }) {
     const slot = { item, pageSlot };
     if (group) group.push(slot); else groups.set(key, [slot]);
   }
-  return <section ref={resultRef} tabIndex={-1} className="mentions__results" aria-label="Mention results" aria-busy={view.loading}>
+  return <BriefNavigationSurface><section ref={resultRef} tabIndex={-1} className="mentions__results" aria-label="Mention results" aria-busy={view.loading}>
     {view.loading && <p role="status">Loading mentions…</p>}
     {view.stale && <p role="status">Showing the last available results; they may be out of date.</p>}
     {view.error && <p role="alert">{view.error}</p>}
@@ -602,14 +609,14 @@ function MentionResultOwner({ selection }: { selection: MentionSelection }) {
       {view.page.items.length === 0 && <p>No matching stored mentions in known sources.</p>}
       <ul className="mentions__groups">{[...groups].map(([key, items]) => {
         const first = items[0]!.item;
-        const occurrences = items.filter(({ item }) => item.kind === "occurrence");
+        const occurrences = items.filter(({ item }) => item.kind === "occurrence" || item.kind === "brief-occurrence");
         const hidden = Math.max(0, occurrences.length - 3);
         let shown = 0;
         return <li key={key}>
           <strong>{first.source.presentation.label}</strong>
           <small>Producer: {first.producerPluginId} · {first.cap.state === "uncapped" ? "No known location clipping" : first.cap.state === "capped" ? "Locations capped at 100" : "Location cap history unknown"}{first.cap.sourceHistoryUnknown ? " · Source clipping history unknown" : ""}</small>
           <ul>{items.map(({ item, pageSlot }) => {
-            if (item.kind === "occurrence" && ++shown > 3 && !expanded.has(key)) return null;
+            if ((item.kind === "occurrence" || item.kind === "brief-occurrence") && ++shown > 3 && !expanded.has(key)) return null;
             return <li key={mentionItemKey(item, pageSlot)}><MentionRow item={item} /></li>;
           })}</ul>
           {hidden > 0 && <button type="button" aria-expanded={expanded.has(key)} onClick={() => setExpanded(current => { const next = new Set(current); if (next.has(key)) next.delete(key); else next.add(key); return next; })}>{expanded.has(key) ? "Show three locations on this page" : `Show ${hidden} more locations on this page`}</button>}
@@ -619,9 +626,9 @@ function MentionResultOwner({ selection }: { selection: MentionSelection }) {
         <button type="button" disabled={view.loading} onClick={() => run.current()}>First page</button>
         <button type="button" disabled={view.loading || view.page.nextCursor === null} onClick={() => { if (page.current?.nextCursor) run.current(page.current.nextCursor); }}>Next page</button>
       </nav>
-      <p className="mentions__note">This page contains {view.page.items.length} rows. Groups follow their first result; locations within each group are newest first. Three locations per claim are initially shown on this page; disclosure reveals the rest of this page.</p>
+      <p className="mentions__note">This page contains {view.page.items.length} rows. Groups follow their first result. Conversation locations use message time; Brief locations follow their original line. Three locations per claim are initially shown on this page; disclosure reveals the rest of this page.</p>
     </>}
-  </section>;
+  </section></BriefNavigationSurface>;
 }
 function MentionCoverage({ page }: { page: MentionPage }) {
   const { counts, coverage } = page;
@@ -635,11 +642,12 @@ function MentionCoverage({ page }: { page: MentionPage }) {
     {coverage.evidenceStateUnknown && <p>Some claims have unknown or unbound evidence.</p>}
     <p>{counts.claimsWithoutLocations} claims without locations · {counts.excerptUnavailable} locations without excerpts</p>
     {coverage.authoredUrlCoverage.state === "partial" && <p>Historical authored URLs are unknown for {coverage.authoredUrlCoverage.unknownLocations} known locations; an Exact URL search may miss them.</p>}
-    {coverage.reasons.length > 0 && <details><summary>Coverage details</summary><ul>{coverage.reasons.map(reason => <li key={reason}>{reason}</li>)}</ul></details>}
+    {coverage.reasons.length > 0 && <details><summary>Coverage details</summary><ul>{coverage.reasons.map(reason => <li key={reason}>{reason==="pr-family-authority-unknown"?"Some stored references lack PR-family authority":reason}</li>)}</ul></details>}
     {coverage.reasonsClipped && <p>Additional coverage reasons were clipped.</p>}
   </div>;
 }
 function MentionRow({ item }: { item: MentionItem }) {
+  if(item.kind==="brief-occurrence")return <BriefMentionRow item={item}/>;
   const href = mentionMessageHref(item);
   const sourceUrl = item.source.presentation.url;
   const parts = mentionExcerptParts(item);

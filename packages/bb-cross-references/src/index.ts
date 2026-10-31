@@ -423,3 +423,7 @@ export { verifiedFileIdentity, verifiedFileIdentityRecord, VerifiedFileTargetSch
 
 export * from './evidence-v2.js';
 export * from './lookup.js';
+
+export * from './producer.js';
+import { createProducerSchemas } from './producer.js';
+export const crossReferencesProducerRpcSchemas = createProducerSchemas(applyProjectionInputSchema);

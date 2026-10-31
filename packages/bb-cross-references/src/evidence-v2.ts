@@ -1,3 +1,4 @@
+import { briefLocatorOutputSchema, briefFrameOutputSchema, briefProvenanceOutputSchema, briefAuthoredUrlOutputSchema } from './producer.js';
 /** Pure V2 evidence wire. V1 schemas and projection meanings are independent. */
 import { z } from 'zod';
 import { ContextBundleV1Schema, SafeHrefSchema, CandidateV1Schema, SourceIdentitySchema } from '@phosphorco/bb-context-recognition';
@@ -67,6 +68,9 @@ const provenanceOutput=recognitionProvenance.extend({verifiedFile:verifiedFileOu
 const claimShape={source:resourceOutputV2Schema,target:resourceOutputV2Schema,producerPluginId:producer,graphRevision:integer(),
  cap:z.object({state:z.enum(['uncapped','capped','unknown']),limit:z.literal(100).nullable(),sourceHistoryUnknown:z.boolean().nullable()}).passthrough()};
 const knownItem=z.discriminatedUnion('kind',[
+ z.object({...claimShape,kind:z.literal('brief-occurrence'),evidenceRevision:integer().min(1),occurrenceKey:digest,sourceOccurrenceId:text(256),locator:briefLocatorOutputSchema,sourceContentRevision:digest,frame:briefFrameOutputSchema,
+ excerpt:z.object({state:z.literal('unavailable'),reason:z.literal('not-materialized'),codecVersion:z.literal(1)}).passthrough(),provenance:briefProvenanceOutputSchema,authoredUrl:briefAuthoredUrlOutputSchema,authoredUrlState:z.enum(['exact','not-url','unknown','withheld']),confirmation:z.enum(['producer-attested','retained-unconfirmed'])}).passthrough().refine(v=>v.authoredUrlState===v.authoredUrl.state&&v.sourceContentRevision===v.locator.sourceContentRevision&&v.locator.threadId===v.locator.file.threadId,'Inconsistent Brief item.'),
+
  z.object({...claimShape,kind:z.literal('occurrence'),evidenceRevision:integer().min(1),occurrenceKey:digest,locator:locatorOutputV2Schema,sourceContentRevision:digest,span:spanOutputV2Schema,
  excerpt:excerptV2Schema,messageCreatedAt:time(),observedAt:time(),confirmation:z.enum(['observed','retained-unconfirmed']),provenance:provenanceOutput,authoredUrlState:z.enum(['exact','not-url','unknown'])}).passthrough(),
  z.object({...claimShape,kind:z.literal('claim-without-evidence'),reason:z.enum(['legacy','producer-no-evidence','not-yet-collected']),matchBasis:z.enum(['primary-resource','primary-url-identity'])}).passthrough(),
@@ -76,8 +80,9 @@ const knownItem=z.discriminatedUnion('kind',[
 export const mentionItemV2Schema=z.unknown().transform((raw,ctx)=>{
  const r=raw as Record<string,any>;
  const unknown=(value:unknown,known:readonly string[])=>typeof value==='string'&&!known.includes(value);
- const future=!!r&&typeof r==='object'&&(unknown(r.kind,['occurrence','claim-without-evidence','unsupported'])||
+ const future=!!r&&typeof r==='object'&&(unknown(r.kind,['occurrence','brief-occurrence','claim-without-evidence','unsupported'])||
   (r.kind==='occurrence'&&(unknown(r.locator?.kind,['conversation'])||unknown(r.excerpt?.state,['ready','unavailable'])||(typeof r.excerpt?.codecVersion==='number'&&r.excerpt.codecVersion!==1)||unknown(r.confirmation,['observed','retained-unconfirmed'])||unknown(r.authoredUrlState,['exact','not-url','unknown'])||unknown(r.locator?.role,['user','assistant'])||unknown(r.provenance?.origin,['builtin','contributed'])||unknown(r.provenance?.confidence,['high','medium','low'])||unknown(r.provenance?.recognition?.basis,['explicit','text-url','existing-link','git-remote','context'])||(r.excerpt?.state==='unavailable'&&unknown(r.excerpt.reason,['not-materialized','indivisible-word','no-eligible-context']))))||
+  (r.kind==='brief-occurrence'&&(unknown(r.locator?.kind,['thread-brief'])||unknown(r.confirmation,['producer-attested','retained-unconfirmed'])||unknown(r.authoredUrlState,['exact','not-url','unknown','withheld'])||unknown(r.provenance?.state,['safe','withheld'])||unknown(r.locator?.section?.heading?.state,['named','withheld'])||unknown(r.locator?.section?.heading?.cause,['policy','unclassified'])||unknown(r.provenance?.cause,['policy','unclassified'])||unknown(r.authoredUrl?.state,['exact','not-url','unknown','withheld'])||unknown(r.authoredUrl?.cause,['policy','unclassified'])||unknown(r.frame?.codec,['utf8-fatal-bom-consumed-v1'])||unknown(r.frame?.lineMapping?.codec,['native-file-lines-v1'])||unknown(r.locator?.location?.kind,['line'])||unknown(r.locator?.span?.frame,['file-utf16','body-utf16'])||unknown(r.excerpt?.state,['unavailable'])||unknown(r.excerpt?.reason,['not-materialized'])||(typeof r.excerpt?.codecVersion==='number'&&r.excerpt.codecVersion!==1)))||
   (r.kind==='claim-without-evidence'&&(unknown(r.reason,['legacy','producer-no-evidence','not-yet-collected'])||unknown(r.matchBasis,['primary-resource','primary-url-identity'])))||unknown(r.cap?.state,['uncapped','capped','unknown']));
  if(future&&(!r.cap||!z.object({state:z.string(),limit:z.literal(100).nullable(),sourceHistoryUnknown:z.boolean().nullable()}).safeParse(r.cap).success)){
   ctx.addIssue({code:'custom',message:'Invalid required claim cap.'});return z.NEVER;

@@ -453,6 +453,7 @@ test("both directions show source recency with exact timestamp tooltips and omit
 });
 
 import { z } from "zod";
+import { producerDescribe, verifiedFileIdentity } from "@phosphorco/bb-cross-references";
 import { mentionsSubPath, parseMentionsSubPath } from "../presentation.ts";
 
 const mentionHash = "a".repeat(64);
@@ -666,16 +667,36 @@ test("legacy, unsupported, unavailable and retained cap truth remain visible", a
 test("backlink context is one lazy reader with exact target/source/producer admission", async () => {
   const app = await loadPluginApp(() => import("../app.tsx"));
   const requests: UiRequest[] = [];
+  const statusRequests: UiRequest[] = [];
+  const sdkRequests: UiRequest[] = [];
   const row = { ...backlinkRow(), source: mentionSource, producerPluginId: "cross-references" };
-  const slot = renderSlot(app.threadHeaderActions[0]!, { threadId: "thr_header01", projectId: "proj_header01", isCompactViewport: false }, { rpc: { listForwardReferences: () => ({ rows: [], total: 0, nextCursor: null }), listBacklinks: () => ({ rows: [row], total: 1, nextCursor: null }), checkForwardReferences: () => [] }, sdk: mentionSdk(request => { requests.push(request); return mentionPage(1); }) });
+  const slot = renderSlot(app.threadHeaderActions[0]!, { threadId: "thr_header01", projectId: "proj_header01", isCompactViewport: false }, { rpc: { listForwardReferences: () => ({ rows: [], total: 0, nextCursor: null }), listBacklinks: () => ({ rows: [row], total: 1, nextCursor: null }), checkForwardReferences: () => [] }, sdk: mentionSdk(request => {
+    sdkRequests.push(request);
+    if (request.method === "crossReferencesProducer.describe") { statusRequests.push(request); return producerDescribe(); }
+    if (request.method === "crossReferencesProducerV1GetState") { statusRequests.push(request); return { version: 1, projection: null, evidence: null, status: null, revisionHighWater: 0 }; }
+    if (request.method === "crossReferencesV2ListMentions") { requests.push(request); return mentionPage(1); }
+    throw new Error(`Unexpected RPC method: ${request.method}`);
+  }) });
   fireEvent.click(await slot.findByRole("button", { name: "Cross-references: 1 backlink" }));
+  await waitFor(() => expect(statusRequests).toHaveLength(2));
+  expect(statusRequests.map(request => request.method)).toEqual(["crossReferencesProducer.describe", "crossReferencesProducerV1GetState"]);
+  expect(statusRequests[0]?.input).toBeNull();
+  expect(statusRequests[1]?.input).toEqual({ version: 1, producerPluginId: "thread-brief", source: verifiedFileIdentity({ kind: "thread-storage", threadId: "thr_header01", path: "BRIEF.md" }) });
+  expect(sdkRequests.map(request => request.method)).toEqual(["crossReferencesProducer.describe", "crossReferencesProducerV1GetState"]);
   expect(requests).toHaveLength(0);
   fireEvent.click(slot.getByRole("button", { name: "Show context" }));
   await slot.findByRole("link", { name: "User message 40" });
+  expect(requests).toHaveLength(1);
   expect(requests[0]?.input).toMatchObject({ query: { kind: "resource", target: { provider: "bb", keys: { project: "proj_header01", thread: "thr_header01" } } }, source: { provider: "bb", keys: mentionSource.keys }, producerPluginId: "cross-references", pageSize: 25 });
+  expect(statusRequests).toHaveLength(2);
   fireEvent.click(slot.getByRole("button", { name: "Show context" }));
   expect(slot.queryByRole("region", { name: "Mention results" })).toBeNull();
+  expect(requests).toHaveLength(1);
   slot.lifecycle.unmount();
+  await act(async () => { await Promise.resolve(); });
+  expect(requests).toHaveLength(1);
+  expect(statusRequests).toHaveLength(2);
+  expect(sdkRequests.map(request => request.method)).toEqual(["crossReferencesProducer.describe", "crossReferencesProducerV1GetState", "crossReferencesV2ListMentions"]);
 });
 
 test("hidden results pause invalidations and visibility resumes one bounded read; unmount retires timer", async () => {
@@ -825,4 +846,10 @@ test("multiple future slots retain every page row without duplicate keys through
     slot.lifecycle.unmount();
     errors.mockRestore();
   }
+});
+
+test('fixed Brief blocked producer remains visible at ZERO V1 relationships without inventing an edge',async()=>{
+ const app=await loadPluginApp(()=>import('../app.tsx'));const sdk=mentionSdk(request=>request.method==='crossReferencesProducer.describe'?{protocol:'cross-references-producer',versions:[1],sourceKinds:['thread-brief'],limits:{inputBytes:1048576,statusBytes:16384,locations:512,perTarget:100,headingBytes:256,limitCodes:['target-count']}}:request.method==='crossReferencesProducerV1GetState'?{version:1,projection:null,evidence:null,revisionHighWater:10,status:{state:'over-limit',sourceContentRevision:mentionHash,limits:['target-count'],attemptRevision:10,statusDigest:mentionHash,sourceFile:{kind:'thread-storage',threadId:'thr_zero',path:'BRIEF.md'},applicability:'current'}}:null);
+ const slot=renderSlot(app.threadHeaderActions[0]!,{threadId:'thr_zero',projectId:'proj_zero',isCompactViewport:false},{sdk,rpc:{listForwardReferences:()=>({rows:[],total:0,nextCursor:null}),listBacklinks:()=>({rows:[],total:0,nextCursor:null}),checkForwardReferences:()=>[]}} as any);
+ fireEvent.click(await slot.findByRole('button',{name:'Cross-references: Thread Brief'}));expect(await slot.findByText('brief references not updated: over limit')).toBeTruthy();expect(slot.getByText('target-count')).toBeTruthy();expect(slot.queryByText('1 forward reference')).toBeNull();slot.lifecycle.unmount();
 });

@@ -880,3 +880,89 @@ test('actual store and V2 reader preserve astral/U+FFFD source slices and atomic
  db.prepare('UPDATE mention_excerpts SET match_start=?').run(ready.matchSpan.start);
  assert.deepEqual(snapshot(),before);assert.deepEqual(reader.read(query),page);
 });
+
+// P3 tests exercise the product store/transaction, never an alternate graph.
+import {briefFixture,briefEmptyFixture,briefStatus,refreshBrief} from './brief-evidence.test.ts';
+import {briefWithheldDigest,briefEvidenceDigest} from '@phosphorco/bb-cross-references';
+function briefTables(db:Database.Database){const tables=['resources','resource_keys','source_projections','reference_occurrences','recognized_resources','brief_evidence_streams','brief_evidence_occurrences','brief_producer_status','assistant_link_jobs','sqlite_sequence'];return Object.fromEntries(tables.map(table=>[table,db.prepare(`SELECT * FROM ${table} ORDER BY rowid`).all()]));}
+test('producer G8/S10 high-water fences ALL state; exact replay preserves status;11 atomically supersedes',t=>{
+ const {db,store}=makeStore();t.after(()=>db.close());const first=briefFixture();assert.equal(store.applyProducer(first).response.evidenceDisposition,'installed');
+ const blocked=briefStatus(first);assert.equal(store.reportProducerStatus(blocked).response.outcome,'recorded');const before=briefTables(db);
+ for(const revision of [9,10]){const r=store.applyProducer(briefFixture(revision,8));assert.equal(r.response.outcome,'stale');assert.equal(r.response.currentRevision,8);assert.equal(r.response.state.revisionHighWater,10);assert.equal(r.signal,null);assert.deepEqual(briefTables(db),before);}
+ const replay=store.applyProducer({...first,projection:{...first.projection,expectedRevision:0}});assert.equal(replay.response.evidenceDisposition,'replayed');assert.equal(replay.response.state.status?.attemptRevision,10);assert.equal(replay.signal,null);assert.deepEqual(briefTables(db),before);
+ const different=briefFixture();different.evidence.occurrences[0]!.authoredUrl={state:'unknown'};different.evidenceDigest=briefEvidenceDigest(different.evidence);assert.equal(store.applyProducer(different).response.evidenceDisposition,'conflict');assert.deepEqual(briefTables(db),before);
+ assert.equal(store.applyProducer(briefFixture(11,7)).response.outcome,'cas-mismatch');assert.deepEqual(briefTables(db),before);
+ const next=store.applyProducer(briefFixture(11,8));assert.equal(next.response.outcome,'applied');assert.equal(next.response.currentRevision,11);assert.equal(next.response.state.status,null);assert.equal(next.response.state.evidence?.state,'bound');assert.equal(next.response.state.revisionHighWater,11);assert.ok(next.signal);
+});
+test('status-only first intent creates NO resource/graph/evidence and precise replay/CAS ordering survives ordinary V1',t=>{
+ const {db,store}=makeStore();t.after(()=>db.close());const first=briefFixture(),status=briefStatus(first,10,0);
+ assert.equal(store.reportProducerStatus(status).response.outcome,'recorded');for(const table of ['resources','reference_occurrences','source_projections','brief_evidence_streams'])assert.equal((db.prepare(`SELECT COUNT(*) n FROM ${table}`).get() as {n:number}).n,0);
+ const state=store.getProducerState({version:1,producerPluginId:'thread-brief',source:status.source});assert.equal(state.projection,null);assert.equal(state.status?.attemptRevision,10);
+ assert.equal(store.applyProducer(first).response.outcome,'stale');
+ // Plain V1 is deliberately compatible and is not subject to the new-family H.
+ assert.equal(store.applyProjection({...first.projection,revision:11,expectedRevision:0}).outcome,'applied');
+ const before=briefTables(db),duplicate=store.reportProducerStatus(status);assert.equal(duplicate.response.outcome,'duplicate');assert.equal(duplicate.response.state.projection?.revision,11);assert.equal(duplicate.response.state.status?.applicability,'superseded-by-graph');assert.deepEqual(briefTables(db),before);
+ const changed=briefStatus(first,10,11);changed.status.limits=['target-count'];changed.statusDigest=briefStatusDigestForTest(changed);assert.equal(store.reportProducerStatus(changed).response.outcome,'stale');assert.deepEqual(briefTables(db),before);
+});
+import {briefStatusDigest as briefStatusDigestForValue,type ProducerReportStatusInput,type BriefEvidenceV1} from '@phosphorco/bb-cross-references';
+function briefStatusDigestForTest(s:ProducerReportStatusInput){return briefStatusDigestForValue(s.producerPluginId,s.source,s.sourceFile,s.status);}
+test('opposite arrival, conflicts and injected child failure preserve transaction and sequences',t=>{
+ const {db,store}=makeStore();t.after(()=>db.close());const first=briefFixture();store.applyProducer(first);store.applyProducer(briefFixture(9,8));assert.equal(store.reportProducerStatus(briefStatus(first)).response.outcome,'cas-mismatch');
+ const status=briefStatus(first,10,9);store.reportProducerStatus(status);const before=briefTables(db);
+ const conflict=briefStatus(first,10,9);conflict.status.limits=['target-count'];conflict.statusDigest=briefStatusDigestForTest(conflict);assert.equal(store.reportProducerStatus(conflict).response.outcome,'conflict');assert.equal(store.reportProducerStatus(briefStatus(first,7,9)).response.outcome,'stale');assert.deepEqual(briefTables(db),before);
+ db.exec("CREATE TEMP TRIGGER reject_brief_child BEFORE INSERT ON brief_evidence_occurrences BEGIN SELECT RAISE(ABORT,'injected child failure'); END");
+ assert.throws(()=>store.applyProducer(briefFixture(11,9)),/injected child/);assert.deepEqual(briefTables(db),before);db.exec('DROP TRIGGER reject_brief_child');
+ assert.equal(store.applyProducer(briefFixture(11,9)).response.outcome,'applied');
+});
+test('Brief metadata withheld preserves graph/count/location, safe injection rejects atomically, empty and absent are authoritative',t=>{
+ const {db,store}=makeStore();t.after(()=>db.close());const input=briefFixture();const secret='https://example.test/?token=not-for-storage';
+ input.evidence.occurrences[0]!.locator.section.heading={state:'withheld',digest:briefWithheldDigest('heading',secret),cause:'policy',display:'Heading withheld'};refreshBrief(input);store.applyProducer(input);
+ assert.equal((db.prepare('SELECT COUNT(*) n FROM reference_occurrences').get() as {n:number}).n,1);assert.equal(JSON.stringify(briefTables(db)).includes('not-for-storage'),false);
+ const before=briefTables(db),bad=briefFixture(9,8,{heading:{state:'named',text:secret}});assert.throws(()=>store.applyProducer(bad));assert.deepEqual(briefTables(db),before);
+ const empty=briefEmptyFixture(9,8);store.applyProducer(empty);assert.equal((db.prepare('SELECT COUNT(*) n FROM brief_evidence_occurrences').get() as {n:number}).n,0);
+ const absent=briefFixture(10,9);absent.evidence.sourceState='absent';absent.evidence.sourceContentRevision=null;absent.evidence.frame=null;absent.evidence.occurrences=[];absent.evidence.targetDescriptors=[];absent.projection.tombstone=true;refreshBrief(absent);assert.equal(store.applyProducer(absent).response.state.evidence?.sourceState,'absent');
+});
+test('Brief durable binding/status reopen, ordinary V1 unconfirms without deleting primary evidence',t=>{
+ const dir=mkdtempSync(join(tmpdir(),'bb-brief-reopen-'));t.after(()=>rmSync(dir,{recursive:true,force:true}));const file=join(dir,'evidence.db');let db=new Database(file);enableForeignKeys(db);for(const m of crossReferencesMigrations)db.exec(m);let store=new CrossReferenceStore(db);const first=briefFixture();store.applyProducer(first);store.reportProducerStatus(briefStatus(first));db.close();
+ db=new Database(file);enableForeignKeys(db);store=new CrossReferenceStore(db);t.after(()=>db.close());const key={version:1 as const,producerPluginId:'thread-brief' as const,source:{provider:first.projection.source.provider,keys:first.projection.source.keys}};
+ assert.equal(store.getProducerState(key).revisionHighWater,10);assert.equal(store.getProducerState(key).evidence?.state,'bound');store.applyProjection({...first.projection,revision:11,expectedRevision:8});const current=store.getProducerState(key);assert.equal(current.evidence?.state,'unconfirmed');assert.equal(current.status?.applicability,'superseded-by-graph');assert.equal(current.evidence?.occurrenceCount,1);
+});
+
+test('complete512-location snapshot uses bounded primary rows across edges;513 rejects whole state',t=>{
+ const {db,store}=makeStore();t.after(()=>db.close());const input=briefFixture(8,0,{count:100});
+ const template=input.evidence.occurrences[0]!;input.evidence.occurrences=[];input.evidence.targetDescriptors=[];
+ for(let group=0;group<6;group++){const href=`https://example.test/group${group}`,target={provider:'url',keys:{href}};input.evidence.targetDescriptors.push({target,presentation:{label:{state:'safe',text:`Group ${group}`},detail:null,url:{state:'exact',href}},codec:{state:'available',value:{kind:'url',href}}});
+  for(let j=0;j<100&&input.evidence.occurrences.length<512;j++){const n=input.evidence.occurrences.length;input.evidence.occurrences.push({...template,sourceOccurrenceId:`ref-${n}`,target,authoredUrl:{state:'exact',href}});}}
+ refreshBrief(input);assert.equal(store.applyProducer(input).response.state.evidence?.occurrenceCount,512);assert.equal((db.prepare('SELECT COUNT(*) n FROM brief_evidence_occurrences').get() as {n:number}).n,512);assert.equal((db.prepare('SELECT COUNT(*) n FROM reference_occurrences').get() as {n:number}).n,6);
+ const before=briefTables(db);input.projection.revision=9;input.projection.expectedRevision=8;input.evidence.occurrences.push({...template,sourceOccurrenceId:'ref-512'});assert.throws(()=>store.applyProducer(input));assert.deepEqual(briefTables(db),before);
+});
+
+test('Brief primary/status SQL rejects NULL/fractional revisions; another producer cannot clear blocked intent',t=>{
+ const {db,store}=makeStore();t.after(()=>db.close());const first=briefFixture();store.applyProducer(first);store.reportProducerStatus(briefStatus(first));const before=briefTables(db);
+ for(const table of ['brief_evidence_streams','brief_producer_status']){const column=table==='brief_evidence_streams'?'graph_revision':'attempt_revision';assert.throws(()=>db.prepare(`UPDATE ${table} SET ${column}=NULL`).run());assert.throws(()=>db.prepare(`UPDATE ${table} SET ${column}=1.5`).run());}assert.deepEqual(briefTables(db),before);
+ const other=makeCommand({source:first.projection.source,producerPluginId:'another-producer',targets:[],revision:12,tombstone:true});store.applyProjection(other);const state=store.getProducerState({version:1,producerPluginId:'thread-brief',source:{provider:first.projection.source.provider,keys:first.projection.source.keys}});assert.equal(state.projection?.revision,8);assert.equal(state.status?.attemptRevision,10);assert.equal(state.evidence?.state,'bound');
+});
+
+test('Brief heading exact Unicode/U+FFFD roundtrips; malformed, oversized and incomplete replacements reject atomically',t=>{
+ const {db,store}=makeStore();t.after(()=>db.close());const title='😀 e\u0301 界 \uFFFD',input=briefFixture(8,0,{heading:{state:'named',text:title}});store.applyProducer(input);assert.ok((db.prepare('SELECT locator_json FROM brief_evidence_occurrences').get() as {locator_json:string}).locator_json.includes(title));const before=briefTables(db);
+ for(const text of ['\udfff','界'.repeat(86)]){const bad=briefFixture(9,8);Object.assign(bad.evidence.occurrences[0]!.locator.section,{heading:{state:'named',text}});assert.throws(()=>store.applyProducer(bad));assert.deepEqual(briefTables(db),before);}
+ const partial=briefFixture(9,8);Object.assign(partial.evidence.completeness,{state:'partial'});assert.throws(()=>store.applyProducer(partial));assert.deepEqual(briefTables(db),before);
+});
+
+
+import {readBriefSnapshot} from '../brief-evidence.ts';
+test('contradictory EMPTY replacement rejects ALL durable tables atomically; persisted EMPTY corruption rejects',t=>{
+ const {db,store}=makeStore();t.after(()=>db.close());store.applyProducer(briefFixture());store.reportProducerStatus(briefStatus(briefFixture()));
+ const snapshot=()=>Object.fromEntries((db.prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name").pluck().all() as string[]).map(name=>[name,db.prepare(`SELECT * FROM "${name.replaceAll('"','""')}" ORDER BY rowid`).all()]));
+ const before=snapshot();
+ for(const edit of [(e:BriefEvidenceV1)=>{e.frame!.rawBytes=10;e.frame!.fileUtf16Length=10;e.frame!.bodyBase.utf16Length=10;},(e:BriefEvidenceV1)=>{e.sourceContentRevision=sha256Hex('not empty');}]){
+  const bad=briefEmptyFixture(11,8);edit(bad.evidence);refreshBrief(bad);assert.throws(()=>store.applyProducer(bad));assert.deepEqual(snapshot(),before);
+ }
+ assert.equal(store.applyProducer(briefEmptyFixture(11,8)).response.state.evidence?.sourceState,'empty');
+ const bom=briefEmptyFixture(12,11,true);assert.equal(store.applyProducer(bom).response.state.evidence?.sourceState,'empty');
+ const row=db.prepare('SELECT source_resource_id FROM brief_evidence_streams').get() as {source_resource_id:number};assert.equal(readBriefSnapshot(db,'thread-brief',row.source_resource_id)?.evidence.sourceContentRevision,sha256Hex('\uFEFF'));
+ // Retained JSON/digest agree with each other but contradict literal EMPTY.
+ const corrupt=structuredClone(bom.evidence);corrupt.frame!.rawBytes=10;corrupt.frame!.bomBytes=0;corrupt.frame!.fileUtf16Length=10;corrupt.frame!.bodyBase.utf16Length=10;
+ db.prepare('UPDATE brief_evidence_streams SET frame_json=?,evidence_digest=?').run(JSON.stringify(corrupt.frame),briefEvidenceDigest(corrupt));
+ assert.throws(()=>readBriefSnapshot(db,'thread-brief',row.source_resource_id));
+});
