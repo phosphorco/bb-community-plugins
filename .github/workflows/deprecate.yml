@@ -1,0 +1,68 @@
+name: Deprecate exact npm package version
+
+on:
+  workflow_dispatch:
+    inputs:
+      package:
+        description: Reviewed repository package
+        required: true
+        type: choice
+        options:
+          - '@phosphorco/bb-agent-connection'
+          - '@phosphorco/bb-context-recognition'
+          - '@phosphorco/bb-cross-references'
+          - '@phosphorco/bb-identity'
+          - '@phosphorco/bb-markdown'
+          - '@phosphorco/bb-people-accounts'
+          - '@phosphorco/bb-provider-settings'
+          - '@phosphorco/bb-thread-context'
+          - '@phosphorco/bb-thread-filters'
+          - '@phosphorco/bb-thread-membership'
+          - '@phosphorco/bb-thread-metrics'
+          - '@phosphorco/bb-turn-results'
+          - '@phosphorco/bb-usage-algebra'
+      version:
+        description: Exact version only; ranges and tags are refused
+        required: true
+        type: string
+      message:
+        description: Reviewed nonempty deprecation message
+        required: true
+        type: string
+
+permissions: {}
+
+concurrency:
+  group: npm-deprecate-${{ inputs.package }}-${{ inputs.version }}
+  cancel-in-progress: false
+
+jobs:
+  deprecate:
+    if: github.repository == 'phosphorco/bb-community-plugins' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+        with:
+          node-version: '24'
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+      - name: Validate exact selection and deprecate
+        shell: bash
+        env:
+          PACKAGE: ${{ inputs.package }}
+          VERSION: ${{ inputs.version }}
+          MESSAGE: ${{ inputs.message }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+          case "$PACKAGE" in
+            @phosphorco/bb-agent-connection|@phosphorco/bb-context-recognition|@phosphorco/bb-cross-references|@phosphorco/bb-identity|@phosphorco/bb-markdown|@phosphorco/bb-people-accounts|@phosphorco/bb-provider-settings|@phosphorco/bb-thread-context|@phosphorco/bb-thread-filters|@phosphorco/bb-thread-membership|@phosphorco/bb-thread-metrics|@phosphorco/bb-turn-results|@phosphorco/bb-usage-algebra) ;;
+            *) echo 'Package is not an approved repository package' >&2; exit 1 ;;
+          esac
+          node --input-type=module <<'JS'
+          const { VERSION: version, MESSAGE: message } = process.env;
+          const exact = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*))*)?$/;
+          if (!version || version.length > 128 || !exact.test(version)) throw new Error('Exact SemVer required');
+          if (!message || !message.trim() || message.length > 512 || /[\u0000-\u001f\u007f\u2028\u2029]/.test(message)) throw new Error('Nonempty single-line message required');
+          JS
+          npm deprecate --registry=https://registry.npmjs.org/ --ignore-scripts -- "$PACKAGE@$VERSION" "$MESSAGE"
