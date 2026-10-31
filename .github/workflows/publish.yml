@@ -18,6 +18,8 @@ on:
           - bb-ui-reference
           - plugin-guide-for-nerds
           - attach-text-snippets
+          - turn-results
+          - turn-result-images
           - bb-identity
           - bb-provider-settings
           - bb-context-recognition
@@ -70,6 +72,8 @@ on:
       - "bb-ui-reference/v*"
       - "plugin-guide-for-nerds/v*"
       - "attach-text-snippets/v*"
+      - "turn-results/v*"
+      - "turn-result-images/v*"
       - "bb-identity/v*"
       - "bb-provider-settings/v*"
       - "bb-context-recognition/v*"
@@ -162,6 +166,8 @@ jobs:
             bb-ui-reference) workspace="@phosphorco/bb-plugin-bb-ui-reference" ;;
             plugin-guide-for-nerds) workspace="@phosphorco/bb-plugin-plugin-guide-for-nerds" ;;
             attach-text-snippets) workspace="@phosphorco/bb-plugin-attach-text-snippets" ;;
+            turn-results) workspace="@phosphorco/bb-plugin-turn-results" ;;
+            turn-result-images) workspace="@phosphorco/bb-plugin-turn-result-images" ;;
             bb-identity) workspace="@phosphorco/bb-identity" ;;
             bb-provider-settings) workspace="@phosphorco/bb-provider-settings" ;;
             bb-context-recognition) workspace="@phosphorco/bb-context-recognition" ;;
@@ -259,6 +265,10 @@ jobs:
           fi
           echo "pinned_tgz=$(printf '%s' "$workspace" | sed 's#^@##; s#/#-#')-$package_version.tgz" >> "$GITHUB_OUTPUT"
 
+      - name: Check Turn Results artifact gates offline
+        if: ${{ steps.release.outputs.plugin == 'turn-results' || steps.release.outputs.plugin == 'turn-result-images' }}
+        run: node --test .github/scripts/check-turn-results-artifacts.test.mjs
+
       - name: Install locked dependencies
         if: ${{ steps.release.outputs.pinned_next != 'true' || inputs.dry_run }}
         run: npm ci
@@ -275,6 +285,30 @@ jobs:
             npm run build --workspace packages/bb-identity --workspace packages/bb-provider-settings --workspace packages/bb-context-recognition --workspace packages/bb-turn-results --workspace packages/bb-cross-references --workspace packages/bb-agent-connection --workspace packages/bb-people-accounts --workspace packages/bb-usage-algebra --workspace packages/bb-thread-metrics --workspace packages/bb-thread-membership --workspace packages/bb-thread-context --workspace packages/bb-thread-filters
           fi
 
+      - name: Check out the selected Turn Results compiler
+        if: ${{ steps.release.outputs.plugin == 'turn-results' || steps.release.outputs.plugin == 'turn-result-images' }}
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          repository: phosphorco/bb-fork
+          ref: 3976be61002511a61ca07f0969ff5838772ed5c0
+          submodules: true
+          path: .bb-toolchain/fork
+
+      - name: Prepare the selected Turn Results compiler
+        if: ${{ steps.release.outputs.plugin == 'turn-results' || steps.release.outputs.plugin == 'turn-result-images' }}
+        run: bash .github/scripts/prepare-turn-results-toolchain.sh
+
+      - name: Install published Turn Results development inputs
+        if: ${{ steps.release.outputs.plugin == 'turn-results' || steps.release.outputs.plugin == 'turn-result-images' }}
+        shell: bash
+        run: |
+          sdk="$GITHUB_WORKSPACE/../sdk-artifacts/get-bb-plugin-sdk-0.6.52+phosphor.975e38f02f1a.sdk.12eb78c20820.tgz"
+          for plugin in turn-results turn-result-images; do
+            npm install --prefix "plugins/$plugin" --workspaces=false --include=dev --ignore-scripts --package-lock=false --no-save --no-audit --no-fund --registry=https://registry.npmjs.org "$sdk"
+          done
+          npm rebuild --prefix plugins/turn-result-images/node_modules/better-sqlite3 --workspaces=false
+          npm rebuild --prefix plugins/turn-result-images/node_modules/bun --workspaces=false
+
       - name: Test
         if: ${{ steps.release.outputs.pinned_next != 'true' || inputs.dry_run }}
         run: npm run test --workspace "${{ steps.release.outputs.workspace }}"
@@ -286,6 +320,10 @@ jobs:
       - name: Build BB artifacts
         if: ${{ steps.release.outputs.pinned_next != 'true' }}
         run: npm run build --workspace "${{ steps.release.outputs.workspace }}"
+
+      - name: Verify selected Turn Results artifacts
+        if: ${{ steps.release.outputs.plugin == 'turn-results' || steps.release.outputs.plugin == 'turn-result-images' }}
+        run: node .github/scripts/check-turn-results-artifacts.mjs "${{ steps.release.outputs.path }}" > turn-results-artifacts.json
 
       - name: Inspect package contents
         if: ${{ steps.release.outputs.pinned_next != 'true' }}
@@ -367,6 +405,16 @@ jobs:
           name: release-receipt-${{ steps.release.outputs.plugin }}
           path: release-receipt.json
           if-no-files-found: error
+
+      - name: Retain selected Turn Results compiler and asset receipts
+        if: ${{ always() && (steps.release.outputs.plugin == 'turn-results' || steps.release.outputs.plugin == 'turn-result-images') }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: turn-results-compiler-${{ steps.release.outputs.plugin }}
+          path: |
+            turn-results-toolchain.json
+            turn-results-artifacts.json
+          if-no-files-found: warn
 
       - name: Publish context recognition and cross references through trusted publishers
         if: ${{ !inputs.dry_run && (steps.release.outputs.plugin == 'bb-context-recognition' || steps.release.outputs.plugin == 'bb-cross-references') && steps.release.outputs.pinned_next != 'true' }}

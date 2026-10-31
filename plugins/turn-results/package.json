@@ -1,0 +1,77 @@
+{
+  "name": "@phosphorco/bb-plugin-turn-results",
+  "version": "0.1.0",
+  "type": "module",
+  "license": "MIT",
+  "description": "Inline historical turn results supplied by independently installed BB plugins.",
+  "author": "Phosphor",
+  "homepage": "https://github.com/phosphorco/bb-community-plugins/tree/main/plugins/turn-results#readme",
+  "bugs": {
+    "url": "https://github.com/phosphorco/bb-community-plugins/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/phosphorco/bb-community-plugins.git",
+    "directory": "plugins/turn-results"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org"
+  },
+  "keywords": [
+    "bb",
+    "bb-plugin",
+    "turn-results",
+    "gallery",
+    "results"
+  ],
+  "engines": {
+    "bb": ">=0.46.1 <1.0.0",
+    "bbPluginSdk": ">=0.6.52"
+  },
+  "bb": {
+    "name": "Turn results",
+    "description": "View generated images and confirmed results beside their original conversation turn.",
+    "branding": {
+      "icon": "Images"
+    },
+    "app": "./app.tsx",
+    "skills": [],
+    "server": "./server.ts"
+  },
+  "files": [
+    "dist/",
+    "app.tsx",
+    "app.css",
+    "probe/anchor.ts",
+    "README.md",
+    "LICENSE",
+    "server.ts",
+    "gallery/"
+  ],
+  "dependencies": {
+    "@phosphorco/bb-turn-results": "0.1.0",
+    "@phosphorco/bb-context-recognition": "0.5.1",
+    "@tanstack/store": "0.11.1",
+    "@tanstack/react-store": "0.11.1",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@get-bb/plugin-sdk": "0.6.52+phosphor.975e38f02f1a.sdk.12eb78c20820",
+    "@types/node": "^22",
+    "@types/react": "19.2.2",
+    "@types/react-dom": "19.2.2",
+    "react": "19.2.1",
+    "react-dom": "19.2.1",
+    "jsdom": "^27.0.0",
+    "typescript": "^5.9.3",
+    "@types/jsdom": "^27.0.0",
+    "@types/better-sqlite3": "^7.6.13",
+    "@testing-library/react": "16.3.3"
+  },
+  "scripts": {
+    "build": "bb plugin build .",
+    "typecheck": "tsc --noEmit",
+    "test": "node --test --experimental-strip-types test/*.test.ts"
+  }
+}

@@ -141,7 +141,7 @@ class Selection(unittest.TestCase):
         for plugin in ['bb-markdown', '']:
             self.assertNotEqual(select(REQUESTED_PLUGIN=plugin, GITHUB_EVENT_NAME='push', GITHUB_REF_NAME='bb-markdown/v0.1.0', DRY_RUN='false')[0].returncode, 0)
         self.assertFalse(chosen('Publish public package', pinned='false'))
-        publish_steps = ['Publish public package', 'Publish context recognition through trusted publisher', 'Publish only the reviewed pinned-next tgz', 'Bootstrap membership from the reviewed tgz', 'Bootstrap Markdown from the exact reviewed tgz']
+        publish_steps = ['Publish public package', 'Publish context recognition and cross references through trusted publishers', 'Publish only the reviewed pinned-next tgz', 'Bootstrap membership from the reviewed tgz', 'Bootstrap Markdown from the exact reviewed tgz']
         for name in publish_steps:self.assertFalse(chosen(name, dry=True), name)
         self.assertEqual([name for name in publish_steps if chosen(name)], ['Bootstrap Markdown from the exact reviewed tgz'])
 

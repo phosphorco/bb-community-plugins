@@ -14,6 +14,8 @@
     { "name": "bb-ui-reference", "source": "./plugins/bb-ui-reference" },
     { "name": "attach-text-snippets", "source": "./plugins/attach-text-snippets" },
     { "name": "figma", "source": "./plugins/figma" },
-    { "name": "sentry", "source": "./plugins/sentry" }
+    { "name": "sentry", "source": "./plugins/sentry" },
+    { "name": "turn-results", "source": "./plugins/turn-results" },
+    { "name": "turn-result-images", "source": "./plugins/turn-result-images" }
   ]
 }

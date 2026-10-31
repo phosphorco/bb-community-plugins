@@ -39,6 +39,7 @@ jobs:
           python3 .github/scripts/test-pinned-release.py
           python3 .github/scripts/test-context-recognition-publish.py
           python3 .github/scripts/test-markdown-release.py
+          node --test .github/scripts/check-turn-results-artifacts.test.mjs
 
       - name: Install locked dependencies
         run: npm ci
@@ -57,6 +58,27 @@ jobs:
 
           npm run build --workspace @phosphorco/bb-thread-filters
 
+      - name: Check out the selected Turn Results compiler
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          repository: phosphorco/bb-fork
+          ref: 3976be61002511a61ca07f0969ff5838772ed5c0
+          submodules: true
+          path: .bb-toolchain/fork
+
+      - name: Prepare the selected Turn Results compiler
+        run: bash .github/scripts/prepare-turn-results-toolchain.sh
+
+      - name: Install published Turn Results development inputs
+        shell: bash
+        run: |
+          sdk="$GITHUB_WORKSPACE/../sdk-artifacts/get-bb-plugin-sdk-0.6.52+phosphor.975e38f02f1a.sdk.12eb78c20820.tgz"
+          for plugin in turn-results turn-result-images; do
+            npm install --prefix "plugins/$plugin" --workspaces=false --include=dev --ignore-scripts --package-lock=false --no-save --no-audit --no-fund --registry=https://registry.npmjs.org "$sdk"
+          done
+          npm rebuild --prefix plugins/turn-result-images/node_modules/better-sqlite3 --workspaces=false
+          npm rebuild --prefix plugins/turn-result-images/node_modules/bun --workspaces=false
+
       - name: Test
         run: npm run test
 
@@ -65,6 +87,11 @@ jobs:
 
       - name: Build BB artifacts
         run: npm run build
+
+      - name: Verify selected Turn Results artifacts
+        run: |
+          node .github/scripts/check-turn-results-artifacts.mjs plugins/turn-results
+          node .github/scripts/check-turn-results-artifacts.mjs plugins/turn-result-images
 
       - name: Inspect Agentation Mentions package
         run: npm pack --dry-run --ignore-scripts --workspace @phosphorco/bb-plugin-agentation-mentions
@@ -119,3 +146,9 @@ jobs:
 
       - name: Inspect Thread Context package
         run: npm pack --dry-run --ignore-scripts --workspace @phosphorco/bb-thread-context
+
+      - name: Inspect Turn Results plugin package
+        run: npm pack --dry-run --ignore-scripts --workspace @phosphorco/bb-plugin-turn-results
+
+      - name: Inspect Turn Result Images plugin package
+        run: npm pack --dry-run --ignore-scripts --workspace @phosphorco/bb-plugin-turn-result-images

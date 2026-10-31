@@ -1,0 +1,25 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "jsx": "react-jsx",
+    "lib": [
+      "ES2023",
+      "DOM",
+      "DOM.Iterable"
+    ],
+    "types": [
+      "node",
+      "react",
+      "react-dom"
+    ]
+  },
+  "include": [
+    "app.tsx",
+    "probe/**/*.ts",
+    "probe/**/*.tsx",
+    "test/**/*.ts",
+    "server.ts",
+    "gallery/**/*.ts",
+    "gallery/**/*.tsx"
+  ]
+}
