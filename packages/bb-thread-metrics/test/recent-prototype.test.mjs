@@ -106,3 +106,78 @@ test('explicit unpriced coverage retains missing-price even when supported total
   const report=await runSupplierConformance({pluginId:'unpriced-floor-kit',register:bb=>registerThreadMetricsOwner(bb,port),readCases:[{scope:'own',threadIds:['thr_one']}],recentCases:[{}]});expect(report.passed).toBe(accepted);
  }
 });
+
+
+test('additive per-ID unavailable rows are bounded status evidence and never a financial timestamp',()=>{
+ const f=fixture();f.coverage='partial';f.coverageReasons=['population-incomplete'];f.materializationPending=1;
+ const reason={code:'backlog',detail:'This thread is waiting for an admitted projection.'};
+ f.availability={rows:[{threadId:'thr_missing',asOf:null,projectionAsOf:null,observedAt:now,own:reason,family:reason}],omitted:{count:0,exact:true}};
+ const decoded=validateRecentSnapshot({},f);expect(decoded.availability.rows[0].asOf).toBe(null);expect(decoded.rows[0].asOf).toBe(now);expect(decoded.availability.rows[0].family.code).toBe('backlog');
+ const fakeMoney=structuredClone(f);fakeMoney.availability.rows[0].asOf=now;expect(()=>validateRecentSnapshot({},fakeMoney)).toThrow();
+ const falseProjection=structuredClone(f);falseProjection.availability.rows[0].projectionAsOf=now;expect(()=>validateRecentSnapshot({},falseProjection)).toThrow('projection reference');
+ const duplicate=structuredClone(f);duplicate.availability.rows.push(duplicate.availability.rows[0]);expect(()=>validateRecentSnapshot({},duplicate)).toThrow('Duplicate unavailable');
+ const noReason=structuredClone(f);noReason.availability.rows[0].own=noReason.availability.rows[0].family=null;expect(()=>validateRecentSnapshot({},noReason)).toThrow();
+ const future=structuredClone(f);future.availability.rows[0].observedAt=now+1;expect(()=>validateRecentSnapshot({},future)).toThrow();
+ const known=structuredClone(f);known.availability.rows[0].threadId=known.rows[0].threadId;known.availability.rows[0].projectionAsOf=now;expect(validateRecentSnapshot({},known).availability.rows[0].projectionAsOf).toBe(now);
+ const combined=structuredClone(f);combined.availability.rows=Array.from({length:1000},(_,i)=>({...combined.availability.rows[0],threadId:'missing'+String(i).padStart(4,'0')}));expect(()=>validateRecentSnapshot({},combined)).toThrow('aggregate row');
+ const unchanged={version:1,revision:'instance:1',unchanged:true,availability:f.availability};expect(()=>validateRecentSnapshot({ifRevision:'instance:1'},unchanged)).toThrow('full content');
+});
+
+const availabilityFixture=()=>{
+ const f=fixture();f.coverage='partial';f.coverageReasons=['population-incomplete'];
+ f.availability={rows:[{threadId:'thr_missing',asOf:null,projectionAsOf:null,observedAt:now,own:{code:'future-reason',detail:'Supplier explanation'},family:null}],omitted:{count:0,exact:true}};
+ return f;
+};
+
+test('availability keeps unknown codes and independent scope reasons with stable equal-time ordering',()=>{
+ const f=availabilityFixture(),first=f.availability.rows[0];first.threadId='thr_a';
+ f.availability.rows.push({...structuredClone(first),threadId:'thr_b',own:null,family:{code:'future-family',detail:'Family status only'}});
+ const decoded=validateRecentSnapshot({},f);
+ expect(decoded.availability.rows[0].own.code).toBe('future-reason');
+ expect(decoded.availability.rows[0].family).toBeNull();
+ expect(decoded.availability.rows[1].own).toBeNull();
+ expect(decoded.availability.rows[1].family.detail).toBe('Family status only');
+ const reversed=structuredClone(f);reversed.availability.rows.reverse();
+ expect(()=>validateRecentSnapshot({},reversed)).toThrow('newest first');
+});
+
+test('availability raw additive bytes share exact row and response bounds before stripping',()=>{
+ const f=availabilityFixture(),r=f.availability.rows[0];r.future='';
+ r.future='x'.repeat(RECENT_LIMITS.rowBytes-Buffer.byteLength(JSON.stringify(r)));
+ expect(Buffer.byteLength(JSON.stringify(r))).toBe(RECENT_LIMITS.rowBytes);
+ expect(validateRecentSnapshot({},f).availability.rows[0].future).toBeUndefined();
+ r.future+='x';expect(()=>validateRecentSnapshot({},f)).toThrow('row byte');
+ const whole=availabilityFixture();whole.future='';
+ whole.future='x'.repeat(RECENT_LIMITS.bytes-Buffer.byteLength(JSON.stringify(whole)));
+ expect(Buffer.byteLength(JSON.stringify(whole))).toBe(RECENT_LIMITS.bytes);
+ expect(validateRecentSnapshot({},whole).future).toBeUndefined();
+ whole.future+='x';expect(()=>validateRecentSnapshot({},whole)).toThrow('byte');
+});
+
+test('new status preserves a stale completed projection through emitted owner client and conformance',async()=>{
+ const f=availabilityFixture(),r=f.rows[0];r.asOf=r.ownLastFoldAt=r.familyLastFoldAt=now-1000;
+ f.availability.rows[0]={...f.availability.rows[0],threadId:r.threadId,projectionAsOf:r.asOf};
+ const {createFakePluginHost}=await import('@get-bb/plugin-sdk/testing');
+ const {registerThreadMetricsOwner,createThreadMetricsClient}=await import('../dist/bb.js');
+ const {runSupplierConformance}=await import('../dist/testing.js');
+ const port={capabilities:{summary:true,series:false,detail:false,recentSnapshotV1:true},read:async()=>({version:1,rows:[]}),recentSnapshot:async()=>f};
+ const host=createFakePluginHost({pluginId:'availability-owner'});registerThreadMetricsOwner(host.bb,port);
+ try{
+  const client=createThreadMetricsClient({plugins:{list:async()=>({plugins:[]}),callRpc:a=>host.harness.behavior.callRpc(a.method,a.input)}},'availability-owner');
+  const decoded=await client.recentSnapshot();
+  expect(decoded.rows[0].asOf).toBe(now-1000);expect(decoded.rows[0].family.windows.lifetime.amount).toBe(1);
+  expect(decoded.availability.rows[0].projectionAsOf).toBe(now-1000);
+  expect(decoded.availability.rows[0].observedAt).toBe(now);expect(decoded.availability.rows[0].asOf).toBeNull();
+ }finally{await host.harness.lifecycle.dispose();}
+ const report=await runSupplierConformance({pluginId:'availability-conformance',register:bb=>registerThreadMetricsOwner(bb,port),readCases:[{scope:'family',threadIds:['thr_one']}],recentCases:[{}]});
+ expect(report.passed).toBe(true);
+});
+
+test('empty exact availability can be complete but uncertain status omissions cannot',()=>{
+ const f=fixture();f.availability={rows:[],omitted:{count:0,exact:true}};
+ expect(validateRecentSnapshot({},f).coverage).toBe('complete');
+ f.availability.omitted.exact=false;
+ expect(()=>validateRecentSnapshot({},f)).toThrow('partial coverage');
+ f.coverage='partial';f.coverageReasons=['population-incomplete'];
+ expect(validateRecentSnapshot({},f).availability.omitted.exact).toBe(false);
+});

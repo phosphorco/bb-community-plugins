@@ -167,11 +167,22 @@ const scopedPopulations=z.object({dollars:populations,scores:populations}).strip
  * an opaque new instance alone never authorizes resetting a retained watermark. */
 export const recentPublicationIdentitySchema=z.object({instance:z.string().min(1).max(128),sequence:z.number().int().positive().max(Number.MAX_SAFE_INTEGER)}).strip();
 export type RecentPublicationIdentity=z.infer<typeof recentPublicationIdentitySchema>;
+/** Supplier-authored per-ID absence evidence. This is NOT a dollar projection:
+ * its asOf is always null. projectionAsOf may reference a separately retained
+ * completed dollar row; observedAt dates this reason only. Unknown future codes
+ * remain displayable via detail without client-side guessing. */
+export const recentUnavailableReasonSchema=z.object({code:reason,detail:z.string().min(1).max(256)}).strip();
+export const recentUnavailableRowSchema=z.object({threadId:id,asOf:z.null(),projectionAsOf:time.nullable(),observedAt:time,own:recentUnavailableReasonSchema.nullable(),family:recentUnavailableReasonSchema.nullable()}).strip().superRefine((row,context)=>{if(row.own===null&&row.family===null)context.addIssue({code:'custom',message:'Unavailable row requires a scoped reason'});});
+export const recentAvailabilitySchema=z.object({rows:z.array(recentUnavailableRowSchema).max(RECENT_LIMITS.rows),omitted:z.object({count,exact:z.boolean()}).strip()}).strip();
+export type RecentUnavailableReason=z.infer<typeof recentUnavailableReasonSchema>;
+export type RecentUnavailableRow=z.infer<typeof recentUnavailableRowSchema>;
+export type RecentAvailability=z.infer<typeof recentAvailabilitySchema>;
 export const recentSnapshotFullSchema=z.object({
  version:z.literal(1),revision,publication:recentPublicationIdentitySchema.optional(),unchanged:z.literal(false),currency:z.literal('USD'),estimated:z.literal(true),cutoffLastFoldAt:time.nullable(),asOf:time,rankAsOf:time,recentWindowMs:z.literal(RECENT_LIMITS.windowMs),
  config:z.object({revision,value:storedScoringConfigSchema}).strip(),
  heat:rootFamilyHeatContextV1Schema.optional(),
  heatInputs:recentHeatInputsSchema.optional(),
+ availability:recentAvailabilitySchema.optional(),
  coverage,coverageReasons:reasons,materializationPending:count,omittedRows:z.object({count,exact:z.boolean()}).strip(),
  population:z.object({own:scopedPopulations,family:scopedPopulations}).strip(),
  rows:z.array(recentRowSchema).max(RECENT_LIMITS.rows),
@@ -185,8 +196,8 @@ export type RecentScope=z.infer<typeof recentScopeSchema>;
 export function validateRecentSnapshot(input:RecentSnapshotInput,value:unknown):RecentSnapshotResult{
  recentSnapshotInputSchema.parse(input);const bytes=(v:unknown)=>new TextEncoder().encode(JSON.stringify(v)).byteLength;
  if(bytes(value)>RECENT_LIMITS.bytes)throw new Error('Snapshot byte limit');
- const raw=value as {rows?:unknown[];heatInputs?:{rows?:unknown[]}}|null;let entries=0;
- for(const rows of [raw?.rows,raw?.heatInputs?.rows])if(rows!==undefined){if(!Array.isArray(rows)||(entries+=rows.length)>RECENT_LIMITS.rows)throw new Error('Snapshot aggregate row limit');for(const row of rows)if(bytes(row)>RECENT_LIMITS.rowBytes)throw new Error('Snapshot row byte limit');}
+ const raw=value as {rows?:unknown[];heatInputs?:{rows?:unknown[]};availability?:{rows?:unknown[]}}|null;let entries=0;
+ for(const rows of [raw?.rows,raw?.heatInputs?.rows,raw?.availability?.rows])if(rows!==undefined){if(!Array.isArray(rows)||(entries+=rows.length)>RECENT_LIMITS.rows)throw new Error('Snapshot aggregate row limit');for(const row of rows)if(bytes(row)>RECENT_LIMITS.rowBytes)throw new Error('Snapshot row byte limit');}
  if(value&&typeof value==='object'&&(value as {unchanged?:unknown}).unchanged===true){
   for(const field of Object.keys(recentSnapshotFullSchema.shape))if(!['version','revision','unchanged'].includes(field)&&Object.hasOwn(value,field))throw new Error('Unchanged snapshot carries recognized full content');
  }
@@ -200,6 +211,15 @@ export function validateRecentSnapshot(input:RecentSnapshotInput,value:unknown):
   const pop=out.heat.population[axis][w],supported=out.rows.filter(row=>row.heat&&rootFamilyEligibilityV1(row.heat.topology)==='eligible-root'&&row.asOf<=out.heat!.rankAsOf&&(row.family[field][w].amount??0)>0).length;
   if(pop.coverage==='complete'&&pop.count<supported)throw new Error('Root population below supported displayed members');
  }}}
+ if(out.availability){
+  const actual=new Map(out.rows.map(row=>[row.threadId,row]));let previous=Infinity,previousId='';const seen=new Set<string>();
+  for(const row of out.availability.rows){
+   if(seen.has(row.threadId))throw new Error('Duplicate unavailable thread');seen.add(row.threadId);
+   if(row.observedAt>out.asOf||row.observedAt>previous||row.observedAt===previous&&row.threadId<previousId)throw new Error('Unavailable rows must be newest first');previous=row.observedAt;previousId=row.threadId;
+   if(row.projectionAsOf!==(actual.get(row.threadId)?.asOf??null))throw new Error('Unavailable projection reference mismatch');
+  }
+  if((out.availability.rows.length||out.availability.omitted.count||!out.availability.omitted.exact)&&out.coverage==='complete')throw new Error('Unavailable omissions require partial coverage');
+ }
  if(out.heatInputs)validateHeatInputs(out);
  if(out.omittedRows.count&&out.rows.length&&out.cutoffLastFoldAt!==previousActivity)throw new Error('Missing eviction cutoff');return out;
 }

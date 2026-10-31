@@ -87,3 +87,9 @@ createRecentSnapshotSession(sessionClient,{clock:sessionClock});
 createRecentSnapshotSession({pluginId:'missing-method'});
 // @ts-expect-error publication observations are readonly.
 if(session.current)session.current.ownerGeneration=99;
+
+import type { RecentAvailability, RecentUnavailableReason, RecentSnapshot } from "@phosphorco/bb-thread-metrics";
+const scopedReason:RecentUnavailableReason={code:"future-code",detail:"Supplier-authored bounded explanation"};
+const availability:RecentAvailability={rows:[{threadId:"thr_missing",asOf:null,projectionAsOf:null,observedAt:0,own:scopedReason,family:null}],omitted:{count:0,exact:true}};
+const publicAvailability:NonNullable<RecentSnapshot["availability"]>=availability;
+void publicAvailability;

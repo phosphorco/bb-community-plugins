@@ -528,3 +528,32 @@ Save config bytes/version, which the retained Heat adapter must still check.
 These are client source conformance guarantees, not released pins, native
 resource adoption, host latency/freshness or live bytes/time acceptance. No
 existing consumer is switched merely by exporting this helper.
+
+
+## Additive availability (package0.2.2)
+
+`availability` is an optional full-snapshot field. Its `rows` are per-thread,
+per-scope supplier-authored reasons, not dollar projections. Every reason row
+has `asOf: null`; `observedAt` dates status evidence and NEVER makes completed
+dollars fresh. `projectionAsOf` refers only to `snapshot.rows`: it must equal that ID's actual
+completed dollar row time there, otherwise null. Captured-only heat-input rows
+and supplier-private rows omitted from the response cannot supply this reference. Both scoped reasons cannot be null.
+Recommended codes: `backlog`, `root-eligibility`, `source-gap`, `cap`,
+`not-observed`. Root eligibility here concerns unavailable scope evidence, not
+suppression of child heat. A child is not automatically cost-ineligible.
+Unknown future reason codes display the bounded plain-language `detail`.
+Clients never infer per-ID capacity/source gaps from a global pending count.
+Only supplier-proved per-ID source gaps qualify for source-gap exclusions.
+
+Display rows + captured heat-input rows + availability rows share ONE1000-entry
+and4MiB limit; each row retains the8KiB bound. Availability order is observedAt
+descending then threadId ascending, unique IDs. Omission count/exactness is
+explicit and forces partial coverage. Existing0.2.1 consumers strip the optional
+field. Adoption requires a new reviewed package release and exact registry pins;
+the package source/version alone does not establish registry publication or production adoption.
+
+A reason is status evidence, not an assertion that separately supplied dollars disappeared.
+Consumers preserve the completed projection and its actual timestamp, display unknown
+codes as plain text, and never turn a missing reason into zero, a source gap or
+an inferred per-ID backlog. Code meaning, priority and evidence freshness remain
+supplier/adopter conformance obligations; a codec cannot establish the claim from a code string.

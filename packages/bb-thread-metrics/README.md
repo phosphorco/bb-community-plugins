@@ -1,6 +1,6 @@
 # @phosphorco/bb-thread-metrics
 
-Version0.2.0 candidate (not released): adds a bounded recent snapshot and scoring-configv2. Existing wirev1 summaries, family closure, heat ranks and optional
+Package0.2.2 defines bounded per-ID availability status to the existing recent snapshot and scoring-configv2. Existing wirev1 summaries, family closure, heat ranks and optional
 on-demand breakdowns for independent BB plugins. See [CONTRACT.md](CONTRACT.md)
 for ownership, wire semantics and proof limits.
 
@@ -31,7 +31,7 @@ factory and representative read/detail cases. It returns explicit source
 conformance checks, never live host acceptance.
 
 
-## Recent snapshot (0.2 candidate)
+## Recent snapshot (wirev1, package0.2)
 
 Owners may advertise `capabilities.recentSnapshotV1:true` with a matching
 `recentSnapshot(input)` handler. `createThreadMetricsClient(...).recentSnapshot({ifRevision?})`
@@ -56,3 +56,8 @@ one held snapshot/mount+30s conditional cadence; the package schedules nothing.
 Current source tests are package/adapter proof only. Registry release, ledger
 materialization, live byte/time measurement, all consumer adoptions and native
 host/freshness proof remain separate gates.
+
+
+## Per-ID availability (package0.2.2)
+
+The optional full-snapshot `availability` field carries supplier-authored own/family reasons. Its financial `asOf` is always null; `projectionAsOf` refers only to the same ID in `snapshot.rows`, and `observedAt` dates status evidence. Preserve any separately supplied dollars and their actual timestamp. Missing reasons do not imply zero, a source gap or a per-ID backlog. Unknown codes retain their bounded plain-language detail. This source version is not a publication or adopter-runtime claim.
