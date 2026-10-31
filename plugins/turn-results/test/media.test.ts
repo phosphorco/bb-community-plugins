@@ -5,8 +5,8 @@ import { createGalleryMedia } from '../gallery/media.ts';
 const data = new Uint8Array([137, 80, 78, 71]);
 const digest = [...new Uint8Array(await crypto.subtle.digest('SHA-256', data))].map(v => v.toString(16).padStart(2, '0')).join('');
 const tick = () => new Promise<void>(resolve => setTimeout(resolve, 10));
-async function settled(store: { state: { state: string } }) {
-  for (let i = 0; i < 100 && ['idle', 'loading'].includes(store.state.state); i++) await tick();
+async function settled(store: { state: { state: string } }, expected?: string) {
+  for (let i = 0; i < 100 && (expected ? store.state.state !== expected : ['idle', 'loading'].includes(store.state.state)); i++) await tick();
 }
 const lease = { url: '/api/v1/file-previews/test/image.png', expiresAtMs: Date.now() + 120000, targetFingerprint: 'fixed', leaseGeneration: 'one' };
 function harness() {
@@ -28,7 +28,7 @@ test('loaded image survives all row retain/dispose cycles and does not reacquire
 });
 test('same result shares bytes across panes; immutable binding cannot be replaced', async () => {
   const h = harness(), a = h.owner.retain(h.request), b = h.owner.retain(h.request);
-  assert.equal(a.store, b.store); await tick(); a.dispose(); assert.equal(b.store.state.state, 'ready');
+  assert.equal(a.store, b.store); await settled(a.store); a.dispose(); assert.equal(b.store.state.state, 'ready');
   assert.throws(() => h.owner.retain({ ...h.request, fingerprint: 'other' }), /binding/);
   b.dispose(); h.owner.dispose();
 });
@@ -43,16 +43,16 @@ test('changed serving bytes fail closed then explicit retry clears same failure'
   let correct = false;
   const owner = createGalleryMedia({ async fetch() { return new Response(correct ? data : new Uint8Array([0]), { headers: { 'content-type': 'image/png' } }); }, createUrl: () => 'blob:verified', revokeUrl() {} });
   const a = owner.retain({ key: 'image', fingerprint: 'fixed', sha256: digest, async acquire() { return lease; } });
-  await tick(); assert.equal(a.store.state.state, 'error'); assert.equal(a.store.state.url, null);
-  correct = true; a.retry(); await tick(); assert.equal(a.store.state.state, 'ready'); assert.equal(a.store.state.error, null);
+  await settled(a.store); assert.equal(a.store.state.state, 'error'); assert.equal(a.store.state.url, null);
+  correct = true; a.retry(); await settled(a.store, 'ready'); assert.equal(a.store.state.state, 'ready'); assert.equal(a.store.state.error, null);
   a.dispose(); owner.dispose();
 });
 test('hidden owner admits no requests and resumes once; streamed oversized image stops', async () => {
   const h = harness(); h.owner.visible(false); const a = h.owner.retain(h.request); await tick(); assert.equal(h.counts().acquires, 0);
-  h.owner.visible(true); await tick(); assert.equal(a.store.state.state, 'ready'); a.dispose(); h.owner.dispose();
+  h.owner.visible(true); await settled(a.store); assert.equal(a.store.state.state, 'ready'); a.dispose(); h.owner.dispose();
   let cancelled = false;
   const owner = createGalleryMedia({ async fetch() { return new Response(new ReadableStream({ start(c) { c.enqueue(new Uint8Array(8388609)); }, cancel() { cancelled = true; } }), { headers: { 'content-type': 'image/png' } }); }, createUrl: () => { throw Error('must not publish'); }, revokeUrl() {} });
-  const b = owner.retain(h.request); await tick(); assert.equal(b.store.state.state, 'error'); assert.equal(cancelled, true); assert.equal(owner.stats().bytes, 0); b.dispose(); owner.dispose();
+  const b = owner.retain(h.request); await settled(b.store); assert.equal(b.store.state.state, 'error'); assert.equal(cancelled, true); assert.equal(owner.stats().bytes, 0); b.dispose(); owner.dispose();
 });
 test('rejected status/MIME/length cancels body and retires the transport signal', async () => {
   for (const [status, mime, length] of [[500, 'image/png', '4'], [200, 'text/html', '4'], [200, 'image/png', '8388609']] as const) {
