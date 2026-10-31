@@ -38,7 +38,7 @@ test('registry stale-disposer token, higher generation, same-generation replacem
   abort.abort();assert.equal(registry.lookupPresentation('plan-graph',ref.schema),undefined);latest();assert.equal(notifications,3);
   const a=registry.registerPresentation(ctx(3),registration);const b=registry.registerPresentation(ctx(3),registration);a();assert.ok(registry.lookupPresentation('plan-graph',ref.schema));b();
   assert.equal(registry.getPresentationRevision(),6);
-  assert.throws(()=>registry.registerPresentation(ctx(4),{...registration,methods:[]}),registry.PresentationRegistrationError);
+  assert.throws(()=>registry.registerPresentation(ctx(4),{...registration,methods:Array.from({length:17},(_,i)=>'method'+i)}),registry.PresentationRegistrationError);
   assert.throws(()=>registry.registerPresentation(ctx(4),{...registration,load:null}),registry.PresentationRegistrationError);
   const already=new AbortController();already.abort();registry.registerPresentation({...ctx(4),signal:already.signal},registration)();assert.equal(registry.getPresentationRevision(),6);
  }finally{off();realm.restore();}
@@ -55,4 +55,11 @@ test('mixed-version built package copies share native v1 realm and stale-dispose
   assert.equal(registry.lookupPresentation('plan-graph',ref.schema).label,'Later build');assert.equal(events,1);
   dispose();assert.equal(registry.lookupPresentation('plan-graph',ref.schema),undefined);assert.equal(events,2);off();
  }finally{realm.restore();await rm(scratch,{recursive:true,force:true});}
+});
+
+test('no-RPC registration admits empty methods while preserving token and generation fencing',()=>{
+ const realm=createIsolatedPresentationRealm();try{
+  const old=registry.registerPresentation(ctx(1),{...registration,methods:[],label:'Gallery'}),first=registry.lookupPresentation('plan-graph',ref.schema);assert.deepEqual(first.methods,[]);assert.ok(Object.isFrozen(first.methods));
+  const dispose=registry.registerPresentation(ctx(2),{...registration,methods:[]});old();assert.equal(registry.lookupPresentation('plan-graph',ref.schema).generation,2);dispose();assert.equal(registry.lookupPresentation('plan-graph',ref.schema),undefined);
+ }finally{realm.restore();}
 });

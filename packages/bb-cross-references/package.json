@@ -76,7 +76,7 @@
     "react": "19.2.1",
     "react-dom": "19.2.1",
     "typescript": "5.9.3",
-    "jsdom": "26.1.0",
+    "jsdom": "^27.0.0",
     "@types/jsdom": "21.1.7"
   },
   "scripts": {

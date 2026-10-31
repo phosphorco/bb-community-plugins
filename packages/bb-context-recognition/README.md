@@ -106,3 +106,5 @@ In 0.5.0, `nativeCandidates` is a pure native thread/file/URL helper for consume
 that need a fallback when suppliers are absent. It uses original UTF-16 spans,
 respects explicit exclusions and has no SDK or DOM runtime dependency. Consumers
 own Markdown grammar, target verification, scheduling and durable evidence.
+
+Hosted presentation registrations accept zero through sixteen owner RPC method names. An empty list makes every owner RPC unavailable; failed views retain the data fallback and use the registration label (or “Hosted”) in the failure message.

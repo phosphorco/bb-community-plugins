@@ -88,7 +88,7 @@ type PresentationEntryV1 = Readonly<{
   generation: number; token: symbol;                 // compare-and-delete identity
   load: () => Promise<PresentationComponent>;        // the only cross-bundle code besides decode
   decode: (data: unknown) => unknown | null;         // supplier-owned; null → fallback card
-  methods: readonly string[];                        // owner RPC allowlist, 1..16
+  methods: readonly string[];                        // owner RPC allowlist, 0..16; [] means no owner RPC
   label?: string;                                    // ≤ 64, a11y/diagnostics
 }>;
 ```
@@ -212,7 +212,7 @@ Steps, all inside the consumer's tree:
 2. Lazily resolve `entry.load()` once per `token` (memoized `React.lazy`), under
    `<Suspense fallback={fallback}>`: first paint is the data card, as today.
 3. Wrap in an **error boundary** keyed by `token + revision + retryKey`; on error render
-   `fallback` plus a muted "Plan view failed" note and report once through
+   `fallback` plus a muted "<registration label or Hosted> view failed" note and report once through
    `onDiagnostic`. The consumer advances `retryKey` for a bounded recovery attempt;
    `onReady` confirms a committed supplier subtree after Suspense. Failed lazy
    imports may reload on a new attempt; successful loads remain shared. A hosted crash never reaches the consumer's `PluginSlotBoundary`.

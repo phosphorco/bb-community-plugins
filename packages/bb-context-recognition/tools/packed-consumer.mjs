@@ -51,9 +51,9 @@ const rootNode=createRoot(dom.window.document.getElementById('root'));
 const props={sdk:{plugins:{callRpc:async()=>({})}},consumer:{pluginId:'packed-consumer',surface:'brief'},stamp:{pluginId:'packed-supplier',schema:'packed-supplier/view@1',data:{}},identity:{provider:'packed',id:'item'},readyPlugins:new Set(['packed-supplier']),mode:'docked',size:{maxWidth:400,maxHeight:300,preferredHeight:240},navigate:{toThread(){},openUrl(){},openFile(){return true;}},fallback:React.createElement('span',null,'Packed fallback'),onReady:()=>ready++};
 try{
  await act(async()=>rootNode.render(React.createElement(react.PresentationHost,{...props,retryKey:0})));
- assert.match(dom.window.document.body.textContent,/Plan view failed/);assert.equal(ready,0);
+ assert.match(dom.window.document.body.textContent,/Hosted view failed/);assert.equal(ready,0);
  broken=false;await act(async()=>rootNode.render(React.createElement(react.PresentationHost,{...props,retryKey:1})));
- assert.match(dom.window.document.body.textContent,/Recovered packed view/);assert.doesNotMatch(dom.window.document.body.textContent,/Plan view failed/);assert.equal(ready,1);
+ assert.match(dom.window.document.body.textContent,/Recovered packed view/);assert.doesNotMatch(dom.window.document.body.textContent,/Hosted view failed/);assert.equal(ready,1);
 }finally{await act(async()=>rootNode.unmount());dispose();owner.abort();dom.window.close();}
 
 console.log('Packed consumer imports all six entries and runs source conformance; SDK ${sdkVersion}.');

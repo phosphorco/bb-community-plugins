@@ -81,7 +81,7 @@ class HostedBoundary extends Component<{children:ReactNode;fallback:ReactNode;en
  componentDidCatch(error: unknown, _info:ErrorInfo) {
   try {this.props.onDiagnostic?.({pluginId:this.props.entry.pluginId,schema:this.props.entry.schema,stage:'render',message:error instanceof Error ? error.message : 'Hosted view failed.'});} catch {}
  }
- render() {return this.state.failed ? <>{this.props.fallback}<span role="status" className="text-muted-foreground">Plan view failed</span></> : this.props.children;}
+ render() {return this.state.failed ? <>{this.props.fallback}<span role="status" className="text-muted-foreground">{this.props.entry.label ?? 'Hosted'} view failed</span></> : this.props.children;}
 }
 function Hosted(props:PresentationHostProps & {entry:PresentationEntryV1;data:unknown;View:LazyExoticComponent<PresentationComponent>}): ReactElement {
  const {entry, sdk} = props;

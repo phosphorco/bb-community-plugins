@@ -89,7 +89,7 @@
     "@types/react": "19.2.2",
     "@types/react-dom": "19.2.2",
     "better-sqlite3": "^12.0.0",
-    "jsdom": "^26.1.0",
+    "jsdom": "^27.0.0",
     "react": "19.2.1",
     "react-dom": "19.2.1",
     "typescript": "^5.9.3",
