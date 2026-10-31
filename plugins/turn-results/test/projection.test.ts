@@ -27,13 +27,41 @@ test('same PR open and review occurrences remain separate; competing equivalent 
   competing.retracted = { revision: { epoch: 'e', sequence: 2 }, reason: 'source correction', supersedesEvidenceDigest: 'b'.repeat(64) };
   assert.equal(projectResults([open, competing])[0]!.kind, 'single');
 });
-test('generic suppression uses exact same-event site and URL, retains records and restores after source expiry', () => {
+test('incidental generic URLs remain indexed but never displace deliberate operation results', () => {
   const typed = observation('source-a'), generic = observation('links');
   generic.identity = { ...generic.identity, ref: { ...generic.identity.ref, kind: 'links/url-found', member: 'url:0' }, specificity: 'generic', evidence: { ...generic.identity.evidence, basis: 'text-link' } };
   delete generic.identity.equivalence; generic.resolution = null; generic.key = claimKey('links', generic.identity.ref);
   InputSchemas.identity.parse(generic.identity);
   assert.equal(projectResults([typed, generic]).length, 1); assert.equal(generic.identity.specificity, 'generic');
-  typed.sourceExpired = { epoch: 'e', sequence: 2 }; assert.equal(projectResults([typed, generic]).length, 2);
+  typed.sourceExpired = { epoch: 'e', sequence: 2 }; assert.equal(projectResults([typed, generic]).length, 1);
   typed.sourceExpired = null; generic.identity.ref.source.eventId = 'different'; generic.identity.evidence.sites[0]!.eventId = 'different';
-  assert.equal(projectResults([typed, generic]).length, 2);
+  assert.equal(projectResults([typed, generic]).length, 1);
+});
+
+test('routine source commands and incidental addresses stay quiet; only positively available source-bound previews survive', () => {
+  const command = observation('independent-source'); command.identity.ref.kind = 'workspace/command-completed';
+  command.resolution!.route = { kind: 'source', threadId: 'thread', eventId: 'event', seq: 1 };
+  const address = structuredClone(command); address.identity.ref.kind = 'workspace/address-observed';
+  address.resolution!.route = { kind: 'url', href: 'https://preview.example/path' };
+  assert.deepEqual(projectResults([command, address]), []);
+  assert.ok(command.resolution, 'projection never deletes retained facts');
+  address.resolution!.availability = { state: 'available', asOf: 5, expiresAt: 500 };
+  address.currentAvailability = address.resolution!.availability;
+  assert.equal(projectResults([address]).length, 0, 'positive health alone cannot invent source-host binding');
+  address.resolution!.provenance.originHost = { state: 'recorded', hostId: 'recorded', sourceEventId: 'event', capturedAt: 1 };
+  assert.equal(projectResults([address]).length, 1);
+  address.currentAvailability = { state: 'unknown', asOf: 501, expiresAt: null };
+  assert.equal(projectResults([address]).length, 0, 'expired/unknown current readiness is not a usable preview');
+  const pr = observation('another-source'), image = observation('unrelated-image-source');
+  image.identity.ref.kind = 'images/generated'; image.resolution!.fallback = { kind: 'image', title: 'Generated image', alt: 'Scene' };
+  image.resolution!.route = { kind: 'file', target: { kind: 'host', hostId: 'recorded', path: '/saved/image.png' } };
+  assert.equal(projectResults([pr, image]).length, 2, 'real external/file artifacts are not suppressed by owner or URL host');
+});
+
+test('generic incidental links from another namespace stay quiet while explicit file artifacts remain selectable', () => {
+  const row = observation('any-owner'); row.identity.specificity = 'generic'; row.identity.ref.kind = 'another/observed-link';
+  row.resolution!.knowledge = 'unknown'; row.resolution!.outcomeEvidence = null;
+  assert.equal(projectResults([row]).length, 0);
+  row.resolution!.route = { kind: 'file', target: { kind: 'host', hostId: 'recorded', path: '/saved/report.pdf' } };
+  assert.equal(projectResults([row]).length, 1, 'generic specificity alone must not hide an explicitly supplied file artifact');
 });

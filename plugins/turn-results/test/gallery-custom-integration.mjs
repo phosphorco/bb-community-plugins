@@ -320,7 +320,7 @@ test('one dated-image gesture checks fresh proof then opens once without losing 
     await until(() => f.fileOpenCalls.length === 1);
     assert.equal(card.querySelector('[data-turn-result-open-status]'), null);
     assert.equal(card.querySelector('img'), image); assert.equal(image.src, url); assert.equal(card.closest('[data-turn-results-gallery]'), shell);
-    assert.match(card.textContent, /checked earlier/); assert.deepEqual(f.mediaCounts(), { calls: 1, fetches: 1 });
+    assert.equal(card.textContent.includes('checked earlier'), false); assert.deepEqual(f.mediaCounts(), { calls: 1, fetches: 1 });
     await settle(50); assert.equal(f.fileOpenCalls.length, 1);
   } finally { f.sdk.threads.timeline = original; release(); await f.dispose(); }
 });
@@ -473,16 +473,19 @@ test('Checking rejects actual target/source/physical/user changes and fences lat
   });
 });
 
-test('Checking stops after four genuine older pages when its captured historical boundary remains unplaced', async () => {
-  const h = await heldImageIntent(); let pages = 0;
+test('Checking stops after eight genuine issued pages when its captured historical boundary remains unplaced', async () => {
+  const h = await heldImageIntent(); let pages = 0; const inputs = [];
   try {
-    h.f.sdk.threads.timeline = async () => {
+    h.f.sdk.threads.timeline = async input => {
+      inputs.push(input); assert.equal(input.deferContent, 'true');
+      if (pages) { assert.equal(input.beforeAnchorId, `opaque-issued-${pages}`); assert.equal(input.beforeAnchorSeq, String(1000 - pages * 10)); }
+      else assert.equal(input.beforeAnchorId, undefined);
       pages++; const seq = 1000 - pages * 10;
       return { rows: [{ id: `public-deep-${pages}`, threadId: 'thread', turnId: `public-turn-${pages}`, kind: 'turn', status: 'completed', sourceSeqStart: seq, sourceSeqEnd: seq + 5 }],
         timelinePage: { historySnapshot: 'genuine-deep', olderCursor: { anchorId: `opaque-issued-${pages}`, anchorSeq: seq } } };
     };
-    await h.release(); await until(() => /complete current turn boundary/.test(h.card.textContent));
-    assert.equal(pages, 4); assert.equal(h.f.fileOpenCalls.length, 0); await settle(100); assert.equal(pages, 4);
+    await h.release(); await until(() => /Results read capacity reached/.test(h.card.textContent));
+    assert.equal(pages, 8); assert.equal(inputs.length, 8); assert.equal(h.f.fileOpenCalls.length, 0); await settle(100); assert.equal(pages, 8);
   } finally { await h.close(); }
 });
 
@@ -528,7 +531,7 @@ test('cancelled Checking stays declined until a later explicit Open; native refu
   try {
     await until(() => f.stats().live === 1);
     const card = document.querySelector('[data-result-key="row-0"]');
-    const open = [...card.querySelectorAll('.tr-caption button')].find(button => button.textContent === 'Open');
+    const open = card.querySelector('.tr-open-icon');
     const original = f.sdk.threads.timeline;
     f.sdk.threads.timeline = async input => { await new Promise(resolve => { release = resolve; });
       const page = await original(input); return { ...page, timelinePage: { historySnapshot: 'genuinely-fresh-public-snapshot', olderCursor: null } }; };
@@ -557,6 +560,12 @@ test('contributor requestFull retires its custom trigger and Escape focuses the 
     await until(() => document.querySelector('[data-contributor-expand]'));
     const custom = document.querySelector('[data-contributor-expand]');
     const card = custom.closest('[data-result-key]'), consumer = card.querySelector('.tr-caption button');
+    assert.equal(consumer.textContent, ''); assert.equal(consumer.getAttribute('aria-label'), 'Expand result'); assert.equal(consumer.title, 'Expand result');
+    assert.equal(consumer.querySelector('svg').getAttribute('aria-hidden'), 'true');
+    const style = document.createElement('style'); style.textContent = readFileSync(new URL('../app.css', import.meta.url), 'utf8'); document.head.append(style);
+    assert.equal(window.getComputedStyle(consumer).width, '32px'); assert.equal(window.getComputedStyle(consumer).height, '32px');
+    assert.equal(custom.textContent, 'Expand contributor result', 'independent contributor requestFull control remains untouched');
+    style.remove();
     await act(async () => { custom.focus(); custom.click(); });
     await until(() => f.stats().full === 1);
     assert.equal(custom.isConnected, false, 'the old custom trigger is retired for full mode');
@@ -579,7 +588,7 @@ test('one lazy accessible full dialog transfers same4 credit and restores only l
     const dialog = document.querySelector('dialog'); assert.equal(document.querySelectorAll('dialog').length, 1);
     assert.equal(dialog.getAttribute('aria-label'), 'Expanded result'); assert.equal(document.activeElement.textContent, 'Close expanded result');
     assert.equal(f.stats().peak, 4); assert.equal(f.stats().fullPeak, 1);
-    assert.ok(dialog.querySelector('.tr-caption')); assert.ok(dialog.querySelector('.tr-fallback strong'));
+    assert.ok(dialog.querySelector('.tr-caption')); assert.ok(dialog.querySelector('.tr-fallback [aria-label^="Open "]'));
     const controls = dialog.querySelectorAll('button'), last = controls[controls.length - 1];
     await act(async () => { last.focus(); last.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true })); });
     assert.equal(document.activeElement.textContent, 'Close expanded result');
@@ -632,7 +641,7 @@ test('pane holds exact root disposal credit past real passive cleanup/watchdog; 
     assert.deepEqual(events, ['begin', 'abort', 'unmount']); assert.equal(f.stats().live, 3);
     assert.equal(runtime.canvases.counts().occupied, 4); assert.equal(runtime.canvases.counts().retiring, 1);
     await settle(1550); assert.equal(runtime.canvases.counts().occupied, 4); assert.equal(runtime.presentationStatus.state.stalled, 1);
-    assert.match(document.body.textContent, /waiting for cleanup/); assert.equal(f.stats().peak, 4);
+    assert.equal(f.stats().peak, 4); assert.equal(runtime.canvases.counts().stalled, 1);
     await act(async () => { release(); await tick(); }); await until(() => f.stats().live === 4);
     assert.deepEqual(events, ['begin', 'abort', 'unmount', 'finish']); assert.equal(runtime.presentationStatus.state.stalled, 0);
     assert.equal(f.stats().peak, 4); assert.equal(f.stats().rpc, 0);
@@ -672,24 +681,28 @@ test('lazy renderer late completion after disable stays inert; nonempty owner me
     f.enabled(false); await f.notify();
     await act(async () => { release(f.renderer); await tick(); });
     await settle(50); assert.equal(f.stats().live, 0); assert.equal(f.stats().rpc, 0);
-    assert.match(document.querySelector('.tr-fallback').textContent, /Saved result 0/);
+    assert.ok(document.querySelector('.tr-caption > span').textContent); assert.ok(document.querySelector('.tr-fallback [aria-label^="Open "]'));
     f.enabled(true); await act(async () => { f.register(async () => f.renderer, ['requires-io']); }); await f.notify();
     await settle(100); assert.equal(f.stats().live, 0); assert.equal(f.stats().rpc, 0);
     await act(async () => { f.register(); }); await until(() => f.stats().live === 1);
   } finally { release(f.renderer); await f.dispose(); }
 });
 
-test('lazy failure leaves saved data and explicit retry recovers unchanged source without repeated reads', async () => {
-  const f = await fixture(1); let loads = 0;
+test('lazy failure keeps compact fallback; explicit full/retry recovers unchanged source without background reads', async () => {
+  const f = await fixture(1); let loads = 0, rejected = true;
   try {
     await until(() => f.stats().live === 1);
-    await act(async () => { f.register(async () => { if (++loads === 1) throw Error('intentional pure fixture load failure'); return f.renderer; }); });
-    await until(() => document.querySelector('.tr-custom-status button'));
-    assert.match(document.body.textContent, /Saved result 0/); assert.ok(document.querySelector('.tr-caption button'));
+    await act(async () => { f.register(async () => { loads++; if (rejected) throw Error('intentional pure fixture load failure'); return f.renderer; }); });
+    await until(() => loads === 1 && f.stats().live === 0);
+    assert.equal(document.querySelector('.tr-custom-status'), null, 'automatic dock fallback has no ambient readiness/error strip');
+    assert.ok(document.querySelector('.tr-caption > span').textContent); assert.ok(document.querySelector('.tr-caption button'));
     const lists = f.stats().listCalls; await settle(120); assert.equal(loads, 1); assert.equal(f.stats().listCalls, lists);
-    await act(async () => document.querySelector('.tr-custom-status button').click());
-    await until(() => f.stats().live === 1 && !document.querySelector('.tr-custom-status'));
-    assert.equal(loads, 2); assert.equal(f.stats().rpc, 0); assert.equal(f.stats().peak, 1);
+    rejected = false; await act(async () => document.querySelector('.tr-caption button').click());
+    await until(() => f.stats().full === 1 || document.querySelector('dialog .tr-custom-status button'));
+    const retry = document.querySelector('dialog .tr-custom-status button');
+    if (retry) await act(async () => retry.click());
+    await until(() => f.stats().full === 1 && !document.querySelector('.tr-custom-status'));
+    assert.equal(loads, 2); assert.equal(f.stats().rpc, 0); assert.equal(f.stats().peak, 1); assert.equal(f.stats().listCalls, lists);
   } finally { await f.dispose(); }
 });
 
@@ -1140,7 +1153,7 @@ test('fresh public navigation objects/callbacks preserve scope, host and discove
     const before = f.navigation.length;
     captured.navigate.openUrl('https://fixture.invalid/latest-committed');
     assert.equal(f.navigation.length, before + 1); assert.equal(probe.calls.at(-1).version, probe.committed);
-    await act(async () => [...host.closest('.tr-card').querySelectorAll('.tr-caption button')].find(button => button.textContent === 'Open').click());
+    await act(async () => host.closest('.tr-card').querySelector('.tr-open-icon').click());
     assert.equal(probe.calls.at(-1).version, probe.committed);
     await f.reconnect(); await until(() => f.stats().live === 1 && f.nativeCalls.length > initial.native);
     const recovered = f.nativeCalls.length, recoveredLists = f.stats().listCalls;
@@ -1259,7 +1272,7 @@ test('closing a dialog releases modal interaction and exact opener focus while r
   } finally { release(); await f.dispose(); }
 });
 
-test('later inline page Checking validates the exact issued retained cursor and opens once after fresh public proof', async () => {
+test('later collected row Checking validates its actual issued cursor and opens once after fresh public proof', async () => {
   const f = await fixture(1, true, { owner: 'turn-result-images', fileRoute: true, loadedImage: true }); let release = () => {};
   try {
     await until(() => document.querySelector('[data-result-key="row-0"] img'));
@@ -1268,10 +1281,6 @@ test('later inline page Checking validates the exact issued retained cursor and 
       row.identity.ref.member = `image:${i}`; row.identity.artifact.id = `image-${i}`; row.resolution.identity = row.identity; return row; });
     f.setRows(rows); f.sdk.threads.timeline = async () => nativePage;
     await f.notify(); await until(() => document.querySelector('[data-result-key="paged-0"] img'));
-    const more = () => [...document.querySelectorAll('.tr-more')].find(button => button.textContent === 'Show more results');
-    await until(() => more() && !more().disabled);
-    await act(async () => more().click());
-    if (!document.querySelector('[data-result-key="paged-8"]')) await act(async () => more().click());
     await until(() => document.querySelector('[data-result-key="paged-8"] img'));
     const image = document.querySelector('[data-result-key="paged-8"] img'), blob = image.src;
     const reads = [], originalRpc = f.sdk.plugins.callRpc;
@@ -1415,4 +1424,50 @@ test('detached header scope retains one known-parent recovery trigger without na
     for (const callback of callbacks) callback.navigate.openUrl('https://fixture.invalid/retired-recovery-after-unmount');
     assert.equal(f.navigation.length, before, 'cleanup revokes every recovered token');
   }
+});
+
+test('routine-only retained facts leave no shelf, footer, loading/error chrome, controls or reserved gap', async () => {
+  const f = await fixture(1, true, { captureRuntime: true });
+  try {
+    await until(() => f.stats().live === 1); const nativePage = await f.sdk.threads.timeline({ threadId: 'thread' });
+    const rows = Array.from({ length: 16 }, (_, i) => { const row = structuredClone(f.rows()[0]); row.key = `routine-${i}`; row.identity.ref.member = `native:${i}`;
+      row.identity.ref.kind = i % 2 ? 'workspace/address-observed' : 'workspace/command-completed'; row.resolution.identity = row.identity;
+      delete row.resolution.presentation; row.resolution.route = i % 2 ? { kind: 'unavailable', reason: 'unbound-address' } : { kind: 'source', threadId: 'thread', eventId: 'event-0', seq: 3 };
+      row.resolution.fallback = { kind: 'card', title: i % 2 ? 'Address observed' : 'Command succeeded', description: 'Routine diagnostic', fields: [{ label: 'Exit code', value: '0' }] }; return row; });
+    f.setRows(rows); f.sdk.threads.timeline = async () => nativePage; await f.notify();
+    await until(() => f.stats().live === 0 && f.runtime().stats().running === 0 && !document.querySelector('.tr-gallery'));
+    assert.equal(f.rows().length, 16, 'selection retains every source fact');
+    const shell = document.querySelector('[data-turn-results-gallery]'); assert.equal(shell.style.minHeight, '');
+    assert.equal(document.querySelector('[data-turn-results-notice]'), null); assert.equal(shell.textContent, '');
+    const original = f.sdk.plugins.callRpc;
+    f.sdk.plugins.callRpc = async args => { if (args.method === GALLERY_METHODS.read) throw Error('hidden routine read unavailable'); return original(args); };
+    await f.notify(); await until(() => f.runtime().stats().running === 0); await settle(40);
+    assert.equal(shell.textContent, ''); assert.equal(shell.style.minHeight, '');
+    assert.equal(shell.querySelector('button, [role="status"]'), null);
+  } finally { await f.dispose(); }
+});
+
+test('later collected-row Open declines source revision/route changes and wrong-turn replacement without retargeting', async t => {
+  for (const change of ['revision-route', 'wrong-turn']) await t.test(change, async () => {
+    const f = await fixture(1, true, { owner: 'turn-result-images', fileRoute: true, loadedImage: true }); let release = () => {};
+    try {
+      await until(() => document.querySelector('[data-result-key="row-0"] img'));
+      const nativePage = await f.sdk.threads.timeline({ threadId: 'thread' });
+      const rows = Array.from({ length: 17 }, (_, i) => { const row = structuredClone(f.rows()[0]); row.key = `guarded-${i}`;
+        row.identity.ref.member = `image:${i}`; row.identity.artifact.id = `image-${i}`; row.resolution.identity = row.identity; return row; });
+      f.setRows(rows); f.sdk.threads.timeline = async () => nativePage; await f.notify();
+      await until(() => document.querySelector('[data-result-key="guarded-8"] img'));
+      let held = 0; f.sdk.threads.timeline = async () => { held++; await new Promise(resolve => { release = resolve; }); return nativePage; };
+      await f.notify(); await until(() => held === 1);
+      await act(async () => document.querySelector('[data-result-key="guarded-8"] .tr-image-action').click());
+      assert.equal(f.fileOpenCalls.length, 0);
+      const changed = structuredClone(rows);
+      if (change === 'revision-route') { changed[8].resolution.revision.sequence++; changed[8].resolution.route.target.path = '/changed/file.png'; }
+      else changed[8].identity.ref.source.turnId = 'other-turn';
+      f.setRows(changed); f.sdk.threads.timeline = async () => nativePage;
+      await act(async () => { release(); await tick(); }); await settle(120);
+      assert.equal(f.fileOpenCalls.length, 0, 'fresh action proof never reuses a changed target or another turn');
+      assert.equal(document.body.textContent.includes('Checking this saved result'), false);
+    } finally { release(); await f.dispose(); }
+  });
 });

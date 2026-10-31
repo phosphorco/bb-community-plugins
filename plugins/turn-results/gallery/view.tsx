@@ -7,12 +7,11 @@ import { navigateResult } from '@phosphorco/bb-turn-results/bb';
 import type { GalleryObservation } from './index.ts';
 import type { GalleryAnchor } from './anchors.ts';
 import type { GalleryActionScope, GalleryActionCapture } from './pane.ts';
-import { GALLERY_RUNTIME_LIMITS } from './runtime.ts';
 import type { GalleryRuntime, GalleryPresentationRoot } from './runtime.ts';
 import type { PresentationLifetime } from './presentation-lifetime.ts';
 import { HostedCanvas } from './presentation.ts';
 import { lookupPresentation } from '@phosphorco/bb-context-recognition/presentation';
-import { initialResultLimit, paneColumns, packResults } from './packing.ts';
+import { paneColumns, packResults } from './packing.ts';
 import { projectResults } from './projection.ts';
 
 type Sdk = ReturnType<typeof useSdk>;
@@ -89,7 +88,7 @@ export function openFingerprint(row: GalleryObservation): string | null {
   catch { return null; }
 }
 export function openAvailable(row: GalleryObservation) {
-  return Boolean(row.resolution && row.resolution.route.kind !== 'unavailable' && row.resolution.availability.state !== 'unavailable'
+  return Boolean(row.resolution && (row.resolution.route.kind === 'file' || row.resolution.route.kind === 'url') && row.resolution.availability.state !== 'unavailable'
     && !row.retracted && !row.sourceExpired && row.currentAvailability?.state !== 'unavailable');
 }
 // One explicit user intent in this loaded module/window; not a value store.
@@ -192,25 +191,27 @@ export function ResultCard({ row, runtime, sdk, navigate, current, lifetime, pre
     runtime.openDialog({ row, sdk, navigate, siteKey: site.current.key, retireDock: site.current.retire,
       opener: expandButton.current, openerCurrent: current });
   };
+  const destination = Boolean(value && (value.route.kind === 'file' || value.route.kind === 'url'));
+  const caption = runtime.caption(row);
+  const detail = value && 'description' in value.fallback && value.fallback.description || value?.fallback.title;
+  const description = detail?.replace(/\s+/gu, ' ').trim().slice(0, 140);
+  const content = <><span className="tr-result-symbol" aria-hidden="true">{value?.route.kind === 'file' ? '▤' : value?.route.kind === 'url' ? '↗' : '•'}</span>
+    {description && description !== caption && <span className="tr-excerpt">{description}</span>}</>;
   const fallback = value?.fallback.kind === 'image' ? <ImageCanvas row={row} runtime={runtime} sdk={sdk} open={open} lifetime={lifetime} />
-    : <button className="tr-canvas tr-data-action" onClick={open} disabled={!value || value.route.kind === 'unavailable'}>
-      <strong>{value?.fallback.title ?? 'Recognized result'}</strong>
-      {value && 'description' in value.fallback && <span>{value.fallback.description}</span>}
-      {value?.fallback.kind === 'card' && value.fallback.fields?.map(field => <span key={field.label}>{field.label}: {field.value}</span>)}
-    </button>;
+    : destination ? <button className="tr-canvas tr-data-action" onClick={open} aria-label={`Open ${caption}`}>{content}</button>
+      : <div className="tr-canvas tr-data-action">{content}</div>;
   return <article ref={card} className="tr-card" data-result-key={row.key}>
     <PresentationCanvas row={row} runtime={runtime} sdk={sdk} navigate={navigate} current={current} lifetime={lifetime}
       presentationRoot={presentationRoot} mode={mode} enabled={customEnabled} site={site} requestFull={full} fallback={fallback} />
-    <div className="tr-caption"><span>{runtime.caption(row)}</span><div>
-      {mode === 'docked' && value?.presentation && <button ref={expandButton} onClick={full}>Expand result</button>}
-      <button onClick={open} disabled={!value || value.route.kind === 'unavailable'}>Open</button>
+    <div className="tr-caption"><span>{caption}</span><div>
+      {mode === 'docked' && value?.presentation && <button ref={expandButton} onClick={full} className="tr-expand-icon" aria-label="Expand result" title="Expand result">
+        <svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true" focusable="false"><path d="M6 2H2v4M10 2h4v4M14 10v4h-4M6 14H2v-4" /></svg>
+      </button>}
+      {destination && <button onClick={open} className={mode === 'docked' ? 'tr-open-icon' : undefined} aria-label={`Open ${caption}`} title="Open result">
+        {mode === 'docked' ? <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true" focusable="false"><path d="M6 3H3v10h10v-3M9 3h4v4M7 9l6-6" /></svg> : 'Open'}
+      </button>}
     </div></div>
     {openStatus && <small className="tr-freshness" role="status" data-turn-result-open-status="">{openStatus}</small>}
-    {row.freshness !== 'fresh' && <small className="tr-freshness" title="This describes the result source record, separately from image loading and byte verification.">
-      {row.freshness === 'disconnected' ? 'Source disconnected · saved result details'
-        : row.freshness === 'unsupported' ? 'Source version unsupported · saved result details'
-        : row.freshness === 'stale' ? 'Source details were checked earlier' : 'Source details have not been checked'}
-    </small>}
   </article>;
 }
 function PresentationCanvas({ row, runtime, sdk, navigate, current, lifetime, presentationRoot, mode, enabled, site, requestFull, fallback }: {
@@ -224,7 +225,6 @@ function PresentationCanvas({ row, runtime, sdk, navigate, current, lifetime, pr
   const [ready, setReady] = useState<{ id: number; key: string } | null>(null), [failed, setFailed] = useState(false);
   const [size, setSize] = useState({ maxWidth: 320, maxHeight: 240, preferredHeight: 240 });
   const readyPlugins = useSelector(runtime.readyOwners), dialogs = useSelector(runtime.dialogSites);
-  const status = useSelector(runtime.presentationStatus);
   const presentation = row.resolution?.presentation;
   const authorityKey = canonicalJson([enabled, current(), row.owner, row.identity, row.resolution?.revision ?? null, presentation ?? null]);
   const [committedAuthority, setCommittedAuthority] = useState<string | null>(null);
@@ -295,121 +295,84 @@ function PresentationCanvas({ row, runtime, sdk, navigate, current, lifetime, pr
         } }}
         onDiagnostic={() => { setReady(null); setFailed(true); }} />
     </div>}
-    {presentation && (failed || snapshot?.state === 'stalled' || snapshot?.state === 'capacity' || snapshot?.state === 'queued' && status.stalled > 0) && <div className="tr-custom-status" role="status">
-      {snapshot?.state === 'stalled' || snapshot?.state === 'queued' && status.stalled > 0 ? 'Custom view is waiting for cleanup.' : snapshot?.state === 'capacity' ? 'Custom view capacity reached.' : 'Custom view could not be displayed.'}
+    {presentation && mode === 'full' && failed && <div className="tr-custom-status" role="status">
+      Custom view could not be displayed.
       <button onClick={() => { setReady(null); setFailed(false); setRetry(value => value + 1); }}>Retry custom view</button>
     </div>}
   </div>;
 }
-type PageCursor = { seq: number; key: string };
-interface Paging { after: PageCursor | undefined; previous: (PageCursor | undefined)[] }
-interface LayoutMemory { paging?: Paging; columns: number; expanded: boolean; spans: Map<string, { width: number; height: number }> }
-// Weakly owned by the exact in-flow shell, not by an unbounded turn-history map.
+interface LayoutMemory { columns: number; spans: Map<string, { revision: string; width: number; height: number }> }
+// Geometry belongs to this exact physical shell and resolved source revision.
 const layouts = new WeakMap<HTMLElement, LayoutMemory>();
 export function TurnGallery({ anchor, runtime, sdk, navigate, current, lifetime, visible = true, shell, demanded = true, presentationRoot, actionScope, requestOpen }: {
   anchor: GalleryAnchor; runtime: GalleryRuntime; sdk: Sdk; navigate: BbNavigate; current(): boolean;
   lifetime: AbortSignal; visible?: boolean; shell?: HTMLElement | undefined; demanded?: boolean; presentationRoot?: GalleryPresentationRoot | undefined;
   actionScope?: GalleryActionScope | undefined; requestOpen?: GalleryOpenPort | undefined;
 }) {
-  const [resource, setResource] = useState<ReturnType<GalleryRuntime['retain']> | null>(null), [attempt, setAttempt] = useState(0);
-  const localLayout = useRef<LayoutMemory>({ columns: 1, expanded: false, spans: new Map() });
+  const [resource, setResource] = useState<ReturnType<GalleryRuntime['retain']> | null>(null);
+  const localLayout = useRef<LayoutMemory>({ columns: 1, spans: new Map() });
   const memory = shell ? layouts.get(shell) ?? localLayout.current : localLayout.current;
   if (shell && !layouts.has(shell)) layouts.set(shell, memory);
-  const [paging, setPaging] = useState<Paging>(memory.paging ?? { after: undefined, previous: [] });
-  const accepted = useRef<ReturnType<GalleryRuntime['retain']> | null>(null);
-  const [pageError, setPageError] = useState<string | null>(null), [pagingBusy, setPagingBusy] = useState(false);
-  const cursorKey = canonicalJson(paging.after ?? null);
   useLayoutEffect(() => {
     if (!visible || lifetime.aborted) { setResource(null); return; }
-    const next = runtime.retain(anchor, demanded, paging.after);
-    if (next.capacity) { setPageError('Results view capacity reached. Retry this page after another view closes.'); return; }
-    let live = true; setPageError(null); setPagingBusy(accepted.current !== null);
-    if (!accepted.current) { accepted.current = next; setResource(next); }
-    const update = () => {
-      if (!live) return;
-      if (next.store.state.loaded) {
-        const old = accepted.current; accepted.current = next; setResource(next); setPagingBusy(false); setPageError(null);
-        if (old && old !== next) old.dispose();
-      } else if (next.store.state.error) { setPageError(next.store.state.error); setPagingBusy(false); }
+    const lease = runtime.retain(anchor, demanded); setResource(lease);
+    return () => {
+      if (shell) { const height = shell.getBoundingClientRect().height; if (height > 0) shell.style.minHeight = `${height}px`; }
+      lease.dispose();
     };
-    const subscription = next.store.subscribe(update); update();
-    const abort = () => next.dispose(); lifetime.addEventListener('abort', abort, { once: true });
-    return () => { live = false; subscription.unsubscribe(); lifetime.removeEventListener('abort', abort); if (accepted.current !== next) next.dispose(); };
-  }, [runtime, anchor.threadId, anchor.turnId, anchor.turnSeqStart, anchor.turnSeqEnd, lifetime, visible, cursorKey, attempt]);
-  useLayoutEffect(() => () => {
-    if (shell) { const height = shell.getBoundingClientRect().height; if (height > 0) shell.style.minHeight = `${height}px`; }
-    accepted.current?.dispose(); accepted.current = null;
   }, [runtime, anchor.threadId, anchor.turnId, anchor.turnSeqStart, anchor.turnSeqEnd, lifetime, visible]);
   useLayoutEffect(() => { resource?.visible(demanded); }, [resource, demanded]);
-  const page = (next: Paging) => {
-    while (next.previous.length > GALLERY_RUNTIME_LIMITS.cursorHistory || canonicalByteLength({ after: next.after ?? null, previous: next.previous.map(value => value ?? null) }, 262144) > GALLERY_RUNTIME_LIMITS.cursorBytes) next.previous.shift();
-    memory.paging = next; setPaging(next);
-  };
-  return <div>{resource ? <GalleryContents resource={resource} runtime={runtime} sdk={sdk} navigate={navigate} current={current} lifetime={lifetime}
-      memory={memory} shell={shell} presentationRoot={presentationRoot} actionScope={actionScope} requestOpen={requestOpen}
-      pagingBusy={pagingBusy || pageError !== null} pageNext={() => { const next = resource.store.state.next; if (next) page({ after: next, previous: [...paging.previous, paging.after] }); }} /> : pageError ? null : <small role="status">Finding turn results…</small>}
-    {paging.after && <div className="tr-inline-paging"><button disabled={pagingBusy || !paging.previous.length} onClick={() => page({ after: paging.previous.at(-1), previous: paging.previous.slice(0, -1) })}>Previous results</button>
-      <button disabled={pagingBusy} onClick={() => page({ after: undefined, previous: [] })}>First results</button></div>}
-    {pageError && <div role="status">{pageError}<button onClick={() => setAttempt(value => value + 1)}>Retry results page</button></div>}
-    {pagingBusy && <small role="status">Loading the next results page…</small>}
-  </div>;
+  return resource && !resource.capacity ? <GalleryContents resource={resource} runtime={runtime} sdk={sdk} navigate={navigate} current={current} lifetime={lifetime}
+    memory={memory} shell={shell} presentationRoot={presentationRoot} actionScope={actionScope} requestOpen={requestOpen} /> : null;
 }
-
-function GalleryContents({ resource, runtime, sdk, navigate, current, lifetime, memory, shell, presentationRoot, actionScope, requestOpen, pagingBusy, pageNext }: {
+function GalleryContents({ resource, runtime, sdk, navigate, current, lifetime, memory, shell, presentationRoot, actionScope, requestOpen }: {
   resource: ReturnType<GalleryRuntime['retain']>; runtime: GalleryRuntime; sdk: Sdk; navigate: BbNavigate;
   current(): boolean; lifetime: AbortSignal; memory: LayoutMemory; shell?: HTMLElement | undefined; presentationRoot?: GalleryPresentationRoot | undefined;
   actionScope?: GalleryActionScope | undefined; requestOpen?: GalleryOpenPort | undefined;
-  pagingBusy: boolean; pageNext(): void;
 }) {
   const state = useSelector(resource.store), container = useRef<HTMLElement>(null);
-  const hasContent = Boolean(state.rows.length || state.busy || state.error || state.continued);
-  const [columns, setColumns] = useState(() => { const width = shell?.getBoundingClientRect().width; const value = width && width > 0 ? paneColumns(width) : memory.columns; memory.columns = value; return value; }), [expanded, setExpanded] = useState(memory.expanded);
-  const spans = useRef(memory.spans);
+  const rows = projectResults(state.rows), hasContent = rows.length > 0;
+  const [columns, setColumns] = useState(() => { const width = shell?.getBoundingClientRect().width; const value = width && width > 0 ? paneColumns(width) : memory.columns; memory.columns = value; return value; });
   useLayoutEffect(() => {
     if (!container.current) return;
-    const observer = new ResizeObserver(entries => { const width = entries[0]?.contentRect.width;
-      if (width !== undefined) { const next = paneColumns(width); memory.columns = next; setColumns(next); }
-    });
-    const width = container.current.getBoundingClientRect().width;
-    if (width > 0) { const next = paneColumns(width); memory.columns = next; setColumns(next); }
-    observer.observe(container.current); return () => observer.disconnect();
+    const update = (width: number) => { if (width > 0) { const next = paneColumns(width); memory.columns = next; setColumns(next); } };
+    const observer = new ResizeObserver(entries => { const width = entries[0]?.contentRect.width; if (width !== undefined) update(width); });
+    update(container.current.getBoundingClientRect().width); observer.observe(container.current); return () => observer.disconnect();
   }, [memory, hasContent]);
-  useLayoutEffect(() => { if (shell && state.loaded && !state.busy && !state.error) shell.style.minHeight = ''; }, [shell, state.rows, state.busy]);
-  const rows = projectResults(state.rows);
-  const admitted = rows.slice(0, expanded ? 24 : initialResultLimit(columns));
-  const retained = new Set(admitted.map(result => result.key));
-  for (const key of spans.current.keys()) if (!retained.has(key)) spans.current.delete(key);
-  const packing = packResults(admitted.map(result => {
-    if (!spans.current.has(result.key)) spans.current.set(result.key, result.kind === 'single' ? result.row.resolution?.spans ?? { width: 2, height: 2 } : { width: 2, height: 1 });
-    return { key: result.key, ...spans.current.get(result.key)! };
+  useLayoutEffect(() => { if (shell && state.loaded && !state.busy && (!state.error || !hasContent)) shell.style.minHeight = ''; }, [shell, state.rows, state.busy, state.error, state.loaded, hasContent]);
+  const retained = new Set(rows.map(result => result.key));
+  for (const key of memory.spans.keys()) if (!retained.has(key)) memory.spans.delete(key);
+  const packing = packResults(rows.map(result => {
+    if (result.kind === 'contested') return { key: result.key, width: 1, height: 1 };
+    const value = result.row.resolution;
+    if (!value || result.row.unresolved) { memory.spans.delete(result.key); return { key: result.key, width: 1, height: 1 }; }
+    const revision = canonicalJson([result.row.owner, value.revision]), prior = memory.spans.get(result.key);
+    if (!prior || prior.revision !== revision) memory.spans.set(result.key, { revision,
+      ...(value.presentation ? value.spans : value.fallback.kind === 'image' ? { width: 2, height: 2 } : { width: 1, height: 1 }) });
+    return { key: result.key, ...memory.spans.get(result.key)! };
   }), columns);
   if (!hasContent) return null;
   return <section ref={container} className="tr-gallery" aria-label="Turn results">
     <div className="tr-grid" style={{ gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))` }}>
-      {admitted.map((result, index) => { const place = packing.placements[index]!;
+      {rows.map((result, index) => { const place = packing.placements[index]!;
         return <div key={result.key} style={{ gridColumn: `${place.column + 1} / span ${place.width}`, gridRow: `${place.row + 1} / span ${place.height}` }}>
           {result.kind === 'single' ? <ResultCard row={result.row} runtime={runtime} sdk={sdk} navigate={navigate}
             current={() => current() && resource.store.state.rows.some(row => row.key === result.row.key && row.owner === result.row.owner && canonicalJson(row.identity) === canonicalJson(result.row.identity)
               && canonicalJson(row.resolution?.revision ?? null) === canonicalJson(result.row.resolution?.revision ?? null))}
-            lifetime={lifetime} presentationRoot={presentationRoot} actionScope={actionScope} requestOpen={requestOpen} readAfter={resource.after}
+            lifetime={lifetime} presentationRoot={presentationRoot} actionScope={actionScope} requestOpen={requestOpen}
+            readAfter={state.bindings?.[result.row.key]?.after ?? undefined}
             currentRow={() => resource.store.state.rows.find(row => row.key === result.row.key && row.owner === result.row.owner) ?? null}
             watchCurrent={changed => { const subscription = resource.store.subscribe(changed); return () => subscription.unsubscribe(); }} />
-            : <article className="tr-card"><details className="tr-data-action"><summary>Multiple result sources ({result.rows.length})</summary>
-              {result.rows.map(row => <button key={row.key} onClick={() => {
+            : <article className="tr-card"><div className="tr-data-action">
+              {result.rows.map(row => openAvailable(row) ? <button key={row.key} onClick={() => {
                 openOutcome = Symbol(); pendingOpen?.supersede();
                 const latest = resource.store.state.rows.find(next => next.key === row.key && next.owner === row.owner), fact = openFingerprint(row);
                 if (current() && fact && latest && openAvailable(latest) && openFingerprint(latest) === fact) navigateResult(navigate, row.resolution!.route);
-              }}>{row.owner}: {row.resolution?.fallback.title ?? 'Recognized result'}</button>)}
-            </details><div className="tr-caption">Multiple result sources</div></article>}
+              }}>{row.owner}</button> : <span key={row.key}>{row.owner}</span>)}
+            </div><div className="tr-caption">Multiple result sources</div></article>}
         </div>;
       })}
     </div>
-    {(rows.length > admitted.length || state.continued) && <button className="tr-more" disabled={state.busy || pagingBusy} onClick={() => {
-      if (rows.length > admitted.length) { memory.expanded = true; setExpanded(true); }
-      else if (state.next) pageNext();
-      else resource.more();
-    }}>Show more results</button>}
-    {state.error && <div className="tr-error" role="status">{state.error}<button disabled={state.busy} onClick={() => resource.more()}>Retry results</button></div>}
-    {!rows.length && state.busy && <small className="tr-freshness" role="status">Finding turn results…</small>}
+    {state.limited && <small className="tr-limit">Some results could not fit in this view.</small>}
   </section>;
 }

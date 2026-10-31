@@ -1,7 +1,7 @@
 /** Host-owned, bounded geometry. Rendering/content and occurrence framing stay
  * outside this module; a custom canvas cannot reserve its own page/viewport.
  */
-export const INLINE_RESULT_CEILING = 24;
+export const INLINE_RESULT_CEILING = 64;
 export const GALLERY_GAP_PX = 12;
 export const MIN_COLUMN_PX = 152;
 export interface PackingItem { key: string; width: number; height: number }

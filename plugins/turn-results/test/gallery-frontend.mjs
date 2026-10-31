@@ -73,7 +73,7 @@ function setup() {
 import { createHash } from 'node:crypto';
 function awaitableDigest(data) { return createHash('sha256').update(data).digest(); }
 
-test('hidden/remount releases view leases, retains loaded blob, span geometry and source-only freshness warning', async () => {
+test('hidden/remount releases view leases and retains loaded blob/geometry without permanent metadata footer', async () => {
   const h = setup(); const registration = { component: TurnGallery };
   const rendered = renderSlot(registration, { ...h.props, visible: true });
   try {
@@ -95,13 +95,19 @@ test('hidden/remount releases view leases, retains loaded blob, span geometry an
     const pressure = Array.from({ length: 127 }, (_, i) => h.runtime.retain({ ...h.anchor, threadId: `pressure-${i}` }, false));
     const overflowShell = document.createElement('div');
     const overflow = renderSlot(registration, { ...h.props, anchor: { ...h.anchor, turnId: 'overflow' }, shell: overflowShell, visible: true });
-    assert.match(overflow.container.textContent, /capacity reached/);
+    assert.equal(overflow.container.querySelector('.tr-gallery'), null, 'capacity cannot invent an empty collection');
     assert.equal(rendered.container.querySelector('img'), loadedNode, 'capacity never drops an admitted visible image');
     assert.deepEqual(h.counts(), { mediaCalls: 1, fetches: 1 });
     overflow.unmount(); for (const lease of pressure) lease.dispose();
-    assert.match(rendered.container.textContent, /Source details were checked earlier/);
-    assert.match(rendered.container.querySelector('.tr-freshness').title, /separately from image loading and byte verification/);
+    assert.equal(rendered.container.querySelector('.tr-freshness'), null);
     assert.equal(rendered.container.querySelector('.tr-image-action').title, 'Image bytes match the saved generation');
+    const openIcon = rendered.container.querySelector('.tr-open-icon');
+    assert.equal(openIcon.textContent, ''); assert.match(openIcon.getAttribute('aria-label'), /^Open /);
+    assert.equal(openIcon.querySelector('svg').getAttribute('aria-hidden'), 'true');
+    const previewStyle = document.createElement('style'); previewStyle.textContent = readFileSync(new URL('../app.css', import.meta.url), 'utf8'); document.head.append(previewStyle);
+    assert.equal(window.getComputedStyle(loadedNode).objectFit, 'cover', 'inline preview fills its tile without changing original image bytes');
+    const fullImage = document.createElement('img'), fullAction = document.createElement('button'); fullAction.className = 'tr-image-action'; fullAction.append(fullImage); document.body.append(fullAction);
+    assert.equal(window.getComputedStyle(fullImage).objectFit, 'contain', 'full/native presentation is outside the preview-only crop'); fullAction.remove(); previewStyle.remove();
     await act(async () => rendered.rerender(React.createElement(TurnGallery, { ...h.props, visible: false })));
     assert.equal(h.runtime.stats().leases, 0); assert.equal(h.shell.style.minHeight, '420px');
     await act(async () => rendered.rerender(React.createElement(TurnGallery, { ...h.props, visible: true })));
@@ -111,60 +117,90 @@ test('hidden/remount releases view leases, retains loaded blob, span geometry an
   } finally { rendered.unmount(); h.restore(); }
 });
 
-test('message paging follows genuine cursors, keeps usable data on failed next read, and permits successful empty geometry release', async () => {
-  const f = setup(); const reads = []; let failNext = true;
-  const rows = Array.from({ length: 18 }, (_, i) => ({ ...f.row, key: `paged-${i}`, firstObservedOrder: i }));
+
+function collectionRows(base, count) {
+  return Array.from({ length: count }, (_, i) => { const row = structuredClone(base); row.key = `collected-${i}`; row.firstObservedOrder = i;
+    row.identity.ref.member = `image:${i}`; row.identity.artifact.id = `artifact-${i}`; row.resolution.identity = row.identity; return row; });
+}
+test('turn collection follows issued cursors internally, retains last-good media on failure, and clears successful empty geometry', async () => {
+  const f = setup(), reads = []; let rows = collectionRows(f.row, 18), fail = false;
   f.runtime.backend.read = async (_thread, _turn, _signal, after) => {
-    reads.push(after ?? null); if (after && failNext) throw Error('next page offline');
+    reads.push(after ?? null); if (after && fail) throw Error('collection offline');
     const start = after ? after.seq + 1 : 0, page = rows.slice(start, start + 8);
     return { page: { rows: page, next: start + 8 < rows.length ? { seq: start + 7, key: `issued-${start + 7}` } : null }, coverage: { state: 'partial', intervals: [] } };
   };
   const rendered = renderSlot({ component: TurnGallery }, { ...f.props, visible: true });
-  const button = text => [...rendered.container.querySelectorAll('button')].find(node => node.textContent === text);
   try {
-    await until(() => rendered.container.querySelector('[data-result-key="paged-0"]') && !button('Show more results')?.disabled);
-    await act(async () => button('Show more results').click()); // disclose remaining cards of this8-row page
-    if (!reads.some(cursor => cursor?.key === 'issued-7')) await act(async () => button('Show more results').click());
-    await until(() => rendered.container.textContent.includes('next page offline'));
-    assert.ok(rendered.container.querySelector('[data-result-key="paged-0"]'), 'failed next page retains prior cards');
-    failNext = false; await act(async () => button('Retry results page').click());
-    await until(() => rendered.container.querySelector('[data-result-key="paged-8"]'));
-    assert.equal(rendered.container.querySelector('[data-result-key="paged-0"]'), null);
-    assert.ok(reads.some(cursor => cursor?.seq === 7 && cursor.key === 'issued-7'));
-    assert.ok(rendered.container.querySelectorAll('[data-result-key]').length <= 8);
-    await act(async () => button('Previous results').click());
-    await until(() => rendered.container.querySelector('[data-result-key="paged-0"]'));
-    await act(async () => { rows.length = 0; f.shell.style.minHeight = '420px'; f.runtime.invalidate(); });
-    await until(() => !rendered.container.querySelector('[data-result-key]') && f.runtime.stats().running === 0);
-    assert.equal(f.shell.style.minHeight, '', 'successful empty data clears old geometry reservation');
-    assert.equal(rendered.container.querySelector('.tr-gallery'), null, 'successful no-result state leaves no blank collection shell');
-    assert.ok(!rendered.container.querySelector('button[aria-label="Results"]'));
+    await until(() => rendered.container.querySelectorAll('[data-result-key]').length === 18 && f.runtime.stats().running === 0);
+    assert.deepEqual(reads, [null, { seq: 7, key: 'issued-7' }, { seq: 15, key: 'issued-15' }]);
+    assert.equal([...rendered.container.querySelectorAll('button')].some(b => /Show more|Previous|First results/.test(b.textContent)), false);
+    const prior = rendered.container.querySelector('[data-result-key="collected-0"]');
+    fail = true; await act(async () => f.runtime.invalidate()); await until(() => f.runtime.stats().running === 0);
+    assert.equal(rendered.container.querySelector('[data-result-key="collected-0"]'), prior, 'failed later page keeps the entire accepted turn');
+    assert.equal(rendered.container.querySelectorAll('[data-result-key]').length, 18);
+    const count = reads.length; await act(async () => { await tick(); await tick(); }); assert.equal(reads.length, count, 'no idle or timing retry');
+    fail = false; rows = []; f.shell.style.minHeight = '420px'; await act(async () => f.runtime.invalidate());
+    await until(() => !rendered.container.querySelector('.tr-gallery') && f.runtime.stats().running === 0);
+    assert.equal(f.shell.style.minHeight, '');
+  } finally { rendered.unmount(); f.restore(); }
+});
+test('turn collection64/8page cap charges issued bindings, isolates wrong-turn rows and remains shared by identical-turn panes', async () => {
+  const f = setup(); let rows = collectionRows(f.row, 70), reads = [], wrong = false;
+  f.runtime.backend.read = async (_thread, _turn, _signal, after) => {
+    reads.push(after ?? null); const start = after ? after.seq + 1 : 0, page = structuredClone(rows.slice(start, start + 8));
+    if (wrong && after) page[0].identity.ref.source.turnId = 'foreign-turn';
+    return { page: { rows: page, next: start + 8 < rows.length ? { seq: start + 7, key: `issued-${start + 7}` } : null }, coverage: { state: 'partial', intervals: [] } };
+  };
+  const other = document.createElement('div'); document.querySelector('main').append(other);
+  const left = renderSlot({ component: TurnGallery }, { ...f.props, visible: true }), right = renderSlot({ component: TurnGallery }, { ...f.props, shell: other, visible: true });
+  const lease = f.runtime.retain(f.anchor, false);
+  try {
+    await until(() => left.container.querySelectorAll('[data-result-key]').length === 64 && f.runtime.stats().running === 0);
+    assert.equal(right.container.querySelectorAll('[data-result-key]').length, 64); assert.equal(reads.length, 8);
+    assert.equal(lease.store.state.limited, true); assert.equal(Object.keys(lease.store.state.bindings).length, 64);
+    assert.deepEqual(lease.store.state.bindings['collected-8'].after, { seq: 7, key: 'issued-7' });
+    assert.equal(f.runtime.stats().bytes, canonicalByteLength(lease.store.state, 262144)); assert.ok(f.runtime.stats().bytes <= 262144);
+    assert.equal(f.runtime.stats().leases, 3); assert.ok(f.runtime.stats().running <= 2);
+    const old = left.container.querySelector('[data-result-key="collected-8"]'); wrong = true; reads = [];
+    await act(async () => f.runtime.invalidate()); await until(() => f.runtime.stats().running === 0);
+    assert.match(lease.store.state.error, /collection changed/); assert.equal(left.container.querySelector('[data-result-key="collected-8"]'), old);
+    assert.equal(left.container.querySelector('[data-result-key="foreign-turn"]'), null);
+  } finally { lease.dispose(); left.unmount(); right.unmount(); f.restore(); }
+});
+test('unresolved geometry is not cached; plain data is compact and resolved custom revision hints replace prior geometry', async () => {
+  const f = setup(), row = structuredClone(f.row); row.unresolved = true; row.resolution = null; f.changeRows([row]);
+  const rendered = renderSlot({ component: TurnGallery }, { ...f.props, visible: true });
+  const place = () => rendered.container.querySelector('[data-result-key]').parentElement;
+  try {
+    await until(() => rendered.container.querySelector('[data-result-key]'));
+    assert.equal(place().style.gridRow, '1 / span 1');
+    const plain = structuredClone(f.row); plain.resolution.fallback = { kind: 'card', title: 'Saved file', description: 'A short description', fields: [{ label: 'Hidden raw diagnostics', value: 'x'.repeat(80) }] }; plain.resolution.spans = { width: 2, height: 1 };
+    f.changeRows([plain]); await act(async () => f.runtime.invalidate()); await until(() => rendered.container.textContent.includes('A short description'));
+    assert.equal(place().style.gridColumn, '1 / span 1'); assert.equal(rendered.container.textContent.includes('Hidden raw diagnostics'), false);
+    plain.resolution.presentation = { schema: 'fixture/card@1', data: {} }; plain.resolution.revision.sequence++;
+    plain.resolution.spans = { width: 3, height: 2 }; f.changeRows([structuredClone(plain)]); await act(async () => f.runtime.invalidate());
+    await until(() => place().style.gridRow === '1 / span 2'); assert.equal(place().style.gridColumn, '1 / span 3');
   } finally { rendered.unmount(); f.restore(); }
 });
 
-test('identical-turn views select independent inline pages within existing lease and shared-lane limits', async () => {
-  const f = setup(); const rows = Array.from({ length: 17 }, (_, i) => ({ ...f.row, key: `split-${i}`, firstObservedOrder: i }));
+test('large valid retained artifacts stop at the charged byte cap with exact bindings and no idle retry', async () => {
+  const f = setup(), rows = collectionRows(f.row, 64), reads = [];
+  for (const row of rows) row.resolution.fallback = { kind: 'card', title: 'Saved report', fields: Array.from({ length: 8 }, (_, i) => ({ label: `field-${i}`, value: 'x'.repeat(512) })) };
   f.runtime.backend.read = async (_thread, _turn, _signal, after) => {
-    const start = after ? after.seq + 1 : 0, page = rows.slice(start, start + 8);
-    return { page: { rows: page, next: start + 8 < rows.length ? { seq: start + 7, key: `cursor-${start + 7}` } : null }, coverage: { state: 'partial', intervals: [] } };
+    reads.push(after ?? null); const start = after ? after.seq + 1 : 0;
+    return { page: { rows: rows.slice(start, start + 8), next: start + 8 < rows.length ? { seq: start + 7, key: `issued-${start + 7}` } : null }, coverage: { state: 'partial', intervals: [] } };
   };
-  const otherShell = document.createElement('div'); document.querySelector('main').append(otherShell);
-  const left = renderSlot({ component: TurnGallery }, { ...f.props, visible: true });
-  const right = renderSlot({ component: TurnGallery }, { ...f.props, shell: otherShell, visible: true });
-  const more = () => [...left.container.querySelectorAll('button')].find(node => node.textContent === 'Show more results');
+  const lease = f.runtime.retain(f.anchor);
   try {
-    await until(() => left.container.querySelector('[data-result-key="split-0"]') && right.container.querySelector('[data-result-key="split-0"]') && !more()?.disabled);
-    const unchanged = right.container.querySelector('[data-result-key="split-0"]');
-    await act(async () => more().click());
-    if (!left.container.querySelector('[data-result-key="split-8"]')) await act(async () => more().click());
-    await until(() => left.container.querySelector('[data-result-key="split-8"]'));
-    assert.equal(right.container.querySelector('[data-result-key="split-0"]'), unchanged);
-    assert.equal(right.container.querySelector('[data-result-key="split-8"]'), null);
-    assert.equal(f.runtime.stats().leases, 2); assert.ok(f.runtime.stats().running <= 2);
-    const cursor = { seq: 7, key: 'cursor-7' }, first = f.runtime.retain(f.anchor, false), second = f.runtime.retain(f.anchor, false, cursor);
-    try {
-      assert.equal(f.runtime.stats().bytes, canonicalByteLength(first.store.state) + canonicalByteLength(second.store.state) + canonicalByteLength(cursor) * 2 + 16,
-        'cursor and key copy are charged alongside both bounded snapshots');
-    } finally { first.dispose(); second.dispose(); }
-  } finally { left.unmount(); right.unmount(); assert.equal(f.runtime.stats().leases, 0); f.restore(); }
+    await until(() => lease.store.state.loaded && f.runtime.stats().running === 0);
+    assert.ok(lease.store.state.rows.length > 8 && lease.store.state.rows.length < 64);
+    assert.equal(lease.store.state.limited, true); assert.ok(reads.length <= 8);
+    assert.equal(Object.keys(lease.store.state.bindings).length, lease.store.state.rows.length);
+    assert.equal(f.runtime.stats().bytes, canonicalByteLength(lease.store.state, 262144)); assert.ok(f.runtime.stats().bytes <= 262144);
+    for (const row of lease.store.state.rows) {
+      const cursor = lease.store.state.bindings[row.key].after;
+      assert.ok(reads.some(issued => canonicalJson(issued) === canonicalJson(cursor)), 'each row retains an actually used issued cursor');
+    }
+    const count = reads.length; await act(async () => { await tick(); await tick(); }); assert.equal(reads.length, count);
+  } finally { lease.dispose(); f.restore(); }
 });

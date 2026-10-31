@@ -132,11 +132,11 @@ test('same-ID changed range keeps root; unchanged failure recovers; pending/fore
     const host = f.roots()[0]; host.getBoundingClientRect = () => ({ top: 0, bottom: 240, left: 0, right: 800, width: 800, height: 240, x: 0, y: 0, toJSON() {} });
     f.set([publicRow('completed', 15)]); await f.notify(); await until(() => f.calls.length === 2 && host.querySelector('[data-result-key]'));
     assert.equal(f.roots()[0], host);
-    f.fail(true); await f.notify(); await until(() => f.native.closest('[data-thread-window]').textContent.includes('could not read'));
+    const failedAt = f.calls.length; f.fail(true); await f.notify(); await until(() => f.calls.length === failedAt + 1 && f.calls.every(call => call.finished));
     assert.equal(f.roots()[0], host, 'network failure retains last-good visual/layout');
     const failures = f.calls.length; await settle(200); assert.equal(f.calls.length, failures, 'unchanged failure does not retry itself');
     const before = f.navigation.length; await act(async () => host.querySelector('.tr-caption button').click()); assert.equal(f.navigation.length, before, 'unvalidated boundary has no input authority');
-    f.fail(false); await f.notify(); await until(() => !f.native.closest('[data-thread-window]').textContent.includes('could not read'));
+    const recoveredAt = f.calls.length; f.fail(false); await f.notify(); await until(() => f.calls.length === recoveredAt + 1 && f.calls.every(call => call.finished));
     assert.equal(f.roots()[0], host);
     f.set([publicRow('pending', 15)]); await f.notify(); await until(() => f.roots().length === 0);
     assert.equal(host.style.minHeight, '240px'); assert.equal(host.querySelector('button'), null);
@@ -236,72 +236,80 @@ for (const trigger of ['native-content', 'source-notification', 'reconnect', 'vi
   } finally { await f.dispose(); }
 });
 
-test('historical negative beyond400 revalidates latest then exposes only explicit fresh-chain continuation', async () => {
+test('history beyond800 remains bounded and quiet until genuine fresh public demand can prove the target', async () => {
   const f = await fixture('pending', 900);
-  const more = () => [...f.native.closest('[data-thread-window]').querySelectorAll('button')].find(button => button.textContent === 'Continue history');
   try {
-    await until(() => f.calls.length === 4 && more());
-    await settle(200); assert.equal(f.calls.length, 4);
-    await act(async () => more().click()); await until(() => f.calls.length === 8 && f.calls.every(call => call.finished));
-    await act(async () => more().click()); await until(() => f.calls.length === 10 && !more());
-    assert.equal(f.roots().length, 0);
+    await until(() => f.calls.length === 8 && f.calls.every(call => call.finished));
+    await settle(200); assert.equal(f.calls.length, 8); assert.equal(f.roots().length, 0);
+    assert.equal(f.native.querySelector('[data-turn-results-notice]'), null);
+    assert.equal(f.native.querySelector('.tr-gallery'), null);
     f.set([publicRow('completed', 15)], 'fresh-history-B'); await f.notify();
-    await until(() => f.calls.length === 14 && more());
-    assert.equal(f.roots().length, 0); assert.equal(f.calls[10].beforeAnchorId, undefined);
-    assert.ok(f.native.closest('[data-thread-window]').textContent.includes('earlier snapshot'));
-    await settle(220); assert.equal(f.calls.length, 14, 'fresh-chain debt cannot start a whole-history automatic walk');
-    await act(async () => more().click()); await until(() => f.calls.length === 18 && f.calls.every(call => call.finished));
-    await act(async () => more().click()); await until(() => f.roots().length === 1 && f.calls.length === 20);
-    assert.equal(f.calls.filter(call => !call.beforeAnchorId).length, 2);
-    assert.equal(f.responses.at(-1).timelinePage.historySnapshot, 'fresh-history-B');
-    assert.equal(more(), undefined); assert.ok(!f.native.closest('[data-thread-window]').textContent.includes('earlier snapshot'));
-    await settle(200); assert.equal(f.calls.length, 20);
+    await until(() => f.calls.length === 16 && f.calls.every(call => call.finished));
+    assert.equal(f.calls[8].beforeAnchorId, undefined); assert.equal(f.roots().length, 0);
+    assert.equal([...f.native.querySelectorAll('button')].some(b => /Continue|Show more|Previous|Next/.test(b.textContent)), false);
+    await settle(220); assert.equal(f.calls.length, 16, 'one demand cannot start an all-history walk');
+    f.depth(150); f.set([publicRow('completed', 20)], 'fresh-reachable-C'); await f.notify();
+    await until(() => f.calls.length === 18 && f.roots().length === 1);
+    assert.equal(f.calls[16].beforeAnchorId, undefined); assert.equal(f.responses.at(-1).timelinePage.historySnapshot, 'fresh-reachable-C');
+    await settle(200); assert.equal(f.calls.length, 18);
   } finally { await f.dispose(); }
 });
 
-test('historical failed refresh keeps dated host; explicit continuation restores authority; old A response cannot override B', async () => {
+test('failed refresh retains last-good host without global status; bounded Open and genuine fresh proof retain late-response fences', async () => {
   const f = await fixture('completed', 150);
-  const more = () => [...f.native.closest('[data-thread-window]').querySelectorAll('button')].find(button => button.textContent === 'Continue history');
   try {
     await until(() => f.roots().length === 1 && f.roots()[0].querySelector('[data-result-key]'));
-    const host = f.roots()[0]; f.fail(true); await f.notify();
-    await until(() => f.native.closest('[data-thread-window]').textContent.includes('could not read'));
-    assert.equal(f.roots()[0], host); assert.ok(f.native.closest('[data-thread-window]').textContent.includes('earlier snapshot'));
+    const host = f.roots()[0], failedAt = f.calls.length; f.fail(true); await f.notify();
+    await until(() => f.calls.length === failedAt + 1 && f.calls.every(call => call.finished));
+    assert.equal(f.roots()[0], host); assert.equal(f.native.querySelector('[data-turn-results-notice]'), null);
     const navigation = f.navigation.length;
-    await act(async () => host.querySelector('.tr-caption button').click()); assert.equal(f.navigation.length, navigation);
+    await act(async () => host.querySelector('.tr-caption button').click());
+    await until(() => !host.textContent.includes('Checking')); assert.equal(f.navigation.length, navigation);
     const failedCalls = f.calls.length; await settle(200); assert.equal(f.calls.length, failedCalls);
     f.fail(false); f.depth(900); f.set([publicRow('completed', 15)], 'B'); await f.notify();
-    await until(() => f.calls.length === failedCalls + 4 && more());
-    assert.equal(f.roots()[0], host); assert.ok(f.native.closest('[data-thread-window]').textContent.includes('earlier snapshot'));
+    await until(() => f.calls.length === failedCalls + 8 && f.calls.every(call => call.finished));
+    assert.equal(f.roots()[0], host);
     const paneCursor = structuredClone(f.responses.at(-1).timelinePage.olderCursor); assert.ok(paneCursor);
     const beforeIntent = f.calls.length;
     await act(async () => host.querySelector('.tr-caption button').click()); assert.equal(f.navigation.length, navigation);
-    await until(() => f.calls.length === beforeIntent + 4 && f.calls.every(call => call.finished)
-      && !host.textContent.includes('Checking') && host.textContent.includes('complete current turn boundary'));
+    await until(() => f.calls.length === beforeIntent + 8 && f.calls.every(call => call.finished)
+      && !host.textContent.includes('Checking') && host.textContent.includes('Results read capacity reached'));
     assert.equal(f.navigation.length, navigation); assert.equal(f.calls[beforeIntent].beforeAnchorId, undefined);
-    for (let offset = 1; offset < 4; offset++) {
+    for (let offset = 1; offset < 8; offset++) {
       const issued = f.responses[beforeIntent + offset - 1].timelinePage.olderCursor; assert.ok(issued);
       assert.equal(f.calls[beforeIntent + offset].beforeAnchorId, issued.anchorId);
       assert.equal(f.calls[beforeIntent + offset].beforeAnchorSeq, String(issued.anchorSeq));
     }
     assert.notEqual(f.responses.at(-1).timelinePage.olderCursor.anchorId, paneCursor.anchorId);
-    const afterIntent = f.calls.length;
-    await settle(200); assert.equal(f.calls.length, afterIntent, 'one Open spends only its bounded fresh slice');
-    assert.equal(f.roots()[0], host); assert.ok(f.native.closest('[data-thread-window]').textContent.includes('earlier snapshot'));
-    await act(async () => more().click()); await until(() => f.calls.length === afterIntent + 4 && f.calls.every(call => call.finished));
-    assert.equal(f.calls[afterIntent].beforeAnchorId, paneCursor.anchorId, 'Continue resumes the pane cursor, never the private intent cursor');
-    assert.equal(f.calls[afterIntent].beforeAnchorSeq, String(paneCursor.anchorSeq));
-    await act(async () => more().click()); await until(() => f.calls.length === afterIntent + 6 && !more());
-    assert.equal(f.roots()[0], host); assert.ok(!f.native.closest('[data-thread-window]').textContent.includes('earlier snapshot'));
+    const afterIntent = f.calls.length; await settle(200); assert.equal(f.calls.length, afterIntent, 'one Open spends only its bounded fresh slice');
+    assert.equal(f.roots()[0], host);
+    f.depth(150); f.set([publicRow('completed', 20)], 'B-reachable'); await f.notify();
+    await until(() => f.calls.length === afterIntent + 2 && f.calls.every(call => call.finished));
+    assert.equal(f.calls[afterIntent].beforeAnchorId, undefined, 'new public demand begins a genuine fresh chain');
+    assert.equal(f.roots()[0], host);
     await act(async () => host.querySelector('.tr-caption button').click()); assert.equal(f.navigation.length, navigation + 1);
-    // The held A latest response has already captured its old snapshot/status.
-    f.depth(150); f.set([publicRow('pending', 10)], 'A-late'); f.hold(true, true); await f.notify(); await until(() => f.held.length === 1);
+    f.set([publicRow('pending', 10)], 'A-late'); f.hold(true, true); await f.notify(); await until(() => f.held.length === 1);
     assert.ok(f.calls.at(-1).beforeAnchorId, 'held A reply is an actual older snapshot-pinned continuation');
     await f.hidden(true); f.set([publicRow('completed', 30)], 'C-new'); f.hold(false); await f.hidden(false);
-    await until(() => f.responses.at(-1).timelinePage.historySnapshot === 'C-new' && !f.native.closest('[data-thread-window]').textContent.includes('earlier snapshot'));
+    await until(() => f.responses.at(-1).timelinePage.historySnapshot === 'C-new' && f.calls.at(-1).finished);
     assert.equal(f.roots()[0], host);
     const count = f.calls.length; f.held[0](); await settle(200);
     assert.equal(f.calls.length, count); assert.equal(f.roots()[0], host);
     assert.equal(f.responses.at(-1).timelinePage.historySnapshot, 'C-new'); assert.equal(f.maxOwned(), 1);
   } finally { await f.dispose(); }
+});
+test('successor: visible old target receives one finite second issued slice without controls', async () => {
+ const f=await fixture('completed',650);
+ try { await until(()=>f.roots().length===1);assert.equal(f.calls.length,7);assert.equal(f.calls.filter(c=>!c.beforeAnchorId).length,1);assert.equal(f.maxOwned(),1);for(let i=1;i<7;i++){const cursor=f.responses[i-1].timelinePage.olderCursor;assert.equal(f.calls[i].beforeAnchorId,cursor.anchorId);assert.equal(f.calls[i].beforeAnchorSeq,String(cursor.anchorSeq));}await settle(200);assert.equal(f.calls.length,7); }
+ finally{console.log('SUCCESSOR_BEFORE_COUNTS',JSON.stringify({calls:f.calls.length,roots:f.roots().length,cursors:f.calls.map(c=>c.beforeAnchorId??null)}));await f.dispose();}
+});
+
+test('old visible target single Open obtains a NEW seven-page chain within the original eight-read action budget', async () => {
+ const f=await fixture('completed',650);
+ try{await until(()=>f.roots().length===1);const host=f.roots()[0];const initial=f.calls.length;assert.equal(initial,7);
+ f.fail(true);await f.notify();await until(()=>f.calls.length===initial+1&&f.calls.at(-1).finished);f.fail(false);
+ const mark=f.calls.length;await act(async()=>host.querySelector('.tr-open-icon').click());await until(()=>f.navigation.length===1);
+ assert.equal(f.calls.length-mark,7);assert.equal(f.calls[mark].beforeAnchorId,undefined);for(let i=mark+1;i<f.calls.length;i++)assert.equal(f.calls[i].beforeAnchorId,f.responses[i-1].timelinePage.olderCursor.anchorId);
+ assert.equal(f.roots()[0],host);assert.equal(f.maxOwned(),1);await settle(200);assert.equal(f.calls.length,mark+7);assert.equal(f.navigation.length,1);
+ }finally{await f.dispose();}
 });

@@ -46,7 +46,7 @@ export function galleryAnchors(rows: readonly ProbeRow[], threadId: string, snap
 
 export class GalleryBoundaryError extends Error {}
 
-export const GALLERY_HISTORY_LIMITS = Object.freeze({ targets: 20, pages: 4, segments: 100, rows: 1000, bytes: 1048576 });
+export const GALLERY_HISTORY_LIMITS = Object.freeze({ targets: 20, pages: 4, chainPages: 8, segments: 100, rows: 1000, bytes: 1048576 });
 export interface GalleryTimelinePage {
   rows: readonly ProbeRow[];
   completedTurnDisplay?: string;
@@ -54,9 +54,9 @@ export interface GalleryTimelinePage {
 }
 export interface GalleryTimelinePort {
   timeline(input: { threadId: string; includeNestedRows: 'false'; segmentLimit: string;
-    beforeAnchorId?: string; beforeAnchorSeq?: string; signal: AbortSignal }): Promise<GalleryTimelinePage | { state: 'capacity' }>;
+    beforeAnchorId?: string; beforeAnchorSeq?: string; deferContent: 'true'; signal: AbortSignal }): Promise<GalleryTimelinePage | { state: 'capacity' }>;
 }
-/** Only explicit pane demand advances this public backward cursor. No native ID
+/** Only live pane demand advances this public backward cursor, in two finite slices. No native ID
  * parsing, outline/transcript scan, latest-page restart loop, or detached work.
  * A bounded boundary window witnesses complete turns; a very large turn stays
  * unplaced, with continuation, rather than inventing its missing start. */
@@ -65,21 +65,22 @@ export function createGalleryAnchorReader(port: GalleryTimelinePort, threadId: s
   let cursor: { anchorId: string; anchorSeq: number } | null = null, started = false, exhausted = false;
   let lastTargets = new Set<string>();
   const matched = new Map<string, GalleryAnchor>(), ineligible = new Set<string>();
-  let generation = 0;
+  let generation = 0, chainPages = 0;
   const unresolved = (id: string) => !matched.has(id) && !ineligible.has(id);
   function reset() {
     generation++; window = []; snapshot = null; display = undefined; cursor = null; started = false; exhausted = false;
-    matched.clear(); ineligible.clear();
+    matched.clear(); ineligible.clear(); chainPages = 0;
   }
   function invalidate() {
     // An issued older cursor pins its original snapshot/status. Only a latest
     // request can establish a fresh chain after a genuine invalidation. Older
-    // targets remain explicit bounded continuation, never an automatic sweep.
+    // targets get only the same bounded two-slice chain, never an automatic sweep.
     reset();
   }
   return { invalidate,
-    async read(targets: readonly string[], signal: AbortSignal, restart = false) {
-      if (targets.length > GALLERY_HISTORY_LIMITS.targets || targets.some(id => !id || id.length > 1024)
+    async read(targets: readonly string[], signal: AbortSignal, restart = false, pageBudget: number = GALLERY_HISTORY_LIMITS.pages) {
+      if (!Number.isSafeInteger(pageBudget) || pageBudget < 1 || pageBudget > GALLERY_HISTORY_LIMITS.pages
+        || targets.length > GALLERY_HISTORY_LIMITS.targets || targets.some(id => !id || id.length > 1024)
         || new Set(targets).size !== targets.length) throw Error('Invalid gallery history demand.');
       if (restart || targets.some(id => !lastTargets.has(id))) reset();
       lastTargets = new Set(targets);
@@ -87,15 +88,15 @@ export function createGalleryAnchorReader(port: GalleryTimelinePort, threadId: s
       for (const id of ineligible) if (!lastTargets.has(id)) ineligible.delete(id);
       const readGeneration = generation;
       let pages = 0, limited = false;
-      while (targets.length && !exhausted && targets.some(unresolved) && pages < GALLERY_HISTORY_LIMITS.pages) {
+      while (targets.length && !exhausted && targets.some(unresolved) && pages < pageBudget && chainPages < GALLERY_HISTORY_LIMITS.chainPages) {
         signal.throwIfAborted();
         const before = started ? cursor : null;
-        const page = await port.timeline({ threadId, includeNestedRows: 'false', segmentLimit: String(GALLERY_HISTORY_LIMITS.segments),
+        const page = await port.timeline({ threadId, includeNestedRows: 'false', segmentLimit: String(GALLERY_HISTORY_LIMITS.segments), deferContent: 'true',
           ...(before ? { beforeAnchorId: before.anchorId, beforeAnchorSeq: String(before.anchorSeq) } : {}), signal });
         signal.throwIfAborted();
         if (readGeneration !== generation) throw Error('Timeline read retired.');
-        if ('state' in page) return { anchors: targets.flatMap(id => matched.has(id) ? [matched.get(id)!] : []), continued: true, unplaced: targets.filter(unresolved), checked: targets.filter(id => !unresolved(id) || exhausted), capacity: true, pages, exhausted };
-        pages++;
+        if ('state' in page) return { anchors: targets.flatMap(id => matched.has(id) ? [matched.get(id)!] : []), continued: true, unplaced: targets.filter(unresolved), checked: targets.filter(id => !unresolved(id) || exhausted), capacity: true, pages, exhausted, automatic: false };
+        pages++; chainPages++;
         if (!page.timelinePage.historySnapshot || (snapshot !== null && (page.timelinePage.historySnapshot !== snapshot || page.completedTurnDisplay !== display))) {
           reset(); throw new GalleryBoundaryError('Timeline changed while reading its boundary.');
         }
@@ -110,11 +111,11 @@ export function createGalleryAnchorReader(port: GalleryTimelinePort, threadId: s
         if (sparse.some(row => row.id.length > 1024 || row.threadId.length > 1024 || (row.turnId?.length ?? 0) > 1024
           || row.kind.length > 128 || (row.role?.length ?? 0) > 32 || (row.status?.length ?? 0) > 32)) {
           return { anchors: targets.flatMap(id => matched.has(id) ? [matched.get(id)!] : []), continued: true,
-            unplaced: targets.filter(unresolved), checked: targets.filter(id => !unresolved(id) || exhausted), capacity: true, pages, exhausted };
+            unplaced: targets.filter(unresolved), checked: targets.filter(id => !unresolved(id) || exhausted), capacity: true, pages, exhausted, automatic: false };
         }
         try { canonicalByteLength(sparse, GALLERY_HISTORY_LIMITS.bytes); }
         catch { return { anchors: targets.flatMap(id => matched.has(id) ? [matched.get(id)!] : []), continued: true,
-          unplaced: targets.filter(unresolved), checked: targets.filter(id => !unresolved(id) || exhausted), capacity: true, pages, exhausted }; }
+          unplaced: targets.filter(unresolved), checked: targets.filter(id => !unresolved(id) || exhausted), capacity: true, pages, exhausted, automatic: false }; }
         snapshot = page.timelinePage.historySnapshot; display = page.completedTurnDisplay;
         const byId = new Map(window.map(row => [row.id, row]));
         for (const row of sparse) byId.set(row.id, row);
@@ -141,8 +142,9 @@ export function createGalleryAnchorReader(port: GalleryTimelinePort, threadId: s
       }
       return { anchors: targets.flatMap(id => matched.has(id) ? [matched.get(id)!] : []),
         continued: targets.some(unresolved) && !exhausted,
-        unplaced: targets.filter(unresolved), checked: targets.filter(id => !unresolved(id) || exhausted), capacity: limited,
-        pages, exhausted };
+        unplaced: targets.filter(unresolved), checked: targets.filter(id => !unresolved(id) || exhausted), capacity: limited || chainPages >= GALLERY_HISTORY_LIMITS.chainPages && targets.some(unresolved) && !exhausted,
+        pages, exhausted, automatic: !limited && chainPages === GALLERY_HISTORY_LIMITS.pages && pages === GALLERY_HISTORY_LIMITS.pages
+          && targets.some(unresolved) && !exhausted };
     },
   };
 }

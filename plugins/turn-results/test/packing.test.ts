@@ -48,7 +48,7 @@ test('content resolution does not change geometry; removing a result does not re
 });
 test('empty geometry and explicit capacity/identity/span admission never silently drop cards', () => {
   assert.deepEqual(packResults([], 2), { columns: 2, rows: 0, placements: [] });
-  assert.throws(() => packResults(Array.from({ length: 25 }, (_, i) => ({ key: `${i}`, width: 1, height: 1 })), 4));
+  assert.throws(() => packResults(Array.from({ length: 65 }, (_, i) => ({ key: `${i}`, width: 1, height: 1 })), 4));
   for (const item of [{ key: '', width: 1, height: 1 }, { key: 'é'.repeat(513), width: 1, height: 1 },
     { key: 'a', width: 0, height: 1 }, { key: 'a', width: 1, height: 5 }, { key: 'a', width: 1.1, height: 1 }]) assert.throws(() => packResults([item], 4));
   assert.throws(() => packResults([{ key: 'same', width: 1, height: 1 }, { key: 'same', width: 2, height: 2 }], 4));

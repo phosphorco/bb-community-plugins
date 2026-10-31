@@ -4,7 +4,7 @@ import { createRoot } from 'react-dom/client';
 import { createPortal } from 'react-dom';
 import type { PluginThreadHeaderActionProps } from '@get-bb/plugin-sdk/app';
 import { createGalleryAnchorReader, GalleryBoundaryError, GALLERY_HISTORY_LIMITS } from './gallery/anchors.ts';
-import { mountGalleryPane, observeGalleryDemand, GALLERY_PANE_LIMITS, sameBoundary, resolveGalleryBridge, mountGalleryNotice } from './gallery/pane.ts';
+import { mountGalleryPane, observeGalleryDemand, GALLERY_PANE_LIMITS, sameBoundary, resolveGalleryBridge } from './gallery/pane.ts';
 import { createGalleryRuntime } from './gallery/runtime.ts';
 import type { GalleryRuntime } from './gallery/runtime.ts';
 import { TurnGallery, openFingerprint, openAvailable } from './gallery/view.tsx';
@@ -134,17 +134,12 @@ export default definePluginApp(app => {
       };
     }, [navigationBinding, bridgeCurrent]);
     const sentinel = useRef<HTMLSpanElement>(null);
-    const [targetKey, setTargetKey] = useState('[]');
-    const [notice, setNotice] = useState<ReturnType<typeof mountGalleryNotice>>(null);
     const handle = useRef<ReturnType<typeof mountGalleryPane> | null>(null);
     const reader = useRef<ReturnType<typeof createGalleryAnchorReader> | null>(null);
     const historyRows = useRef(new Map<string, { id: string; turnId: string | null }>());
     const historyBytes = useRef(0);
     const refreshTurns = useRef<Set<string> | null>(new Set());
-    const targets = useRef<string[]>([]), targetCapacity = useRef(false);
-    const [error, setError] = useState<string | null>(null), [continuation, setContinuation] = useState(false);
-    const [capacity, setCapacity] = useState(false);
-    const [unverified, setUnverified] = useState(false);
+    const targets = useRef<string[]>([]);
     const request = useRef<AbortController | null>(null), scope = useRef(0), boundary = useRef(0);
     const queued = useRef(false), rediscover = useRef(false);
     const openValidation = useRef<{ turnId: string; dirty(): void; cancel(): void } | null>(null);
@@ -156,7 +151,7 @@ export default definePluginApp(app => {
       const cancel = () => controller.abort('retired');
       input.signal.addEventListener('abort', cancel, { once: true });
       const timer = setTimeout(() => controller.abort('deadline'), 5000);
-      let dirty = false, disposed = false, unsubscribe = () => {};
+      let dirty = false, disposed = false, timelineRemaining = 8, unsubscribe = () => {};
       const validation = { turnId: input.scope.boundary.turnId, dirty() { dirty = true; }, cancel() { controller.abort('changed'); } };
       const scopeLive = () => Boolean(owner?.isActive() && generationActive && bridgeCurrent() && generation === scope.current && !document.hidden
         && navigationBinding.activation === activationIntent && navigationBinding.threadId === threadId
@@ -184,15 +179,24 @@ export default definePluginApp(app => {
           const fresh = createGalleryAnchorReader({ async timeline(nativeInput) {
             check();
             const read = await owner.readScope(threadId, controller.signal, signal => {
-              check(); return sdk.threads.timeline({ ...nativeInput, signal });
+              check();
+              if (!timelineRemaining) throw Error('Timeline action budget reached.');
+              timelineRemaining--; return sdk.threads.timeline({ ...nativeInput, signal });
             });
             check(); return read.state === 'ready' ? read.value : { state: 'capacity' };
           } }, threadId);
-          const proof = await untilAborted(fresh.read([input.scope.boundary.rowId], controller.signal), controller.signal);
+          if (!timelineRemaining) return decline('This result could not be checked within its history limit.');
+          let proof = await untilAborted(fresh.read([input.scope.boundary.rowId], controller.signal, false, Math.min(4, timelineRemaining)), controller.signal);
+          // Continue only this NEW latest/snapshot chain. Both units and any
+          // dirty restart spend the same eight-read action budget. Each public
+          // page enters the shared FIFO lane, so other demands can run.
+          if (proof.automatic && !dirty && timelineRemaining)
+            proof = await untilAborted(fresh.read([input.scope.boundary.rowId], controller.signal, false, Math.min(4, timelineRemaining)), controller.signal);
+          if (dirty && pass === 0 && timelineRemaining) continue;
           check();
           if (proof.capacity) return decline('Results read capacity reached. Try Open after another view settles.');
           const anchor = proof.anchors.find(value => value.rowId === input.scope.boundary.rowId);
-          if (!anchor || !sameBoundary(anchor, input.scope.boundary)) return decline('This result needs a complete current turn boundary. Continue its history before opening.');
+          if (!anchor || !sameBoundary(anchor, input.scope.boundary)) return decline('This result needs a complete current turn boundary before it can open.');
           const read = await owner.readScope(threadId, controller.signal, signal => {
             check(); return owner.backend.read(threadId, input.scope.boundary.turnId, signal, input.after);
           });
@@ -250,16 +254,13 @@ export default definePluginApp(app => {
         }
         refreshTurns.current = new Set();
         rediscover.current = false;
-        setContinuation(result.continued);
-        setUnverified(result.continued || result.capacity);
-        setCapacity(targetCapacity.current || result.capacity || handle.current.capacity);
-        // Successful exhausted negative/pending rows stay quiet; continued
-        // history and capacity retain explicit inline controls without authority.
-        setError(null);
+        // Only one queued second four-page slice for this live target epoch.
+        // The private reader hard-stops the chain at eight; no timer retries.
+        if (result.automatic) queued.current = true;
+        // Missing/limited native history never invents a completed turn or a
+        // collection surface. Only proved meaningful results render inline.
       } catch (failure) {
         if (failure instanceof GalleryBoundaryError && generation === scope.current && version === boundary.current) handle.current?.update([], targets.current);
-        if (generationActive && !controller.signal.aborted && generation === scope.current && version === boundary.current) setError('Turn results could not read this conversation. Retry results.');
-        else if (controller.signal.reason === 'deadline' && generation === scope.current && version === boundary.current) setError('Turn history read reached its deadline. Continue results.');
       } finally {
         clearTimeout(timer);
         if (request.current === controller) {
@@ -287,7 +288,6 @@ export default definePluginApp(app => {
       // Native history is not participant membership. Only genuine source or
       // lifecycle invalidations revoke the shared ready list and finite pass.
       if (!mutation) runtime?.invalidateReadiness();
-      setUnverified(true);
       if (document.hidden) {
         if (mutationTimer.current !== null) clearTimeout(mutationTimer.current);
         mutationTimer.current = null; return;
@@ -338,11 +338,10 @@ export default definePluginApp(app => {
         }
         return read.state === 'ready' ? read.value : { state: 'capacity' };
       } }, threadId);
-      const stop = observeGalleryDemand(sentinel.current, (ids, limited, reason, changedRows) => {
-        targets.current = ids; setTargetKey(JSON.stringify(ids)); targetCapacity.current = limited;
+      const stop = observeGalleryDemand(sentinel.current, (ids, _limited, reason, changedRows) => {
+        targets.current = ids;
         discoveryDemand ??= owner.retainDiscoveryDemand();
         discoveryDemand?.visible(ids.length > 0);
-        if (!discoveryDemand) { targetCapacity.current = true; setCapacity(true); }
         if (reason === 'demand') void refresh(); else invalidateBoundary(reason === 'mutation', changedRows);
       });
       const visibility = () => { if (document.hidden) { discoveryDemand?.visible(false); invalidateBoundary(); request.current?.abort(); } };
@@ -352,23 +351,10 @@ export default definePluginApp(app => {
         if (mutationTimer.current !== null) clearTimeout(mutationTimer.current); mutationTimer.current = null;
         stop(); discoveryDemand?.dispose(); document.removeEventListener('visibilitychange', visibility); request.current?.abort(); reader.current = null;
         if (handle.current) { void retirePane(handle.current); handle.current = null; }
-        targets.current = []; historyRows.current.clear(); historyBytes.current = 0; refreshTurns.current = new Set(); setError(null); setContinuation(false); setCapacity(false); setUnverified(false);
+        targets.current = []; historyRows.current.clear(); historyBytes.current = 0; refreshTurns.current = new Set();
       };
     }, [threadId, sdk, refresh, invalidateBoundary]);
-    const needsNotice = continuation || capacity || error !== null;
-    useLayoutEffect(() => {
-      if (!needsNotice || !sentinel.current || !bridgeCurrent()) { setNotice(null); return; }
-      const next = mountGalleryNotice(sentinel.current, targets.current); setNotice(next);
-      return () => next?.dispose();
-    }, [needsNotice, targetKey, bridgeCurrent]);
-    const noticeAction = (action: () => void) => { if (generationActive && bridgeCurrent() && notice?.current()) action(); };
-    return <><span ref={sentinel} hidden data-turn-results-sentinel="" />
-      {notice && createPortal(<div className="tr-inline-notice">
-        {unverified && <span role="status">More history is needed to find these results. Saved results may reflect an earlier snapshot.</span>}
-        {continuation && <button className="tr-more" onClick={() => noticeAction(() => void refresh())}>Continue history</button>}
-        {capacity && <span role="status">Results view capacity reached. Focus a turn or continue its history.</span>}
-        {error && <button className="tr-more" onClick={() => noticeAction(() => invalidateBoundary())}>{error}</button>}
-      </div>, notice.element)}</>;
+    return <span ref={sentinel} hidden data-turn-results-sentinel="" />;
 
   }
 

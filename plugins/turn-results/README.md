@@ -2,7 +2,9 @@
 
 Turn results keeps independently supplied results beside their originating
 conversation turn, including when the work section is collapsed. The timeline is
-the collection surface: Show more, Previous and First results stay in that message.
+the collection surface. Meaningful results from a turn appear together without
+paging or history controls; routine command/address observations remain indexed
+and leave no shelf.
 There is no composer customization/banner or separate Results panel/action.
 
 The current source increment includes automatic pane-scoped placement, generated
@@ -79,17 +81,24 @@ anchor types are included from that directory in the published package.
 Current bounded resources include 128 admitted view leases, 128 queued historical
 read units, 64 inactive turn models, and two shared active read lanes with at most
 one read per thread. A demanded historical slice reads at most four public
-100-segment pages and requires explicit continuation beyond that slice. Supplier
+100-segment pages, yielding through shared lanes. One automatic second slice may
+continue the same issued snapshot chain for the same live target; the chain stops
+at eight pages,1,000 sparse rows or1MiB. No history controls or idle walks are added.
+A single Open validates a new latest chain within five seconds and the original
+eight-timeline/two-retained-read budget, including any restart. Supplier
 work also uses the shared lanes and finite continuation budgets. Native source
 slices select at most 32 completions; atomic applications admit at most eight
 candidates/resolutions. Media retains at most 64 entries, two active operations
-and 32 MiB of verified image blobs. Primary inline packing starts with 2/4/8
-cards according to measured pane width. Each inline page contains at most eight
-observations. Explicit continuation follows only the issued keyset cursor; up to64
-previous cursors fit a4KiB per-view history, with First results always available.
-Page keys separate independently selected pages in identical-thread splits. Cursor
-metadata reserves2MiB inside the existing16MiB aggregate snapshot/admission budget;
-loading/failure retains the prior usable page. No hidden page walk is performed. SQLite bounds
+and 32 MiB of verified image blobs. One bounded turn collection follows at most
+eight actually issued pages, admitting up to64 rows within256KiB including
+row-to-issued-cursor bindings, inside the existing16MiB aggregate budget. A lane
+collects once and performs its finite owner slice; one queued follow-up observes
+committed facts while yielding to other demands. Failures retain the last usable
+turn. No per-card read or hidden all-history walk is performed. Actual capacity
+may show a quiet limitation beside meaningful results. Empty/routine-only turns
+have no frame, loading/error strip or reserved space. Plain data cards use1x1,
+images2x2, and custom presentations their supplied spans. Unresolved guesses are
+never cached; resolved geometry follows its source revision. SQLite bounds
 and transaction/eviction accounting live in gallery/index.ts and its actual
 SQLite tests. Capacity, incomplete coverage and evicted history are explicit.
 
@@ -111,9 +120,10 @@ A public per-header bridge supplies the actual thread id and that surface's
 committed native navigation callbacks. It proves a unique local thread window
 from its own DOM ancestry; ambiguous/foreign scopes refuse. Its own empty header
 wrapper is hidden from layout and accessibility. No global thread-id lookup or
-private React context supplies pane ownership. History continuation before a
-complete anchor is placed as an honest notice on an actual demanded native row,
-without claiming a completed turn. Settled healthy views have no status strip.
+private React context supplies pane ownership. Native history remains a bounded proof input; missing boundaries never invent
+a completed turn, history invitation or collection. One concise event caption
+accompanies content, and only meaningful file/URL destinations offer Open.
+Source clocks/provenance remain in facts without permanent diagnostic footers.
 
 ## Verification limits
 

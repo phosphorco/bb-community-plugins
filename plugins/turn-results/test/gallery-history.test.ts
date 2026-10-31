@@ -48,13 +48,15 @@ test('visible historical turn before newest64 remains eligible by public identit
   assert.equal(result.anchors[0]!.turnId, 'turn-5'); assert.equal(result.anchors[0]!.rowId, f.all[5]!.id);
   assert.equal(result.continued, false); assert.equal(f.calls.length, 1);
 });
-test('explicit four-page continuation reaches old visible turn without restarting latest or scanning idle', async () => {
-  const f = pages(), reader = createGalleryAnchorReader(f.port, 'thread'), target = f.all[20]!.id;
+test('one bounded second four-page slice reaches old visible turn without restarting latest or scanning idle', async () => {
+  const f = pages(rows(750)), reader = createGalleryAnchorReader(f.port, 'thread'), target = f.all[20]!.id;
   const first = await reader.read([target], signal()); assert.equal(first.continued, true); assert.equal(first.pages, 4); assert.equal(first.anchors.length, 0);
-  const next = await reader.read([target], signal()); assert.equal(next.continued, true); assert.equal(f.calls.length, 8);
-  const last = await reader.read([target], signal()); assert.equal(last.anchors[0]!.rowId, target); assert.equal(f.calls.length, 9);
+  assert.equal(first.automatic, true);
+  const next = await reader.read([target], signal()); assert.equal(next.continued, false); assert.equal(next.automatic, false); assert.equal(next.anchors[0]!.rowId, target); assert.equal(f.calls.length, 8);
+  const last = await reader.read([target], signal()); assert.equal(last.pages, 0); assert.equal(last.anchors[0]!.rowId, target); assert.equal(f.calls.length, 8);
   assert.equal(f.calls.filter(call => !call.beforeAnchorId).length, 1);
-  const cached = await reader.read([target], signal()); assert.equal(cached.pages, 0); assert.equal(f.calls.length, 9);
+  const cached = await reader.read([target], signal()); assert.equal(cached.pages, 0); assert.equal(f.calls.length, 8);
+  assert.ok(f.calls.every(call => (call as { deferContent?: string }).deferContent === 'true'));
 });
 test('partial first turn is deferred until preceding public page witnesses its start; multi-summary places once', async () => {
   const all = [
@@ -72,17 +74,17 @@ test('partial first turn is deferred until preceding public page witnesses its s
 });
 test('issued older cursor pins snapshot/display; cross-chain response rejects and explicit invalidation acquires latest', async () => {
   for (const change of ['snapshot', 'display'] as const) {
-    const f = pages(), reader = createGalleryAnchorReader(f.port, 'thread'), target = f.all[20]!.id;
+    const f = pages(rows(750)), reader = createGalleryAnchorReader(f.port, 'thread'), target = f.all[20]!.id;
     await reader.read([target], signal()); f[change]('changed');
     const older = await reader.read([target], signal());
-    assert.equal(older.continued, true, 'issued old cursor stays on its original chain');
+    assert.equal(older.continued, false); assert.equal(older.anchors[0]!.historySnapshot, 'native-snapshot', 'issued old cursor stays on its original chain');
     reader.invalidate();
-    const result = await reader.read([f.all[899]!.id], signal());
-    assert.equal(result.anchors[0]!.rowId, f.all[899]!.id);
+    const result = await reader.read([f.all[749]!.id], signal());
+    assert.equal(result.anchors[0]!.rowId, f.all[749]!.id);
     assert.equal(f.calls.at(-1)!.beforeAnchorId, undefined);
     let calls = 0;
     const corrupt = createGalleryAnchorReader({ async timeline() { calls++; return {
-      rows: [f.all[899]!], completedTurnDisplay: calls === 1 ? 'compact' : change === 'display' ? 'changed' : 'compact',
+      rows: [f.all[749]!], completedTurnDisplay: calls === 1 ? 'compact' : change === 'display' ? 'changed' : 'compact',
       timelinePage: { historySnapshot: calls === 1 || change === 'display' ? 'original' : 'wrong-chain',
         olderCursor: { anchorId: `issued-${calls}`, anchorSeq: 4000 - calls } },
     }; } }, 'thread');
@@ -122,23 +124,23 @@ test('recorded native public image-turn IDs/ranges join directly; no ID syntax c
 });
 
 test('history-lane capacity preserves genuine cursor and all previously matched anchors for retry', async () => {
-  const f = pages(rows(900)); let capacity = false;
+  const f = pages(rows(750)); let capacity = false;
   const reader = createGalleryAnchorReader({ async timeline(input) { return capacity ? { state: 'capacity' } : f.port.timeline(input); } }, 'thread');
-  const targets = [f.all[899]!.id, f.all[20]!.id];
+  const targets = [f.all[749]!.id, f.all[20]!.id];
   const initial = await reader.read(targets, signal()); assert.equal(initial.anchors.length, 1);
   capacity = true; const paused = await reader.read(targets, signal());
   assert.equal(paused.capacity, true); assert.equal(paused.continued, true); assert.equal(paused.pages, 0);
   assert.deepEqual(paused.anchors, initial.anchors); assert.equal(f.calls.length, 4);
   capacity = false; await reader.read(targets, signal()); const complete = await reader.read(targets, signal());
-  assert.equal(complete.anchors.length, 2); assert.equal(f.calls.length, 9);
+  assert.equal(complete.anchors.length, 2); assert.equal(f.calls.length, 8);
   assert.equal(f.calls.filter(call => !call.beforeAnchorId).length, 1, 'capacity never acknowledges or resets public cursor');
 });
 
-test('historical negative knowledge is revoked through fresh latest plus pinned chain; over400 rows need explicit continuation', async () => {
-  const all = rows(900).map((row, index) => ({ ...row, status: index === 20 ? 'pending' : 'completed' }));
+test('historical negative knowledge is revoked through fresh latest plus one bounded second slice', async () => {
+  const all = rows(750).map((row, index) => ({ ...row, status: index === 20 ? 'pending' : 'completed' }));
   const f = pages(all), reader = createGalleryAnchorReader(f.port, 'thread'), target = all[20]!.id;
   await reader.read([target], signal()); await reader.read([target], signal()); const old = await reader.read([target], signal());
-  assert.deepEqual(old.anchors, []); assert.deepEqual(old.checked, [target]); assert.equal(f.calls.length, 9);
+  assert.deepEqual(old.anchors, []); assert.deepEqual(old.checked, [target]); assert.equal(f.calls.length, 8);
   f.replace(all.map(row => ({ ...row, status: 'completed' }))); f.snapshot('fresh-B');
   const pinned = await f.port.timeline(f.calls.at(-1)!);
   assert.equal(pinned.timelinePage.historySnapshot, 'native-snapshot'); assert.equal(pinned.rows[20]!.status, 'pending');
@@ -146,18 +148,17 @@ test('historical negative knowledge is revoked through fresh latest plus pinned 
   const fresh = await reader.read([target], signal());
   assert.deepEqual(fresh.anchors, []); assert.deepEqual(fresh.checked, []); assert.equal(fresh.continued, true);
   assert.equal(fresh.pages, 4); assert.equal(f.calls.length, mark + 4); assert.equal(f.calls[mark]!.beforeAnchorId, undefined);
-  assert.equal((await reader.read([target], signal())).continued, true);
-  const complete = await reader.read([target], signal());
+  const complete = await reader.read([target], signal()); assert.equal(complete.continued, false);
   assert.equal(complete.anchors[0]!.historySnapshot, 'fresh-B'); assert.equal(complete.anchors[0]!.rowId, target);
-  assert.equal(f.calls.length, mark + 9); assert.equal(f.calls.filter(call => !call.beforeAnchorId).length, 2);
+  assert.equal(f.calls.length, mark + 8); assert.equal(f.calls.filter(call => !call.beforeAnchorId).length, 2);
   assert.equal((await reader.read([target], signal())).pages, 0);
 });
 test('invalidation discards unresolved old cursor and fences ignored late prior generation', async () => {
-  const f = pages(), reader = createGalleryAnchorReader(f.port, 'thread'), target = f.all[20]!.id;
+  const f = pages(rows(750)), reader = createGalleryAnchorReader(f.port, 'thread'), target = f.all[20]!.id;
   await reader.read([target], signal()); reader.invalidate(); await reader.read([target], signal());
   await reader.read([target], signal());
   const complete = await reader.read([target], signal()); assert.equal(complete.anchors[0]!.rowId, target);
-  assert.equal(f.calls.length, 13); assert.equal(f.calls.filter(call => !call.beforeAnchorId).length, 2);
+  assert.equal(f.calls.length, 12); assert.equal(f.calls.filter(call => !call.beforeAnchorId).length, 2);
   let release!: (page: GalleryTimelinePage) => void, first = true;
   const row = { id: 'stable-id', threadId: 'thread', turnId: 'turn', kind: 'turn', status: 'completed', sourceSeqStart: 1, sourceSeqEnd: 15 };
   const fence = createGalleryAnchorReader({ async timeline() {
@@ -170,3 +171,11 @@ test('invalidation discards unresolved old cursor and fences ignored late prior 
   await assert.rejects(old, /retired/);
   assert.equal((await fence.read(['stable-id'], signal())).anchors[0]!.turnSeqEnd, 15);
 });
+
+ test('hard eight-page chain capacity cannot be spent again by repeated same-target demands', async () => {
+ const f=pages(rows(900)), reader=createGalleryAnchorReader(f.port,'thread'), target=f.all[20]!.id;
+ const first=await reader.read([target],signal()); assert.equal(first.pages,4);assert.equal(first.automatic,true);
+ const second=await reader.read([target],signal());assert.equal(second.pages,4);assert.equal(second.capacity,true);assert.equal(second.automatic,false);assert.deepEqual(second.anchors,[]);assert.deepEqual(second.checked,[]);
+ for(let i=0;i<3;i++){const stopped=await reader.read([target],signal());assert.equal(stopped.pages,0);assert.equal(stopped.capacity,true);assert.equal(stopped.automatic,false);}assert.equal(f.calls.length,8);
+ reader.invalidate();const fresh=await reader.read([target],signal());assert.equal(fresh.pages,4);assert.equal(f.calls[8]!.beforeAnchorId,undefined);
+ });

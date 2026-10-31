@@ -65,8 +65,8 @@ function setup(count = 0, failed = '', productive = false) {
 test('65 distinct demanded threads pass two read lanes fairly; no permanent64 admission', async () => {
   const h = setup(), leases = Array.from({ length: 65 }, (_, i) => h.runtime.retain(anchor(`thread-${i}`)));
   try {
-    await until(() => h.reads.length === 130 && h.runtime.stats().running === 0);
-    assert.equal(new Set(h.reads).size, 65); for (let i = 0; i < 65; i++) assert.equal(h.reads.filter(id => id === `thread-${i}`).length, 2);
+    await until(() => h.reads.length === 65 && h.runtime.stats().running === 0);
+    assert.equal(new Set(h.reads).size, 65); for (let i = 0; i < 65; i++) assert.equal(h.reads.filter(id => id === `thread-${i}`).length, 1);
     assert.equal(h.runtime.stats().leases, 65); assert.equal(h.runtime.stats().queued, 0);
     const count = h.reads.length; await tick(); assert.equal(h.reads.length, count, 'settled idle is quiet');
   } finally { for (const lease of leases) lease.dispose(); h.dispose(); }
@@ -147,7 +147,7 @@ test('same-scope split shares snapshot; narrower proof cannot abort/widen other 
     assert.equal(h.runtime.stats().running, 2); assert.equal(h.reads.filter(id => id === 'same').length, 1);
     assert.equal(heldSignal.aborted, false);
     h.setHold(null); wide.dispose(); duplicate.dispose(); other.dispose(); release();
-    await until(() => h.runtime.stats().running === 0 && h.reads.filter(id => id === 'same').length >= 3);
+    await until(() => h.runtime.stats().running === 0 && h.reads.filter(id => id === 'same').length === 2);
     assert.equal(narrow.store.state.error, null);
   } finally { wide.dispose(); duplicate.dispose(); narrow.dispose(); other.dispose(); h.dispose(); }
 });

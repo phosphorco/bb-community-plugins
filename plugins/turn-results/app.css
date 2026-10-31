@@ -10,14 +10,10 @@
 
 .tr-gallery { margin-block: .75rem; color: var(--foreground); font-size: .875rem; }
 .tr-gallery:empty { display: none; }
-.tr-grid { display: grid; gap: 12px; grid-auto-rows: 108px; }
-.tr-card { height: 100%; min-width: 0; display: flex; flex-direction: column; border: 1px solid var(--border); border-radius: .6rem; overflow: hidden; background: var(--background); }
 .tr-canvas { flex: 1; min-height: 0; width: 100%; overflow: hidden; background: var(--muted); }
 .tr-placeholder { display: flex; height: 100%; align-items: center; justify-content: center; gap: .5rem; padding: .75rem; text-align: center; color: var(--muted-foreground); }
 .tr-image-action { width: 100%; height: 100%; padding: 0; background: transparent; border: 0; cursor: pointer; }
 .tr-image-action img { width: 100%; height: 100%; object-fit: contain; }
-.tr-data-action { display: flex; flex-direction: column; align-items: start; text-align: start; gap: .5rem; padding: 1rem; color: var(--foreground); border: 0; cursor: pointer; overflow-wrap: anywhere; }
-.tr-caption { display: flex; align-items: center; justify-content: space-between; gap: .5rem; min-height: 2.2rem; padding: .25rem .6rem; font-weight: 500; }
 .tr-caption button, .tr-more, .tr-error button, .tr-placeholder button { border: 1px solid var(--border); border-radius: .35rem; padding: .25rem .5rem; background: var(--background); color: var(--foreground); }
 .tr-gallery button:focus-visible { outline: 2px solid var(--ring); outline-offset: -3px; }
 .tr-more { margin-top: .5rem; }
@@ -43,9 +39,30 @@
 [data-thread-header-workflow-actions] > [data-bb-plugin-root][data-bb-plugin="turn-results"]:has(> span[role="group"] > [data-turn-results-bridge]) { display: none; }
 .tr-inline-notice { margin-block: .5rem; color: var(--muted-foreground); font-size: .875rem; }
 .tr-inline-paging { display: flex; flex-wrap: wrap; gap: .5rem; }
-.tr-caption { flex-wrap: wrap; }
-.tr-caption > span { overflow-wrap: anywhere; min-width: 0; }
-.tr-caption > div { display: flex; flex-wrap: wrap; gap: .25rem; }
 
-.tr-caption { flex-shrink: 0; }
-.tr-fallback .tr-data-action { overflow: auto; }
+
+/* Compact turn-local collection: content carries detail, one caption names the event. */
+.tr-grid { display: grid; gap: 12px; grid-auto-rows: 96px; align-items: stretch; }
+.tr-card { height: 100%; min-width: 0; display: flex; flex-direction: column; border: 1px solid var(--border); border-radius: .6rem; overflow: hidden; background: var(--background); }
+.tr-caption button { font-size: .75rem; padding: 2px 5px; }
+.tr-data-action { display: flex; flex-direction: column; align-items: start; justify-content: center; text-align: start; color: var(--foreground); border: 0; padding: 10px; gap: 6px; overflow: hidden; overflow-wrap: anywhere; }
+.tr-fallback .tr-data-action { overflow: hidden; }
+.tr-excerpt { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; line-height: 1.3; font-size: .8rem; }
+.tr-result-symbol { color: var(--muted-foreground); font-size: 1.4rem; line-height: 1; }
+.tr-limit { display: block; color: var(--muted-foreground); font-size: .75rem; margin-top: 4px; }
+
+.tr-caption { display: flex; align-items: center; justify-content: space-between; flex-wrap: nowrap; flex-shrink: 0; min-height: 30px; padding: 4px 8px; gap: 6px; font-size: .8rem; line-height: 1.25; font-weight: 500; }
+.tr-caption > span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tr-caption > div { display: flex; flex: 0 0 auto; gap: 4px; }
+
+/* Inline preview fills its tile; the native viewer keeps the original image. */
+.tr-gallery .tr-image-action img { object-fit: cover; display: block; }
+.tr-caption .tr-open-icon { display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; padding: 3px; border: 0; background: transparent; color: var(--muted-foreground); opacity: 0; }
+.tr-card:hover .tr-open-icon, .tr-card:focus-within .tr-open-icon { opacity: 1; }
+@media (hover: none) { .tr-caption .tr-open-icon { opacity: 1; } }
+
+/* Consumer-owned stable full-view trigger; supplier controls remain independent. */
+.tr-caption:has(.tr-expand-icon) { min-height: 32px; padding-block: 0; }
+.tr-caption .tr-expand-icon { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; padding: 8px; border: 0; background: transparent; color: var(--muted-foreground); opacity: .4; }
+.tr-card:hover .tr-expand-icon, .tr-card:focus-within .tr-expand-icon { opacity: 1; }
+@media (hover: none) { .tr-caption .tr-expand-icon { opacity: 1; } }
