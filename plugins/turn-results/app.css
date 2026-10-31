@@ -23,8 +23,6 @@
 .tr-more { margin-top: .5rem; }
 .tr-freshness { color: var(--muted-foreground); padding: .15rem .6rem .4rem; }
 .tr-error { color: var(--muted-foreground); margin-top: .5rem; }
-.tr-panel-card { height: 280px; margin-block: 12px; }
-.tr-panel-paging { display: flex; gap: .5rem; margin-block: 1rem; }
 .tr-upper { flex: 1; min-height: 0; position: relative; overflow: hidden; }
 .tr-fallback { height: 100%; }
 .tr-fallback > .tr-canvas { height: 100%; }
@@ -40,3 +38,14 @@
 .tr-dialog footer { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; color: var(--muted-foreground); }
 .tr-dialog button { border: 1px solid var(--border); border-radius: .35rem; padding: .3rem .5rem; background: var(--background); color: var(--foreground); }
 .tr-dialog button:focus-visible { outline: 2px solid var(--ring); outline-offset: -3px; }
+
+/* Only this registration's empty native wrapper leaves the header layout/a11y. */
+[data-thread-header-workflow-actions] > [data-bb-plugin-root][data-bb-plugin="turn-results"]:has(> span[role="group"] > [data-turn-results-bridge]) { display: none; }
+.tr-inline-notice { margin-block: .5rem; color: var(--muted-foreground); font-size: .875rem; }
+.tr-inline-paging { display: flex; flex-wrap: wrap; gap: .5rem; }
+.tr-caption { flex-wrap: wrap; }
+.tr-caption > span { overflow-wrap: anywhere; min-width: 0; }
+.tr-caption > div { display: flex; flex-wrap: wrap; gap: .25rem; }
+
+.tr-caption { flex-shrink: 0; }
+.tr-fallback .tr-data-action { overflow: auto; }

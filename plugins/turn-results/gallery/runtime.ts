@@ -18,7 +18,7 @@ import type { GalleryDialogInput, GalleryDialogController } from './dialog.tsx';
 import { untilAborted } from './lifetime.ts';
 
 type Sdk = { plugins: Parameters<typeof discoverResultsParticipants>[0]['sdk']['plugins']; threads: { events: Parameters<typeof consumeTurnSource>[1] } };
-export interface TurnSnapshot { rows: GalleryObservation[]; busy: boolean; continued: boolean; error: string | null; coverage: string }
+export interface TurnSnapshot { loaded?: boolean; next?: { seq: number; key: string } | null; rows: GalleryObservation[]; busy: boolean; continued: boolean; error: string | null; coverage: string }
 export interface GalleryPresentationRoot {
   readonly id: number;
   site(key: string, priority: CanvasPriority, current: () => boolean): PresentationLifetime | null;
@@ -26,14 +26,14 @@ export interface GalleryPresentationRoot {
   whenDrained(): Promise<void>;
 }
 interface TurnEntry {
-  key: string; threadId: string; anchor: GalleryAnchor; store: Store<TurnSnapshot>; refs: number; visible: number;
+  key: string; threadId: string; anchor: GalleryAnchor; after: { seq: number; key: string } | undefined; store: Store<TurnSnapshot>; refs: number; visible: number;
   dirty: boolean; controller: AbortController | null; afterOwner: string | null;
-  debts: Set<string>; debtBudget: number; bytes: number;
+  debts: Set<string>; debtBudget: number; bytes: number; cursorCharge: number;
 }
 interface HistoryRead { threadId: string; live(): boolean; start(): void; cancel(): void }
 type Work = TurnEntry | HistoryRead;
 export const GALLERY_RUNTIME_LIMITS = Object.freeze({ leases: 128, cached: 64, lanes: 2,
-  historyQueue: 128, snapshotBytes: 262144, totalSnapshotBytes: 16777216, sliceMs: 6000, automaticDebtUnits: 4 });
+  historyQueue: 128, cursorBytes: 4096, cursorHistory: 64, snapshotBytes: 262144, totalSnapshotBytes: 16777216, sliceMs: 6000, automaticDebtUnits: 4 });
 const stageSchema = z.object({ version: z.number().int().nonnegative(), value: z.object({
   stage: z.enum(['discover', 'native', 'recognize', 'resolve', 'feed', 'maintenance']), cursor: z.string().nullable(),
   status: z.enum(['ready', 'parked', 'complete']), debt: z.json(),
@@ -43,7 +43,7 @@ const observationSchema = z.object({ key: z.string().max(1024), owner: z.string(
   corrections: z.array(z.object({ kind: z.enum(['observation', 'external-success', 'definite-failure']), id: z.string(), digest: z.string(), recordedAt: z.number().int().nonnegative() })), sourceExpired: InputSchemas.revision.nullable(),
   retracted: z.object({ revision: InputSchemas.revision, supersedesEvidenceDigest: z.string(), reason: z.string() }).nullable(),
   freshness: z.enum(['fresh', 'stale', 'disconnected', 'unsupported', 'unverified']), currentAvailability: z.object({ state: z.enum(['available', 'unavailable', 'unknown']), asOf: z.number(), expiresAt: z.number().nullable(), reason: z.string().optional() }).nullable() });
-const readSchema = z.object({ page: z.object({ rows: z.array(observationSchema).max(8), next: z.object({ seq: z.number().int(), key: z.string() }).nullable() }),
+const readSchema = z.object({ page: z.object({ rows: z.array(observationSchema).max(8), next: z.object({ seq: z.number().int().nonnegative(), key: z.string().max(1024) }).nullable() }),
   coverage: z.object({ state: z.enum(['unindexed', 'partial', 'deleted']), intervals: z.array(z.unknown()).max(128) }) });
 
 /** Window-generation owner. Only demanded turns run. All values/notifications
@@ -197,18 +197,19 @@ export function createGalleryRuntime(sdk: Sdk) {
       turns.delete(entry.key); bytes -= entry.bytes;
     }
   }
-  function publish(entry: TurnEntry, next: TurnSnapshot) {
+  function publish(entry: TurnEntry, next: TurnSnapshot, authoritative = false) {
     const encoded = canonicalJson(next, GALLERY_RUNTIME_LIMITS.snapshotBytes);
-    if (canonicalJson(entry.store.state, GALLERY_RUNTIME_LIMITS.snapshotBytes) === encoded) return;
-    const charge = new TextEncoder().encode(encoded).length;
-    if (bytes - entry.bytes + charge > GALLERY_RUNTIME_LIMITS.totalSnapshotBytes - GALLERY_RUNTIME_LIMITS.leases * 1024) {
+    if (canonicalJson(entry.store.state, GALLERY_RUNTIME_LIMITS.snapshotBytes) === encoded) { if (authoritative) dialog?.observe(next.rows); return; }
+    const charge = new TextEncoder().encode(encoded).length + entry.cursorCharge;
+    if (bytes - entry.bytes + charge > GALLERY_RUNTIME_LIMITS.totalSnapshotBytes - GALLERY_RUNTIME_LIMITS.leases * 16384) {
       // Do not evict mounted content or acknowledge an empty successful view.
+      authoritative = false;
       next = { ...entry.store.state, busy: false, continued: true, error: 'Results display capacity reached. Retry results after closing another view.' };
     }
-    const nextBytes = canonicalByteLength(next, GALLERY_RUNTIME_LIMITS.snapshotBytes);
+    const nextBytes = canonicalByteLength(next, GALLERY_RUNTIME_LIMITS.snapshotBytes) + entry.cursorCharge;
     bytes += nextBytes - entry.bytes; entry.bytes = nextBytes;
     entry.store.setState(() => next);
-    dialog?.observe(next.rows);
+    if (authoritative) dialog?.observe(next.rows);
   }
   function enqueue(entry: TurnEntry) {
     if (!entry.refs || !entry.visible || !entry.dirty || !active || !visible) return;
@@ -248,9 +249,9 @@ export function createGalleryRuntime(sdk: Sdk) {
       const signal = controller.signal, timer = setTimeout(() => controller.abort('deadline'), GALLERY_RUNTIME_LIMITS.sliceMs);
       publish(entry, { ...entry.store.state, busy: true });
       void (async () => {
-        const cached = await backend.read(anchor.threadId, anchor.turnId, signal); signal.throwIfAborted();
-        publish(entry, { ...entry.store.state, rows: cached.page.rows, coverage: cached.coverage.state,
-          continued: cached.page.next !== null, error: null });
+        const cached = await backend.read(anchor.threadId, anchor.turnId, signal, entry.after); signal.throwIfAborted();
+        publish(entry, { ...entry.store.state, rows: cached.page.rows, loaded: true, next: cached.page.next, coverage: cached.coverage.state,
+          continued: cached.page.next !== null, error: null }, true);
         const available = await discover(signal); signal.throwIfAborted();
         // Finish a finite first visit to every listed owner before revisiting
         // productive owner debt. Failures park only that owner, never this pass.
@@ -282,10 +283,10 @@ export function createGalleryRuntime(sdk: Sdk) {
         }
         const unvisited = available.some(source => entry.afterOwner === null || source.pluginId > entry.afterOwner);
         const productive = unvisited || discoveryCursor !== null || (entry.debts.size > 0 && entry.debtBudget > 0);
-        const next = await backend.read(anchor.threadId, anchor.turnId, signal); signal.throwIfAborted();
-        publish(entry, { rows: next.page.rows, busy: false,
+        const next = await backend.read(anchor.threadId, anchor.turnId, signal, entry.after); signal.throwIfAborted();
+        publish(entry, { rows: next.page.rows, loaded: true, next: next.page.next, busy: false,
           continued: productive || entry.debts.size > 0 || next.page.next !== null || discoveryCapacity,
-          error: failure, coverage: discoveryCapacity ? 'source-capacity' : next.coverage.state });
+          error: failure, coverage: discoveryCapacity ? 'source-capacity' : next.coverage.state }, true);
         if (productive) entry.dirty = true;
       })().catch(error => {
         if (signal.aborted && signal.reason === 'deadline' && entry.afterOwner !== null
@@ -383,18 +384,27 @@ export function createGalleryRuntime(sdk: Sdk) {
       for (const entry of turns.values()) if (entry.refs && (!threadId || entry.anchor.threadId === threadId)
         && (!turnIds || turnIds.has(entry.anchor.turnId))) { reset(entry); enqueue(entry); }
     },
-    retain(anchor: GalleryAnchor, initiallyVisible = true) {
+    retain(anchor: GalleryAnchor, initiallyVisible = true, after?: { seq: number; key: string }) {
+      if (after) canonicalByteLength(after, 4096);
       if (!active) throw Error('Gallery generation retired.');
       if (leases >= GALLERY_RUNTIME_LIMITS.leases) return {
-        capacity: true, store: new Store<TurnSnapshot>({ rows: [], busy: false, continued: true, error: null, coverage: 'view-capacity' }),
+        after, capacity: true, store: new Store<TurnSnapshot>({ rows: [], busy: false, continued: true, error: null, coverage: 'view-capacity' }),
         visible(_next: boolean) {}, more() {}, dispose() {},
       };
-      const key = canonicalJson([anchor.threadId, anchor.turnId, anchor.turnSeqStart, anchor.turnSeqEnd]);
+      const key = canonicalJson([anchor.threadId, anchor.turnId, anchor.turnSeqStart, anchor.turnSeqEnd, ...(after ? [after] : [])]);
       let entry = turns.get(key);
       if (!entry) {
         const initial: TurnSnapshot = { rows: [], busy: false, continued: false, error: null, coverage: 'unindexed' };
-        entry = { key, threadId: anchor.threadId, anchor: { ...anchor }, store: new Store(initial), refs: 0, visible: 0, dirty: true,
-          controller: null, afterOwner: null, debts: new Set(), debtBudget: GALLERY_RUNTIME_LIMITS.automaticDebtUnits, bytes: canonicalByteLength(initial) };
+        // Charge both the page cursor and its cache-key copy. The fixed
+        // reserve separately covers bounded per-view back-history metadata.
+        const cursorCharge = after ? canonicalByteLength(after, 4096) * 2 + 16 : 0;
+        const initialBytes = canonicalByteLength(initial) + cursorCharge;
+        if (bytes + initialBytes > GALLERY_RUNTIME_LIMITS.totalSnapshotBytes - GALLERY_RUNTIME_LIMITS.leases * (GALLERY_RUNTIME_LIMITS.cursorBytes + 1024)) return {
+          after, capacity: true, store: new Store<TurnSnapshot>({ rows: [], busy: false, continued: true, error: null, coverage: 'view-capacity' }),
+          visible(_next: boolean) {}, more() {}, dispose() {},
+        };
+        entry = { key, threadId: anchor.threadId, anchor: { ...anchor }, after, store: new Store(initial), refs: 0, visible: 0, dirty: true,
+          controller: null, afterOwner: null, debts: new Set(), debtBudget: GALLERY_RUNTIME_LIMITS.automaticDebtUnits, bytes: initialBytes, cursorCharge };
         turns.set(key, entry); bytes += entry.bytes;
       }
       const owned = entry;
@@ -405,7 +415,7 @@ export function createGalleryRuntime(sdk: Sdk) {
       owned.anchor = { ...anchor }; owned.refs++; leases++; if (initiallyVisible) owned.visible++;
       let live = true, shown = initiallyVisible;
       enqueue(owned);
-      return { capacity: false, store: owned.store,
+      return { after, capacity: false, store: owned.store,
         visible(next: boolean) { if (!live || shown === next) return; shown = next; owned.visible += next ? 1 : -1;
           if (!owned.visible) { owned.controller?.abort(); unqueue(owned); stopUnusedDiscovery(); }
           else { reset(owned); enqueue(owned); } },

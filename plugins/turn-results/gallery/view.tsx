@@ -6,6 +6,8 @@ import { canonicalByteLength, canonicalJson, sha256Canonical } from '@phosphorco
 import { navigateResult } from '@phosphorco/bb-turn-results/bb';
 import type { GalleryObservation } from './index.ts';
 import type { GalleryAnchor } from './anchors.ts';
+import type { GalleryActionScope, GalleryActionCapture } from './pane.ts';
+import { GALLERY_RUNTIME_LIMITS } from './runtime.ts';
 import type { GalleryRuntime, GalleryPresentationRoot } from './runtime.ts';
 import type { PresentationLifetime } from './presentation-lifetime.ts';
 import { HostedCanvas } from './presentation.ts';
@@ -25,7 +27,7 @@ const mediaOutput = z.discriminatedUnion('state', [
     width: z.number().int().min(1).max(32768), height: z.number().int().min(1).max(32768), sizeBytes: z.number().int().min(1).max(8388608) }) }),
 ]);
 type MediaHandle = ReturnType<GalleryRuntime['media']['retain']>;
-function LoadedImage({ handle, alt, open }: { handle: MediaHandle; alt: string; open(): void }) {
+function LoadedImage({ handle, alt, open }: { handle: MediaHandle; alt: string; open: OpenClick }) {
   const state = useSelector(handle.store);
   const [decodeError, setDecodeError] = useState(false);
   if (state.url && !decodeError) return <button className="tr-image-action" onClick={open} aria-label={`Open ${alt}`} title="Image bytes match the saved generation">
@@ -37,7 +39,7 @@ function LoadedImage({ handle, alt, open }: { handle: MediaHandle; alt: string; 
   return <div className="tr-placeholder"><span>{decodeError ? 'Image could not be displayed' : state.state === 'loading' ? 'Loading image…' : state.error ?? 'Generated image'}</span>
     {(decodeError || state.state === 'error') && <button onClick={() => { setDecodeError(false); handle.retry(); }}>Retry image</button>}</div>;
 }
-function ImageCanvas({ row, runtime, sdk, open, lifetime }: { row: GalleryObservation; runtime: GalleryRuntime; sdk: Sdk; open(): void; lifetime: AbortSignal }) {
+function ImageCanvas({ row, runtime, sdk, open, lifetime }: { row: GalleryObservation; runtime: GalleryRuntime; sdk: Sdk; open: OpenClick; lifetime: AbortSignal }) {
   const host = useRef<HTMLDivElement>(null), [handle, setHandle] = useState<MediaHandle | null>(null);
   const resolution = row.resolution;
   const location = resolution?.provenance.artifactLocation;
@@ -72,14 +74,117 @@ function ImageCanvas({ row, runtime, sdk, open, lifetime }: { row: GalleryObserv
   return <div ref={host} className="tr-canvas">{handle ? <LoadedImage handle={handle} alt={alt} open={open} /> : <div className="tr-placeholder">{resolution?.fallback.title ?? 'Image result'}</div>}</div>;
 }
 interface CardSite { key: string; retire(): void }
-export function ResultCard({ row, runtime, sdk, navigate, current, lifetime, presentationRoot, mode = 'docked', customEnabled = true }: {
+type OpenClick = (event: React.MouseEvent<HTMLButtonElement>) => void;
+export type GalleryOpenOutcome = ReturnType<typeof navigateResult> | { state: 'declined'; reason: string };
+export interface GalleryOpenRequest {
+  after?: { seq: number; key: string } | undefined;
+  expected: GalleryObservation; scope: GalleryActionCapture; signal: AbortSignal;
+  currentRow(): GalleryObservation | null; watchCurrent(changed: () => void): () => void; consume(): boolean;
+}
+export type GalleryOpenPort = (input: GalleryOpenRequest) => Promise<GalleryOpenOutcome>;
+/** Factual target, not clock-derived freshness or display ordering. */
+export function openFingerprint(row: GalleryObservation): string | null {
+  try { return canonicalJson({ key: row.key, owner: row.owner, identity: row.identity, resolution: row.resolution,
+    corrections: row.corrections, unresolved: row.unresolved, sourceExpired: row.sourceExpired, retracted: row.retracted }, 16384); }
+  catch { return null; }
+}
+export function openAvailable(row: GalleryObservation) {
+  return Boolean(row.resolution && row.resolution.route.kind !== 'unavailable' && row.resolution.availability.state !== 'unavailable'
+    && !row.retracted && !row.sourceExpired && row.currentAvailability?.state !== 'unavailable');
+}
+// One explicit user intent in this loaded module/window; not a value store.
+interface OpenOperation { cancel(): void; supersede(): void }
+let pendingOpen: OpenOperation | null = null;
+let openOutcome: symbol | null = null;
+export function ResultCard({ row, runtime, sdk, navigate, current, lifetime, presentationRoot, mode = 'docked', customEnabled = true,
+  actionScope, requestOpen, currentRow, watchCurrent, readAfter }: {
   row: GalleryObservation; runtime: GalleryRuntime; sdk: Sdk; navigate: BbNavigate; current(): boolean; lifetime: AbortSignal;
   presentationRoot?: GalleryPresentationRoot | undefined; mode?: 'docked' | 'full'; customEnabled?: boolean;
+  actionScope?: GalleryActionScope | undefined; requestOpen?: GalleryOpenPort | undefined;
+  readAfter?: { seq: number; key: string } | undefined;
+  currentRow?: (() => GalleryObservation | null) | undefined; watchCurrent?: ((changed: () => void) => () => void) | undefined;
 }) {
   const site = useRef<CardSite | null>(null);
+  const card = useRef<HTMLElement>(null), operation = useRef<OpenOperation | null>(null);
   const expandButton = useRef<HTMLButtonElement>(null);
+  const [openStatus, setOpenStatus] = useState<string | null>(null);
   const value = row.resolution;
-  const open = () => { if (current() && value) navigateResult(navigate, value.route); };
+  const fact = openFingerprint(row);
+  useLayoutEffect(() => { setOpenStatus(null); return () => operation.current?.cancel(); }, [fact, lifetime]);
+  const showOutcome = (result: GalleryOpenOutcome) => setOpenStatus(result.state === 'handled' ? null
+      : result.state === 'declined' ? result.reason
+      : result.state === 'invalid' ? 'The saved result destination is invalid.'
+      : result.state === 'unavailable' ? 'This result has no available destination.'
+      : 'The Open request was not accepted. You can try Open again.');
+  const open: OpenClick = event => {
+    // A later explicit action retires outcome ownership, including when the
+    // new action takes the direct/unavailable branch and creates no request.
+    const outcome = Symbol(); openOutcome = outcome;
+    operation.current?.supersede(); pendingOpen?.supersede();
+    const latest = currentRow ? currentRow() : row;
+    // Saved unavailable is authoritative even when the display clock masks it.
+    if (!latest || !openAvailable(latest)) { setOpenStatus('This saved result is unavailable.'); return; }
+    if (!fact || openFingerprint(latest) !== fact) { setOpenStatus('This saved result changed. Review its current details.'); return; }
+    if (current()) { showOutcome(navigateResult(navigate, value!.route)); return; }
+    const scope = actionScope?.capture(), element = card.current;
+    if (!fact || !scope || !scope.live() || !element || !requestOpen || !currentRow || !watchCurrent || lifetime.aborted || !runtime.isActive()) {
+      scope?.release(); setOpenStatus('This result needs verification before it can open. Try Open again after verification.'); return;
+    }
+    const controller = new AbortController(), initiating = event.nativeEvent;
+    let consumed = false, cleaned = false;
+    const cleanup = () => {
+      if (cleaned) return; cleaned = true;
+      document.removeEventListener('pointerdown', later, true); document.removeEventListener('keydown', later, true);
+      document.removeEventListener('focusin', focus, true); document.removeEventListener('visibilitychange', hidden);
+      lifetime.removeEventListener('abort', cancel);
+      if (pendingOpen === owned) pendingOpen = null;
+    };
+    const cancel = () => { controller.abort('retired'); cleanup(); };
+    const supersede = () => {
+      if (operation.current === owned) {
+        operation.current = null;
+        const latest = currentRow();
+        if (!lifetime.aborted && card.current === element && element.isConnected && latest && openFingerprint(latest) === fact)
+          setOpenStatus(previous => previous === 'Checking this saved result…' ? null : previous);
+      }
+      cancel();
+    };
+    const owned = { cancel, supersede };
+    const later = (next: Event) => { if (next !== initiating) cancel(); };
+    const focus = (next: Event) => { if (next !== initiating && !element.contains(next.target as Node)) cancel(); };
+    const hidden = () => { if (document.hidden) cancel(); };
+    pendingOpen = owned; operation.current = owned;
+    // Initiating pointerdown/keydown already happened. Its own native click
+    // dispatch is excluded; only a later gesture or departing focus cancels.
+    document.addEventListener('pointerdown', later, true); document.addEventListener('keydown', later, true);
+    document.addEventListener('focusin', focus, true); document.addEventListener('visibilitychange', hidden);
+    lifetime.addEventListener('abort', cancel, { once: true });
+    setOpenStatus('Checking this saved result…');
+    const consume = () => {
+      const latest = currentRow();
+      if (consumed || controller.signal.aborted || pendingOpen !== owned || operation.current !== owned || !scope.live()
+        || !element.isConnected || !latest || openFingerprint(latest) !== fact) return false;
+      consumed = true; cleanup(); return true;
+    };
+    void requestOpen({ after: readAfter, expected: row, scope, signal: controller.signal, currentRow, watchCurrent, consume }).then(result => {
+      const latest = currentRow();
+      // A revoked action capture never regains action authority. A separately
+      // confirmed current card may still display that old intent's decline.
+      if (openOutcome === outcome && operation.current === owned && !lifetime.aborted && element.isConnected && (scope.live() || current()) && latest && openFingerprint(latest) === fact) showOutcome(result);
+    }, () => {
+      if (openOutcome === outcome && operation.current === owned && !lifetime.aborted && element.isConnected && scope.live()) setOpenStatus('This result could not be checked. Try Open again.');
+    }).finally(() => {
+      cleanup(); scope.release();
+      if (operation.current === owned) {
+        operation.current = null;
+        const latest = currentRow();
+        // Clear only this operation's pending marker on this exact card. Never
+        // publish an old outcome onto a replacement/factually changed card.
+        if (!lifetime.aborted && card.current === element && element.isConnected && latest && openFingerprint(latest) === fact)
+          setOpenStatus(previous => previous === 'Checking this saved result…' ? null : previous);
+      }
+    });
+  };
   const full = () => {
     if (!current() || !value || !site.current || !runtime.isActive()) return;
     // Contributor controls retire with the dock. The consumer action survives
@@ -93,13 +198,14 @@ export function ResultCard({ row, runtime, sdk, navigate, current, lifetime, pre
       {value && 'description' in value.fallback && <span>{value.fallback.description}</span>}
       {value?.fallback.kind === 'card' && value.fallback.fields?.map(field => <span key={field.label}>{field.label}: {field.value}</span>)}
     </button>;
-  return <article className="tr-card" data-result-key={row.key}>
+  return <article ref={card} className="tr-card" data-result-key={row.key}>
     <PresentationCanvas row={row} runtime={runtime} sdk={sdk} navigate={navigate} current={current} lifetime={lifetime}
       presentationRoot={presentationRoot} mode={mode} enabled={customEnabled} site={site} requestFull={full} fallback={fallback} />
     <div className="tr-caption"><span>{runtime.caption(row)}</span><div>
       {mode === 'docked' && value?.presentation && <button ref={expandButton} onClick={full}>Expand result</button>}
       <button onClick={open} disabled={!value || value.route.kind === 'unavailable'}>Open</button>
     </div></div>
+    {openStatus && <small className="tr-freshness" role="status" data-turn-result-open-status="">{openStatus}</small>}
     {row.freshness !== 'fresh' && <small className="tr-freshness" title="This describes the result source record, separately from image loading and byte verification.">
       {row.freshness === 'disconnected' ? 'Source disconnected · saved result details'
         : row.freshness === 'unsupported' ? 'Source version unsupported · saved result details'
@@ -195,45 +301,80 @@ function PresentationCanvas({ row, runtime, sdk, navigate, current, lifetime, pr
     </div>}
   </div>;
 }
-interface LayoutMemory { columns: number; expanded: boolean; spans: Map<string, { width: number; height: number }> }
+type PageCursor = { seq: number; key: string };
+interface Paging { after: PageCursor | undefined; previous: (PageCursor | undefined)[] }
+interface LayoutMemory { paging?: Paging; columns: number; expanded: boolean; spans: Map<string, { width: number; height: number }> }
 // Weakly owned by the exact in-flow shell, not by an unbounded turn-history map.
 const layouts = new WeakMap<HTMLElement, LayoutMemory>();
-export function TurnGallery({ anchor, runtime, sdk, navigate, current, lifetime, visible = true, shell, demanded = true, presentationRoot }: {
+export function TurnGallery({ anchor, runtime, sdk, navigate, current, lifetime, visible = true, shell, demanded = true, presentationRoot, actionScope, requestOpen }: {
   anchor: GalleryAnchor; runtime: GalleryRuntime; sdk: Sdk; navigate: BbNavigate; current(): boolean;
   lifetime: AbortSignal; visible?: boolean; shell?: HTMLElement | undefined; demanded?: boolean; presentationRoot?: GalleryPresentationRoot | undefined;
+  actionScope?: GalleryActionScope | undefined; requestOpen?: GalleryOpenPort | undefined;
 }) {
   const [resource, setResource] = useState<ReturnType<GalleryRuntime['retain']> | null>(null), [attempt, setAttempt] = useState(0);
   const localLayout = useRef<LayoutMemory>({ columns: 1, expanded: false, spans: new Map() });
   const memory = shell ? layouts.get(shell) ?? localLayout.current : localLayout.current;
   if (shell && !layouts.has(shell)) layouts.set(shell, memory);
+  const [paging, setPaging] = useState<Paging>(memory.paging ?? { after: undefined, previous: [] });
+  const accepted = useRef<ReturnType<GalleryRuntime['retain']> | null>(null);
+  const [pageError, setPageError] = useState<string | null>(null), [pagingBusy, setPagingBusy] = useState(false);
+  const cursorKey = canonicalJson(paging.after ?? null);
   useLayoutEffect(() => {
     if (!visible || lifetime.aborted) { setResource(null); return; }
-    const next = runtime.retain(anchor, demanded); setResource(next);
-    const abort = () => next.dispose(); lifetime.addEventListener('abort', abort, { once: true });
-    return () => {
-      if (shell) { const height = shell.getBoundingClientRect().height; if (height > 0) shell.style.minHeight = `${height}px`; }
-      lifetime.removeEventListener('abort', abort); next.dispose();
+    const next = runtime.retain(anchor, demanded, paging.after);
+    if (next.capacity) { setPageError('Results view capacity reached. Retry this page after another view closes.'); return; }
+    let live = true; setPageError(null); setPagingBusy(accepted.current !== null);
+    if (!accepted.current) { accepted.current = next; setResource(next); }
+    const update = () => {
+      if (!live) return;
+      if (next.store.state.loaded) {
+        const old = accepted.current; accepted.current = next; setResource(next); setPagingBusy(false); setPageError(null);
+        if (old && old !== next) old.dispose();
+      } else if (next.store.state.error) { setPageError(next.store.state.error); setPagingBusy(false); }
     };
-  }, [runtime, anchor.threadId, anchor.turnId, anchor.turnSeqStart, anchor.turnSeqEnd, lifetime, visible, shell, attempt]);
+    const subscription = next.store.subscribe(update); update();
+    const abort = () => next.dispose(); lifetime.addEventListener('abort', abort, { once: true });
+    return () => { live = false; subscription.unsubscribe(); lifetime.removeEventListener('abort', abort); if (accepted.current !== next) next.dispose(); };
+  }, [runtime, anchor.threadId, anchor.turnId, anchor.turnSeqStart, anchor.turnSeqEnd, lifetime, visible, cursorKey, attempt]);
+  useLayoutEffect(() => () => {
+    if (shell) { const height = shell.getBoundingClientRect().height; if (height > 0) shell.style.minHeight = `${height}px`; }
+    accepted.current?.dispose(); accepted.current = null;
+  }, [runtime, anchor.threadId, anchor.turnId, anchor.turnSeqStart, anchor.turnSeqEnd, lifetime, visible]);
   useLayoutEffect(() => { resource?.visible(demanded); }, [resource, demanded]);
-  return <div>{resource?.capacity ? <div role="status">Results view capacity reached. <button onClick={() => setAttempt(value => value + 1)}>Retry this turn</button></div>
-    : resource ? <GalleryContents resource={resource} runtime={runtime} sdk={sdk} navigate={navigate} current={current} lifetime={lifetime} memory={memory} shell={shell} presentationRoot={presentationRoot} /> : null}</div>;
+  const page = (next: Paging) => {
+    while (next.previous.length > GALLERY_RUNTIME_LIMITS.cursorHistory || canonicalByteLength({ after: next.after ?? null, previous: next.previous.map(value => value ?? null) }, 262144) > GALLERY_RUNTIME_LIMITS.cursorBytes) next.previous.shift();
+    memory.paging = next; setPaging(next);
+  };
+  return <div>{resource ? <GalleryContents resource={resource} runtime={runtime} sdk={sdk} navigate={navigate} current={current} lifetime={lifetime}
+      memory={memory} shell={shell} presentationRoot={presentationRoot} actionScope={actionScope} requestOpen={requestOpen}
+      pagingBusy={pagingBusy || pageError !== null} pageNext={() => { const next = resource.store.state.next; if (next) page({ after: next, previous: [...paging.previous, paging.after] }); }} /> : pageError ? null : <small role="status">Finding turn results…</small>}
+    {paging.after && <div className="tr-inline-paging"><button disabled={pagingBusy || !paging.previous.length} onClick={() => page({ after: paging.previous.at(-1), previous: paging.previous.slice(0, -1) })}>Previous results</button>
+      <button disabled={pagingBusy} onClick={() => page({ after: undefined, previous: [] })}>First results</button></div>}
+    {pageError && <div role="status">{pageError}<button onClick={() => setAttempt(value => value + 1)}>Retry results page</button></div>}
+    {pagingBusy && <small role="status">Loading the next results page…</small>}
+  </div>;
 }
-function GalleryContents({ resource, runtime, sdk, navigate, current, lifetime, memory, shell, presentationRoot }: {
+
+function GalleryContents({ resource, runtime, sdk, navigate, current, lifetime, memory, shell, presentationRoot, actionScope, requestOpen, pagingBusy, pageNext }: {
   resource: ReturnType<GalleryRuntime['retain']>; runtime: GalleryRuntime; sdk: Sdk; navigate: BbNavigate;
   current(): boolean; lifetime: AbortSignal; memory: LayoutMemory; shell?: HTMLElement | undefined; presentationRoot?: GalleryPresentationRoot | undefined;
+  actionScope?: GalleryActionScope | undefined; requestOpen?: GalleryOpenPort | undefined;
+  pagingBusy: boolean; pageNext(): void;
 }) {
   const state = useSelector(resource.store), container = useRef<HTMLElement>(null);
-  const [columns, setColumns] = useState(memory.columns), [expanded, setExpanded] = useState(memory.expanded);
+  const hasContent = Boolean(state.rows.length || state.busy || state.error || state.continued);
+  const [columns, setColumns] = useState(() => { const width = shell?.getBoundingClientRect().width; const value = width && width > 0 ? paneColumns(width) : memory.columns; memory.columns = value; return value; }), [expanded, setExpanded] = useState(memory.expanded);
   const spans = useRef(memory.spans);
   useLayoutEffect(() => {
     if (!container.current) return;
     const observer = new ResizeObserver(entries => { const width = entries[0]?.contentRect.width;
       if (width !== undefined) { const next = paneColumns(width); memory.columns = next; setColumns(next); }
     });
+    const width = container.current.getBoundingClientRect().width;
+    if (width > 0) { const next = paneColumns(width); memory.columns = next; setColumns(next); }
     observer.observe(container.current); return () => observer.disconnect();
-  }, [memory]);
-  useLayoutEffect(() => { if (shell && state.rows.length && !state.busy) shell.style.minHeight = ''; }, [shell, state.rows, state.busy]);
+  }, [memory, hasContent]);
+  useLayoutEffect(() => { if (shell && state.loaded && !state.busy && !state.error) shell.style.minHeight = ''; }, [shell, state.rows, state.busy]);
   const rows = projectResults(state.rows);
   const admitted = rows.slice(0, expanded ? 24 : initialResultLimit(columns));
   const retained = new Set(admitted.map(result => result.key));
@@ -242,6 +383,7 @@ function GalleryContents({ resource, runtime, sdk, navigate, current, lifetime, 
     if (!spans.current.has(result.key)) spans.current.set(result.key, result.kind === 'single' ? result.row.resolution?.spans ?? { width: 2, height: 2 } : { width: 2, height: 1 });
     return { key: result.key, ...spans.current.get(result.key)! };
   }), columns);
+  if (!hasContent) return null;
   return <section ref={container} className="tr-gallery" aria-label="Turn results">
     <div className="tr-grid" style={{ gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))` }}>
       {admitted.map((result, index) => { const place = packing.placements[index]!;
@@ -249,18 +391,25 @@ function GalleryContents({ resource, runtime, sdk, navigate, current, lifetime, 
           {result.kind === 'single' ? <ResultCard row={result.row} runtime={runtime} sdk={sdk} navigate={navigate}
             current={() => current() && resource.store.state.rows.some(row => row.key === result.row.key && row.owner === result.row.owner && canonicalJson(row.identity) === canonicalJson(result.row.identity)
               && canonicalJson(row.resolution?.revision ?? null) === canonicalJson(result.row.resolution?.revision ?? null))}
-            lifetime={lifetime} presentationRoot={presentationRoot} />
+            lifetime={lifetime} presentationRoot={presentationRoot} actionScope={actionScope} requestOpen={requestOpen} readAfter={resource.after}
+            currentRow={() => resource.store.state.rows.find(row => row.key === result.row.key && row.owner === result.row.owner) ?? null}
+            watchCurrent={changed => { const subscription = resource.store.subscribe(changed); return () => subscription.unsubscribe(); }} />
             : <article className="tr-card"><details className="tr-data-action"><summary>Multiple result sources ({result.rows.length})</summary>
-              {result.rows.map(row => <button key={row.key} onClick={() => { if (current() && row.resolution) navigateResult(navigate, row.resolution.route); }}>{row.owner}: {row.resolution?.fallback.title ?? 'Recognized result'}</button>)}
+              {result.rows.map(row => <button key={row.key} onClick={() => {
+                openOutcome = Symbol(); pendingOpen?.supersede();
+                const latest = resource.store.state.rows.find(next => next.key === row.key && next.owner === row.owner), fact = openFingerprint(row);
+                if (current() && fact && latest && openAvailable(latest) && openFingerprint(latest) === fact) navigateResult(navigate, row.resolution!.route);
+              }}>{row.owner}: {row.resolution?.fallback.title ?? 'Recognized result'}</button>)}
             </details><div className="tr-caption">Multiple result sources</div></article>}
         </div>;
       })}
     </div>
-    {(rows.length > admitted.length || state.continued) && <button className="tr-more" disabled={state.busy} onClick={() => {
-      if (state.rows.length >= 8 && rows.length <= admitted.length) navigate.openThreadPanel({ actionId: 'results', params: { turnId: state.rows[0]!.identity.ref.source.turnId } });
-      else { memory.expanded = true; setExpanded(true); resource.more(); }
+    {(rows.length > admitted.length || state.continued) && <button className="tr-more" disabled={state.busy || pagingBusy} onClick={() => {
+      if (rows.length > admitted.length) { memory.expanded = true; setExpanded(true); }
+      else if (state.next) pageNext();
+      else resource.more();
     }}>Show more results</button>}
     {state.error && <div className="tr-error" role="status">{state.error}<button disabled={state.busy} onClick={() => resource.more()}>Retry results</button></div>}
-    {!rows.length && state.busy && <small className="tr-freshness">Finding turn results…</small>}
+    {!rows.length && state.busy && <small className="tr-freshness" role="status">Finding turn results…</small>}
   </section>;
 }

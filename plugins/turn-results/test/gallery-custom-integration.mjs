@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { registerHooks } from 'node:module';
 import { readFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { getEventListeners } from 'node:events';
 import ts from 'typescript';
 import { JSDOM } from 'jsdom';
@@ -11,11 +12,12 @@ import { createPortal } from 'react-dom';
 import { loadPluginApp, renderSlot } from '@get-bb/plugin-sdk/testing/app';
 import { registerPresentation } from '@phosphorco/bb-context-recognition/presentation';
 import { registerTurnResultsParticipant } from '@phosphorco/bb-turn-results/bb';
-import { buildResolveOutput, METHODS } from '@phosphorco/bb-turn-results';
+import { buildResolveOutput, METHODS, sha256Canonical } from '@phosphorco/bb-turn-results';
 import { GALLERY_METHODS } from '../gallery/rpc.ts';
 import { createGalleryRuntime } from '../gallery/runtime.ts';
 import { mountGalleryPane } from '../gallery/pane.ts';
 const navigationVariantUrl = new URL('../app.tsx?public-navigation-reference-fixture', import.meta.url).href;
+const runtimeVariantUrl = new URL('../app.tsx?public-runtime-constructor-fixture', import.meta.url).href;
 const navigationHookFixture = `
 function useBbNavigate() {
   const api = originalUseBbNavigate(), probe = globalThis.__turnResultsNavigationFixture;
@@ -43,6 +45,8 @@ registerHooks({ load(url, context, next) {
     let source = readFileSync(new URL(url), 'utf8');
     if (url === navigationVariantUrl) source = source.replace('useBbNavigate,', 'useBbNavigate as originalUseBbNavigate,')
       .replace('useSdk,', 'useSdk as originalUseSdk,') + navigationHookFixture;
+    if (url === runtimeVariantUrl) source = source.replace('import { createGalleryRuntime }', 'import { createGalleryRuntime as originalCreateGalleryRuntime }')
+      + '\nfunction createGalleryRuntime(...args) { const owner = originalCreateGalleryRuntime(...args); globalThis.__turnResultsRuntimeFixture?.push(owner); return owner; }';
     return { format: 'module', shortCircuit: true,
       source: ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2023, module: ts.ModuleKind.ESNext, jsx: ts.JsxEmit.ReactJSX } }).outputText };
   }
@@ -50,7 +54,44 @@ registerHooks({ load(url, context, next) {
 } });
 const definition = await import('../app.tsx');
 const navigationDefinition = await import(navigationVariantUrl);
+const runtimeDefinition = await import(runtimeVariantUrl);
 const { ResultCard } = await import('../gallery/view.tsx');
+
+// Exact independent h5 OI1/OI2 interleavings (retained probe SHA872b6d88...).
+test('independent: superseding a held Checking with direct Open cannot publish the cancelled outcome', async () => {
+  const h = await heldImageIntent({ holdValidation: true });
+  try {
+    await act(async () => { h.gates.shift()(); await tick(); });
+    await until(() => h.gates.length === 1);
+    // The ordinary pane proof has now resumed this same card. The private
+    // action timeline is held; a new explicit Open takes the synchronous path.
+    await act(async () => h.image.closest('button').click());
+    assert.equal(h.f.fileOpenCalls.length, 1);
+    await settle(25);
+    console.log('INDEPENDENT_SUPERSEDED_DIRECT', JSON.stringify({ calls: h.f.fileOpenCalls.length, status: h.card.querySelector('[data-turn-result-open-status]')?.textContent ?? null }));
+    const staleStatus = h.card.querySelector('[data-turn-result-open-status]')?.textContent ?? null;
+    console.log('CLEANUP_RELEASE_START'); await h.release(); console.log('CLEANUP_RELEASE_FINISHED');
+    assert.equal(staleStatus, null, 'successful later direct Open must not display an old cancelled intent decline');
+  } finally { console.log('CLEANUP_CLOSE_START'); await h.close(); console.log('CLEANUP_CLOSE_FINISHED'); }
+});
+
+test('independent: synchronous Open checks explicit expiry already published by its actual resource store', async () => {
+  const f = await fixture(1, true, { owner: 'turn-result-images', fileRoute: true, loadedImage: true, nativeItems: true, captureRuntime: true });
+  let lease;
+  try {
+    await until(() => document.querySelector('[data-result-key="row-0"] img'));
+    const image = document.querySelector('[data-result-key="row-0"] img');
+    lease = f.runtime().retain({ threadId: 'thread', turnId: 'turn-0', rowId: 'opaque-0', sourceSeqStart: 1,
+      sourceSeqEnd: 5, turnSeqStart: 1, turnSeqEnd: 5, historySnapshot: 'public-snapshot' }, false);
+    await act(async () => {
+      lease.store.setState(previous => ({ ...previous, rows: previous.rows.map(row => ({ ...row,
+        sourceExpired: { epoch: 'fixture', sequence: 2 }, currentAvailability: { state: 'unknown', asOf: 2, expiresAt: null } })) }));
+      image.closest('button').click();
+    });
+    console.log('INDEPENDENT_PUBLISHED_EXPIRY', JSON.stringify({ sourceExpired: lease.store.state.rows[0].sourceExpired, calls: f.fileOpenCalls.length }));
+    assert.equal(f.fileOpenCalls.length, 0, 'already-published explicit expiry must refuse before the direct branch, including before React commits the new props');
+  } finally { lease?.dispose(); await f.dispose(); }
+});
 const tick = ms => new Promise(resolve => setTimeout(resolve, ms));
 async function settle(ms = 0) { await act(async () => { await tick(ms); }); }
 async function until(condition) { for (let i = 0; i < 400; i++) { await settle(5); if (condition()) return; } assert.fail('Custom integration did not settle'); }
@@ -73,8 +114,8 @@ async function fixture(count = 6, mount = true, contribution = {}) {
   const structuralRows = contribution.structuralRows ?? [];
   const nativeMarkup = Array.from({ length: count }, (_, i) => `<div data-timeline-row-id="opaque-${i}"><button>Native ${i}</button></div>`).join('')
     + structuralRows.map(row => `<div data-timeline-row-id="${row.id}"><button>Native public row</button></div>`).join('');
-  const dom = new JSDOM(`<body data-thread-window><div data-timeline-row-list="top-level">${structuralRows.length ? `<div data-timeline-items class="relative w-full">${nativeMarkup}</div>` : nativeMarkup}</div></body>`, { pretendToBeVisual: true });
-  const keys = ['window','document','Element','HTMLElement','MutationObserver','ResizeObserver','IntersectionObserver','IS_REACT_ACT_ENVIRONMENT'];
+  const dom = new JSDOM(`<body><section data-split-pane-id="left"><header><div data-thread-header-workflow-actions><div data-bb-plugin-root data-bb-plugin="turn-results" class="contents"><span role="group" data-fixture-header></span></div></div></header><section data-thread-window>${contribution.nativeItems ? '<div data-native-chrome><div></div></div>' : ''}<div data-timeline-row-list="top-level">${structuralRows.length || contribution.nativeItems ? `<div data-timeline-items class="relative w-full">${nativeMarkup}</div>` : nativeMarkup}</div></section></section></body>`, { pretendToBeVisual: true });
+  const keys = ['window','document','Element','HTMLElement','MutationObserver','ResizeObserver','IntersectionObserver','IS_REACT_ACT_ENVIRONMENT','fetch'];
   const saved = Object.fromEntries(keys.map(key => [key, globalThis[key]]));
   const changes = new Map(), eventPrototype = EventTarget.prototype, addEvent = eventPrototype.addEventListener, removeEvent = eventPrototype.removeEventListener;
   let subscriptions = 0, subscriptionPeak = 0;
@@ -89,12 +130,28 @@ async function fixture(count = 6, mount = true, contribution = {}) {
     if (type === 'change' && changes.get(this)?.delete(listener)) { subscriptions--; if (!changes.get(this).size) changes.delete(this); }
     return removeEvent.call(this, type, listener, options);
   };
-  class Observer { constructor(callback) { this.callback = callback; } observe() {} unobserve() {} disconnect() {} }
+  class Observer { constructor(callback) { this.callback = callback; } observe(target) {
+    if (contribution.loadedImage && target.classList.contains('tr-canvas')) this.callback([{ target, isIntersecting: true }]);
+  } unobserve() {} disconnect() {} }
   Object.assign(globalThis, { window: dom.window, document: dom.window.document, Element: dom.window.Element, HTMLElement: dom.window.HTMLElement,
     MutationObserver: dom.window.MutationObserver, ResizeObserver: Observer, IntersectionObserver: Observer, IS_REACT_ACT_ENVIRONMENT: true });
   const box = { top: 0, bottom: 600, left: 0, right: 800, width: 800, height: 600, x: 0, y: 0, toJSON() {} };
   dom.window.HTMLElement.prototype.getBoundingClientRect = function () { return this.hasAttribute('data-thread-window') ? box : { ...box, width: 400, right: 400, height: 216, bottom: 216 }; };
   let rows = Array.from({ length: count }, (_, i) => record(i)), enabled = true, listCalls = 0, rpc = 0, live = 0, peak = 0, setups = 0, cleanups = 0, full = 0, fullPeak = 0;
+  if (contribution.fileRoute) rows = rows.map(row => ({ ...row, resolution: { ...row.resolution,
+    route: { kind: 'file', target: { kind: 'host', hostId: 'recorded-host', path: '/saved/result.png' } } } }));
+  if (contribution.savedUnavailable) rows = rows.map(row => ({ ...row, currentAvailability: { state: 'unknown', asOf: 1, expiresAt: null },
+    resolution: { ...row.resolution, availability: { state: 'unavailable', asOf: 1, expiresAt: null, reason: 'source-refused' } } }));
+  const mediaBytes = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aX1cAAAAASUVORK5CYII=', 'base64');
+  const mediaSha = createHash('sha256').update(mediaBytes).digest('hex'); let mediaCalls = 0, mediaFetches = 0;
+  if (contribution.loadedImage) {
+    rows = rows.map(row => { const { presentation, ...resolution } = row.resolution; return { ...row, owner: registeredOwner,
+      resolution: { ...resolution, fallback: { kind: 'image', title: 'Saved image', alt: 'Retained fixture image' },
+        provenance: { ...resolution.provenance, artifactLocation: { state: 'verified', target: resolution.route.target,
+          observedAt: 1, basis: 'explicit-host-read', sha256: mediaSha } } } }; });
+    globalThis.fetch = async () => { mediaFetches++; return new Response(mediaBytes, { headers: { 'content-type': 'image/png' } }); };
+  }
+  const fileOpenCalls = []; let fileOpenAccepted = true;
   const captured = [], navigation = [], registrations = [], nativeCalls = [], handlers = new Map();
   const bb = { rpc: { register(_contract, value) { for (const [method, handler] of Object.entries(value)) handlers.set(method, handler); } } };
   registerTurnResultsParticipant(bb, { pluginId: registeredOwner, capabilities: { revision: 'supplier-r1', supplier: {
@@ -107,8 +164,17 @@ async function fixture(count = 6, mount = true, contribution = {}) {
     async list() { listCalls++; return { plugins: [{ id: registeredOwner, enabled, status: enabled ? 'running' : 'disabled' }] }; },
     async callRpc(args) {
       let value;
-      if (args.pluginId === 'turn-results') {
-        if (args.method === GALLERY_METHODS.read) value = { page: { rows: rows.filter(row => !args.input.turnId || row.identity.ref.source.turnId === args.input.turnId).slice(0, 8), next: null }, coverage: { state: 'partial', intervals: [] } };
+      if (contribution.loadedImage && args.method === 'turnResultImagesV1Media') {
+        mediaCalls++; const now = Date.now(), target = rows[0].resolution.route.target;
+        value = { version: 1, state: 'ready', image: { mimeType: 'image/png', sha256: mediaSha, width: 1, height: 1, sizeBytes: mediaBytes.length },
+          lease: { targetFingerprint: await sha256Canonical({ target, sha256: mediaSha }), leaseGeneration: 'fixture',
+            baseUrl: '/api/v1/file-previews/fixture', url: '/api/v1/file-previews/fixture/image.png', resolvedAt: now, expiresAtMs: now + 60000 } };
+      } else if (args.pluginId === 'turn-results') {
+        if (args.method === GALLERY_METHODS.read) {
+          const all = rows.filter(row => !args.input.turnId || row.identity.ref.source.turnId === args.input.turnId);
+          const start = args.input.after ? all.findIndex(row => row.key === args.input.after.key) + 1 : 0, page = all.slice(start, start + 8), last = page.at(-1);
+          value = { page: { rows: page, next: last && start + 8 < all.length ? { seq: last.identity.ref.source.seq, key: last.key } : null }, coverage: { state: 'partial', intervals: [] } };
+        }
         else if (args.method === GALLERY_METHODS.pending) value = { rows: [], next: null };
         else if (args.method === GALLERY_METHODS.stage) value = null;
         else if (args.method === GALLERY_METHODS.known) value = [];
@@ -134,22 +200,30 @@ async function fixture(count = 6, mount = true, contribution = {}) {
     registrations.push(dispose); return dispose;
   }
   register();
-  const app = await loadPluginApp(contribution.definition ?? definition), controller = new AbortController();
+  const runtimeProbe = []; if (contribution.captureRuntime) globalThis.__turnResultsRuntimeFixture = runtimeProbe;
+  const app = await loadPluginApp(contribution.definition ?? (contribution.captureRuntime ? runtimeDefinition : definition)), controller = new AbortController();
   let script = await app.contentScripts[0].mount({ pluginId: 'turn-results', generation: 1, signal: controller.signal });
-  const originalBanner = app.composerCustomizations[0].banners[0];
-  const banner = contribution.wrapBanner ? { ...originalBanner, component: contribution.wrapBanner(originalBanner.component) } : originalBanner;
-  const renderBanner = () => renderSlot(banner, {}, { sdk, composer: { scope: { kind: 'thread', threadId: 'thread' } },
+  assert.equal(app.composerCustomizations.length, 0); assert.equal(app.threadPanelActions.length, 0);
+  const originalBridge = app.threadHeaderActions[0];
+  const Bridge = contribution.wrapBanner ? contribution.wrapBanner(originalBridge.component) : originalBridge.component;
+  const headerProps = { threadId: 'thread', projectId: 'project', isCompactViewport: false };
+  const banner = { ...originalBridge, component: props => createPortal(h(Bridge, props), document.querySelector('[data-fixture-header]')) };
+  const renderBanner = () => renderSlot(banner, headerProps, { sdk,
+    openFilePreview(options) { fileOpenCalls.push(options); if (contribution.focusOnFileOpen) { const preview = document.createElement('button'); document.body.append(preview); preview.focus(); } return fileOpenAccepted; },
     openUrl(url) { navigation.push(url); return true; }, realtimeConnectionState: 'connected' });
   let rendered = null; if (mount) act(() => { rendered = renderBanner(); }); const slots = [];
   return { dom, sdk, app, controller, captured, navigation, nativeCalls, register, renderer: View, slot: () => rendered,
-    rerender: () => act(async () => { rendered.lifecycle.rerender(h(banner.component)); await tick(); }),
+    fileOpenCalls, fileOpenAccepted(value) { fileOpenAccepted = value; },
+    runtime: () => runtimeProbe.at(-1), element: () => h(banner.component, { ...headerProps }),
+    mediaCounts: () => ({ calls: mediaCalls, fetches: mediaFetches }),
+    rerender: () => act(async () => { rendered.lifecycle.rerender(h(banner.component, headerProps)); await tick(); }),
+    thread: value => act(async () => { headerProps.threadId = value; rendered.lifecycle.rerender(h(banner.component, { ...headerProps })); await tick(); }),
     stats: () => ({ listCalls, rpc, live, peak, setups, cleanups, full, fullPeak, subscriptions, subscriptionPeak }),
     rows: () => rows, setRows(value) { rows = value; }, enabled(value) { enabled = value; },
     notify: () => act(async () => { await rendered.behavior.emitRealtime('results-changed', { threadId: 'thread' }); await tick(); }),
     membership: () => act(async () => { await rendered.behavior.emitRealtime('plugins-changed', {}); await tick(); }),
     async reconnect() { await rendered.behavior.setRealtimeConnectionState('reconnecting'); await rendered.behavior.setRealtimeConnectionState('connected'); await settle(); },
     async hidden(value) { Object.defineProperty(document, 'hidden', { configurable: true, value }); await act(async () => document.dispatchEvent(new dom.window.Event('visibilitychange'))); },
-    panel() { let slot; act(() => { slot = renderSlot(app.threadPanelActions[0], { threadId: 'thread' }, { sdk, composer: { scope: { kind: 'thread', threadId: 'thread' } }, openUrl(url) { navigation.push(url); return true; } }); }); slots.push(slot); return slot; },
     async replaceGeneration() {
       const previous = script; const nextController = new AbortController();
       let next; act(() => { next = app.contentScripts[0].mount({ pluginId: 'turn-results', generation: 2, signal: nextController.signal });
@@ -173,13 +247,14 @@ async function fixture(count = 6, mount = true, contribution = {}) {
       eventPrototype.addEventListener = addEvent; eventPrototype.removeEventListener = removeEvent;
       const counters = { live, peak, setups, cleanups, full, fullPeak, rpc, subscriptions, subscriptionPeak };
       Object.assign(globalThis, saved); dom.window.close();
+      if (globalThis.__turnResultsRuntimeFixture === runtimeProbe) delete globalThis.__turnResultsRuntimeFixture;
       console.log('CUSTOM_HOST_COUNTERS', JSON.stringify(counters));
       assert.equal(live, 0); assert.equal(setups, cleanups); assert.equal(subscriptions, 0); assert.ok(subscriptionPeak <= 132);
     },
   };
 }
 
-test('actual app readiness/realm/revision/retry fences, four resources, panel and quiet idle', async () => {
+test('actual app readiness/realm/revision/retry fences, four resources and quiet idle', async () => {
   const f = await fixture();
   try {
     await until(() => f.stats().live === 4 && document.querySelectorAll('[data-result-key]').length === 6);
@@ -196,12 +271,284 @@ test('actual app readiness/realm/revision/retry fences, four resources, panel an
     assert.equal(f.navigation.length, navigations); await until(() => f.stats().live === 4);
     const changed = structuredClone(f.rows()); for (const row of changed) { row.resolution.revision.sequence = 2; row.resolution.presentation.data.label = 'Updated referent'; }
     f.setRows(changed); await f.notify(); await until(() => document.querySelector('[data-supplier]')?.textContent === 'Updated referent');
-    const slot = f.panel(); await until(() => slot.container.querySelectorAll('[data-result-key]').length === 6 && f.stats().live === 4);
     assert.equal(f.stats().live, 4); assert.equal(f.stats().peak, 4); assert.equal(f.stats().rpc, 0);
     await f.hidden(true); await until(() => f.stats().live === 0); await settle(100);
     const count = f.stats().listCalls; await settle(100); assert.equal(f.stats().listCalls, count);
     await f.hidden(false); await until(() => f.stats().live === 4);
   } finally { await f.dispose(); }
+});
+
+test('outside-list native chrome preserves loaded image Open while unrelated fresh history is held', async () => {
+  const f = await fixture(2, true, { owner: 'turn-result-images', fileRoute: true, loadedImage: true, nativeItems: true }); let release = () => {};
+  try {
+    await until(() => document.querySelector('[data-result-key="row-0"] img'));
+    const image = document.querySelector('[data-result-key="row-0"] img'), url = image.src;
+    const card = image.closest('[data-result-key]'), shell = card.closest('[data-turn-results-gallery]');
+    const original = f.sdk.threads.timeline; let started = 0;
+    f.sdk.threads.timeline = async input => { started++; await new Promise(resolve => { release = resolve; }); return original(input); };
+    await act(async () => { document.querySelector('[data-timeline-row-id="opaque-1"] > button').firstChild.data = 'Other turn changed'; await tick(170); });
+    await until(() => started === 1);
+    const chrome = document.querySelector('[data-native-chrome]');
+    await act(async () => { chrome.firstChild.replaceWith(document.createElement('div')); await tick(10); });
+    await act(async () => image.closest('button').click());
+    assert.equal(f.fileOpenCalls.length, 1, 'unrelated outside-list chrome cannot revoke a healthy loaded image Open');
+    assert.equal(card.querySelector('[data-turn-result-open-status]'), null);
+    assert.equal(card.querySelector('img'), image); assert.equal(image.src, url); assert.equal(card.closest('[data-turn-results-gallery]'), shell);
+    f.sdk.threads.timeline = original; await act(async () => { release(); await tick(); });
+    await until(() => document.querySelector('[data-result-key="row-1"] img'));
+    assert.equal(started, 1); assert.equal(card.querySelector('img'), image); assert.equal(image.src, url);
+    assert.deepEqual(f.mediaCounts(), { calls: 2, fetches: 2 }, 'proof/chrome does not reload verified image bytes');
+  } finally { release(); await f.dispose(); }
+});
+
+test('one dated-image gesture checks fresh proof then opens once without losing its loaded Blob', async () => {
+  const f = await fixture(1, true, { owner: 'turn-result-images', fileRoute: true, loadedImage: true, nativeItems: true });
+  const original = f.sdk.threads.timeline; let release = () => {};
+  try {
+    await until(() => document.querySelector('[data-result-key="row-0"] img'));
+    const image = document.querySelector('[data-result-key="row-0"] img'), url = image.src;
+    const card = image.closest('[data-result-key]'), shell = card.closest('[data-turn-results-gallery]');
+    const dated = structuredClone(f.rows()); dated[0].currentAvailability = { state: 'unknown', asOf: 1, expiresAt: null }; f.setRows(dated);
+    let held = 0;
+    f.sdk.threads.timeline = async input => { held++; await new Promise(resolve => { release = resolve; });
+      const page = await original(input); return { ...page, timelinePage: { historySnapshot: 'fresh-after-gesture', olderCursor: null } }; };
+    await f.notify(); await until(() => held === 1);
+    await act(async () => image.closest('button').click());
+    assert.match(card.querySelector('[data-turn-result-open-status]')?.textContent ?? '', /Checking/);
+    assert.equal(f.fileOpenCalls.length, 0); assert.equal(held, 1, 'intent waits in the existing per-thread lane');
+    f.sdk.threads.timeline = original; await act(async () => { release(); await tick(); });
+    await until(() => f.fileOpenCalls.length === 1);
+    assert.equal(card.querySelector('[data-turn-result-open-status]'), null);
+    assert.equal(card.querySelector('img'), image); assert.equal(image.src, url); assert.equal(card.closest('[data-turn-results-gallery]'), shell);
+    assert.match(card.textContent, /checked earlier/); assert.deepEqual(f.mediaCounts(), { calls: 1, fetches: 1 });
+    await settle(50); assert.equal(f.fileOpenCalls.length, 1);
+  } finally { f.sdk.threads.timeline = original; release(); await f.dispose(); }
+});
+
+test('direct Open checks current full facts before React commit, without a validation read or clock freshness requirement', async t => {
+  for (const kind of ['clock-only', 'source-expired', 'saved-unavailable', 'retracted', 'route', 'proof', 'missing']) await t.test(kind, async () => {
+    const f = await fixture(1, true, { owner: 'turn-result-images', fileRoute: true, loadedImage: true, nativeItems: true, captureRuntime: true });
+    let lease;
+    try {
+      await until(() => document.querySelector('[data-result-key="row-0"] img'));
+      const image = document.querySelector('[data-result-key="row-0"] img'), nativeReads = f.nativeCalls.length;
+      lease = f.runtime().retain({ threadId: 'thread', turnId: 'turn-0', rowId: 'opaque-0', sourceSeqStart: 1,
+        sourceSeqEnd: 5, turnSeqStart: 1, turnSeqEnd: 5, historySnapshot: 'public-snapshot' }, false);
+      await act(async () => {
+        const rows = structuredClone(lease.store.state.rows);
+        rows[0].freshness = 'disconnected'; rows[0].currentAvailability = { state: 'unknown', asOf: 2, expiresAt: null };
+        if (kind === 'source-expired') rows[0].sourceExpired = { epoch: 'fixture', sequence: 2 };
+        if (kind === 'saved-unavailable') rows[0].resolution.availability.state = 'unavailable';
+        if (kind === 'retracted') rows[0].retracted = { revision: { epoch: 'fixture', sequence: 2 }, supersedesEvidenceDigest: 'b'.repeat(64), reason: 'source-correction' };
+        if (kind === 'route') rows[0].resolution.route.target.path = '/different/saved.png';
+        if (kind === 'proof') rows[0].resolution.provenance.artifactLocation.sha256 = 'c'.repeat(64);
+        lease.store.setState(previous => ({ ...previous, rows: kind === 'missing' ? [] : rows }));
+        image.closest('button').click(); // source publication and handler precede React commit
+        assert.equal(f.fileOpenCalls.length, kind === 'clock-only' ? 1 : 0);
+        assert.equal(f.nativeCalls.length, nativeReads, 'direct/decline stays synchronous with no implicit history request');
+      });
+      await settle(30); assert.equal(f.fileOpenCalls.length, kind === 'clock-only' ? 1 : 0);
+    } finally { lease?.dispose(); await f.dispose(); }
+  });
+});
+
+test('a later direct native refusal owns its status after cancelling older Checking', async () => {
+  const h = await heldImageIntent({ holdValidation: true });
+  try {
+    await act(async () => { h.gates.shift()(); await tick(); }); await until(() => h.gates.length === 1);
+    h.f.fileOpenAccepted(false);
+    await act(async () => h.image.closest('button').click());
+    assert.equal(h.f.fileOpenCalls.length, 1);
+    await settle(25); assert.match(h.card.querySelector('[data-turn-result-open-status]')?.textContent ?? '', /not accepted/);
+    await h.release(); await settle(25); assert.match(h.card.querySelector('[data-turn-result-open-status]')?.textContent ?? '', /not accepted/);
+  } finally { await h.close(); }
+});
+
+async function heldImageIntent(options = {}) {
+  const f = await fixture(1, true, { owner: 'turn-result-images', fileRoute: true, loadedImage: true, nativeItems: true, ...options });
+  await until(() => document.querySelector('[data-result-key="row-0"] img'));
+  const image = document.querySelector('[data-result-key="row-0"] img'), card = image.closest('[data-result-key]');
+  const original = f.sdk.threads.timeline, gates = [], calls = []; let free = false;
+  f.sdk.threads.timeline = async input => {
+    calls.push(input);
+    if (!free && (calls.length === 1 || options.holdValidation && calls.length === 2)) await new Promise(resolve => gates.push(resolve));
+    return original(input);
+  };
+  await f.notify(); await until(() => gates.length === 1);
+  let trackedLease, restoreTracking = () => {}, activeWatch = 0;
+  const listeners = new Set();
+  if (options.trackWatch) {
+    trackedLease = f.runtime().retain({ threadId: 'thread', turnId: 'turn-0', rowId: 'opaque-0', sourceSeqStart: 1,
+      sourceSeqEnd: 5, turnSeqStart: 1, turnSeqEnd: 5, historySnapshot: 'public-snapshot' }, false);
+    const store = trackedLease.store, subscribe = store.subscribe;
+    store.subscribe = function(listener) { activeWatch++; const sub = subscribe.call(this, listener); let live = true;
+      return { unsubscribe() { if (live) { live = false; activeWatch--; sub.unsubscribe(); } } }; };
+    const add = document.addEventListener, remove = document.removeEventListener;
+    const types = new Set(['pointerdown', 'keydown', 'focusin', 'visibilitychange']);
+    document.addEventListener = function(type, listener, ...rest) { if (types.has(type)) listeners.add(listener); return add.call(this, type, listener, ...rest); };
+    document.removeEventListener = function(type, listener, ...rest) { if (types.has(type)) listeners.delete(listener); return remove.call(this, type, listener, ...rest); };
+    restoreTracking = () => { store.subscribe = subscribe; document.addEventListener = add; document.removeEventListener = remove; trackedLease.dispose(); };
+  }
+  await act(async () => {
+    if (options.keyboard) image.closest('button').dispatchEvent(new f.dom.window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    image.closest('button').dispatchEvent(new f.dom.window.MouseEvent('click', { bubbles: true, detail: options.keyboard ? 0 : 1 }));
+  });
+  assert.match(card.querySelector('[data-turn-result-open-status]')?.textContent ?? '', /Checking/);
+  return { f, image, card, calls, gates, original,
+    pendingResources: () => ({ subscriptions: activeWatch, listeners: listeners.size }),
+    async release() { free = true; await act(async () => { for (const resolve of gates.splice(0)) resolve(); await tick(); }); },
+    async close() { free = true; for (const resolve of gates.splice(0)) resolve(); f.sdk.threads.timeline = original; restoreTracking(); await f.dispose(); } };
+}
+
+test('Checking accepts dated clocks, one ambiguous activity restart, keyboard gesture and SDK focus only after cleanup', async () => {
+  const h = await heldImageIntent({ captureRuntime: true, holdValidation: true, keyboard: true, focusOnFileOpen: true, trackWatch: true });
+  const { f } = h; let lease;
+  try {
+    await act(async () => { h.gates.shift()(); await tick(); }); await until(() => h.gates.length === 1);
+    const rt = f.runtime(); lease = rt.retain({ threadId: 'thread', turnId: 'turn-0', rowId: 'opaque-0',
+      sourceSeqStart: 1, sourceSeqEnd: 5, turnSeqStart: 1, turnSeqEnd: 5, historySnapshot: 'public-snapshot' }, false);
+    assert.deepEqual(h.pendingResources(), { subscriptions: 1, listeners: 3 });
+    await act(async () => lease.store.setState(previous => ({ ...previous, rows: previous.rows.map(row => ({ ...row,
+      freshness: 'disconnected', currentAvailability: { state: 'unknown', asOf: 100, expiresAt: null } })) })));
+    await f.notify(); await f.notify(); // same thread-only active/idle/correction carrier: ambiguous, not hard cancel
+    assert.equal(f.fileOpenCalls.length, 0);
+    await h.release(); await until(() => f.fileOpenCalls.length === 1);
+    assert.equal(h.card.querySelector('[data-turn-result-open-status]'), null);
+    assert.ok(h.calls.length <= 5, 'one coalesced restart, no unbounded latest loop');
+    await settle(100); assert.equal(f.fileOpenCalls.length, 1); assert.deepEqual(h.pendingResources(), { subscriptions: 0, listeners: 0 });
+  } finally { lease?.dispose(); await h.close(); }
+});
+
+test('Checking uses genuine fresh latest/opaque older chain for the captured complete target', async () => {
+  const h = await heldImageIntent(); const { f } = h; const issued = [];
+  try {
+    f.sdk.threads.timeline = async input => {
+      issued.push(input); const page = await h.original(input);
+      return input.beforeAnchorId ? { ...page, timelinePage: { historySnapshot: 'genuine-new-B', olderCursor: null } }
+        : { ...page, rows: [{ id: 'newer-public-row', threadId: 'thread', turnId: 'newer-turn', kind: 'turn', status: 'completed', sourceSeqStart: 10, sourceSeqEnd: 15 }],
+          timelinePage: { historySnapshot: 'genuine-new-B', olderCursor: { anchorId: 'opaque-issued-B', anchorSeq: 10 } } };
+    };
+    await h.release(); await until(() => f.fileOpenCalls.length === 1);
+    assert.equal(issued[0].beforeAnchorId, undefined); assert.equal(issued[1].beforeAnchorId, 'opaque-issued-B');
+    assert.equal(issued[1].beforeAnchorSeq, '10'); assert.equal(f.fileOpenCalls.length, 1);
+  } finally { await h.close(); }
+});
+
+test('Checking rejects actual target/source/physical/user changes and fences late ignored reads', async t => {
+  for (const kind of ['revision', 'identity', 'proof', 'sha', 'route', 'saved-unavailable', 'explicit-unavailable', 'expired', 'retracted', 'source-ABA', 'pending-boundary', 'boundary-change', 'row-replacement', 'row-remove-readd', 'hidden', 'unload', 'later-gesture']) await t.test(kind, async () => {
+    const h = await heldImageIntent({ captureRuntime: kind === 'source-ABA' }); const { f } = h; let lease;
+    try {
+      if (['revision', 'identity', 'proof', 'sha', 'route', 'saved-unavailable', 'explicit-unavailable', 'expired', 'retracted'].includes(kind)) {
+        const rows = structuredClone(f.rows());
+        if (kind === 'revision') rows[0].resolution.revision.sequence++;
+        if (kind === 'identity') { rows[0].identity.artifact.id = 'changed-artifact'; rows[0].resolution.identity = rows[0].identity; }
+        if (kind === 'proof') { rows[0].identity.evidence.selectedDigest = 'c'.repeat(64); rows[0].resolution.proof.selectedDigest = 'c'.repeat(64); }
+        if (kind === 'sha') rows[0].resolution.provenance.artifactLocation.sha256 = 'c'.repeat(64);
+        if (kind === 'route') rows[0].resolution.route.target.path = '/different/result.png';
+        if (kind === 'saved-unavailable') { rows[0].resolution.availability.state = 'unavailable'; rows[0].currentAvailability = { state: 'unknown', asOf: 1, expiresAt: null }; }
+        if (kind === 'explicit-unavailable') rows[0].currentAvailability = { state: 'unavailable', asOf: 2, expiresAt: null, reason: 'target-unavailable' };
+        if (kind === 'expired') rows[0].sourceExpired = { epoch: 'fixture', sequence: 2 };
+        if (kind === 'retracted') rows[0].retracted = { revision: { epoch: 'fixture', sequence: 2 }, supersedesEvidenceDigest: 'b'.repeat(64), reason: 'source-correction' };
+        f.setRows(rows);
+      }
+      if (kind === 'source-ABA') {
+        lease = f.runtime().retain({ threadId: 'thread', turnId: 'turn-0', rowId: 'opaque-0', sourceSeqStart: 1,
+          sourceSeqEnd: 5, turnSeqStart: 1, turnSeqEnd: 5, historySnapshot: 'public-snapshot' }, false);
+        const before = lease.store.state;
+        await act(async () => { lease.store.setState({ ...before, rows: before.rows.map(row => ({ ...row, resolution: { ...row.resolution,
+          revision: { ...row.resolution.revision, sequence: 2 } } })) }); lease.store.setState(before); });
+      }
+      if (kind === 'pending-boundary' || kind === 'boundary-change') f.sdk.threads.timeline = async input => {
+        const page = await h.original(input); return { ...page, rows: page.rows.map(row => kind === 'pending-boundary'
+          ? { ...row, status: 'pending' } : { ...row, sourceSeqEnd: 6 }) };
+      };
+      if (kind === 'row-replacement') document.querySelector('[data-timeline-row-id="opaque-0"]').replaceWith(document.createElement('div'));
+      if (kind === 'row-remove-readd') { const row = document.querySelector('[data-timeline-row-id="opaque-0"]'), parent = row.parentElement; row.remove(); parent.append(row); }
+      if (kind === 'hidden') await f.hidden(true);
+      if (kind === 'unload') await act(async () => f.controller.abort());
+      if (kind === 'later-gesture') document.dispatchEvent(new f.dom.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      await h.release(); await settle(220); assert.equal(f.fileOpenCalls.length, 0);
+      const calls = h.calls.length; await settle(80); assert.equal(h.calls.length, calls, 'no late replay/idle validation retry');
+    } finally { lease?.dispose(); await h.close(); }
+  });
+});
+
+test('Checking stops after four genuine older pages when its captured historical boundary remains unplaced', async () => {
+  const h = await heldImageIntent(); let pages = 0;
+  try {
+    h.f.sdk.threads.timeline = async () => {
+      pages++; const seq = 1000 - pages * 10;
+      return { rows: [{ id: `public-deep-${pages}`, threadId: 'thread', turnId: `public-turn-${pages}`, kind: 'turn', status: 'completed', sourceSeqStart: seq, sourceSeqEnd: seq + 5 }],
+        timelinePage: { historySnapshot: 'genuine-deep', olderCursor: { anchorId: `opaque-issued-${pages}`, anchorSeq: seq } } };
+    };
+    await h.release(); await until(() => /complete current turn boundary/.test(h.card.textContent));
+    assert.equal(pages, 4); assert.equal(h.f.fileOpenCalls.length, 0); await settle(100); assert.equal(pages, 4);
+  } finally { await h.close(); }
+});
+
+test('saved unavailable masked by dated unknown blocks both direct and Checking; superseding Open has one winner', async () => {
+  const f = await fixture(1, true, { owner: 'turn-result-images', fileRoute: true, loadedImage: true, nativeItems: true, savedUnavailable: true });
+  try {
+    await until(() => document.querySelector('img')); const button = document.querySelector('img').closest('button');
+    const reads = f.nativeCalls.length; await act(async () => button.click());
+    assert.equal(f.fileOpenCalls.length, 0); assert.equal(f.nativeCalls.length, reads);
+    assert.match(button.closest('.tr-card').textContent, /unavailable/);
+    await f.notify(); await act(async () => button.click()); assert.equal(f.fileOpenCalls.length, 0);
+  } finally { await f.dispose(); }
+  const h = await heldImageIntent();
+  try { await act(async () => h.image.closest('button').click()); await h.release(); await until(() => h.f.fileOpenCalls.length === 1); await settle(80); assert.equal(h.f.fileOpenCalls.length, 1); }
+  finally { await h.close(); }
+});
+
+test('Checking capacity preserves accepted queued debt; five-second deadline has no implicit retry', async t => {
+  await t.test('actual runtime queue128', async () => {
+    const f = await fixture(1, true, { owner: 'turn-result-images', fileRoute: true, loadedImage: true, nativeItems: true, captureRuntime: true });
+    const controller = new AbortController(); let release = () => {};
+    try {
+      await until(() => document.querySelector('img') && f.runtime().stats().running === 0);
+      const rt = f.runtime(), reads = Array.from({ length: 128 }, () => rt.readScope('thread', controller.signal,
+        () => new Promise(resolve => { release = resolve; })).catch(() => null));
+      await until(() => rt.stats().historyReads === 128);
+      await f.notify(); await act(async () => document.querySelector('img').closest('button').click());
+      await until(() => /capacity/.test(document.querySelector('[data-turn-result-open-status]')?.textContent ?? ''));
+      assert.equal(f.fileOpenCalls.length, 0); assert.equal(rt.stats().historyReads, 128);
+      controller.abort(); release(); await Promise.all(reads); await until(() => rt.stats().historyReads === 0);
+    } finally { controller.abort(); release(); await f.dispose(); }
+  });
+  await t.test('deadline includes lane wait', async () => {
+    const h = await heldImageIntent({ holdValidation: true });
+    try { await settle(5100); assert.equal(h.f.fileOpenCalls.length, 0); assert.match(h.card.textContent, /deadline/);
+      await h.release(); await settle(100); assert.equal(h.f.fileOpenCalls.length, 0); }
+    finally { await h.close(); }
+  });
+});
+
+test('cancelled Checking stays declined until a later explicit Open; native refusal remains visible', async () => {
+  const f = await fixture(1, true, { fileRoute: true }); let release = () => {};
+  try {
+    await until(() => f.stats().live === 1);
+    const card = document.querySelector('[data-result-key="row-0"]');
+    const open = [...card.querySelectorAll('.tr-caption button')].find(button => button.textContent === 'Open');
+    const original = f.sdk.threads.timeline;
+    f.sdk.threads.timeline = async input => { await new Promise(resolve => { release = resolve; });
+      const page = await original(input); return { ...page, timelinePage: { historySnapshot: 'genuinely-fresh-public-snapshot', olderCursor: null } }; };
+    await act(async () => { document.querySelector('[data-timeline-row-id="opaque-0"] > button').firstChild.data = 'Native row changed'; await tick(10); });
+    await act(async () => open.click());
+    assert.equal(f.fileOpenCalls.length, 0, 'suspended authority cannot reach the public native port');
+    assert.match(card.querySelector('[data-turn-result-open-status]')?.textContent ?? '', /Checking/);
+    await act(async () => document.dispatchEvent(new f.dom.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true })));
+    await until(() => f.nativeCalls.length >= 1 && f.stats().live === 0);
+    await settle(160); f.sdk.threads.timeline = original;
+    await act(async () => { release(); await tick(); }); await until(() => f.stats().live === 1);
+    assert.equal(f.fileOpenCalls.length, 0, 'fresh proof never replays a prior user gesture');
+    assert.ok(card.querySelector('[data-turn-result-open-status]'), 'revalidation alone does not clear the declined action');
+    await act(async () => open.click());
+    assert.equal(f.fileOpenCalls.length, 1); assert.equal(card.querySelector('[data-turn-result-open-status]'), null);
+    f.fileOpenAccepted(false); await act(async () => open.click());
+    assert.equal(f.fileOpenCalls.length, 2); assert.match(card.querySelector('[data-turn-result-open-status]').textContent, /not accepted/);
+    f.fileOpenAccepted(true); assert.ok(card.querySelector('[data-turn-result-open-status]'));
+    await act(async () => open.click()); assert.equal(f.fileOpenCalls.length, 3); assert.equal(card.querySelector('[data-turn-result-open-status]'), null);
+  } finally { release(); await f.dispose(); }
 });
 
 test('contributor requestFull retires its custom trigger and Escape focuses the same-card stable consumer Expand', async () => {
@@ -262,7 +609,7 @@ test('pane holds exact root disposal credit past real passive cleanup/watchdog; 
   let pane, release = () => {}, held = false; const events = [];
   try {
     await runtime.readScope('thread', signal.signal, bounded => runtime.discoverReady(bounded));
-    const sentinel = document.createElement('span'); sentinel.dataset.turnResultsSentinel = ''; document.body.append(sentinel);
+    const sentinel = document.createElement('span'); sentinel.dataset.turnResultsSentinel = ''; document.querySelector('[data-thread-window]').append(sentinel);
     const anchors = f.rows().map((row, i) => ({ threadId: 'thread', turnId: row.identity.ref.source.turnId, rowId: `opaque-${i}`,
       sourceSeqStart: i * 10 + 1, sourceSeqEnd: i * 10 + 5, turnSeqStart: i * 10 + 1, turnSeqEnd: i * 10 + 5, historySnapshot: 'public-snapshot' }));
     act(() => { pane = mountGalleryPane(sentinel, 'thread', anchors, (host, anchor, current, lifetime) => {
@@ -398,7 +745,7 @@ test('reverification waits quietly for exact shell disposal instead of microtask
   let pane, release = () => {}, mounts = 0, hold = true;
   try {
     await runtime.readScope('thread', controller.signal, signal => runtime.discoverReady(signal));
-    const sentinel = document.createElement('span'); sentinel.dataset.turnResultsSentinel = ''; document.body.append(sentinel);
+    const sentinel = document.createElement('span'); sentinel.dataset.turnResultsSentinel = ''; document.querySelector('[data-thread-window]').append(sentinel);
     const anchors = [{ threadId: 'thread', turnId: 'turn-0', rowId: 'opaque-0', sourceSeqStart: 1, sourceSeqEnd: 5, turnSeqStart: 1, turnSeqEnd: 5, historySnapshot: 'snapshot' }];
     act(() => { pane = mountGalleryPane(sentinel, 'thread', anchors, (host, _anchor, current, lifetime) => {
       mounts++; const root = createRoot(host), scope = runtime.presentationRoot(lifetime, current);
@@ -420,7 +767,7 @@ test('reverification waits quietly for exact shell disposal instead of microtask
 test('repeated empty successor panes share one stalled root barrier and never create another root', async () => {
   const f = await fixture(1, false); let release = () => {}, mounts = 0, latest, original;
   try {
-    const sentinel = document.createElement('span'); sentinel.dataset.turnResultsSentinel = ''; document.body.append(sentinel);
+    const sentinel = document.createElement('span'); sentinel.dataset.turnResultsSentinel = ''; document.querySelector('[data-thread-window]').append(sentinel);
     const anchors = [{ threadId: 'thread', turnId: 'turn-0', rowId: 'opaque-0', sourceSeqStart: 1, sourceSeqEnd: 5, turnSeqStart: 1, turnSeqEnd: 5, historySnapshot: 'snapshot' }];
     original = mountGalleryPane(sentinel, 'thread', anchors, () => { mounts++; return { dispose: () => new Promise(resolve => { release = resolve; }) }; });
     const barrier = original.dispose(); await settle();
@@ -529,24 +876,6 @@ test('independent: an already-loaded dialog rejects an opener reused during pred
   } finally { await f.dispose(); }
 });
 
-test('independent: retained panel data Open after content-script shutdown', async () => {
-  const f = await fixture(1); const observed = {};
-  try {
-    await until(() => f.stats().live === 1);
-    const slot = f.panel(); await until(() => slot.container.querySelector('[data-result-key]'));
-    const open = [...slot.container.querySelectorAll('.tr-caption button')].find(b=>b.textContent==='Open');
-    const before = f.navigation.length; const oldCustom = f.captured.at(-1);
-    await act(async () => { f.controller.abort(); await tick(); });
-    await until(() => f.stats().live === 0);
-    oldCustom.navigate.openUrl('https://fixture.invalid/retired-custom');
-    observed.customNavigationAfterShutdown = f.navigation.length-before;
-    await act(async () => open.click());
-    observed.navigationAfterShutdown = f.navigation.length-before;
-    console.log('INDEPENDENT_PANEL_SHUTDOWN',JSON.stringify(observed));
-    assert.equal(observed.navigationAfterShutdown,0,'retired window generation cannot navigate from a still-owned native panel');
-  } finally { await f.dispose(); }
-});
-
 
 test('independent control: already-loaded dialog replacement with current opener remains functional', async () => {
   const f = await fixture(2);
@@ -623,43 +952,12 @@ test('already accepted full selection keeps independent saved-data lifetime when
   } finally { await f.dispose(); }
 });
 
-test('native panel dated data works through active source faults but fences synchronously on retirement and stays inert after replacement', async () => {
-  const f = await fixture(1);
-  try {
-    await until(() => f.stats().live === 1);
-    const slot = f.panel(); await until(() => slot.container.querySelector('[data-result-key]'));
-    const open = [...slot.container.querySelectorAll('.tr-caption button')].find(button => button.textContent === 'Open');
-    const original = f.sdk.plugins.callRpc;
-    f.sdk.plugins.callRpc = async args => {
-      if (args.pluginId === 'turn-results' && args.method === GALLERY_METHODS.read) throw Error('intentional active-generation read outage');
-      return original(args);
-    };
-    await f.hidden(true); await f.hidden(false);
-    await until(() => /Results history is temporarily unavailable/.test(slot.container.textContent));
-    const before = f.navigation.length; await act(async () => open.click());
-    assert.equal(f.navigation.length, before + 1, 'source read outage does not retire accepted data authority');
-    f.sdk.plugins.callRpc = original;
-    await f.hidden(true); await f.hidden(false);
-    await until(() => !/Results history is temporarily unavailable/.test(slot.container.textContent) && f.stats().live > 0);
-    const fallback = slot.container.querySelector('.tr-fallback button'), oldCustom = f.captured.at(-1), beforeStop = f.navigation.length;
-    act(() => {
-      f.controller.abort();
-      open.click(); fallback.click(); oldCustom.navigate.openUrl('https://fixture.invalid/retired');
-      assert.equal(f.navigation.length, beforeStop, 'stop fences old data/custom actions before passive native-slot cleanup');
-    });
-    await until(() => f.stats().live === 0); assert.ok(open.isConnected, 'native panel remains mounted during stop');
-    await f.replaceGeneration(); await until(() => f.stats().live === 1);
-    await act(async () => open.click()); assert.equal(f.navigation.length, beforeStop, 'old runtime never revives with successor');
-    const fresh = f.panel(); await until(() => fresh.container.querySelector('[data-result-key]'));
-    await act(async () => [...fresh.container.querySelectorAll('.tr-caption button')].find(button => button.textContent === 'Open').click());
-    assert.equal(f.navigation.length, beforeStop + 1, 'current replacement generation remains usable');
-  } finally { await f.dispose(); }
-});
 
 function streamUnrelatedRow(f, token) {
   const row = f.dom.window.document.querySelector('[data-timeline-row-id="opaque-1"]');
   row.querySelector(':scope > button').firstChild.data = `Unrelated native token ${token}`;
 }
+
 test('witnessed foreign native wrapper windowing preserves healthy host and ordinary full intent', async () => {
   // Native v7 late-ring shape and public workspace turn-location metadata.
   // Thread is fixture-owned; the opaque native ID and its public turn are not parsed.
@@ -746,26 +1044,6 @@ test('native changes cannot abort delayed participant pass while actual pane sti
   } finally { await f.dispose(); }
 });
 
-test('unrelated native stream retains independently mounted panel hosts and exact unchanged data actions', async () => {
-  const f = await fixture(2);
-  try {
-    await until(() => f.stats().live === 2); const panel = f.panel();
-    await until(() => f.stats().live === 4 && panel.container.querySelectorAll('[data-supplier]').length === 2);
-    const hosts = [...panel.container.querySelectorAll('[data-supplier]')], dock = document.querySelector('[data-timeline-row-id="opaque-0"] [data-supplier]');
-    const lists = f.stats().listCalls;
-    for (let i = 0; i < 8; i++) {
-      await act(async () => { streamUnrelatedRow(f, i); await tick(60); });
-      assert.deepEqual([...panel.container.querySelectorAll('[data-supplier]')], hosts);
-      assert.equal(document.querySelector('[data-timeline-row-id="opaque-0"] [data-supplier]'), dock);
-    }
-    assert.equal(f.stats().listCalls, lists); assert.equal(f.stats().peak, 4);
-    const before = f.navigation.length;
-    await act(async () => { hosts[0].click(); }); assert.equal(f.navigation.length, before + 1);
-    await f.hidden(true); await until(() => f.stats().live === 0);
-    const hiddenCalls = f.nativeCalls.length; await settle(200); assert.equal(f.nativeCalls.length, hiddenCalls);
-    await f.hidden(false); await until(() => f.stats().live === 4);
-  } finally { await f.dispose(); }
-});
 
 test('same-thread split keeps its exact unchanged custom host while another pane streams native content', async () => {
   const f = await fixture(2); let rightSlot;
@@ -774,12 +1052,15 @@ test('same-thread split keeps its exact unchanged custom host while another pane
     const right = document.createElement('section'); right.dataset.threadWindow = '';
     right.innerHTML = '<div data-timeline-row-list="top-level"><div data-timeline-row-id="opaque-0"><button>Right native row</button></div></div>';
     document.body.append(right);
-    const Sentinel = f.app.composerCustomizations[0].banners[0].component;
-    let rightReads = 0;
+    const Sentinel = f.app.threadHeaderActions[0].component;
+    const frame = document.createElement('section'); frame.dataset.splitPaneId = 'right';
+    const group = document.createElement('span'); group.setAttribute('role', 'group');
+    frame.append(group, right); document.body.append(frame);
+    let rightReads = 0; const rightNavigation = [];
     const sdk = { ...f.sdk, threads: { ...f.sdk.threads, timeline(input) { rightReads++; return f.sdk.threads.timeline(input); } } };
-    await act(async () => { rightSlot = renderSlot({ component: () => createPortal(h(Sentinel), right) }, {}, {
+    await act(async () => { rightSlot = renderSlot({ component: () => createPortal(h(Sentinel, { threadId: 'thread', projectId: 'project', isCompactViewport: false }), group) }, {}, {
       sdk, composer: { scope: { kind: 'thread', threadId: 'thread' } }, realtimeConnectionState: 'connected',
-      openUrl(url) { f.navigation.push(url); return true; },
+      openUrl(url) { rightNavigation.push(url); return true; },
     }); });
     await until(() => right.querySelector('[data-supplier]') && f.stats().live === 3);
     const host = right.querySelector('[data-supplier]'), shell = host.closest('[data-turn-results-gallery]'), reads = rightReads;
@@ -788,7 +1069,7 @@ test('same-thread split keeps its exact unchanged custom host while another pane
       assert.equal(right.querySelector('[data-supplier]'), host);
     }
     assert.equal(rightReads, reads); assert.equal(host.closest('[data-turn-results-gallery]'), shell);
-    const before = f.navigation.length; await act(async () => host.click()); assert.equal(f.navigation.length, before + 1);
+    const before = f.navigation.length; await act(async () => host.click()); assert.equal(rightNavigation.length, 1); assert.equal(f.navigation.length, before, 'the right native surface uses its own public navigation context');
     assert.ok(f.stats().peak <= 4);
   } finally { if (rightSlot) await act(async () => rightSlot.unmount()); await f.dispose(); }
 });
@@ -835,7 +1116,7 @@ test('earlier public row of same proven turn invalidates its terminal custom hos
     assert.equal(document.querySelector('[data-timeline-row-id="opaque-1"] [data-supplier]'), other);
     await until(() => f.stats().live === 2);
     const unknown = document.createElement('aside'); unknown.textContent = 'Native structural change';
-    await act(async () => { document.body.append(unknown); await tick(10); });
+    await act(async () => { document.querySelector('[data-thread-window]').append(unknown); await tick(10); });
     assert.equal(f.stats().live, 0, 'unknown pane structure conservatively invalidates every docked boundary');
     await until(() => f.stats().live === 2);
   } finally { await f.dispose(); }
@@ -874,7 +1155,7 @@ test('speculative navigation render cannot publish callbacks before real React c
   function Gate() { if (blocked) throw gate; return null; }
   let Wrapper;
   const f = await fixture(1, true, { definition: navigationDefinition, wrapBanner(Sentinel) {
-    Wrapper = function Wrapper() { return h(Suspense, { fallback: h('span', { 'data-test-fallback': '' }, 'Waiting') }, h(Sentinel), h(Gate)); };
+    Wrapper = function Wrapper(props) { return h(Suspense, { fallback: h('span', { 'data-test-fallback': '' }, 'Waiting') }, h(Sentinel, props), h(Gate)); };
     return Wrapper;
   } });
   try {
@@ -882,7 +1163,7 @@ test('speculative navigation render cannot publish callbacks before real React c
     const host = document.querySelector('[data-supplier]'), captured = f.captured.at(-1), committed = probe.committed;
     const native = f.nativeCalls.length, lists = f.stats().listCalls;
     blocked = true;
-    await act(async () => { startTransition(() => f.slot().lifecycle.rerender(h(Wrapper))); await tick(15); });
+    await act(async () => { startTransition(() => f.slot().lifecycle.rerender(f.element())); await tick(15); });
     assert.ok(probe.rendered > committed); assert.equal(probe.committed, committed);
     assert.equal(document.querySelector('[data-supplier]'), host);
     const before = f.navigation.length; captured.navigate.openUrl('https://fixture.invalid/while-speculative');
@@ -907,11 +1188,231 @@ test('real SDK/thread scope replacement fences old navigation and A-to-B-to-A ca
     await until(() => f.stats().live === 1 && f.captured.at(-1) !== old && f.nativeCalls.length > originalReads);
     const calls = probe.calls.length; old.navigate.openUrl('https://fixture.invalid/old-sdk'); assert.equal(probe.calls.length, calls);
     const beforeScope = f.captured.at(-1);
-    await f.slot().behavior.setComposerScope({ kind: 'thread', threadId: 'other-thread' }); await until(() => f.stats().live === 0);
+    await f.thread('other-thread'); await until(() => f.stats().live === 0);
     beforeScope.navigate.openUrl('https://fixture.invalid/old-scope'); assert.equal(probe.calls.length, calls);
-    await f.slot().behavior.setComposerScope({ kind: 'thread', threadId: 'thread' }); await until(() => f.stats().live === 1);
+    await f.thread('thread'); await until(() => f.stats().live === 1);
     beforeScope.navigate.openUrl('https://fixture.invalid/reused-scope'); assert.equal(probe.calls.length, calls);
     f.captured.at(-1).navigate.openUrl('https://fixture.invalid/current-scope'); assert.equal(probe.calls.length, calls + 1);
     assert.equal(probe.calls.at(-1).version, probe.committed);
   } finally { await f.dispose(); delete globalThis.__turnResultsNavigationFixture; }
+});
+
+test('timeline-only registration has no composer/panel/overlay and hides only its own header wrapper', async () => {
+  const f = await fixture(1);
+  try {
+    await until(() => f.stats().live === 1);
+    assert.equal(f.app.composerCustomizations.length, 0); assert.equal(f.app.threadPanelActions.length, 0); assert.equal(f.app.appOverlays.length, 0);
+    const marker = document.querySelector('[data-turn-results-bridge]'); assert.equal(marker.hidden, true);
+    const style = document.createElement('style'); style.textContent = readFileSync(new URL('../app.css', import.meta.url), 'utf8').split('\n').find(line => line.includes(':has(> span[role="group"] > [data-turn-results-bridge])'));
+    document.head.append(style);
+    const group = marker.parentElement, pluginRoot = group.parentElement;
+    assert.equal(pluginRoot.hasAttribute('data-bb-plugin-root'), true); assert.equal(pluginRoot.dataset.bbPlugin, 'turn-results');
+    assert.equal(window.getComputedStyle(pluginRoot).display, 'none');
+    const foreign = document.createElement('div'); foreign.dataset.bbPluginRoot = ''; foreign.dataset.bbPlugin = 'other-plugin';
+    foreign.innerHTML = '<span role="group"><span data-turn-results-bridge></span></span>'; pluginRoot.parentElement.append(foreign);
+    assert.notEqual(window.getComputedStyle(foreign).display, 'none', 'other native/plugin groups remain unchanged');
+    assert.equal(document.querySelector('[data-turn-results-sentinel]').hidden, true);
+    assert.equal(document.querySelector('[data-turn-results-notice]'), null, 'settled healthy views have no status strip');
+  } finally { await f.dispose(); }
+});
+
+test('matching successful unchanged dialog observation clears its error and a held older refresh cannot overwrite new facts', async () => {
+  const f = await fixture(1, true, { captureRuntime: true }); let release = () => {}, original;
+  try {
+    await until(() => f.stats().live === 1);
+    await act(async () => document.querySelector('.tr-caption button').click()); await until(() => f.stats().full === 1);
+    const runtime = f.runtime(); original = runtime.refreshDialogRow;
+    runtime.refreshDialogRow = async () => { throw Error('fixture manual refresh failure'); };
+    const refresh = () => [...document.querySelectorAll('dialog button')].find(button => button.textContent === 'Refresh saved result');
+    await act(async () => refresh().click()); await until(() => document.querySelector('dialog').textContent.includes('could not be refreshed'));
+    await f.notify(); await until(() => !document.querySelector('dialog').textContent.includes('could not be refreshed') && f.stats().full === 1);
+    const old = structuredClone(f.rows()[0]);
+    runtime.refreshDialogRow = async () => new Promise(resolve => { release = () => resolve(old); });
+    await act(async () => refresh().click());
+    const changed = structuredClone(f.rows()); changed[0].resolution.revision.sequence = 2; changed[0].resolution.presentation.data.label = 'New authoritative observation';
+    f.setRows(changed); await f.notify(); await until(() => document.querySelector('dialog [data-supplier]')?.textContent === 'New authoritative observation');
+    await act(async () => { release(); await tick(); }); await settle(30);
+    assert.equal(document.querySelector('dialog [data-supplier]').textContent, 'New authoritative observation');
+    assert.equal(document.querySelector('dialog').textContent.includes('could not be refreshed'), false);
+  } finally { release(); if (original) f.runtime().refreshDialogRow = original; await f.dispose(); }
+});
+
+test('closing a dialog releases modal interaction and exact opener focus while root cleanup credit remains held', async () => {
+  const f = await fixture(1, true, { captureRuntime: true }); let release = () => {};
+  try {
+    await until(() => f.stats().live === 1);
+    const runtime = f.runtime(), original = runtime.presentationRoot;
+    runtime.presentationRoot = (...args) => {
+      const scope = original(...args);
+      return { ...scope, beginDisposal() { const finish = scope.beginDisposal(); return () => { release = finish; }; } };
+    };
+    const opener = document.querySelector('.tr-caption button'); await act(async () => { opener.focus(); opener.click(); });
+    await until(() => f.stats().full === 1);
+    const dialog = document.querySelector('dialog');
+    await act(async () => [...dialog.querySelectorAll('button')].find(button => button.textContent === 'Close expanded result').click());
+    await until(() => dialog.hidden && f.stats().full === 0);
+    assert.equal(dialog.open, false); assert.equal(document.activeElement, opener);
+    assert.equal(runtime.canvases.counts().retiring, 1); assert.ok(dialog.isConnected, 'DOM/accounting waits for real acknowledgment even though modal is closed');
+    runtime.presentationRoot = original;
+    await act(async () => { release(); await tick(); }); await until(() => !dialog.isConnected);
+    assert.equal(runtime.canvases.counts().retiring, 0);
+  } finally { release(); await f.dispose(); }
+});
+
+test('later inline page Checking validates the exact issued retained cursor and opens once after fresh public proof', async () => {
+  const f = await fixture(1, true, { owner: 'turn-result-images', fileRoute: true, loadedImage: true }); let release = () => {};
+  try {
+    await until(() => document.querySelector('[data-result-key="row-0"] img'));
+    const nativePage = await f.sdk.threads.timeline({ threadId: 'thread' });
+    const rows = Array.from({ length: 17 }, (_, i) => { const row = structuredClone(f.rows()[0]); row.key = `paged-${i}`; row.firstObservedOrder = i;
+      row.identity.ref.member = `image:${i}`; row.identity.artifact.id = `image-${i}`; row.resolution.identity = row.identity; return row; });
+    f.setRows(rows); f.sdk.threads.timeline = async () => nativePage;
+    await f.notify(); await until(() => document.querySelector('[data-result-key="paged-0"] img'));
+    const more = () => [...document.querySelectorAll('.tr-more')].find(button => button.textContent === 'Show more results');
+    await until(() => more() && !more().disabled);
+    await act(async () => more().click());
+    if (!document.querySelector('[data-result-key="paged-8"]')) await act(async () => more().click());
+    await until(() => document.querySelector('[data-result-key="paged-8"] img'));
+    const image = document.querySelector('[data-result-key="paged-8"] img'), blob = image.src;
+    const reads = [], originalRpc = f.sdk.plugins.callRpc;
+    f.sdk.plugins.callRpc = async args => { if (args.method === GALLERY_METHODS.read) reads.push(args.input); return originalRpc(args); };
+    let held = 0;
+    f.sdk.threads.timeline = async () => { held++; await new Promise(resolve => { release = resolve; }); return nativePage; };
+    await f.notify(); await until(() => held === 1);
+    await act(async () => image.closest('button').click());
+    assert.equal(f.fileOpenCalls.length, 0); assert.match(image.closest('.tr-card').textContent, /Checking/);
+    f.sdk.threads.timeline = async () => nativePage;
+    await act(async () => { release(); await tick(); }); await until(() => f.fileOpenCalls.length === 1);
+    assert.ok(reads.some(read => read.after?.key === 'paged-7'), 'action final retained read uses the SAME issued display cursor');
+    assert.equal(document.querySelector('[data-result-key="paged-8"] img'), image); assert.equal(image.src, blob);
+    await settle(40); assert.equal(f.fileOpenCalls.length, 1);
+  } finally { release(); await f.dispose(); }
+});
+
+test('observed header/window remove-readd cannot revive old navigation before fresh public scope proof', async () => {
+  const f = await fixture(1); let release = () => {}, original;
+  try {
+    await until(() => f.stats().live === 1);
+    const old = f.captured.at(-1), frame = document.querySelector('[data-split-pane-id]');
+    original = f.sdk.threads.timeline; let reads = 0;
+    f.sdk.threads.timeline = async input => { reads++; await new Promise(resolve => { release = resolve; }); return original(input); };
+    await act(async () => { frame.remove(); document.body.append(frame); await tick(); });
+    await until(() => reads === 1);
+    const before = f.navigation.length; old.navigate.openUrl('https://fixture.invalid/old-reparented-scope'); assert.equal(f.navigation.length, before);
+    f.sdk.threads.timeline = original;
+    await act(async () => { release(); await tick(); }); await until(() => f.stats().live === 1);
+    const current = f.captured.at(-1); assert.notEqual(current, old);
+    current.navigate.openUrl('https://fixture.invalid/fresh-reparented-scope'); assert.equal(f.navigation.length, before + 1);
+  } finally { release(); if (original) f.sdk.threads.timeline = original; await f.dispose(); }
+});
+
+test('header bridge follows remapped/replaced physical witnesses and permanently retires observed successor-window ABA', async t => {
+  for (const mode of ['split remapping', 'window replacement']) await t.test(mode, async () => {
+    const f = await fixture(1), releases = [], callbacks = []; const original = f.sdk.threads.timeline;
+    try {
+      await until(() => f.stats().live === 1);
+      const first = f.captured.at(-1), a = document.querySelector('[data-split-pane-id="left"]'); callbacks.push(first);
+      const header = a.querySelector('header'); let frame = a, pane;
+      if (mode === 'split remapping') {
+        frame = document.createElement('section'); frame.dataset.splitPaneId = 'right';
+        frame.innerHTML = '<section data-thread-window><div data-timeline-row-list="top-level"><div data-timeline-row-id="opaque-0"><button>Native fixture row</button></div></div></section>';
+        await act(async () => { document.body.append(frame); frame.prepend(header); await tick(); });
+        pane = frame.querySelector('[data-thread-window]');
+      } else {
+        pane = document.createElement('section'); pane.dataset.threadWindow = '';
+        pane.innerHTML = '<div data-timeline-row-list="top-level"><div data-timeline-row-id="opaque-0"><button>Native replacement fixture row</button></div></div>';
+        await act(async () => { a.querySelector('[data-thread-window]').replaceWith(pane); await tick(); });
+      }
+      await until(() => pane.querySelector('[data-supplier]') && f.stats().live === 1 && f.captured.at(-1) !== first);
+      const current = f.captured.at(-1); callbacks.push(current);
+      current.navigate.openUrl('https://fixture.invalid/current-successor-window');
+      assert.equal(f.navigation.length, 1, 'fresh successor mapping is usable');
+      first.navigate.openUrl('https://fixture.invalid/retired-initial-window');
+      assert.equal(f.navigation.length, 1, 'remapping never revives the initial callback');
+      const quietReads = f.nativeCalls.length, quietSetups = f.stats().setups;
+      await act(async () => {
+        const decoration = document.createElement('span'); header.append(decoration); decoration.textContent = 'Native header decoration';
+        if (mode === 'split remapping') { const oldDecoration = document.createElement('span'); a.append(oldDecoration); oldDecoration.textContent = 'Unrelated old scope'; }
+        await tick();
+      });
+      assert.equal(f.nativeCalls.length, quietReads, 'unrelated old-scope/header decoration causes no fresh history read');
+      assert.equal(f.stats().setups, quietSetups); assert.equal(f.captured.at(-1), current);
+      current.navigate.openUrl('https://fixture.invalid/unchanged-successor-window');
+      assert.equal(f.navigation.length, 2, 'unrelated churn preserves the current public callback');
+      const before = f.navigation.length;
+      f.sdk.threads.timeline = async input => { await new Promise(resolve => releases.push(resolve)); return original(input); };
+      await act(async () => { pane.remove(); frame.append(pane); await tick(); });
+      current.navigate.openUrl('https://fixture.invalid/stale-after-successor-window-ABA');
+      assert.equal(f.navigation.length, before, 'observed successor-window removal/readd revokes the old callback before fresh proof');
+      await until(() => releases.length === 1);
+      assert.equal(releases.length, 1, 'one bounded fresh public read waits for the new token');
+      f.sdk.threads.timeline = original;
+      await act(async () => { for (const release of releases.splice(0)) release(); await tick(); });
+      await until(() => pane.querySelector('[data-supplier]') && f.stats().live === 1 && f.captured.at(-1) !== current);
+      const fresh = f.captured.at(-1); callbacks.push(fresh);
+      current.navigate.openUrl('https://fixture.invalid/still-retired-after-fresh-proof');
+      first.navigate.openUrl('https://fixture.invalid/initial-still-retired-after-fresh-proof');
+      assert.equal(f.navigation.length, before, 'fresh proof cannot revive either retired token');
+      fresh.navigate.openUrl('https://fixture.invalid/fresh-successor-window');
+      assert.equal(f.navigation.length, before + 1, 'fresh public proof admits the new callback');
+    } finally {
+      f.sdk.threads.timeline = original;
+      await act(async () => { for (const release of releases.splice(0)) release(); await tick(); });
+      await f.dispose();
+      const before = f.navigation.length;
+      for (const callback of callbacks) callback.navigate.openUrl('https://fixture.invalid/retired-after-unmount');
+      assert.equal(f.navigation.length, before, 'cleanup permanently revokes every captured bridge token');
+    }
+  });
+});
+
+test('detached header scope retains one known-parent recovery trigger without navigation authority, then follows its current parent', async () => {
+  const f = await fixture(1), releases = [], callbacks = []; const original = f.sdk.threads.timeline;
+  try {
+    await until(() => f.stats().live === 1);
+    const old = f.captured.at(-1), frame = document.querySelector('[data-split-pane-id="left"]'); callbacks.push(old);
+    await act(async () => { frame.remove(); await tick(); });
+    await until(() => f.stats().live === 0);
+    const detachedReads = f.nativeCalls.length;
+    old.navigate.openUrl('https://fixture.invalid/while-detached'); assert.equal(f.navigation.length, 0);
+    await act(async () => { const unrelated = document.createElement('section'); unrelated.dataset.threadWindow = ''; document.body.append(unrelated); await tick(); });
+    assert.equal(f.nativeCalls.length, detachedReads, 'unrelated known-parent child changes cannot invent a mapping or start reads');
+    assert.equal(f.stats().live, 0);
+    f.sdk.threads.timeline = async input => { await new Promise(resolve => releases.push(resolve)); return original(input); };
+    await act(async () => { document.body.append(frame); await tick(); });
+    await until(() => releases.length === 1);
+    assert.equal(releases.length, 1, 'separately delivered known-parent reattachment starts one bounded fresh proof');
+    assert.equal(f.nativeCalls.length, detachedReads); assert.equal(f.stats().live, 0, 'recovery observation alone does not admit a custom host');
+    old.navigate.openUrl('https://fixture.invalid/held-proof-after-reattachment'); assert.equal(f.navigation.length, 0);
+    f.sdk.threads.timeline = original;
+    await act(async () => { for (const release of releases.splice(0)) release(); await tick(); });
+    await until(() => f.stats().live === 1 && f.captured.at(-1) !== old);
+    assert.equal(f.nativeCalls.length, detachedReads + 1);
+    const fresh = f.captured.at(-1); callbacks.push(fresh);
+    old.navigate.openUrl('https://fixture.invalid/retired-after-fresh-proof'); assert.equal(f.navigation.length, 0);
+    fresh.navigate.openUrl('https://fixture.invalid/fresh-after-known-parent-recovery'); assert.equal(f.navigation.length, 1);
+    const nextParent = document.createElement('section');
+    await act(async () => { document.body.append(nextParent); nextParent.append(frame); await tick(); });
+    await until(() => f.stats().live === 1 && f.captured.at(-1) !== fresh);
+    const remapped = f.captured.at(-1); callbacks.push(remapped);
+    fresh.navigate.openUrl('https://fixture.invalid/old-after-parent-rebind'); assert.equal(f.navigation.length, 1);
+    remapped.navigate.openUrl('https://fixture.invalid/current-parent-proved'); assert.equal(f.navigation.length, 2);
+    await act(async () => { frame.remove(); await tick(); });
+    await until(() => f.stats().live === 0);
+    const movedReads = f.nativeCalls.length;
+    remapped.navigate.openUrl('https://fixture.invalid/detached-from-new-parent'); assert.equal(f.navigation.length, 2);
+    await act(async () => { nextParent.append(frame); await tick(); });
+    await until(() => f.stats().live === 1 && f.captured.at(-1) !== remapped);
+    assert.equal(f.nativeCalls.length, movedReads + 1, 'later recovery follows the newly proved actual parent');
+    const recovered = f.captured.at(-1); callbacks.push(recovered);
+    remapped.navigate.openUrl('https://fixture.invalid/old-after-new-parent-recovery'); assert.equal(f.navigation.length, 2);
+    recovered.navigate.openUrl('https://fixture.invalid/new-parent-recovered'); assert.equal(f.navigation.length, 3);
+  } finally {
+    f.sdk.threads.timeline = original;
+    await act(async () => { for (const release of releases.splice(0)) release(); await tick(); });
+    await f.dispose();
+    const before = f.navigation.length;
+    for (const callback of callbacks) callback.navigate.openUrl('https://fixture.invalid/retired-recovery-after-unmount');
+    assert.equal(f.navigation.length, before, 'cleanup revokes every recovered token');
+  }
 });

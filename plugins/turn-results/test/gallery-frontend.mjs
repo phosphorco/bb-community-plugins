@@ -6,7 +6,7 @@ import ts from 'typescript';
 import { JSDOM } from 'jsdom';
 import React, { act } from 'react';
 import { installTestPluginRuntime, renderSlot } from '@get-bb/plugin-sdk/testing/app';
-import { canonicalJson, sha256Canonical } from '@phosphorco/bb-turn-results';
+import { canonicalJson, canonicalByteLength, sha256Canonical } from '@phosphorco/bb-turn-results';
 import { createGalleryRuntime } from '../gallery/runtime.ts';
 import { GALLERY_METHODS } from '../gallery/rpc.ts';
 // In-memory test transform only. No plugin build, generated file, reload, or
@@ -19,7 +19,6 @@ registerHooks({ load(url, context, next) {
   return next(url, context);
 } });
 const { TurnGallery } = await import('../gallery/view.tsx');
-const { ResultsPanel } = await import('../gallery/panel.tsx');
 const tick = () => new Promise(resolve => setTimeout(resolve, 0));
 async function until(condition) { for (let i = 0; i < 200; i++) { await act(async () => { await tick(); }); if (condition()) return; } assert.fail('React boundary did not settle.'); }
 function setup() {
@@ -112,31 +111,60 @@ test('hidden/remount releases view leases, retains loaded blob, span geometry an
   } finally { rendered.unmount(); h.restore(); }
 });
 
-test('panel ignores old identity responses, retains good page during same-scope read failure, and pauses hidden', async () => {
-  const h = setup(); let release, reads = 0, fail = false;
-  h.runtime.backend.read = async (threadId) => {
-    reads++; if (threadId === 'old') return new Promise(resolve => { release = resolve; });
-    if (fail) throw Error('offline');
-    return { ...h.page(), page: { rows: [{ ...h.row, key: 'new-result', resolution: { ...h.row.resolution,
-      fallback: { kind: 'card', title: 'New scope result' }, route: { kind: 'unavailable', reason: 'test' } } }], next: null } };
+test('message paging follows genuine cursors, keeps usable data on failed next read, and permits successful empty geometry release', async () => {
+  const f = setup(); const reads = []; let failNext = true;
+  const rows = Array.from({ length: 18 }, (_, i) => ({ ...f.row, key: `paged-${i}`, firstObservedOrder: i }));
+  f.runtime.backend.read = async (_thread, _turn, _signal, after) => {
+    reads.push(after ?? null); if (after && failNext) throw Error('next page offline');
+    const start = after ? after.seq + 1 : 0, page = rows.slice(start, start + 8);
+    return { page: { rows: page, next: start + 8 < rows.length ? { seq: start + 7, key: `issued-${start + 7}` } : null }, coverage: { state: 'partial', intervals: [] } };
   };
-  const props = { threadId: 'old', params: null, runtime: h.runtime };
-  const rendered = renderSlot({ component: ResultsPanel }, props);
+  const rendered = renderSlot({ component: TurnGallery }, { ...f.props, visible: true });
+  const button = text => [...rendered.container.querySelectorAll('button')].find(node => node.textContent === text);
   try {
-    await until(() => !!release);
-    await act(async () => rendered.rerender(React.createElement(ResultsPanel, { ...props, threadId: 'new' })));
-    await until(() => rendered.container.textContent.includes('New scope result'));
-    await act(async () => release(h.page()));
-    assert.equal(rendered.container.textContent.includes('Retained scene'), false);
-    Object.defineProperty(document, 'hidden', { configurable: true, value: true });
-    await act(async () => document.dispatchEvent(new h.dom.window.Event('visibilitychange')));
-    const before = reads; await tick(); assert.equal(reads, before);
-    fail = true; Object.defineProperty(document, 'hidden', { configurable: true, value: false });
-    await act(async () => document.dispatchEvent(new h.dom.window.Event('visibilitychange')));
-    await until(() => rendered.container.textContent.includes('temporarily unavailable'));
-    assert.ok(rendered.container.textContent.includes('New scope result'));
-    fail = false; await act(async () => [...rendered.container.querySelectorAll('button')].find(button => button.textContent === 'Retry results').click());
-    await until(() => !rendered.container.textContent.includes('temporarily unavailable'));
-    assert.ok(rendered.container.textContent.includes('New scope result'));
-  } finally { rendered.unmount(); h.restore(); }
+    await until(() => rendered.container.querySelector('[data-result-key="paged-0"]') && !button('Show more results')?.disabled);
+    await act(async () => button('Show more results').click()); // disclose remaining cards of this8-row page
+    if (!reads.some(cursor => cursor?.key === 'issued-7')) await act(async () => button('Show more results').click());
+    await until(() => rendered.container.textContent.includes('next page offline'));
+    assert.ok(rendered.container.querySelector('[data-result-key="paged-0"]'), 'failed next page retains prior cards');
+    failNext = false; await act(async () => button('Retry results page').click());
+    await until(() => rendered.container.querySelector('[data-result-key="paged-8"]'));
+    assert.equal(rendered.container.querySelector('[data-result-key="paged-0"]'), null);
+    assert.ok(reads.some(cursor => cursor?.seq === 7 && cursor.key === 'issued-7'));
+    assert.ok(rendered.container.querySelectorAll('[data-result-key]').length <= 8);
+    await act(async () => button('Previous results').click());
+    await until(() => rendered.container.querySelector('[data-result-key="paged-0"]'));
+    await act(async () => { rows.length = 0; f.shell.style.minHeight = '420px'; f.runtime.invalidate(); });
+    await until(() => !rendered.container.querySelector('[data-result-key]') && f.runtime.stats().running === 0);
+    assert.equal(f.shell.style.minHeight, '', 'successful empty data clears old geometry reservation');
+    assert.equal(rendered.container.querySelector('.tr-gallery'), null, 'successful no-result state leaves no blank collection shell');
+    assert.ok(!rendered.container.querySelector('button[aria-label="Results"]'));
+  } finally { rendered.unmount(); f.restore(); }
+});
+
+test('identical-turn views select independent inline pages within existing lease and shared-lane limits', async () => {
+  const f = setup(); const rows = Array.from({ length: 17 }, (_, i) => ({ ...f.row, key: `split-${i}`, firstObservedOrder: i }));
+  f.runtime.backend.read = async (_thread, _turn, _signal, after) => {
+    const start = after ? after.seq + 1 : 0, page = rows.slice(start, start + 8);
+    return { page: { rows: page, next: start + 8 < rows.length ? { seq: start + 7, key: `cursor-${start + 7}` } : null }, coverage: { state: 'partial', intervals: [] } };
+  };
+  const otherShell = document.createElement('div'); document.querySelector('main').append(otherShell);
+  const left = renderSlot({ component: TurnGallery }, { ...f.props, visible: true });
+  const right = renderSlot({ component: TurnGallery }, { ...f.props, shell: otherShell, visible: true });
+  const more = () => [...left.container.querySelectorAll('button')].find(node => node.textContent === 'Show more results');
+  try {
+    await until(() => left.container.querySelector('[data-result-key="split-0"]') && right.container.querySelector('[data-result-key="split-0"]') && !more()?.disabled);
+    const unchanged = right.container.querySelector('[data-result-key="split-0"]');
+    await act(async () => more().click());
+    if (!left.container.querySelector('[data-result-key="split-8"]')) await act(async () => more().click());
+    await until(() => left.container.querySelector('[data-result-key="split-8"]'));
+    assert.equal(right.container.querySelector('[data-result-key="split-0"]'), unchanged);
+    assert.equal(right.container.querySelector('[data-result-key="split-8"]'), null);
+    assert.equal(f.runtime.stats().leases, 2); assert.ok(f.runtime.stats().running <= 2);
+    const cursor = { seq: 7, key: 'cursor-7' }, first = f.runtime.retain(f.anchor, false), second = f.runtime.retain(f.anchor, false, cursor);
+    try {
+      assert.equal(f.runtime.stats().bytes, canonicalByteLength(first.store.state) + canonicalByteLength(second.store.state) + canonicalByteLength(cursor) * 2 + 16,
+        'cursor and key copy are charged alongside both bounded snapshots');
+    } finally { first.dispose(); second.dispose(); }
+  } finally { left.unmount(); right.unmount(); assert.equal(f.runtime.stats().leases, 0); f.restore(); }
 });

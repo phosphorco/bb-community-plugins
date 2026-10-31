@@ -1,8 +1,9 @@
 # Turn results
 
 Turn results keeps independently supplied results beside their originating
-conversation turn, including when the work section is collapsed. A native
-Results side panel offers paged access to retained observations.
+conversation turn, including when the work section is collapsed. The timeline is
+the collection surface: Show more, Previous and First results stay in that message.
+There is no composer customization/banner or separate Results panel/action.
 
 The current source increment includes automatic pane-scoped placement, generated
 image media through the independent turn-result-images source, and data cards
@@ -83,7 +84,12 @@ work also uses the shared lanes and finite continuation budgets. Native source
 slices select at most 32 completions; atomic applications admit at most eight
 candidates/resolutions. Media retains at most 64 entries, two active operations
 and 32 MiB of verified image blobs. Primary inline packing starts with 2/4/8
-cards according to pane width, with a 24-card technical ceiling. SQLite bounds
+cards according to measured pane width. Each inline page contains at most eight
+observations. Explicit continuation follows only the issued keyset cursor; up to64
+previous cursors fit a4KiB per-view history, with First results always available.
+Page keys separate independently selected pages in identical-thread splits. Cursor
+metadata reserves2MiB inside the existing16MiB aggregate snapshot/admission budget;
+loading/failure retains the prior usable page. No hidden page walk is performed. SQLite bounds
 and transaction/eviction accounting live in gallery/index.ts and its actual
 SQLite tests. Capacity, incomplete coverage and evicted history are explicit.
 
@@ -100,6 +106,14 @@ row/root remounts and pane resize. Source-issued preview URLs are ephemeral and
 never enter durable observations; the fetched PNG is independently hashed before
 local Blob publication. Native file navigation uses the source's explicit host.
 Historical origin remains unknown unless the source recorded it.
+
+A public per-header bridge supplies the actual thread id and that surface's
+committed native navigation callbacks. It proves a unique local thread window
+from its own DOM ancestry; ambiguous/foreign scopes refuse. Its own empty header
+wrapper is hidden from layout and accessibility. No global thread-id lookup or
+private React context supplies pane ownership. History continuation before a
+complete anchor is placed as an honest notice on an actual demanded native row,
+without claiming a completed turn. Settled healthy views have no status strip.
 
 ## Verification limits
 

@@ -35,13 +35,14 @@ function retained(turnId = 'turn') {
       fallback: { kind: 'card', title: `Saved ${turnId} result` }, spans: { width: 2, height: 1 } } };
 }
 async function fixture(status = 'pending', depth = 0) {
-  const dom = new JSDOM('<body data-thread-window><div data-timeline-row-list="top-level"><div data-timeline-row-id="opaque-stable"><button>Native content</button></div></div></body>', { pretendToBeVisual: true });
+  const dom = new JSDOM('<body><section data-split-pane-id="left"><header><div data-thread-header-workflow-actions><div data-bb-plugin-root data-bb-plugin="turn-results" class="contents"><span role="group" data-fixture-header></span></div></div></header><section data-thread-window><div data-timeline-row-list="top-level"><div data-timeline-row-id="opaque-stable"><button>Native content</button></div></div></section></section></body>', { pretendToBeVisual: true });
   const saved = Object.fromEntries(['window','document','Element','HTMLElement','MutationObserver','ResizeObserver','IntersectionObserver','IS_REACT_ACT_ENVIRONMENT'].map(key => [key, globalThis[key]]));
   class Observer { constructor(callback) { this.callback = callback; this.targets = new Set(); } observe(target) { this.targets.add(target); } unobserve(target) { this.targets.delete(target); } disconnect() { this.targets.clear(); } }
   Object.assign(globalThis, { window: dom.window, document: dom.window.document, Element: dom.window.Element, HTMLElement: dom.window.HTMLElement,
     MutationObserver: dom.window.MutationObserver, ResizeObserver: Observer, IntersectionObserver: Observer, IS_REACT_ACT_ENVIRONMENT: true });
   const box = { top: 0, bottom: 600, left: 0, right: 800, width: 800, height: 600, x: 0, y: 0, toJSON() {} };
   document.body.getBoundingClientRect = () => box;
+  document.querySelector('[data-thread-window]').getBoundingClientRect = () => box;
   const native = document.querySelector('[data-timeline-row-id]'); native.getBoundingClientRect = () => ({ ...box, height: 80, bottom: 80 });
   let rows = [publicRow(status)], snapshot = `snapshot-${status}`, hold = false, holdOlder = false, fail = false, maxOwned = 0;
   const calls = [], held = [], navigation = [], responses = [], cursors = new Map(); let issued = 0;
@@ -79,7 +80,8 @@ async function fixture(status = 'pending', depth = 0) {
   } } };
   const app = await loadPluginApp(definition), controller = new AbortController();
   const script = app.contentScripts[0].mount({ signal: controller.signal });
-  const rendered = renderSlot(app.composerCustomizations[0].banners[0], {}, { sdk, composer: { scope: { kind: 'thread', threadId: 'thread' } },
+  const bridge = app.threadHeaderActions[0];
+  const rendered = renderSlot({ ...bridge, component: props => createPortal(createElement(bridge.component, props), document.querySelector('[data-fixture-header]')) }, { threadId: 'thread', projectId: 'project', isCompactViewport: false }, { sdk,
     openUrl(url) { navigation.push(url); return true; }, realtimeConnectionState: 'connected' });
   return { dom, native, rendered, app, sdk, calls, held, navigation, responses, depth(value) { depth = value; }, maxOwned: () => maxOwned,
     set(value, nextSnapshot = `snapshot-${JSON.stringify(value)}`) { rows = value; snapshot = nextSnapshot; },
@@ -96,7 +98,7 @@ async function fixture(status = 'pending', depth = 0) {
 for (const trigger of ['native-content', 'source-notification', 'reconnect', 'visibility']) test(`actual Sentinel recovers stable pending ID after ${trigger}`, async () => {
   const f = await fixture();
   try {
-    await until(() => f.calls.length === 1 && f.calls[0].finished); assert.equal(f.roots().length, 0);
+    await until(() => f.calls.length === 1 && f.calls[0].finished); assert.equal(f.roots().length, 0); assert.equal(document.querySelector('[data-turn-results-notice]'), null);
     f.set([publicRow('completed', 15)]);
     if (trigger === 'native-content') f.mutate();
     if (trigger === 'source-notification') await f.notify();
@@ -130,11 +132,11 @@ test('same-ID changed range keeps root; unchanged failure recovers; pending/fore
     const host = f.roots()[0]; host.getBoundingClientRect = () => ({ top: 0, bottom: 240, left: 0, right: 800, width: 800, height: 240, x: 0, y: 0, toJSON() {} });
     f.set([publicRow('completed', 15)]); await f.notify(); await until(() => f.calls.length === 2 && host.querySelector('[data-result-key]'));
     assert.equal(f.roots()[0], host);
-    f.fail(true); await f.notify(); await until(() => f.rendered.container.textContent.includes('could not read'));
+    f.fail(true); await f.notify(); await until(() => f.native.closest('[data-thread-window]').textContent.includes('could not read'));
     assert.equal(f.roots()[0], host, 'network failure retains last-good visual/layout');
     const failures = f.calls.length; await settle(200); assert.equal(f.calls.length, failures, 'unchanged failure does not retry itself');
     const before = f.navigation.length; await act(async () => host.querySelector('.tr-caption button').click()); assert.equal(f.navigation.length, before, 'unvalidated boundary has no input authority');
-    f.fail(false); await f.notify(); await until(() => !f.rendered.container.textContent.includes('could not read'));
+    f.fail(false); await f.notify(); await until(() => !f.native.closest('[data-thread-window]').textContent.includes('could not read'));
     assert.equal(f.roots()[0], host);
     f.set([publicRow('pending', 15)]); await f.notify(); await until(() => f.roots().length === 0);
     assert.equal(host.style.minHeight, '240px'); assert.equal(host.querySelector('button'), null);
@@ -181,12 +183,7 @@ test('actual historical same-thread split Sentinels keep independent pinned publ
   try {
     await until(() => f.roots().length === 1 && f.roots()[0].querySelector('[data-result-key]'));
     const rect = document.body.getBoundingClientRect;
-    const left = document.createElement('section'); left.dataset.threadWindow = ''; left.getBoundingClientRect = rect;
-    left.append(f.native.parentElement, f.rendered.container); document.body.append(left); document.body.removeAttribute('data-thread-window');
-    // Move the public fixture surface, then drive its public scope lifecycle.
-    await f.rendered.behavior.setComposerScope({ kind: 'thread', threadId: 'temporary' });
-    await f.rendered.behavior.setComposerScope({ kind: 'thread', threadId: 'thread' });
-    await until(() => !!left.querySelector('.tr-gallery'));
+    const left = document.querySelector('[data-thread-window]');
     const right = document.createElement('section'); right.dataset.threadWindow = ''; right.getBoundingClientRect = rect;
     const list = document.createElement('div'); list.dataset.timelineRowList = 'top-level';
     const row = f.native.cloneNode(true); for (const owned of row.querySelectorAll('[data-turn-results-gallery]')) owned.remove();
@@ -199,9 +196,11 @@ test('actual historical same-thread split Sentinels keep independent pinned publ
         kind: 'turn', status: 'completed', sourceSeqStart: 100, sourceSeqEnd: 102 }], completedTurnDisplay: 'collapse',
         timelinePage: { historySnapshot: 'right-proof', olderCursor: input.beforeAnchorId ? null : { anchorId: 'right-issued', anchorSeq: 100 } } };
     } } };
-    const Sentinel = f.app.composerCustomizations[0].banners[0].component;
+    const Sentinel = f.app.threadHeaderActions[0].component;
+    const frame = document.createElement('section'); frame.dataset.splitPaneId = 'right';
+    const group = document.createElement('span'); group.setAttribute('role', 'group'); frame.append(group, right); document.body.append(frame);
     // Test-only host placement; production galleries remain their real createRoot path.
-    rightSlot = renderSlot({ component: () => createPortal(createElement(Sentinel), right) }, {},
+    rightSlot = renderSlot({ component: () => createPortal(createElement(Sentinel, { threadId: 'thread', projectId: 'project', isCompactViewport: false }), group) }, {},
       { sdk, composer: { scope: { kind: 'thread', threadId: 'thread' } }, realtimeConnectionState: 'connected' });
     await until(() => !!right.querySelector('.tr-gallery'));
     const rightHost = right.querySelector('[data-turn-results-gallery]'); const before = rightCalls;
@@ -239,7 +238,7 @@ for (const trigger of ['native-content', 'source-notification', 'reconnect', 'vi
 
 test('historical negative beyond400 revalidates latest then exposes only explicit fresh-chain continuation', async () => {
   const f = await fixture('pending', 900);
-  const more = () => [...f.rendered.container.querySelectorAll('button')].find(button => button.textContent === 'Continue visible turn history');
+  const more = () => [...f.native.closest('[data-thread-window]').querySelectorAll('button')].find(button => button.textContent === 'Continue history');
   try {
     await until(() => f.calls.length === 4 && more());
     await settle(200); assert.equal(f.calls.length, 4);
@@ -249,41 +248,57 @@ test('historical negative beyond400 revalidates latest then exposes only explici
     f.set([publicRow('completed', 15)], 'fresh-history-B'); await f.notify();
     await until(() => f.calls.length === 14 && more());
     assert.equal(f.roots().length, 0); assert.equal(f.calls[10].beforeAnchorId, undefined);
-    assert.ok(f.rendered.container.textContent.includes('earlier snapshot'));
+    assert.ok(f.native.closest('[data-thread-window]').textContent.includes('earlier snapshot'));
     await settle(220); assert.equal(f.calls.length, 14, 'fresh-chain debt cannot start a whole-history automatic walk');
     await act(async () => more().click()); await until(() => f.calls.length === 18 && f.calls.every(call => call.finished));
     await act(async () => more().click()); await until(() => f.roots().length === 1 && f.calls.length === 20);
     assert.equal(f.calls.filter(call => !call.beforeAnchorId).length, 2);
     assert.equal(f.responses.at(-1).timelinePage.historySnapshot, 'fresh-history-B');
-    assert.equal(more(), undefined); assert.ok(!f.rendered.container.textContent.includes('earlier snapshot'));
+    assert.equal(more(), undefined); assert.ok(!f.native.closest('[data-thread-window]').textContent.includes('earlier snapshot'));
     await settle(200); assert.equal(f.calls.length, 20);
   } finally { await f.dispose(); }
 });
 
 test('historical failed refresh keeps dated host; explicit continuation restores authority; old A response cannot override B', async () => {
   const f = await fixture('completed', 150);
-  const more = () => [...f.rendered.container.querySelectorAll('button')].find(button => button.textContent === 'Continue visible turn history');
+  const more = () => [...f.native.closest('[data-thread-window]').querySelectorAll('button')].find(button => button.textContent === 'Continue history');
   try {
     await until(() => f.roots().length === 1 && f.roots()[0].querySelector('[data-result-key]'));
     const host = f.roots()[0]; f.fail(true); await f.notify();
-    await until(() => f.rendered.container.textContent.includes('could not read'));
-    assert.equal(f.roots()[0], host); assert.ok(f.rendered.container.textContent.includes('earlier snapshot'));
+    await until(() => f.native.closest('[data-thread-window]').textContent.includes('could not read'));
+    assert.equal(f.roots()[0], host); assert.ok(f.native.closest('[data-thread-window]').textContent.includes('earlier snapshot'));
     const navigation = f.navigation.length;
     await act(async () => host.querySelector('.tr-caption button').click()); assert.equal(f.navigation.length, navigation);
     const failedCalls = f.calls.length; await settle(200); assert.equal(f.calls.length, failedCalls);
     f.fail(false); f.depth(900); f.set([publicRow('completed', 15)], 'B'); await f.notify();
     await until(() => f.calls.length === failedCalls + 4 && more());
-    assert.equal(f.roots()[0], host); assert.ok(f.rendered.container.textContent.includes('earlier snapshot'));
+    assert.equal(f.roots()[0], host); assert.ok(f.native.closest('[data-thread-window]').textContent.includes('earlier snapshot'));
+    const paneCursor = structuredClone(f.responses.at(-1).timelinePage.olderCursor); assert.ok(paneCursor);
+    const beforeIntent = f.calls.length;
     await act(async () => host.querySelector('.tr-caption button').click()); assert.equal(f.navigation.length, navigation);
-    await act(async () => more().click()); await until(() => f.calls.length === failedCalls + 8 && f.calls.every(call => call.finished));
-    await act(async () => more().click()); await until(() => f.calls.length === failedCalls + 10 && !more());
-    assert.equal(f.roots()[0], host); assert.ok(!f.rendered.container.textContent.includes('earlier snapshot'));
+    await until(() => f.calls.length === beforeIntent + 4 && f.calls.every(call => call.finished)
+      && !host.textContent.includes('Checking') && host.textContent.includes('complete current turn boundary'));
+    assert.equal(f.navigation.length, navigation); assert.equal(f.calls[beforeIntent].beforeAnchorId, undefined);
+    for (let offset = 1; offset < 4; offset++) {
+      const issued = f.responses[beforeIntent + offset - 1].timelinePage.olderCursor; assert.ok(issued);
+      assert.equal(f.calls[beforeIntent + offset].beforeAnchorId, issued.anchorId);
+      assert.equal(f.calls[beforeIntent + offset].beforeAnchorSeq, String(issued.anchorSeq));
+    }
+    assert.notEqual(f.responses.at(-1).timelinePage.olderCursor.anchorId, paneCursor.anchorId);
+    const afterIntent = f.calls.length;
+    await settle(200); assert.equal(f.calls.length, afterIntent, 'one Open spends only its bounded fresh slice');
+    assert.equal(f.roots()[0], host); assert.ok(f.native.closest('[data-thread-window]').textContent.includes('earlier snapshot'));
+    await act(async () => more().click()); await until(() => f.calls.length === afterIntent + 4 && f.calls.every(call => call.finished));
+    assert.equal(f.calls[afterIntent].beforeAnchorId, paneCursor.anchorId, 'Continue resumes the pane cursor, never the private intent cursor');
+    assert.equal(f.calls[afterIntent].beforeAnchorSeq, String(paneCursor.anchorSeq));
+    await act(async () => more().click()); await until(() => f.calls.length === afterIntent + 6 && !more());
+    assert.equal(f.roots()[0], host); assert.ok(!f.native.closest('[data-thread-window]').textContent.includes('earlier snapshot'));
     await act(async () => host.querySelector('.tr-caption button').click()); assert.equal(f.navigation.length, navigation + 1);
     // The held A latest response has already captured its old snapshot/status.
     f.depth(150); f.set([publicRow('pending', 10)], 'A-late'); f.hold(true, true); await f.notify(); await until(() => f.held.length === 1);
     assert.ok(f.calls.at(-1).beforeAnchorId, 'held A reply is an actual older snapshot-pinned continuation');
     await f.hidden(true); f.set([publicRow('completed', 30)], 'C-new'); f.hold(false); await f.hidden(false);
-    await until(() => f.responses.at(-1).timelinePage.historySnapshot === 'C-new' && !f.rendered.container.textContent.includes('earlier snapshot'));
+    await until(() => f.responses.at(-1).timelinePage.historySnapshot === 'C-new' && !f.native.closest('[data-thread-window]').textContent.includes('earlier snapshot'));
     assert.equal(f.roots()[0], host);
     const count = f.calls.length; f.held[0](); await settle(200);
     assert.equal(f.calls.length, count); assert.equal(f.roots()[0], host);

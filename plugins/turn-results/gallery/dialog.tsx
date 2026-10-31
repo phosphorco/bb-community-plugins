@@ -15,7 +15,7 @@ export interface GalleryDialogInput {
 interface Surface {
   input: GalleryDialogInput; element: HTMLDialogElement; root: ReturnType<typeof createRoot>;
   scope: GalleryPresentationRoot; controller: AbortController; current: boolean;
-  store: Store<{ row: GalleryObservation; verified: boolean }>;
+  store: Store<{ row: GalleryObservation; verified: boolean; observation: number; error: string | null }>;
   retirement: Promise<void> | null;
 }
 /** Imported only for a real expansion request. One controller/window; no import
@@ -35,6 +35,11 @@ export function createGalleryDialog(runtime: GalleryRuntime) {
         value.element.remove(); runtime.dialogRetired(value.input.siteKey); done();
       });
     }));
+    // Modal interaction retires immediately; its resource credit still waits
+    // for actual root disposal and the accepted passive cleanup barrier.
+    try { if (value.element.open) value.element.close(); } catch { value.element.open = false; }
+    value.element.hidden = true;
+    if (!pending && !disposed && runtime.isActive() && value.input.opener?.isConnected && value.input.openerCurrent()) value.input.opener.focus();
     return value.retirement;
   }
   function mount(input: GalleryDialogInput) {
@@ -44,7 +49,7 @@ export function createGalleryDialog(runtime: GalleryRuntime) {
     document.body.append(element);
     const controller = new AbortController(), root = createRoot(element);
     const value: Surface = { input, element, root, controller, current: true, retirement: null,
-      store: new Store({ row: input.row, verified: true }),
+      store: new Store<{ row: GalleryObservation; verified: boolean; observation: number; error: string | null }>({ row: input.row, verified: true, observation: 0, error: null }),
       scope: runtime.presentationRoot(controller.signal, () => value.current && runtime.isActive()) };
     const keydown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') { event.preventDefault(); close(); return; }
@@ -57,7 +62,7 @@ export function createGalleryDialog(runtime: GalleryRuntime) {
     };
     element.addEventListener('keydown', keydown);
     element.addEventListener('cancel', event => { event.preventDefault(); close(); });
-    element.addEventListener('close', () => close());
+    element.addEventListener('close', () => { if (value.current) close(); });
     root.render(<ExpandedResult surface={value} runtime={runtime} close={close} />);
     try { if (typeof element.showModal === 'function') element.showModal(); else element.open = true; }
     catch { element.open = true; }
@@ -69,7 +74,6 @@ export function createGalleryDialog(runtime: GalleryRuntime) {
     working = true;
     if (surface) {
       const old = surface; await retire(old); if (surface === old) surface = null;
-      if (!pending && !disposed && runtime.isActive() && old.input.opener?.isConnected && old.input.openerCurrent()) old.input.opener.focus();
     }
     const next = pending;
     if (next) {
@@ -92,7 +96,7 @@ export function createGalleryDialog(runtime: GalleryRuntime) {
       if (!surface?.current) return;
       const previous = surface.store.state.row;
       const next = rows.find(row => row.key === previous.key && row.owner === previous.owner && canonicalJson(row.identity) === canonicalJson(previous.identity));
-      if (next && canonicalJson(next) !== canonicalJson(previous)) surface.store.setState(() => ({ row: next, verified: true }));
+      if (next) surface.store.setState(prior => ({ row: next, verified: true, observation: prior.observation + 1, error: null }));
     },
     open(input: GalleryDialogInput) {
       if (disposed || !runtime.isActive()) return;
@@ -109,8 +113,8 @@ export function createGalleryDialog(runtime: GalleryRuntime) {
 export type GalleryDialogController = ReturnType<typeof createGalleryDialog>;
 
 function ExpandedResult({ surface, runtime, close }: { surface: Surface; runtime: GalleryRuntime; close(): void }) {
-  const { row, verified } = useSelector(surface.store);
-  const [error, setError] = useState<string | null>(null), [busy, setBusy] = useState(false);
+  const { row, verified, error } = useSelector(surface.store);
+  const [busy, setBusy] = useState(false);
   const closeButton = useRef<HTMLButtonElement>(null), read = useRef<AbortController | null>(null);
   useLayoutEffect(() => {
     closeButton.current?.focus();
@@ -120,15 +124,15 @@ function ExpandedResult({ surface, runtime, close }: { surface: Surface; runtime
     if (!surface.current || !runtime.isActive() || read.current) return;
     const controller = new AbortController(); read.current = controller;
     const stop = () => controller.abort(); surface.controller.signal.addEventListener('abort', stop, { once: true });
-    const revision = canonicalJson(row.resolution?.revision ?? null);
+    const revision = canonicalJson(row.resolution?.revision ?? null), observation = surface.store.state.observation;
     surface.store.setState(previous => ({ ...previous, verified: false })); setBusy(true);
     const timer = setTimeout(() => controller.abort('deadline'), 5000);
     try {
       const next = await runtime.refreshDialogRow(row, controller.signal);
-      if (!surface.current || controller.signal.aborted || canonicalJson(surface.store.state.row.resolution?.revision ?? null) !== revision) return;
-      surface.store.setState(() => ({ row: next, verified: true })); setError(null);
+      if (!surface.current || controller.signal.aborted || surface.store.state.observation !== observation || canonicalJson(surface.store.state.row.resolution?.revision ?? null) !== revision) return;
+      surface.store.setState(() => ({ row: next, verified: true, observation: observation + 1, error: null }));
     } catch {
-      if (surface.current) setError('Saved result could not be refreshed. Previously saved details remain available.');
+      if (surface.current && surface.store.state.observation === observation) surface.store.setState(previous => ({ ...previous, error: 'Saved result could not be refreshed. Previously saved details remain available.' }));
     } finally {
       clearTimeout(timer); surface.controller.signal.removeEventListener('abort', stop);
       if (read.current === controller) read.current = null;
@@ -140,7 +144,7 @@ function ExpandedResult({ surface, runtime, close }: { surface: Surface; runtime
     <div className="tr-dialog-card"><ResultCard row={row} runtime={runtime} sdk={surface.input.sdk} navigate={surface.input.navigate}
       current={() => surface.current && runtime.isActive()
         && canonicalJson(surface.store.state.row.resolution?.revision ?? null) === canonicalJson(row.resolution?.revision ?? null)} lifetime={surface.controller.signal}
-      presentationRoot={surface.scope} mode="full" customEnabled={verified} /></div>
+      presentationRoot={surface.scope} mode="full" customEnabled={verified} currentRow={() => surface.store.state.row} /></div>
     <footer><button disabled={busy} onClick={() => void refresh()}>Refresh saved result</button>
       {!verified && <span role="status">Showing previously saved details while this result needs checking.</span>}
       {error && <span role="status">{error}</span>}</footer>
