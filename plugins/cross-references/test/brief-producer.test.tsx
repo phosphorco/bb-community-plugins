@@ -3,7 +3,7 @@ import {act,cleanup,fireEvent,waitFor} from '@testing-library/react';
 import {afterEach,expect,test,vi} from 'vitest';
 import {renderSlot} from '@get-bb/plugin-sdk/testing/app';
 import {z} from 'zod';
-import {BriefNavigationSurface,BriefMentionRow,BriefProducerStatus,createBriefIntentOwner,briefStatusMessage,type BriefMention} from '../brief-producer.tsx';
+import {activateBriefReaderAnchor,useBriefReaderLink,BriefNavigationSurface,BriefMentionRow,BriefProducerStatus,createBriefIntentOwner,briefStatusMessage,type BriefMention} from '../brief-producer.tsx';
 import {type BriefNavigationInput,type BriefNavigationOutput,type ProducerState} from '@phosphorco/bb-cross-references';
 afterEach(cleanup);
 const hash='a'.repeat(64),file={kind:'thread-storage' as const,threadId:'thr_brief_ui',path:'BRIEF.md' as const};
@@ -19,12 +19,17 @@ test('declared rendered destination gets exactly one native route dispatch; malf
  const owner=createBriefIntentOwner({resolve:()=>pending.promise,open,openReader,changed:()=>{}});
  const one=owner.primary(click(),selected),two=owner.primary(click(),selected);expect(one).toBe(two);
  pending.resolve({...ready(selected),reader});await one;
- expect(openReader).toHaveBeenCalledExactlyOnceWith('/plugins/thread-brief/reveal/v1/thr_23456789ab/00000000-0000-4000-8000-000000000001');expect(open).not.toHaveBeenCalled();
+ expect(openReader).toHaveBeenCalledExactlyOnceWith('/plugins/thread-brief/reveal/v1/thr_23456789ab/00000000-0000-4000-8000-000000000001',expect.any(AbortSignal));expect(open).not.toHaveBeenCalled();
  const malformed=createBriefIntentOwner({resolve:async()=>({...ready(selected),reader:{...reader,owner:'other'} as unknown as typeof reader}),open,openReader,changed:()=>{}});
  await malformed.primary(click(),selected);expect(openReader).toHaveBeenCalledTimes(1);expect(open).toHaveBeenCalledExactlyOnceWith({target:selected.sourceFile,location:null});
  const late=deferred<BriefNavigationOutput>();const cancelled=createBriefIntentOwner({resolve:()=>late.promise,open,openReader,changed:()=>{}});
  const flight=cancelled.primary(click(),selected);cancelled.primary(click({ctrlKey:true}),selected);late.resolve({...ready(selected),reader});await flight;expect(openReader).toHaveBeenCalledTimes(1);expect(open).toHaveBeenCalledTimes(1);
  owner.dispose();malformed.dispose();cancelled.dispose();
+});
+test('ready native fallback names the viewport limitation; failed opens never get a success note',async()=>{
+ const states:any[]=[],open=vi.fn(()=>true),owner=createBriefIntentOwner({resolve:async()=>ready(input()),open,changed:value=>states.push(value)});
+ await owner.primary(click(),input());expect(open).toHaveBeenCalledExactlyOnceWith({target:file,location:{kind:'line',line:1,column:null}});expect(states.at(-1)).toMatchObject({error:null,note:expect.stringContaining('Preview may not place the heading in view')});
+ const failed:any[]=[];const declined=createBriefIntentOwner({resolve:async()=>ready(input()),open:()=>false,changed:value=>failed.push(value)});await declined.primary(click(),input());expect(failed.at(-1)).toMatchObject({note:null,error:expect.stringContaining('Could not open')});owner.dispose();declined.dispose();
 });
 test('surface owner shares identical read AND dispatch, sibling primary cancels the older result',async()=>{
  const a=deferred<BriefNavigationOutput>(),b=deferred<BriefNavigationOutput>(),open=vi.fn((_intent:unknown)=>true),changed=vi.fn(),resolve=vi.fn((i:BriefNavigationInput)=>i.section.originalLine===1?a.promise:b.promise),owner=createBriefIntentOwner({resolve,open,changed});
@@ -61,4 +66,37 @@ test('ACTUAL sibling FileLinks: newer primary wins, identical pending primary ha
  const slot=renderSlot({component:()=> <BriefNavigationSurface><BriefMentionRow item={item()}/><BriefMentionRow item={item(1)}/></BriefNavigationSurface>},{},{sdk,openFilePreview:()=>true});
  fireEvent.click(slot.getByRole('link',{name:'Goal'}));await waitFor(()=>expect(reads).toHaveLength(1));fireEvent.click(slot.getByRole('link',{name:'Second'}));fireEvent.click(slot.getByRole('link',{name:'Second'}));await waitFor(()=>expect(reads).toHaveLength(2));
  await act(async()=>a.resolve(ready(input())));expect(slot.inspection.navigateCalls).toHaveLength(0);await act(async()=>b.resolve(ready(input(1))));expect(slot.inspection.navigateCalls.filter(n=>n.method==='experimental_openFilePreview')).toHaveLength(1);const opened=slot.inspection.navigateCalls[0];if(opened?.method==='experimental_openFilePreview')expect(opened.options).toMatchObject({target:file,location:{line:2}});slot.lifecycle.unmount();
+});
+
+test('actual public UrlLink activates its single owned declared route anchor exactly once',async()=>{
+ const path='/plugins/thread-brief/reveal/v1/thr_23456789ab/00000000-0000-4000-8000-000000000001',controller=new AbortController(),activated:string[]=[],results:boolean[]=[];
+ function Control(){const link=useBriefReaderLink();return <>{link.link}<button onClick={()=>{void link.openReader(path,controller.signal).then(value=>results.push(value));}}>Open</button></>;}
+ const capture=(event:MouseEvent)=>{const node=event.target;if(node instanceof HTMLAnchorElement){activated.push(node.getAttribute('href')!);event.preventDefault();}};document.addEventListener('click',capture,true);
+ const slot=renderSlot({component:Control},{});
+ try{fireEvent.click(slot.getByRole('button',{name:'Open'}));await waitFor(()=>expect(results).toEqual([true]));expect(activated).toEqual([path]);expect(slot.inspection.navigateCalls).toHaveLength(0);}
+ finally{slot.lifecycle.unmount();document.removeEventListener('click',capture,true);}
+});
+test('aborted-before-commit and retired owners never activate the public route anchor',async()=>{
+ const path='/plugins/thread-brief/reveal/v1/thr_23456789ab/00000000-0000-4000-8000-000000000001',controller=new AbortController(),activated:string[]=[],results:boolean[]=[];
+ function Control(){const link=useBriefReaderLink();return <>{link.link}<button onClick={()=>{void link.openReader(path,controller.signal).then(value=>results.push(value));controller.abort();}}>Cancel</button></>;}
+ const capture=(event:MouseEvent)=>{if(event.target instanceof HTMLAnchorElement){activated.push(event.target.href);event.preventDefault();}};document.addEventListener('click',capture,true);
+ const slot=renderSlot({component:Control},{});try{fireEvent.click(slot.getByRole('button',{name:'Cancel'}));await waitFor(()=>expect(results).toEqual([false]));expect(activated).toEqual([]);}finally{slot.lifecycle.unmount();document.removeEventListener('click',capture,true);}
+ const gate=deferred<boolean>(),states:unknown[]=[],reader=vi.fn(()=>gate.promise),selected={...input(),sourceFile:{...file,threadId:'thr_23456789ab'}},destination={kind:'thread-brief-reader' as const,version:1 as const,owner:'thread-brief' as const,path:'reveal' as const,threadId:selected.sourceFile.threadId,token:'00000000-0000-4000-8000-000000000001'};
+ const owner=createBriefIntentOwner({resolve:async()=>({...ready(selected),reader:destination}),open:()=>{throw Error('second dispatch');},openReader:reader,changed:value=>states.push(value)});const flight=owner.primary(click(),selected);await waitFor(()=>expect(reader).toHaveBeenCalledOnce());owner.primary(click({ctrlKey:true}),selected);gate.resolve(true);await flight;expect(states.at(-1)).toEqual({pending:false,error:null,note:null});owner.dispose();
+});
+
+test('owned anchor boundary refuses shape, target, download, different origin and canceled signal',()=>{
+ const path='/plugins/thread-brief/reveal/v1/thr_23456789ab/00000000-0000-4000-8000-000000000001',host=document.createElement('span'),a=document.createElement('a'),controller=new AbortController();a.href=path;host.append(a);document.body.append(host);const click=vi.spyOn(a,'click').mockImplementation(()=>{});
+ try{expect(activateBriefReaderAnchor(host,path,controller.signal)).toBe(true);expect(click).toHaveBeenCalledOnce();a.target='_blank';expect(activateBriefReaderAnchor(host,path,controller.signal)).toBe(false);a.removeAttribute('target');a.download='file';expect(activateBriefReaderAnchor(host,path,controller.signal)).toBe(false);a.removeAttribute('download');a.href='https://outside.test'+path;expect(activateBriefReaderAnchor(host,path,controller.signal)).toBe(false);a.href=path;host.append(document.createElement('i'));expect(activateBriefReaderAnchor(host,path,controller.signal)).toBe(false);host.lastElementChild!.remove();controller.abort();expect(activateBriefReaderAnchor(host,path,controller.signal)).toBe(false);expect(click).toHaveBeenCalledOnce();host.remove();expect(activateBriefReaderAnchor(host,path,new AbortController().signal)).toBe(false);}
+ finally{host.remove();click.mockRestore();}
+});
+test('a rejected old bridge cannot overwrite a newer canceled intent state',async()=>{
+ let reject!:(error:Error)=>void;const held=new Promise<boolean>((_,r)=>{reject=r;}),states:unknown[]=[],selected={...input(),sourceFile:{...file,threadId:'thr_23456789ab'}},reader={kind:'thread-brief-reader' as const,version:1 as const,owner:'thread-brief' as const,path:'reveal' as const,threadId:selected.sourceFile.threadId,token:'00000000-0000-4000-8000-000000000001'},open=vi.fn(()=>held);
+ const owner=createBriefIntentOwner({resolve:async()=>({...ready(selected),reader}),open:()=>{throw Error('second dispatch');},openReader:open,changed:state=>states.push(state)});const flight=owner.primary(click(),selected);await waitFor(()=>expect(open).toHaveBeenCalledOnce());owner.primary(click({metaKey:true}),selected);const count=states.length;reject(Error('retired rejection'));await flight;expect(states).toHaveLength(count);expect(states.at(-1)).toEqual({pending:false,error:null,note:null});owner.dispose();
+});
+
+test('an unmounted public-link owner refuses a retained opener without updating React or clicking',async()=>{
+ let retained!:(path:string,signal:AbortSignal)=>Promise<boolean>;
+ function Control(){const link=useBriefReaderLink();retained=link.openReader;return link.link;}
+ const slot=renderSlot({component:Control},{});slot.lifecycle.unmount();expect(await retained('/plugins/thread-brief/reveal/v1/thr_23456789ab/00000000-0000-4000-8000-000000000001',new AbortController().signal)).toBe(false);
 });
