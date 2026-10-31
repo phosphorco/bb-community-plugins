@@ -223,9 +223,10 @@ export function createCrossReferencesProducerClient(sdk:CrossReferencesSdk,plugi
 }
 export type CrossReferencesProducerClient=ReturnType<typeof createCrossReferencesProducerClient>;
 export function createBriefNavigationClient(sdk:CrossReferencesSdk,options:CrossReferencesClientOptions={}){
- const call=boundedFamilyCall(sdk,'thread-brief',options);return {
-  async describe(signal?:AbortSignal){const d=await call(BRIEF_NAVIGATION_METHODS.describe,null,ns[BRIEF_NAVIGATION_METHODS.describe].input,ns[BRIEF_NAVIGATION_METHODS.describe].output,8192,16384,signal);if(!d.versions.includes(1))throw new CrossReferencesProtocolError('Brief navigation unavailable.');return d;},
+ const call=boundedFamilyCall(sdk,'thread-brief',options);let reader=false;return {
+  async describe(signal?:AbortSignal){const d=await call(BRIEF_NAVIGATION_METHODS.describe,null,ns[BRIEF_NAVIGATION_METHODS.describe].input,ns[BRIEF_NAVIGATION_METHODS.describe].output,8192,16384,signal);if(!d.versions.includes(1))throw new CrossReferencesProtocolError('Brief navigation unavailable.');reader=d.renderedReaderVersions?.includes(1)===true;return d;},
   async resolve(input:BriefNavigationInput,signal?:AbortSignal){const value=await call(BRIEF_NAVIGATION_METHODS.resolve,input,ns[BRIEF_NAVIGATION_METHODS.resolve].input,ns[BRIEF_NAVIGATION_METHODS.resolve].output,8192,16384,signal);
+   if(value.reader&&!reader)throw new CrossReferencesProtocolError('Brief reader destination was not negotiated.');
    return validateBriefNavigationResultV1(input,value);
   },
  };

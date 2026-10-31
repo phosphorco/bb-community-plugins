@@ -12,6 +12,20 @@ function input(index=0):BriefNavigationInput{const i=item(index);return {version
 function ready(i:BriefNavigationInput):BriefNavigationOutput{return {version:1,state:'ready',sourceFile:i.sourceFile,sourceContentRevision:i.sourceContentRevision,location:{kind:'line',line:i.section.originalLine,column:null},proof:{kind:'accepted-revision-revalidated',acceptedRevision:i.sourceContentRevision,selection:'same-revision',frame:i.frame}};}
 function deferred<T>(){let resolve!:(value:T)=>void;const promise=new Promise<T>(r=>{resolve=r;});return {promise,resolve};}
 function click(overrides:Partial<{button:number;ctrlKey:boolean;metaKey:boolean;altKey:boolean;shiftKey:boolean;defaultPrevented:boolean}>={}){return {button:0,ctrlKey:false,metaKey:false,altKey:false,shiftKey:false,defaultPrevented:false,currentTarget:{hasAttribute:()=>false},preventDefault:vi.fn(),...overrides};}
+test('declared rendered destination gets exactly one native route dispatch; malformed targets stay fixed TOP',async()=>{
+ const selected={...input(),sourceFile:{...file,threadId:'thr_23456789ab'}};
+ const reader={kind:'thread-brief-reader' as const,version:1 as const,owner:'thread-brief' as const,path:'reveal' as const,threadId:selected.sourceFile.threadId,token:'00000000-0000-4000-8000-000000000001'};
+ const pending=deferred<BriefNavigationOutput>(),open=vi.fn(()=>true),openReader=vi.fn(()=>true);
+ const owner=createBriefIntentOwner({resolve:()=>pending.promise,open,openReader,changed:()=>{}});
+ const one=owner.primary(click(),selected),two=owner.primary(click(),selected);expect(one).toBe(two);
+ pending.resolve({...ready(selected),reader});await one;
+ expect(openReader).toHaveBeenCalledExactlyOnceWith('/plugins/thread-brief/reveal/v1/thr_23456789ab/00000000-0000-4000-8000-000000000001');expect(open).not.toHaveBeenCalled();
+ const malformed=createBriefIntentOwner({resolve:async()=>({...ready(selected),reader:{...reader,owner:'other'} as unknown as typeof reader}),open,openReader,changed:()=>{}});
+ await malformed.primary(click(),selected);expect(openReader).toHaveBeenCalledTimes(1);expect(open).toHaveBeenCalledExactlyOnceWith({target:selected.sourceFile,location:null});
+ const late=deferred<BriefNavigationOutput>();const cancelled=createBriefIntentOwner({resolve:()=>late.promise,open,openReader,changed:()=>{}});
+ const flight=cancelled.primary(click(),selected);cancelled.primary(click({ctrlKey:true}),selected);late.resolve({...ready(selected),reader});await flight;expect(openReader).toHaveBeenCalledTimes(1);expect(open).toHaveBeenCalledTimes(1);
+ owner.dispose();malformed.dispose();cancelled.dispose();
+});
 test('surface owner shares identical read AND dispatch, sibling primary cancels the older result',async()=>{
  const a=deferred<BriefNavigationOutput>(),b=deferred<BriefNavigationOutput>(),open=vi.fn((_intent:unknown)=>true),changed=vi.fn(),resolve=vi.fn((i:BriefNavigationInput)=>i.section.originalLine===1?a.promise:b.promise),owner=createBriefIntentOwner({resolve,open,changed});
  const e=click(),one=owner.primary(e,input()),two=owner.primary(click(),input());expect(e.preventDefault).toHaveBeenCalledOnce();expect(one).toBe(two);expect(resolve).toHaveBeenCalledOnce();

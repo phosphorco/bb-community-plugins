@@ -1,7 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { experimental_FileLink as FileLink, UrlLink, useBbNavigate, useSdk, useRealtime, useRealtimeConnectionState } from '@get-bb/plugin-sdk/app';
 import { createBriefNavigationClient, createCrossReferencesProducerClient } from '@phosphorco/bb-cross-references/bb';
-import { canonicalizeIdentity, verifiedFileIdentity, MENTIONS_V2_CHANNEL, mentionsChangedV2Schema, briefNavigationInputSchema, validateBriefNavigationResultV1,
+import { canonicalizeIdentity, verifiedFileIdentity, MENTIONS_V2_CHANNEL, mentionsChangedV2Schema, briefNavigationInputSchema, validateBriefNavigationResultV1,encodeBriefReaderPath,
  type BriefNavigationInput,type BriefNavigationOutput,type ProducerState,type ListMentionsOutputV2 } from '@phosphorco/bb-cross-references';
 
 type Page=Extract<ListMentionsOutputV2,{status:'page'}>;
@@ -43,7 +43,7 @@ export function BriefProducerStatus({threadId,view}:{threadId:string;view:Return
 
 type Click={button:number;altKey:boolean;ctrlKey:boolean;metaKey:boolean;shiftKey:boolean;defaultPrevented:boolean;currentTarget:{hasAttribute(name:string):boolean};preventDefault():void};
 type IntentState={pending:boolean;error:string|null;note:string|null};
-type IntentPorts={resolve(input:BriefNavigationInput,signal:AbortSignal):Promise<BriefNavigationOutput>;open(input:{target:BriefNavigationInput['sourceFile'];location:{kind:'line';line:number;column:null}|null}):boolean;changed(state:IntentState):void};
+type IntentPorts={resolve(input:BriefNavigationInput,signal:AbortSignal):Promise<BriefNavigationOutput>;open(input:{target:BriefNavigationInput['sourceFile'];location:{kind:'line';line:number;column:null}|null}):boolean;openReader?:(path:string)=>boolean;changed(state:IntentState):void};
 /** Product action owner: one SURFACE, one read AND dispatch entitlement across all rows. */
 export function createBriefIntentOwner(ports:IntentPorts){
  let generation=0,active=true,current:{key:string;controller:AbortController;generation:number;promise:Promise<void>;dispatch:boolean}|null=null;
@@ -60,7 +60,14 @@ export function createBriefIntentOwner(ports:IntentPorts){
     let result:BriefNavigationOutput|null=null;try{result=validateBriefNavigationResultV1(admitted,await ports.resolve(admitted,controller.signal));}catch{/* Missing/public proof unavailable opens only the fixed top. */}
     if(!active||controller.signal.aborted||current!==record||generation!==seq||!record.dispatch)return;
     record.dispatch=false;
-    try{const location=result?.state==='ready'?result.location:null;if(!ports.open({target:admitted.sourceFile,location}))throw new Error('Native open unavailable.');ports.changed({pending:false,error:null,note:location?null:'Current heading could not be verified; opened BRIEF.md at the top.'});}
+    try{
+     if(result?.reader&&ports.openReader){
+      if(!ports.openReader(encodeBriefReaderPath(result.reader)))throw new Error('Native reader open unavailable.');
+      // The destination owns final displayed-revision validation and its TOP
+      // note. Dispatch is not a claim that a viewport has already revealed it.
+      ports.changed({pending:false,error:null,note:null});
+     }else{const location=result?.state==='ready'?result.location:null;if(!ports.open({target:admitted.sourceFile,location}))throw new Error('Native open unavailable.');ports.changed({pending:false,error:null,note:location?null:'Current heading could not be verified; opened BRIEF.md at the top.'});}
+    }
     catch{ports.changed({pending:false,error:'Could not open BRIEF.md. Use its native file link.',note:null});}
     finally{if(current===record)current=null;}
    })();return record.promise;
@@ -72,7 +79,7 @@ const IntentContext=createContext<IntentOwner|null>(null);
 export function BriefNavigationSurface({children}:{children:ReactNode}){
  const sdk=useSdk(),navigate=useBbNavigate(),[state,setState]=useState<IntentState>({pending:false,error:null,note:null});
  const client=useMemo(()=>createBriefNavigationClient(sdk),[sdk]);
- const owner=useMemo(()=>{let described=false;return createBriefIntentOwner({resolve:async(input,signal)=>{if(!described){await client.describe(signal);described=true;}return client.resolve(input,signal);},open:intent=>navigate.experimental_openFilePreview(intent),changed:setState});},[client,navigate]);
+ const owner=useMemo(()=>{let described=false;return createBriefIntentOwner({resolve:async(input,signal)=>{if(!described){await client.describe(signal);described=true;}return client.resolve(input,signal);},open:intent=>navigate.experimental_openFilePreview(intent),openReader:path=>navigate.openUrl(path),changed:setState});},[client,navigate]);
  useEffect(()=>{owner.activate();return()=>owner.dispose();},[owner]);
  return <IntentContext.Provider value={owner}>{children}{state.pending&&<p role="status">Checking current Brief location…</p>}{state.note&&<p role="status">{state.note}</p>}{state.error&&<p role="alert">{state.error}</p>}</IntentContext.Provider>;
 }

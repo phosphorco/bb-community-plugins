@@ -370,3 +370,30 @@ insufficient. Missing authority is independently scoped partial coverage using
 `pr-family-authority-unknown`, including an all-unknown empty result; known issue
 alone is excluded without fabricated unknown. Exact-self/literal semantics stay
 unchanged, and no parser/secondary graph edge/target enumeration is added.
+
+### Rendered Brief reader destination (0.4.1)
+
+The navigation describe envelope may advertise `renderedReaderVersions: [1]`.
+After explicit negotiation, either existing ready or fallback result may add
+`reader` with literal kind `thread-brief-reader`, version `1`, owner
+`thread-brief`, path `reveal`, the exact source thread id, and a bounded opaque
+UUIDv4 token. Existing proof, source-file, frame, line and fallback meanings do
+not change. Older clients continue using the fixed native file preview.
+
+`encodeBriefReaderPath` constructs only the declared same-origin native plugin
+route; `decodeBriefReaderPath` accepts only that exact path grammar. Consumers
+must project known fields and use the shared codec, never an arbitrary returned
+href, scheme, origin, owner or panel. A malformed, unnegotiated or cross-thread
+destination cannot grant another navigation target. Primary dispatch remains
+owned by the existing one-surface intent generation. Modifier/auxiliary/menu
+navigation retains the semantic fixed native FileLink.
+
+The opaque token is a presentation handle, not access authority. The Thread
+Brief owner binds it to the original input and accepted record, and checks the
+accepted/displayed raw revision, frame and section again before scrolling its
+own section ref. Missing, expired, withheld, changed or ambiguous selections
+open the known thread's brief at TOP with a short note, or honestly report
+unavailability; they never relocate by heading text. The route provides a back
+to thread action, is lazy, and reuses the accepted reader service and rendering
+without a second parser or recognition pipeline. Dispatch/conformance is not
+proof that the native rendered heading is visible; that requires live proof.

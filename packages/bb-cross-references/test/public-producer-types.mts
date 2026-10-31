@@ -16,3 +16,10 @@ void client.apply(apply.projection);
 // @ts-expect-error arbitrary raw status/error text is not a permitted status variant
 const badStatus:ProducerReportStatusInput={...status,status:{state:'over-limit',error:'raw'}};
 void badHeading;void badStatus;
+
+import {BRIEF_READER_ROUTE,encodeBriefReaderPath,decodeBriefReaderPath,type BriefReaderDestination} from '@phosphorco/bb-cross-references';
+const reader:BriefReaderDestination={...BRIEF_READER_ROUTE,threadId:'thr_23456789ab',token:'00000000-0000-4000-8000-000000000001'};
+const readerPath:string=encodeBriefReaderPath(reader);const decodedReader:BriefReaderDestination|null=decodeBriefReaderPath(readerPath);void decodedReader;
+// @ts-expect-error arbitrary URL destinations are not rendered Brief destinations
+const badReader:BriefReaderDestination={kind:'url',href:'https://outside.test'};
+void badReader;

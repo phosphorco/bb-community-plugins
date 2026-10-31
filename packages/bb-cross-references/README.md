@@ -81,3 +81,8 @@ fixture; it never supplies a fake freshness proof. Explicitly compile
 ESM imports and physical roots; resolver fixtures are not package/registry proof.
 See CONTRACT.md for display withholding, bounds, revision fencing and the still
 separate TB raw-reader/public navigation adoption duties.
+
+In 0.4.1, Brief navigation can negotiate a rendered Thread Brief reader route.
+The optional fixed destination and shared path codec preserve the existing
+same-revision proof and native-file fallback. The reader owner validates the
+accepted section again; stale or expired selections stay at the top with a note.

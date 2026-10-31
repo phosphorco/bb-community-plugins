@@ -2,6 +2,31 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import * as c from '../dist/index.js';
 const classify=c.classifyBriefDisplayTextV1;
+test('rendered Brief destination codec constructs only the declared native route',()=>{
+ const destination={...c.BRIEF_READER_ROUTE,threadId:'thr_23456789ab',token:'00000000-0000-4000-8000-000000000001'};
+ const path=c.encodeBriefReaderPath({...destination,href:'https://outside.test/private',future:1});
+ assert.equal(path,'/plugins/thread-brief/reveal/v1/thr_23456789ab/00000000-0000-4000-8000-000000000001');
+ assert.deepEqual(c.decodeBriefReaderPath(path),destination);
+ for(const bad of [path+'?next=https://outside.test',path+'#Goal','https://outside.test'+path,'/'+path,path.replace('/thread-brief/','/other/'),path.replace('/v1/','/v2/'),path.replace('thr_23456789ab','thr_invalid'),path.replace('/reveal/','/reveal%2f/'),path.replace('4000','0000')])assert.equal(c.decodeBriefReaderPath(bad),null,bad);
+ for(const bad of [{...destination,owner:'other'},{...destination,kind:'url'},{...destination,path:'elsewhere'},{...destination,version:2},{...destination,token:'../secret'}])assert.throws(()=>c.encodeBriefReaderPath(bad));
+});
+test('navigation client requires explicit reader negotiation and preserves fixed proof semantics',async()=>{
+ const {createBriefNavigationClient}=await import('../dist/bb.js');
+ const sourceFile={kind:'thread-storage',threadId:'thr_23456789ab',path:'BRIEF.md'},revision=c.sha256Hex('raw');
+ const frame={codec:'utf8-fatal-bom-consumed-v1',rawBytes:10,bomBytes:0,fileUtf16Length:10,bodyBase:{startUtf16:0,startLine:1,utf16Length:10},lineMapping:{codec:'native-file-lines-v1',fileLineCount:2}};
+ const input={version:1,sourceFile,sourceContentRevision:revision,frame,section:{heading:{state:'named',text:'Goal'},originalLine:1}};
+ const reader={...c.BRIEF_READER_ROUTE,threadId:sourceFile.threadId,token:'00000000-0000-4000-8000-000000000001'};
+ const ready={version:1,state:'ready',sourceFile,sourceContentRevision:revision,location:{kind:'line',line:1,column:null},proof:{kind:'accepted-revision-revalidated',acceptedRevision:revision,selection:'same-revision',frame},reader};
+ let advertised=false,result=ready;
+ const sdk={plugins:{callRpc:async request=>request.method.endsWith('.describe')?{protocol:'thread-brief-navigation',versions:[1],...(advertised?{renderedReaderVersions:[1]}:{})}:result}};
+ const client=createBriefNavigationClient(sdk);await client.describe();await assert.rejects(client.resolve(input),/not negotiated/);
+ advertised=true;await client.describe();assert.equal((await client.resolve(input)).reader.token,reader.token);
+ result={...ready,reader:{...reader,threadId:'thr_abcdefghjk'}};await assert.rejects(client.resolve(input),/target mismatch/);
+ result={...ready,location:{kind:'line',line:2,column:null}};await assert.rejects(client.resolve(input),/proof mismatch/);
+ result={...ready,reader:{...reader,owner:'other'}};await assert.rejects(client.resolve(input));
+ result={version:1,state:'fallback',sourceFile,location:null,reason:'stale',reader};assert.equal((await client.resolve(input)).state,'fallback');
+ delete result.reader;assert.equal((await client.resolve(input)).state,'fallback');
+});
 test('display policy accepts exact ordinary and URL-like safe metadata without resource recognition',()=>{
  for(const value of ['Goal','Research & Development','100% done','', '😀 界 e\u0301','https://example.test/path?q=public','/projects/P/threads/T','See https://example.test/path.','name=public'])assert.equal(classify(value).state,'safe',value);
 });

@@ -262,12 +262,28 @@ export function createProducerSchemas<S extends z.ZodType<ProjectionDto>>(projec
 export type ProducerApplyInput={version:1;projection:ApplyProjectionInput;evidence:BriefEvidenceV1;evidenceDigest:string};
 export type ProducerApplyOutput={version:1;outcome:'applied'|'duplicate'|'equal'|'stale'|'conflict'|'cas-mismatch';currentRevision:number;currentDigest:string|null;evidenceDisposition:'installed'|'replayed'|'conflict'|'not-applied';state:ProducerState};
 export type ProducerReportStatusOutput={version:1;outcome:'recorded'|'duplicate'|'stale'|'conflict'|'cas-mismatch';state:ProducerState};
+/** A declared native plugin route, never an arbitrary href. Only these known
+ * fields participate in navigation; additive output fields are ignored. */
+export const BRIEF_READER_ROUTE=Object.freeze({kind:'thread-brief-reader',version:1,owner:'thread-brief',path:'reveal'} as const);
+export const briefReaderDestinationSchema=z.object({kind:z.literal(BRIEF_READER_ROUTE.kind),version:z.literal(1),owner:z.literal(BRIEF_READER_ROUTE.owner),path:z.literal(BRIEF_READER_ROUTE.path),threadId:z.string().regex(/^thr_[23456789abcdefghijkmnpqrstuvwxyz]{10}$/u),token:z.string().regex(/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/u)}).passthrough();
+export type BriefReaderDestination=z.infer<typeof briefReaderDestinationSchema>;
+export function encodeBriefReaderPath(raw:BriefReaderDestination):string {
+ const d=briefReaderDestinationSchema.parse(raw);
+ return `/plugins/${BRIEF_READER_ROUTE.owner}/${BRIEF_READER_ROUTE.path}/v1/${d.threadId}/${d.token}`;
+}
+export function decodeBriefReaderPath(path:string):BriefReaderDestination|null {
+ if(path.length>256)return null;
+ const match=/^\/plugins\/thread-brief\/reveal\/v1\/(thr_[23456789abcdefghijkmnpqrstuvwxyz]{10})\/([a-f0-9-]{36})$/u.exec(path);
+ if(!match)return null;
+ const parsed=briefReaderDestinationSchema.safeParse({...BRIEF_READER_ROUTE,threadId:match[1],token:match[2]});
+ return parsed.success?parsed.data:null;
+}
 export const briefNavigationInputSchema=z.strictObject({version:z.literal(1),sourceFile:briefFileSchema,sourceContentRevision:digest,frame:briefFrameSchema,section:z.strictObject({heading:briefHeadingSchema,originalLine:positive})});
 export const briefNavigationOutputSchema=z.discriminatedUnion('state',[
- z.object({version:z.literal(1),state:z.literal('ready'),sourceFile:briefFileSchema.passthrough(),sourceContentRevision:digest,location:z.object({kind:z.literal('line'),line:positive,column:z.null()}).passthrough(),proof:z.object({kind:z.literal('accepted-revision-revalidated'),acceptedRevision:digest,selection:z.literal('same-revision'),frame:briefFrameSchema.safeExtend({bodyBase:briefFrameSchema.shape.bodyBase.passthrough(),lineMapping:briefFrameSchema.shape.lineMapping.passthrough()}).passthrough()}).passthrough()}).passthrough(),
- z.object({version:z.literal(1),state:z.literal('fallback'),sourceFile:briefFileSchema.passthrough(),location:z.null(),reason:z.enum(['stale','no-accepted-document','ambiguous','heading-unavailable','source-unavailable','over-limit'])}).passthrough(),
+ z.object({version:z.literal(1),state:z.literal('ready'),sourceFile:briefFileSchema.passthrough(),sourceContentRevision:digest,location:z.object({kind:z.literal('line'),line:positive,column:z.null()}).passthrough(),proof:z.object({kind:z.literal('accepted-revision-revalidated'),acceptedRevision:digest,selection:z.literal('same-revision'),frame:briefFrameSchema.safeExtend({bodyBase:briefFrameSchema.shape.bodyBase.passthrough(),lineMapping:briefFrameSchema.shape.lineMapping.passthrough()}).passthrough()}).passthrough(),reader:briefReaderDestinationSchema.optional()}).passthrough(),
+ z.object({version:z.literal(1),state:z.literal('fallback'),sourceFile:briefFileSchema.passthrough(),location:z.null(),reason:z.enum(['stale','no-accepted-document','ambiguous','heading-unavailable','source-unavailable','over-limit']),reader:briefReaderDestinationSchema.optional()}).passthrough(),
 ]);
-export const briefNavigationDescribeOutputSchema=z.object({protocol:z.literal('thread-brief-navigation'),versions:z.array(positive).max(16)}).passthrough();
+export const briefNavigationDescribeOutputSchema=z.object({protocol:z.literal('thread-brief-navigation'),versions:z.array(positive).max(16),renderedReaderVersions:z.array(positive).max(16).optional()}).passthrough();
 export const briefNavigationRpcSchemas={ [BRIEF_NAVIGATION_METHODS.describe]:{input:z.null(),output:briefNavigationDescribeOutputSchema},[BRIEF_NAVIGATION_METHODS.resolve]:{input:briefNavigationInputSchema,output:briefNavigationOutputSchema}} as const;
 export type BriefNavigationInput=z.infer<typeof briefNavigationInputSchema>;
 export type BriefNavigationOutput=z.infer<typeof briefNavigationOutputSchema>;
@@ -287,6 +303,7 @@ export const briefAuthoredUrlOutputSchema=z.union([z.object({state:z.literal('ex
 export function validateBriefNavigationResultV1(input:BriefNavigationInput,raw:unknown):BriefNavigationOutput {
  const value=briefNavigationOutputSchema.parse(raw),file=value.sourceFile;
  if(file.kind!==input.sourceFile.kind||file.threadId!==input.sourceFile.threadId||file.path!==input.sourceFile.path)throw new Error('Brief navigation target mismatch.');
+ if(value.reader&&value.reader.threadId!==input.sourceFile.threadId)throw new Error('Brief reader target mismatch.');
  if(value.state==='ready'&&(value.sourceContentRevision!==input.sourceContentRevision||value.proof.acceptedRevision!==input.sourceContentRevision||canonicalJson(knownFrame(value.proof.frame))!==canonicalJson(knownFrame(input.frame))||value.location.line!==input.section.originalLine||value.location.line>input.frame.lineMapping.fileLineCount))throw new Error('Brief navigation proof mismatch.');
  return value;
 }

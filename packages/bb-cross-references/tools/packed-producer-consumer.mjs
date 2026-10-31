@@ -38,6 +38,11 @@ assert.equal(typeof root.crossReferencesProducerRpcSchemas[root.PRODUCER_METHODS
 assert.equal(typeof root.classifyBriefDisplayTextV1, 'function');
 assert.equal(typeof bb.registerCrossReferencesProducer, 'function');
 assert.equal(typeof kit.runCrossReferencesProducerConformance, 'function');
+const reader = {...root.BRIEF_READER_ROUTE, threadId: 'thr_23456789ab', token: '00000000-0000-4000-8000-000000000001'};
+const readerPath = root.encodeBriefReaderPath(reader);
+assert.deepEqual(root.decodeBriefReaderPath(readerPath), reader);
+assert.equal(root.decodeBriefReaderPath('https://outside.test' + readerPath), null);
+assert.throws(() => root.encodeBriefReaderPath({...reader, owner: 'other'}));
 console.log(JSON.stringify({level: 'packed-producer-consumer-imports', root: entries[0], bb: entries[1], testing: entries[2]}));
 `], {
   cwd: dirname(manifest),

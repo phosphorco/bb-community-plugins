@@ -90,5 +90,7 @@ export async function runCrossReferencesProducerConformance(options:{sdk:CrossRe
  * reader fixture. This kit never reads/parses a file or constructs a model. */
 export async function runBriefNavigationConformance(options:{sdk:CrossReferencesSdk;input:import('./producer.js').BriefNavigationInput;assertResult:(value:import('./producer.js').BriefNavigationOutput)=>void|Promise<void>}):Promise<CrossReferencesConformanceResult>{
  const {createBriefNavigationClient}=await import('./bb.js');const client=createBriefNavigationClient(options.sdk);await client.describe();const result=await client.resolve(options.input);await options.assertResult(result);
- return {level:'source-conformance',pluginId:'thread-brief',checks:['navigation-describe','fixed-file-same-revision-proof']};
+ const checks=['navigation-describe','fixed-file-same-revision-proof'];
+ if(result.reader){const {encodeBriefReaderPath,decodeBriefReaderPath}=await import('./index.js');const decoded=decodeBriefReaderPath(encodeBriefReaderPath(result.reader));if(!decoded||decoded.threadId!==options.input.sourceFile.threadId||decoded.token!==result.reader.token)throw new Error('Rendered Brief destination roundtrip failed.');checks.push('declared-rendered-reader-destination');}
+ return {level:'source-conformance',pluginId:'thread-brief',checks};
 }
