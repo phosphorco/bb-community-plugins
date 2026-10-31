@@ -33,7 +33,7 @@
     "name": "Turn results",
     "description": "View generated images and confirmed results beside their original conversation turn.",
     "branding": {
-      "icon": "Images"
+      "icon": "./icons/results.svg"
     },
     "app": "./app.tsx",
     "skills": [],
@@ -41,6 +41,7 @@
   },
   "files": [
     "dist/",
+    "icons/",
     "app.tsx",
     "app.css",
     "probe/anchor.ts",
