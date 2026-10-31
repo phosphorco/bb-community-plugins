@@ -67,3 +67,141 @@ test('64 roots retain focused/visible last-good roots; eviction leaves measured 
     handle.dispose(); await tick(); assert.equal(f.pane.querySelectorAll('[data-turn-results-gallery]').length, 0);
   } finally { handle.dispose(); await tick(); f.restore(); }
 });
+
+test('native hints retain bounded exact changed rows; unknown structure is broad and owned/nested panes stay isolated', async () => {
+  const f = fixture(25), changes: { reason: string; rows: readonly string[] | null }[] = [];
+  const stop = observeGalleryDemand(f.sentinel, (_ids, _capacity, reason, rows) => changes.push({ reason, rows }));
+  try {
+    await tick();
+    f.rows[1]!.querySelector('button')!.firstChild!.textContent = 'Streaming native token';
+    await tick(); assert.deepEqual(changes.at(-1), { reason: 'mutation', rows: ['opaque-row-1'] });
+    for (let i = 0; i < 21; i++) f.rows[i]!.querySelector('button')!.firstChild!.textContent = `Token${i}`;
+    await tick(); assert.deepEqual(changes.at(-1), { reason: 'mutation', rows: null }, 'overflow becomes conservative, never an unbounded row set');
+    const owned = document.createElement('div'); owned.dataset.turnResultsGallery = ''; f.rows[0]!.append(owned);
+    await tick(); const before = changes.length; owned.textContent = 'Owned host update'; await tick(); assert.equal(changes.length, before);
+    const nested = document.createElement('section'); nested.dataset.threadWindow = ''; nested.innerHTML = '<div data-timeline-row-id="foreign"><button>Other pane</button></div>';
+    f.pane.append(nested); await tick(); const nestedBefore = changes.length;
+    nested.querySelector('button')!.textContent = 'Other pane streamed';
+    nested.querySelector('div')!.dataset.timelineRowId = 'reused-foreign';
+    await tick(); assert.equal(changes.length, nestedBefore);
+    f.rows[1]!.remove(); await tick(); assert.deepEqual(changes.at(-1), { reason: 'mutation', rows: null });
+  } finally { stop(); f.restore(); }
+});
+
+function structuralFixture(count = 4, scope?: { id: string; turnId: string | null }[], onlyFirst = false) {
+  const f = fixture(count), list = f.pane.querySelector<HTMLElement>('[data-timeline-row-list]')!;
+  const items = document.createElement('div'); items.dataset.timelineItems = ''; list.append(items);
+  for (const row of f.rows) items.append(row);
+  const publicRows = scope ?? f.rows.map((row, i) => ({ id: row.dataset.timelineRowId!, turnId: `turn-${i}` }));
+  const anchors = f.rows.slice(0, onlyFirst ? 1 : count).map((row, i): GalleryAnchor => ({ threadId: 'thread', turnId: `turn-${i}`, rowId: row.dataset.timelineRowId!,
+    sourceSeqStart: 1, sourceSeqEnd: 10, turnSeqStart: 1, turnSeqEnd: 10, historySnapshot: 'accepted-public-snapshot' }));
+  const current = new Map<string, () => boolean>(), changes: (readonly string[] | null)[] = [];
+  const handle = mountGalleryPane(f.sentinel, 'thread', anchors, (_host, anchor, check) => {
+    current.set(anchor.turnId, check); return { dispose() {} };
+  }, publicRows);
+  const stop = observeGalleryDemand(f.sentinel, (_ids, _capacity, reason, rows) => {
+    if (reason === 'mutation') { changes.push(rows); handle.invalidate(rows ?? undefined); }
+  });
+  return { ...f, items, list, publicRows, anchors, current, changes, handle,
+    async close() { stop(); await handle.dispose(); f.restore(); } };
+}
+
+test('exact native item-wrapper windowing carries only witnessed public row IDs and keeps unrelated authority', async () => {
+  const f = structuralFixture();
+  try {
+    await tick(); const healthy = f.current.get('turn-0')!;
+    f.rows[1]!.remove();
+    assert.equal(f.current.get('turn-1')!(), false, 'physical target removal fences its own callbacks synchronously');
+    await tick(); assert.deepEqual(f.changes.at(-1), ['opaque-row-1']); assert.equal(healthy(), true);
+    f.items.append(f.rows[1]!); await tick();
+    assert.deepEqual(f.changes.at(-1), ['opaque-row-1']); assert.equal(healthy(), true);
+    assert.equal(f.current.get('turn-1')!(), false, 'same ID reentry does not restore old target authority');
+    f.handle.update(f.anchors, f.anchors.map(a => a.rowId), f.publicRows); await tick();
+    assert.equal(f.current.get('turn-1')!(), true, 'only accepted fresh public proof restores the reentered row');
+    const count = f.changes.length; await tick(); assert.equal(f.changes.length, count, 'quiet pane has no repeated mutation work');
+  } finally { await f.close(); }
+});
+
+test('structural same-turn sibling uses published association and source correction replaces that association', async () => {
+  const f = structuralFixture(3, undefined, true);
+  try {
+    await tick();
+    const corrected = f.publicRows.map(row => row.id === 'opaque-row-1' ? { ...row, turnId: 'turn-0' } : row);
+    f.handle.update(f.anchors, [], corrected);
+    f.rows[1]!.remove(); await tick(); assert.deepEqual(f.changes.at(-1), ['opaque-row-1']);
+    assert.equal(f.current.get('turn-0')!(), false, 'same-turn sibling removal suspends the terminal host');
+    f.items.append(f.rows[1]!); await tick(); assert.equal(f.current.get('turn-0')!(), false);
+    f.handle.update(f.anchors, f.anchors.map(a => a.rowId), corrected); await tick(); assert.equal(f.current.get('turn-0')!(), true);
+  } finally { await f.close(); }
+});
+
+test('wrapper narrowing refuses replacement/reorder/reparent, identity/list changes, mixed structure and overflow', async t => {
+  const cases: [string, (f: ReturnType<typeof structuralFixture>) => void][] = [
+    ['same-parent reorder', f => f.items.prepend(f.rows[1]!)],
+    ['same-ID replacement', f => f.rows[1]!.replaceWith(f.rows[1]!.cloneNode(true))],
+    ['cross-list reparent', f => { const other = document.createElement('div'); other.dataset.timelineRowList = 'top-level'; f.pane.append(other); other.append(f.rows[1]!); }],
+    ['cross-pane reparent', f => { const other = document.createElement('section'); other.dataset.threadWindow = ''; document.body.append(other); other.append(f.rows[1]!); }],
+    ['identity reuse then removal', f => { f.rows[1]!.dataset.timelineRowId = 'reused'; f.rows[1]!.remove(); }],
+    ['identity mutation retained', f => { f.rows[1]!.dataset.timelineRowId = 'reused'; }],
+    ['list identity change', f => { f.list.dataset.timelineRowList = 'nested'; }],
+    ['mixed row and unknown child', f => { f.rows[1]!.remove(); f.items.append(document.createElement('aside')); }],
+    ['unknown public row', f => { const node = document.createElement('div'); node.dataset.timelineRowId = 'new-unmapped'; f.items.append(node); }],
+    ['nested structure removal', f => { f.rows[1]!.insertAdjacentHTML('beforeend', '<div data-timeline-row-list="nested"><div data-timeline-row-id="nested-child"></div></div>'); f.rows[1]!.remove(); }],
+    ['missing native item marker', f => { delete f.items.dataset.timelineItems; f.rows[1]!.remove(); }],
+    ['row-set overflow', f => { for (const row of f.rows.slice(1, 22)) row.remove(); }],
+  ];
+  for (const [name, mutate] of cases) await t.test(name, async () => {
+    const f = structuralFixture(name === 'row-set overflow' ? 25 : 4);
+    try { await tick(); mutate(f); await tick(); assert.equal(f.changes.at(-1), null); assert.equal(f.current.get('turn-0')!(), false); }
+    finally { await f.close(); }
+  });
+});
+
+test('missing/null/ambiguous public association and duplicate native occupancy stay broad', async t => {
+  for (const kind of ['missing', 'null', 'empty', 'ambiguous', 'duplicate-native'] as const) await t.test(kind, async () => {
+    const scope = [{ id: 'opaque-row-0', turnId: 'turn-0' },
+      ...(kind === 'missing' ? [] : [{ id: 'opaque-row-1', turnId: kind === 'null' ? null : kind === 'empty' ? '' : 'turn-1' }]),
+      ...(kind === 'ambiguous' ? [{ id: 'opaque-row-1', turnId: 'turn-0' }] : [])];
+    const f = structuralFixture(3, scope);
+    try {
+      await tick();
+      if (kind === 'duplicate-native') { f.items.append(f.rows[1]!.cloneNode(true)); await tick(); f.handle.update(f.anchors, [], scope); }
+      f.rows[1]!.remove(); await tick(); assert.equal(f.changes.at(-1), null); assert.equal(f.current.get('turn-0')!(), false);
+    } finally { await f.close(); }
+  });
+});
+
+test('inbound row from an independently observed foreign pane cannot impersonate a newly windowed public row', async t => {
+  for (const disposed of [false, true]) await t.test(disposed ? 'source observer already disposed' : 'source still mounted', async () => {
+  const f = structuralFixture(2, [{ id: 'opaque-row-0', turnId: 'turn-0' }, { id: 'opaque-row-1', turnId: 'turn-1' },
+    { id: 'public-returning', turnId: 'turn-2' }]);
+  const other = document.createElement('section'); other.dataset.threadWindow = '';
+  other.innerHTML = '<div data-timeline-row-list="top-level"><div data-timeline-items><div data-timeline-row-id="public-returning"></div></div></div><span></span>';
+  document.body.append(other);
+  const stopOther = observeGalleryDemand(other.querySelector('span')!, () => {});
+  try {
+    await tick(); const row = other.querySelector('[data-timeline-row-id]')!;
+    if (disposed) { stopOther(); other.remove(); }
+    f.items.append(row); await tick();
+    assert.equal(f.changes.at(-1), null); assert.equal(f.current.get('turn-0')!(), false);
+  } finally { stopOther(); other.remove(); await f.close(); }
+  });
+});
+
+test('new native node for an already published public row is admitted after same-pane observer teardown/remount', async () => {
+  const f = fixture(2), list = f.pane.querySelector<HTMLElement>('[data-timeline-row-list]')!;
+  const items = document.createElement('div'); items.dataset.timelineItems = ''; list.append(items);
+  for (const row of f.rows) items.append(row);
+  const anchor: GalleryAnchor = { threadId: 'thread', turnId: 'turn-0', rowId: 'opaque-row-0', sourceSeqStart: 1,
+    sourceSeqEnd: 10, turnSeqStart: 1, turnSeqEnd: 10, historySnapshot: 'new-public-snapshot' };
+  const handle = mountGalleryPane(f.sentinel, 'thread', [anchor], () => ({ dispose() {} }),
+    [{ id: 'opaque-row-0', turnId: 'turn-0' }, { id: 'already-public', turnId: 'another-turn' }]);
+  let stop = observeGalleryDemand(f.sentinel, () => {});
+  try {
+    await tick(); stop();
+    const changes: (readonly string[] | null)[] = [];
+    stop = observeGalleryDemand(f.sentinel, (_ids, _capacity, reason, ids) => { if (reason === 'mutation') changes.push(ids); });
+    const node = document.createElement('div'); node.dataset.timelineRowId = 'already-public'; items.append(node); await tick();
+    assert.deepEqual(changes.at(-1), ['already-public']);
+  } finally { stop(); await handle.dispose(); f.restore(); }
+});

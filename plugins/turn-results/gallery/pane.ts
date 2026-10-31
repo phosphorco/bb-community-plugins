@@ -4,10 +4,22 @@ export interface GalleryRoot {
   dispose(): void | Promise<void>; beginDisposal?(): () => void; whenDrained?(): Promise<void>;
   update?(anchor: GalleryAnchor): void; visible?(visible: boolean): void; suspend?(suspended: boolean): void;
 }
-const owners = new WeakMap<HTMLElement, { dispose(): Promise<void>; wake(): void }>();
+const owners = new WeakMap<HTMLElement, { dispose(): Promise<void>; wake(): void; knowsRow(id: string): boolean }>();
 const handoffs = new WeakMap<HTMLElement, { drained: boolean; promise: Promise<void> }>();
 export const GALLERY_PANE_LIMITS = Object.freeze({ rows: 1000, targets: 20, roots: 64 });
 const ownedSurface = '[data-turn-results-gallery], [data-turn-results-sentinel], [data-turn-results-dialog], [data-turn-results-panel]';
+// Index only actual observed nodes, never opaque IDs/history. This weak index
+// shares the prior DOM witness across split observers so an inbound reparent
+// cannot impersonate a fresh windowed node in its destination pane.
+const domTokens = new WeakMap<Element, object>();
+function domToken(element: Element | null): object | null {
+  if (!element) return null;
+  let token = domTokens.get(element);
+  if (!token) { token = {}; domTokens.set(element, token); }
+  return token;
+}
+const rowOrigins = new WeakMap<Element, { pane: object; parent: object | null; list: object | null; id: string }>();
+interface ScopeRow { id: string; turnId: string | null }
 function nativeRows(pane: Element) {
   return [...pane.querySelectorAll<HTMLElement>('[data-timeline-row-id]')].filter(row =>
     row.closest('[data-thread-window]') === pane && row.closest('[data-timeline-row-list]')?.getAttribute('data-timeline-row-list') === 'top-level');
@@ -19,12 +31,20 @@ function intersects(row: HTMLElement, pane: Element) {
 }
 /** One observer per pane for actual native visibility/focus, never a guessed
  * recent-turn list. Only changed bounded demand notifies the page reader. */
-export function observeGalleryDemand(sentinel: HTMLElement, changed: (ids: string[], capacity: boolean, reason: 'demand' | 'mutation' | 'visibility') => void) {
+export function observeGalleryDemand(sentinel: HTMLElement, changed: (ids: string[], capacity: boolean, reason: 'demand' | 'mutation' | 'visibility', changedRows: readonly string[] | null) => void) {
   const pane = sentinel.closest('[data-thread-window]');
   if (!pane) return () => {};
+  const paneToken = domToken(pane)!;
   let active = true, queued = false, prior = '', rows: HTMLElement[] = [];
   let reason: 'demand' | 'mutation' | 'visibility' = 'demand';
+  let broad = false;
+  const changedRows = new Set<string>();
   const visible = new Set<Element>();
+  // Only the last bounded mounted-row snapshot is retained. A removed row has
+  // lost closest()/parent information by delivery time; its prior DOM witness
+  // is necessary to distinguish windowing from a move, replacement or reuse.
+  let rowWitnesses = new Map<Element, { id: string; parent: Element | null; list: Element | null }>();
+  let priorIds = new Map<string, Element | null>();
   function publish() {
     queued = false; if (!active || document.hidden) return;
     const focused = document.activeElement?.closest<HTMLElement>('[data-timeline-row-id]');
@@ -33,50 +53,125 @@ export function observeGalleryDemand(sentinel: HTMLElement, changed: (ids: strin
     const ids = [...new Set(admitted.map(row => row.dataset.timelineRowId!))].slice(0, GALLERY_PANE_LIMITS.targets);
     const capacity = admitted.length > GALLERY_PANE_LIMITS.targets || rows.length > GALLERY_PANE_LIMITS.rows;
     const key = JSON.stringify([ids, capacity]); if (key === prior && reason === 'demand') return;
-    prior = key; const cause = reason; reason = 'demand'; changed(ids, capacity, cause);
+    prior = key; const cause = reason, affected = broad ? null : [...changedRows];
+    reason = 'demand'; broad = false; changedRows.clear(); changed(ids, capacity, cause, affected);
   }
   function schedule() { if (!queued && active && !document.hidden) { queued = true; queueMicrotask(publish); } }
   const observer = new IntersectionObserver(entries => {
     for (const entry of entries) if (entry.isIntersecting) visible.add(entry.target); else visible.delete(entry.target);
     schedule();
   });
-  function scan() {
+  function scan(next = nativeRows(pane!)) {
     if (!active || document.hidden) return;
-    const next = nativeRows(pane!);
     const retained = new Set(next);
     for (const row of rows) if (!retained.has(row)) { observer.unobserve(row); visible.delete(row); }
     const old = new Set(rows); rows = next;
+    rowWitnesses = new Map(); priorIds = new Map();
+    if (rows.length <= GALLERY_PANE_LIMITS.rows) for (const row of rows) {
+      const id = row.dataset.timelineRowId!;
+      const witness = { id, parent: row.parentElement, list: row.closest('[data-timeline-row-list]') };
+      rowWitnesses.set(row, witness);
+      if (!rowOrigins.has(row) && new TextEncoder().encode(id).length <= 1024) rowOrigins.set(row,
+        { pane: paneToken, parent: domToken(witness.parent), list: domToken(witness.list), id });
+      priorIds.set(id, priorIds.has(id) ? null : row);
+    }
     for (const row of rows.slice(0, GALLERY_PANE_LIMITS.rows)) if (!old.has(row)) {
       if (intersects(row, pane!)) visible.add(row); observer.observe(row);
     }
     schedule();
   }
   const mutations = new MutationObserver(records => {
-    const native = records.some(record => {
+    let native = false;
+    let nextRows: HTMLElement[] | undefined, nextIds: Map<string, Element | null> | undefined;
+    let structuralNodes = 0;
+    const structuralIds = new Set<string>();
+    const wrapperRows = (record: MutationRecord, target: Element): string[] | null => {
+      const list = target.parentElement;
+      if (record.type !== 'childList' || !target.hasAttribute('data-timeline-items')
+        || list?.getAttribute('data-timeline-row-list') !== 'top-level'
+        || rowWitnesses.size === 0 || rows.length > GALLERY_PANE_LIMITS.rows) return null;
+      const count = record.addedNodes.length + record.removedNodes.length;
+      structuralNodes += count;
+      if (!count || structuralNodes > GALLERY_PANE_LIMITS.targets * 2) return null;
+      if (!nextIds) {
+        nextRows = nativeRows(pane!); nextIds = new Map();
+        if (nextRows.length > GALLERY_PANE_LIMITS.rows) return null;
+        for (const row of nextRows) {
+          const id = row.dataset.timelineRowId!;
+          nextIds.set(id, nextIds.has(id) ? null : row);
+        }
+      }
+      if (nextRows!.length > GALLERY_PANE_LIMITS.rows) return null;
+      const ids: string[] = [];
+      for (const [nodes, adding] of [[record.removedNodes, false], [record.addedNodes, true]] as const) for (const node of nodes) {
+        if (!(node instanceof Element)) return null;
+        const id = node.getAttribute('data-timeline-row-id');
+        if (!id || new TextEncoder().encode(id).length > 1024 || structuralIds.has(id)
+          || !owners.get(pane as HTMLElement)?.knowsRow(id)
+          || node.matches(ownedSurface)
+          || node.querySelector('[data-timeline-row-id], [data-timeline-row-list], [data-thread-window]')) return null;
+        const priorRow = rowWitnesses.get(node);
+        const origin = rowOrigins.get(node);
+        if (origin && (origin.pane !== paneToken || origin.parent !== domToken(target) || origin.list !== domToken(list) || origin.id !== id)) return null;
+        if (adding) {
+          if (priorRow || priorIds.has(id) || !node.isConnected || node.parentElement !== target
+            || node.closest('[data-thread-window]') !== pane || node.closest('[data-timeline-row-list]') !== list
+            || nextIds.get(id) !== node) return null;
+        } else if (!priorRow || priorRow.id !== id || priorRow.parent !== target || priorRow.list !== list
+          || priorIds.get(id) !== node || node.isConnected || nextIds.has(id)) return null;
+        structuralIds.add(id); ids.push(id);
+        if (structuralIds.size > GALLERY_PANE_LIMITS.targets) return null;
+      }
+      return ids;
+    };
+    for (const record of records) {
       const target = record.target instanceof Element ? record.target : record.target.parentElement;
-      if (!target?.isConnected || target.closest(ownedSurface)) return false;
+      if (!target?.isConnected || target.closest(ownedSurface)) continue;
+      if (target.closest('[data-thread-window]') !== pane) continue;
       if (record.type === 'childList' && [...record.addedNodes, ...record.removedNodes].every(node =>
-        node instanceof Element && node.matches(ownedSurface))) return false;
+        node instanceof Element && node.matches(ownedSurface))) continue;
       // Native content is a hint, never parsed as status or turn authority.
       const row = target?.closest<HTMLElement>('[data-timeline-row-id]');
-      return record.type === 'attributes' || !row || visible.has(row) || row.contains(document.activeElement);
-    });
+      if (record.type !== 'attributes' && row && !visible.has(row) && !row.contains(document.activeElement)) continue;
+      native = true;
+      // Structural/identity changes may affect neighbouring turn boundaries.
+      // Content confined to one real native row does not revoke other rows.
+      if (!row && !broad) {
+        const ids = wrapperRows(record, target);
+        if (ids) for (const id of ids) changedRows.add(id); else broad = true;
+        if (changedRows.size > GALLERY_PANE_LIMITS.targets) broad = true;
+      }
+      else if (record.type === 'attributes' || !row || !row.dataset.timelineRowId || row.dataset.timelineRowId.length > 1024 || row.closest('[data-thread-window]') !== pane) broad = true;
+      else if (!broad) {
+        changedRows.add(row.dataset.timelineRowId);
+        if (changedRows.size > GALLERY_PANE_LIMITS.targets) { broad = true; changedRows.clear(); }
+      }
+    }
     if (!native) return;
-    reason = 'mutation'; scan();
+    reason = 'mutation'; scan(nextRows);
   });
   const visibility = () => { if (!document.hidden) { reason = 'visibility'; prior = ''; scan(); } };
   mutations.observe(pane, { subtree: true, childList: true, characterData: true, attributes: true, attributeFilter: ['data-timeline-row-id', 'data-timeline-row-list'] });
   pane.addEventListener('focusin', schedule); pane.addEventListener('focusout', schedule);
   document.addEventListener('visibilitychange', visibility); scan();
-  return () => { active = false; observer.disconnect(); mutations.disconnect(); pane.removeEventListener('focusin', schedule);
+  return () => { active = false; rows = []; visible.clear(); changedRows.clear(); rowWitnesses.clear(); priorIds.clear(); observer.disconnect(); mutations.disconnect(); pane.removeEventListener('focusin', schedule);
     pane.removeEventListener('focusout', schedule); document.removeEventListener('visibilitychange', visibility); };
 }
 /** Native owns scrolling/windowing/pins. A finite set of roots is backed by
  * measured, inert owned shells on still-mounted rows. No native styles/hooks.
  * Exact row reuse aborts input authority synchronously before deferred unmount. */
 export function mountGalleryPane(sentinel: HTMLElement, threadId: string,
-  initialAnchors: readonly GalleryAnchor[], mount: (host: HTMLElement, anchor: GalleryAnchor, current: () => boolean, lifetime: AbortSignal) => GalleryRoot) {
+  initialAnchors: readonly GalleryAnchor[], mount: (host: HTMLElement, anchor: GalleryAnchor, current: () => boolean, lifetime: AbortSignal) => GalleryRoot,
+  initialScopeRows?: readonly ScopeRow[]) {
   let anchors = initialAnchors;
+  const scopeMap = (rows: readonly ScopeRow[] | undefined) => {
+    if (!rows || rows.length > GALLERY_PANE_LIMITS.rows
+      || !rows.every(row => row.id.length <= 1024 && (row.turnId?.length ?? 0) <= 1024)) return null;
+    const result = new Map<string, string | null>();
+    for (const row of rows) result.set(row.id, result.has(row.id) ? null : row.turnId);
+    return result;
+  };
+  let scopeRows = scopeMap(initialScopeRows);
   const pane = sentinel.closest<HTMLElement>('[data-thread-window]');
   const valid = (next: readonly GalleryAnchor[]) => next.length <= 64 && next.every(a => a.threadId === threadId)
     && new Set(next.map(a => a.turnId)).size === next.length && new Set(next.map(a => a.rowId)).size === next.length;
@@ -169,14 +264,24 @@ export function mountGalleryPane(sentinel: HTMLElement, threadId: string,
     queued = true; queueMicrotask(reconcile);
   });
   const handle = { get capacity() { return capacity; }, get pendingRoots() { return roots.size + retiring.size > 0; },
+    knowsRow(id: string): boolean { const turn = scopeRows?.get(id); return own() && typeof turn === 'string' && turn.length > 0; },
     wake() { predecessorReady = handoff === null || handoff.drained; if (active) reconcile(); }, invalidate(ids?: readonly string[]) {
-    const affected = ids ? new Set(ids) : null;
-    for (const anchor of anchors) if (!affected || affected.has(anchor.rowId)) invalid.add(anchor);
-    for (const old of roots.values()) if (!affected || affected.has(old.anchor.rowId)) {
+    // Match sibling public rows through their witnessed turn, never through an
+    // opaque ID convention. Missing proof remains conservative.
+    const witnessed = scopeRows;
+    const affected = ids && (!witnessed || ids.every(id => witnessed.has(id))) ? new Set(ids) : null;
+    const turns = new Set(ids?.flatMap(id => witnessed?.get(id) ? [witnessed.get(id)!] : []) ?? []);
+    const includes = (anchor: GalleryAnchor) => !affected || affected.has(anchor.rowId) || turns.has(anchor.turnId);
+    const invalidated: string[] = [];
+    for (const anchor of anchors) if (includes(anchor)) invalid.add(anchor);
+    for (const old of roots.values()) if (includes(old.anchor)) {
+      invalidated.push(old.anchor.turnId);
       old.validity.current = false; old.root.suspend?.(true);
     }
-  }, update(next: readonly GalleryAnchor[], checked: readonly string[] = []) {
+    return invalidated;
+  }, update(next: readonly GalleryAnchor[], checked: readonly string[] = [], nextScopeRows?: readonly ScopeRow[]) {
     if (!active) return; if (!valid(next)) throw Error('Invalid updated pane scope.');
+    if (nextScopeRows) scopeRows = scopeMap(nextScopeRows);
     const confirmed = new Set(next.map(anchor => anchor.rowId)), verified = new Set(checked);
     for (const [key, old] of roots) if (verified.has(old.anchor.rowId) && !confirmed.has(old.anchor.rowId)) retire(key, true);
     for (const anchor of next) {

@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
-import { buildResolveOutput } from '@phosphorco/bb-turn-results';
+import { buildResolveOutput, METHODS } from '@phosphorco/bb-turn-results';
 import { registerTurnResultsParticipant } from '@phosphorco/bb-turn-results/bb';
 import type { RegistrationPort } from '@phosphorco/bb-turn-results/bb';
 import { createGalleryRuntime, GALLERY_RUNTIME_LIMITS } from '../gallery/runtime.ts';
@@ -58,7 +58,7 @@ function setup(count = 0, failed = '', productive = false) {
     },
   }, threads: { events: { async list() { return []; } } } };
   const runtime = createGalleryRuntime(sdk);
-  return { runtime, reads, sourceCalls, setHold(value: typeof holding) { holding = value; },
+  return { runtime, sdk, reads, sourceCalls, setHold(value: typeof holding) { holding = value; },
     hidden(value: boolean) { Object.defineProperty(document, 'hidden', { configurable: true, value }); document.dispatchEvent(new dom.window.Event('visibilitychange')); },
     dispose() { runtime.dispose(); globalThis.document = saved; dom.window.close(); } };
 }
@@ -70,6 +70,60 @@ test('65 distinct demanded threads pass two read lanes fairly; no permanent64 ad
     assert.equal(h.runtime.stats().leases, 65); assert.equal(h.runtime.stats().queued, 0);
     const count = h.reads.length; await tick(); assert.equal(h.reads.length, count, 'settled idle is quiet');
   } finally { for (const lease of leases) lease.dispose(); h.dispose(); }
+});
+
+test('proof suspension retains finite discovery lane; same-thread history waits and healthy supplier33 progresses', async () => {
+  const h = setup(33, 'source-000'), original = h.sdk.plugins.callRpc;
+  const descriptions: string[] = []; let release!: () => void, describeSignal!: AbortSignal;
+  h.sdk.plugins.callRpc = async args => {
+    if (args.method === METHODS.describe) {
+      descriptions.push(args.pluginId);
+      if (descriptions.length === 1) { describeSignal = args.signal!; await new Promise<void>(resolve => { release = resolve; }); }
+    }
+    return original(args);
+  };
+  const demand = h.runtime.retainDiscoveryDemand()!; demand.visible(true);
+  const lease = h.runtime.retain(anchor('same')), signal = new AbortController();
+  const history: string[] = [];
+  try {
+    await until(() => descriptions.length === 1);
+    lease.visible(false); await tick();
+    assert.equal(describeSignal.aborted, false, 'proof suspension is not loss of actual pane demand');
+    assert.equal(h.runtime.stats().running, 1, 'initiating lane remains occupied until bounded discovery settles');
+    const same = h.runtime.readScope('same', signal.signal, async () => { history.push('same'); });
+    const other = h.runtime.readScope('other', signal.signal, async () => { history.push('other'); });
+    await until(() => history.includes('other')); assert.deepEqual(history, ['other']);
+    assert.ok(h.runtime.stats().running <= 2); assert.equal(h.sourceCalls.length, 0);
+    release(); await Promise.all([same, other]); await until(() => h.runtime.stats().running === 0);
+    assert.equal(descriptions.length, 32); assert.equal(h.sourceCalls.length, 0, 'suspended proof cannot consume');
+    lease.visible(true);
+    await until(() => h.runtime.isReadyOwner('source-032') && h.sourceCalls.length === 33 && h.runtime.stats().running === 0);
+    assert.equal(descriptions.length, 33, 'continuation retains its finite cursor instead of restarting owner1');
+    assert.equal(new Set(descriptions).size, 33); assert.deepEqual(history, ['other', 'same']);
+    const reads = h.reads.length; await tick(); await tick(); assert.equal(h.reads.length, reads);
+  } finally { release?.(); lease.dispose(); demand.dispose(); h.dispose(); }
+});
+
+test('discovery demand is bounded128, does not start work, and actual hide/unload fence ignored late describe', async () => {
+  const h = setup(1), original = h.sdk.plugins.callRpc;
+  const demands = Array.from({ length: 128 }, () => h.runtime.retainDiscoveryDemand()!);
+  let release!: () => void, started = false, bounded!: AbortSignal;
+  h.sdk.plugins.callRpc = async args => {
+    if (args.method === METHODS.describe) { started = true; bounded = args.signal!; await new Promise<void>(resolve => { release = resolve; }); }
+    return original(args);
+  };
+  let lease: ReturnType<typeof h.runtime.retain> | undefined;
+  try {
+    assert.equal(h.runtime.retainDiscoveryDemand(), null); demands[0]!.visible(true);
+    await tick(); assert.equal(started, false); assert.equal(h.runtime.stats().discoveryDemands, 128);
+    lease = h.runtime.retain(anchor('thread')); await until(() => started);
+    lease.visible(false); demands[0]!.visible(false); assert.equal(bounded.aborted, true);
+    await until(() => h.runtime.stats().running === 0);
+    h.hidden(true); release(); await tick(); assert.equal(h.runtime.isReadyOwner('source-000'), false);
+    assert.equal(h.sourceCalls.length, 0);
+    for (const demand of demands) demand.dispose(); assert.equal(h.runtime.stats().discoveryDemands, 0);
+    h.runtime.dispose(); await tick(); assert.equal(h.runtime.stats().visibleDiscoveryDemands, 0);
+  } finally { release?.(); lease?.dispose(); for (const demand of demands) demand.dispose(); h.dispose(); }
 });
 test('source33 progresses after first owner fails; bounded productive debt parks without idle retry', async () => {
   const h = setup(33, 'source-000', true), lease = h.runtime.retain(anchor('thread'));

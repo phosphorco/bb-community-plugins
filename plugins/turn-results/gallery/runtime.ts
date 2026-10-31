@@ -58,6 +58,7 @@ export function createGalleryRuntime(sdk: Sdk) {
   const historyReads = new Set<HistoryRead>();
   let discoveryController: AbortController | null = null, discoveryGeneration = 0;
   let discoveryCapacity = false;
+  let discoveryDemands = 0, visibleDiscoveryDemands = 0;
   const lifetime = new AbortController();
   const media = createGalleryMedia({ fetch: (url, signal) => fetch(url, { signal }),
     createUrl: blob => URL.createObjectURL(blob), revokeUrl: url => URL.revokeObjectURL(url) });
@@ -185,7 +186,10 @@ export function createGalleryRuntime(sdk: Sdk) {
       discovering = operation;
       void operation.finally(() => { if (discovering === operation) { discovering = null; discoveryController = null; } }).catch(() => {});
     }
-    const found = await untilAborted(discovering, signal); signal.throwIfAborted(); return found;
+    // A proof-suspended turn may stop consuming, while its actual mounted pane
+    // still demands this finite pass. Keep the initiating lane until that pass
+    // settles; detaching on caller abort would orphan discovery outside 2/1.
+    const found = await discovering; signal.throwIfAborted(); return found;
   }
   function collect() {
     const cached = [...turns.values()].filter(entry => !entry.refs && !entry.controller);
@@ -323,7 +327,7 @@ export function createGalleryRuntime(sdk: Sdk) {
   }
   function reset(entry: TurnEntry) { entry.dirty = true; entry.afterOwner = null; entry.debts.clear(); entry.debtBudget = GALLERY_RUNTIME_LIMITS.automaticDebtUnits; }
   function stopUnusedDiscovery() {
-    if (![...turns.values()].some(entry => entry.refs && entry.visible)) discoveryController?.abort();
+    if (!visibleDiscoveryDemands && ![...turns.values()].some(entry => entry.refs && entry.visible)) discoveryController?.abort();
   }
   function visibility() {
     visible = !document.hidden; media.visible(visible); canvases.setHidden(!visible);
@@ -332,6 +336,24 @@ export function createGalleryRuntime(sdk: Sdk) {
   }
   document.addEventListener('visibilitychange', visibility);
   const api = { media, canvases, backend, readScope, readyOwners, presentationStatus, dialogSites, presentationRoot, invalidateReadiness,
+    retainDiscoveryDemand() {
+      if (!active || discoveryDemands >= GALLERY_RUNTIME_LIMITS.leases) return null;
+      discoveryDemands++;
+      let live = true, shown = false;
+      return {
+        visible(next: boolean) {
+          if (!live || !active || shown === next) return;
+          shown = next; visibleDiscoveryDemands += next ? 1 : -1;
+          if (!next) stopUnusedDiscovery();
+        },
+        dispose() {
+          if (!live) return; live = false;
+          if (!active) return;
+          discoveryDemands--; if (shown) visibleDiscoveryDemands--;
+          stopUnusedDiscovery();
+        },
+      };
+    },
     observeRows(rows: readonly GalleryObservation[]) { if (active) dialog?.observe(rows); },
     async discoverReady(signal: AbortSignal) { await discover(signal); return { continued: discoveryCursor !== null, capacity: discoveryCapacity }; },
     isActive: () => active,
@@ -356,9 +378,10 @@ export function createGalleryRuntime(sdk: Sdk) {
       const kind = sources?.find(source => source.pluginId === row.owner)?.capabilities.supplier?.kinds.find(kind => kind.kind === row.identity.ref.kind);
       return kind ? row.resolution?.knowledge === 'confirmed' ? kind.confirmedLabel : kind.neutralLabel : 'Result';
     },
-    invalidate(threadId?: string, rediscover = false) {
+    invalidate(threadId?: string, rediscover = false, turnIds?: ReadonlySet<string>) {
       if (rediscover) invalidateReadiness();
-      for (const entry of turns.values()) if (entry.refs && (!threadId || entry.anchor.threadId === threadId)) { reset(entry); enqueue(entry); }
+      for (const entry of turns.values()) if (entry.refs && (!threadId || entry.anchor.threadId === threadId)
+        && (!turnIds || turnIds.has(entry.anchor.turnId))) { reset(entry); enqueue(entry); }
     },
     retain(anchor: GalleryAnchor, initiallyVisible = true) {
       if (!active) throw Error('Gallery generation retired.');
@@ -395,11 +418,12 @@ export function createGalleryRuntime(sdk: Sdk) {
         } };
     },
     stats: () => ({ leases, entries: turns.size, cached: [...turns.values()].filter(entry => !entry.refs).length,
-      historyReads: historyReads.size, queued: [...queue.values()].reduce((sum, entries) => sum + entries.size, 0), running, bytes }),
+      historyReads: historyReads.size, discoveryDemands, visibleDiscoveryDemands,
+      queued: [...queue.values()].reduce((sum, entries) => sum + entries.size, 0), running, bytes }),
     dispose() {
       if (!active) return; active = false; lifetime.abort(); discoveryController?.abort(); document.removeEventListener('visibilitychange', visibility);
       pendingDialog = null; publishReady(new Set()); dialogDrain = dialog?.dispose() ?? Promise.resolve();
-      for (const read of historyReads) read.cancel(); for (const entry of turns.values()) entry.controller?.abort(); turns.clear(); queue.clear(); bytes = 0; leases = 0; discoveryOwner.dispose(); media.dispose(); canvases.dispose();
+      for (const read of historyReads) read.cancel(); for (const entry of turns.values()) entry.controller?.abort(); turns.clear(); queue.clear(); bytes = 0; leases = 0; discoveryDemands = 0; visibleDiscoveryDemands = 0; discoveryOwner.dispose(); media.dispose(); canvases.dispose();
     },
     async whenDrained() { await dialogDrain; await canvases.whenDrained(); },
   };

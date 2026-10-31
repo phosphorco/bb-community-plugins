@@ -5,22 +5,51 @@ import { readFileSync } from 'node:fs';
 import { getEventListeners } from 'node:events';
 import ts from 'typescript';
 import { JSDOM } from 'jsdom';
-import { act, createElement as h, useEffect, StrictMode } from 'react';
+import { act, createElement as h, useEffect, StrictMode, Suspense, startTransition } from 'react';
 import { createRoot } from 'react-dom/client';
+import { createPortal } from 'react-dom';
 import { loadPluginApp, renderSlot } from '@get-bb/plugin-sdk/testing/app';
 import { registerPresentation } from '@phosphorco/bb-context-recognition/presentation';
 import { registerTurnResultsParticipant } from '@phosphorco/bb-turn-results/bb';
-import { buildResolveOutput } from '@phosphorco/bb-turn-results';
+import { buildResolveOutput, METHODS } from '@phosphorco/bb-turn-results';
 import { GALLERY_METHODS } from '../gallery/rpc.ts';
 import { createGalleryRuntime } from '../gallery/runtime.ts';
 import { mountGalleryPane } from '../gallery/pane.ts';
+const navigationVariantUrl = new URL('../app.tsx?public-navigation-reference-fixture', import.meta.url).href;
+const navigationHookFixture = `
+function useBbNavigate() {
+  const api = originalUseBbNavigate(), probe = globalThis.__turnResultsNavigationFixture;
+  const version = probe ? ++probe.rendered : 0;
+  useLayoutEffect(() => {
+    if (!probe) return;
+    probe.committed = version;
+    return () => { if (probe.committed === version) probe.committed = null; };
+  }, [probe, version]);
+  if (!probe) return api;
+  return { ...api,
+    openUrl(...args) { probe.calls.push({ version, method: 'openUrl' }); return api.openUrl(...args); },
+    openThreadPanel(...args) { probe.calls.push({ version, method: 'openThreadPanel' }); return api.openThreadPanel(...args); },
+  };
+}
+function useSdk() {
+  const api = originalUseSdk(), probe = globalThis.__turnResultsNavigationFixture;
+  if (probe) probe.originalSdk = api;
+  return probe?.sdkOverride ?? api;
+}
+`;
 registerHooks({ load(url, context, next) {
   if (url.endsWith('.css')) return { format: 'module', shortCircuit: true, source: 'export default {}' };
-  if (url.endsWith('.tsx')) return { format: 'module', shortCircuit: true,
-    source: ts.transpileModule(readFileSync(new URL(url), 'utf8'), { compilerOptions: { target: ts.ScriptTarget.ES2023, module: ts.ModuleKind.ESNext, jsx: ts.JsxEmit.ReactJSX } }).outputText };
+  if (new URL(url).pathname.endsWith('.tsx')) {
+    let source = readFileSync(new URL(url), 'utf8');
+    if (url === navigationVariantUrl) source = source.replace('useBbNavigate,', 'useBbNavigate as originalUseBbNavigate,')
+      .replace('useSdk,', 'useSdk as originalUseSdk,') + navigationHookFixture;
+    return { format: 'module', shortCircuit: true,
+      source: ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2023, module: ts.ModuleKind.ESNext, jsx: ts.JsxEmit.ReactJSX } }).outputText };
+  }
   return next(url, context);
 } });
 const definition = await import('../app.tsx');
+const navigationDefinition = await import(navigationVariantUrl);
 const { ResultCard } = await import('../gallery/view.tsx');
 const tick = ms => new Promise(resolve => setTimeout(resolve, ms));
 async function settle(ms = 0) { await act(async () => { await tick(ms); }); }
@@ -41,7 +70,10 @@ function record(i) {
 async function fixture(count = 6, mount = true, contribution = {}) {
   const registeredOwner = contribution.owner ?? owner, registeredSchema = contribution.schema ?? schema;
   const kind = contribution.kind ?? 'example/result', namespace = kind.split('/')[0];
-  const dom = new JSDOM(`<body data-thread-window><div data-timeline-row-list="top-level">${Array.from({ length: count }, (_, i) => `<div data-timeline-row-id="opaque-${i}"><button>Native ${i}</button></div>`).join('')}</div></body>`, { pretendToBeVisual: true });
+  const structuralRows = contribution.structuralRows ?? [];
+  const nativeMarkup = Array.from({ length: count }, (_, i) => `<div data-timeline-row-id="opaque-${i}"><button>Native ${i}</button></div>`).join('')
+    + structuralRows.map(row => `<div data-timeline-row-id="${row.id}"><button>Native public row</button></div>`).join('');
+  const dom = new JSDOM(`<body data-thread-window><div data-timeline-row-list="top-level">${structuralRows.length ? `<div data-timeline-items class="relative w-full">${nativeMarkup}</div>` : nativeMarkup}</div></body>`, { pretendToBeVisual: true });
   const keys = ['window','document','Element','HTMLElement','MutationObserver','ResizeObserver','IntersectionObserver','IS_REACT_ACT_ENVIRONMENT'];
   const saved = Object.fromEntries(keys.map(key => [key, globalThis[key]]));
   const changes = new Map(), eventPrototype = EventTarget.prototype, addEvent = eventPrototype.addEventListener, removeEvent = eventPrototype.removeEventListener;
@@ -70,7 +102,7 @@ async function fixture(count = 6, mount = true, contribution = {}) {
     resolve(input) { return buildResolveOutput(input, input.items.map(() => ({ state: 'unavailable', reason: 'not used' }))); } });
   const sdk = { threads: { async timeline(input) {
     nativeCalls.push(input); return { rows: rows.map((row, i) => ({ id: `opaque-${i}`, threadId: 'thread', turnId: row.identity.ref.source.turnId,
-      kind: 'turn', status: 'completed', sourceSeqStart: i * 10 + 1, sourceSeqEnd: i * 10 + 5 })), completedTurnDisplay: 'collapse', timelinePage: { historySnapshot: 'public-snapshot', olderCursor: null } };
+      kind: 'turn', status: 'completed', sourceSeqStart: i * 10 + 1, sourceSeqEnd: i * 10 + 5 })).concat(structuralRows), completedTurnDisplay: 'collapse', timelinePage: { historySnapshot: 'public-snapshot', olderCursor: null } };
   }, events: { async list() { throw Error('No native event read is allowed in this fixture'); } } }, plugins: {
     async list() { listCalls++; return { plugins: [{ id: registeredOwner, enabled, status: enabled ? 'running' : 'disabled' }] }; },
     async callRpc(args) {
@@ -90,6 +122,9 @@ async function fixture(count = 6, mount = true, contribution = {}) {
     captured.push(props);
     useEffect(() => { live++; setups++; peak = Math.max(peak, live); if (props.mode === 'full') { full++; fullPeak = Math.max(fullPeak, full); }
       return () => { live--; cleanups++; if (props.mode === 'full') full--; }; }, []);
+    if (contribution.customExpand && props.mode === 'docked') return h('button', {
+      'data-supplier': props.identity.id, 'data-mode': props.mode, 'data-contributor-expand': '', onClick: props.requestFull,
+    }, 'Expand contributor result');
     return h('button', { 'data-supplier': props.identity.id, 'data-mode': props.mode, onClick: () => props.navigate.openUrl('https://fixture.invalid/referent') }, props.data.label ?? `${props.data.repository}#${props.data.pullNumber}`);
   }
   let generation = 0;
@@ -99,15 +134,20 @@ async function fixture(count = 6, mount = true, contribution = {}) {
     registrations.push(dispose); return dispose;
   }
   register();
-  const app = await loadPluginApp(definition), controller = new AbortController();
+  const app = await loadPluginApp(contribution.definition ?? definition), controller = new AbortController();
   let script = await app.contentScripts[0].mount({ pluginId: 'turn-results', generation: 1, signal: controller.signal });
-  const renderBanner = () => renderSlot(app.composerCustomizations[0].banners[0], {}, { sdk, composer: { scope: { kind: 'thread', threadId: 'thread' } },
+  const originalBanner = app.composerCustomizations[0].banners[0];
+  const banner = contribution.wrapBanner ? { ...originalBanner, component: contribution.wrapBanner(originalBanner.component) } : originalBanner;
+  const renderBanner = () => renderSlot(banner, {}, { sdk, composer: { scope: { kind: 'thread', threadId: 'thread' } },
     openUrl(url) { navigation.push(url); return true; }, realtimeConnectionState: 'connected' });
   let rendered = null; if (mount) act(() => { rendered = renderBanner(); }); const slots = [];
-  return { dom, sdk, app, controller, captured, navigation, nativeCalls, register, renderer: View,
+  return { dom, sdk, app, controller, captured, navigation, nativeCalls, register, renderer: View, slot: () => rendered,
+    rerender: () => act(async () => { rendered.lifecycle.rerender(h(banner.component)); await tick(); }),
     stats: () => ({ listCalls, rpc, live, peak, setups, cleanups, full, fullPeak, subscriptions, subscriptionPeak }),
     rows: () => rows, setRows(value) { rows = value; }, enabled(value) { enabled = value; },
     notify: () => act(async () => { await rendered.behavior.emitRealtime('results-changed', { threadId: 'thread' }); await tick(); }),
+    membership: () => act(async () => { await rendered.behavior.emitRealtime('plugins-changed', {}); await tick(); }),
+    async reconnect() { await rendered.behavior.setRealtimeConnectionState('reconnecting'); await rendered.behavior.setRealtimeConnectionState('connected'); await settle(); },
     async hidden(value) { Object.defineProperty(document, 'hidden', { configurable: true, value }); await act(async () => document.dispatchEvent(new dom.window.Event('visibilitychange'))); },
     panel() { let slot; act(() => { slot = renderSlot(app.threadPanelActions[0], { threadId: 'thread' }, { sdk, composer: { scope: { kind: 'thread', threadId: 'thread' } }, openUrl(url) { navigation.push(url); return true; } }); }); slots.push(slot); return slot; },
     async replaceGeneration() {
@@ -148,7 +188,7 @@ test('actual app readiness/realm/revision/retry fences, four resources, panel an
     assert.ok(first.size.maxWidth > 0 && first.size.maxWidth <= 400); assert.ok(first.size.maxHeight > 0 && first.size.maxHeight <= 216);
     const native = f.nativeCalls.length, lists = f.stats().listCalls; await settle(200);
     assert.equal(f.nativeCalls.length, native); assert.equal(f.stats().listCalls, lists);
-    f.enabled(false); await f.notify(); await until(() => f.stats().live === 0);
+    f.enabled(false); await f.membership(); await until(() => f.stats().live === 0);
     const navigations = f.navigation.length; first.navigate.openUrl('https://fixture.invalid/stale'); first.requestFull(); first.refresh();
     assert.equal(f.navigation.length, navigations); assert.equal(document.querySelector('dialog'), null);
     f.enabled(true); await f.notify(); await until(() => f.stats().live === 4);
@@ -161,6 +201,25 @@ test('actual app readiness/realm/revision/retry fences, four resources, panel an
     await f.hidden(true); await until(() => f.stats().live === 0); await settle(100);
     const count = f.stats().listCalls; await settle(100); assert.equal(f.stats().listCalls, count);
     await f.hidden(false); await until(() => f.stats().live === 4);
+  } finally { await f.dispose(); }
+});
+
+test('contributor requestFull retires its custom trigger and Escape focuses the same-card stable consumer Expand', async () => {
+  const f = await fixture(1, true, { customExpand: true });
+  try {
+    await until(() => document.querySelector('[data-contributor-expand]'));
+    const custom = document.querySelector('[data-contributor-expand]');
+    const card = custom.closest('[data-result-key]'), consumer = card.querySelector('.tr-caption button');
+    await act(async () => { custom.focus(); custom.click(); });
+    await until(() => f.stats().full === 1);
+    assert.equal(custom.isConnected, false, 'the old custom trigger is retired for full mode');
+    assert.equal(consumer.isConnected, true); assert.equal(consumer.closest('[data-result-key]'), card);
+    await act(async () => document.querySelector('dialog').dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })));
+    await until(() => !document.querySelector('dialog'));
+    console.log('CONTRIBUTOR_FOCUS_RETURN', JSON.stringify({ customConnected: custom.isConnected, consumerConnected: consumer.isConnected,
+      sameCard: consumer.closest('[data-result-key]') === card, consumerFocused: document.activeElement === consumer }));
+    assert.ok(document.activeElement === consumer, 'Escape returns focus to the exact stable consumer Expand on the same source card');
+    assert.equal(f.stats().fullPeak, 1); assert.ok(f.stats().peak <= 4); assert.equal(f.stats().rpc, 0);
   } finally { await f.dispose(); }
 });
 
@@ -595,4 +654,264 @@ test('native panel dated data works through active source faults but fences sync
     await act(async () => [...fresh.container.querySelectorAll('.tr-caption button')].find(button => button.textContent === 'Open').click());
     assert.equal(f.navigation.length, beforeStop + 1, 'current replacement generation remains usable');
   } finally { await f.dispose(); }
+});
+
+function streamUnrelatedRow(f, token) {
+  const row = f.dom.window.document.querySelector('[data-timeline-row-id="opaque-1"]');
+  row.querySelector(':scope > button').firstChild.data = `Unrelated native token ${token}`;
+}
+test('witnessed foreign native wrapper windowing preserves healthy host and ordinary full intent', async () => {
+  // Native v7 late-ring shape and public workspace turn-location metadata.
+  // Thread is fixture-owned; the opaque native ID and its public turn are not parsed.
+  const publicRow = { id: 'thr_ck4kx5mx8m:user-seed:5505', threadId: 'thread', turnId: 'daceb54fe5-t5',
+    kind: 'conversation', role: 'user', messageSeq: 5505, sourceSeqStart: 5505, sourceSeqEnd: 5505 };
+  const f = await fixture(1, true, { structuralRows: [publicRow] });
+  try {
+    await until(() => f.stats().live === 1);
+    const target = document.querySelector('[data-timeline-row-id="opaque-0"] [data-supplier]');
+    const shell = target.closest('[data-turn-results-gallery]'), parent = document.querySelector('[data-timeline-items]');
+    const foreign = [...parent.children].find(node => node.dataset.timelineRowId === publicRow.id);
+    const beforeReads = f.nativeCalls.length, lists = f.stats().listCalls;
+    const original = f.sdk.threads.timeline; let release;
+    f.sdk.threads.timeline = async input => { await new Promise(resolve => { release = resolve; }); return original(input); };
+    await act(async () => { foreign.remove(); await tick(10); });
+    assert.equal(document.querySelector('[data-timeline-row-id="opaque-0"] [data-supplier]'), target,
+      'foreign T5 removal must not revoke the healthy T1 host while fresh proof is pending');
+    await until(() => release);
+    await act(async () => { parent.append(foreign); await tick(10); });
+    assert.equal(target.closest('[data-turn-results-gallery]'), shell);
+    await act(async () => { target.closest('article').querySelector('.tr-caption button').click(); await tick(); });
+    await until(() => f.stats().full === 1);
+    assert.equal(document.querySelector('[data-supplier][data-mode="full"]').dataset.supplier, 'artifact-0');
+    f.sdk.threads.timeline = original; await act(async () => { release(); await tick(); });
+    await until(() => f.nativeCalls.length > beforeReads);
+    assert.equal(f.stats().listCalls, lists, 'native structural proof preserves ready-owner membership');
+    assert.equal(f.stats().rpc, 0); assert.ok(f.stats().peak <= 4);
+  } finally { await f.dispose(); }
+});
+function delayDescriptions(f, delay) {
+  const original = f.sdk.plugins.callRpc, calls = [];
+  f.sdk.plugins.callRpc = async args => {
+    if (args.method !== METHODS.describe) return original(args);
+    const call = { aborted: false, completed: false }; calls.push(call);
+    await new Promise((resolve, reject) => {
+      const aborted = () => { clearTimeout(timer); call.aborted = true; args.signal.removeEventListener('abort', aborted); reject(args.signal.reason); };
+      const timer = setTimeout(() => { args.signal.removeEventListener('abort', aborted); resolve(); }, delay);
+      if (args.signal.aborted) aborted(); else args.signal.addEventListener('abort', aborted, { once: true });
+    });
+    const value = await original(args); call.completed = true; return value;
+  };
+  return calls;
+}
+
+test('native fast stream preserves unchanged custom target and bounds first fresh read without idle polling', async () => {
+  const f = await fixture(2);
+  try {
+    await until(() => f.stats().live === 2);
+    const target = document.querySelector('[data-timeline-row-id="opaque-0"] [data-supplier]');
+    const shell = target.closest('[data-turn-results-gallery]'), lists = f.stats().listCalls, native = f.nativeCalls.length;
+    const setups = f.stats().setups;
+    let unchangedReads = 0; const original = f.sdk.plugins.callRpc;
+    f.sdk.plugins.callRpc = args => { if (args.method === GALLERY_METHODS.read && args.input.turnId === 'turn-0') unchangedReads++; return original(args); };
+    for (let i = 0; i < 8; i++) {
+      await act(async () => { streamUnrelatedRow(f, i); await tick(60); });
+      assert.equal(document.querySelector('[data-timeline-row-id="opaque-0"] [data-supplier]'), target);
+      assert.equal(target.closest('[data-turn-results-gallery]'), shell);
+      if (i >= 3) assert.ok(f.nativeCalls.length > native, 'first150ms refresh cannot be postponed until stream ends');
+    }
+    assert.equal(f.stats().listCalls, lists, 'native history hints do not erase genuine ready membership');
+    assert.equal(unchangedReads, 0, 'unrelated history proof cannot restart unchanged turn supplier/debt cursors');
+    await until(() => f.stats().live === 2);
+    assert.ok(f.stats().setups >= setups); assert.equal(f.stats().rpc, 0);
+    const quietCalls = f.nativeCalls.length, quietLists = f.stats().listCalls;
+    await settle(220); assert.equal(f.nativeCalls.length, quietCalls); assert.equal(f.stats().listCalls, quietLists);
+  } finally { await f.dispose(); }
+});
+
+test('native changes cannot abort delayed participant pass while actual pane still demands it', async () => {
+  const f = await fixture(2);
+  try {
+    await until(() => f.stats().live === 2);
+    const calls = delayDescriptions(f, 350);
+    // Genuine source invalidation starts a new pass; native proof suspension
+    // during that pass must not masquerade as pane disappearance.
+    await f.notify(); await until(() => calls.length === 1);
+    for (let i = 0; i < 7; i++) { await act(async () => { streamUnrelatedRow(f, i); await tick(70); }); }
+    assert.equal(calls.length, 1); assert.equal(calls[0].aborted, false); assert.equal(calls[0].completed, true);
+    await until(() => document.querySelector('[data-timeline-row-id="opaque-0"] [data-supplier]'));
+    const lists = f.stats().listCalls; await settle(200); assert.equal(f.stats().listCalls, lists);
+    f.enabled(false); await f.notify(); await until(() => f.stats().live === 0);
+    assert.equal(calls.at(-1).completed, true, 'disabled listing revokes readiness without owner describe');
+    f.enabled(true); await f.reconnect(); await until(() => f.stats().live === 2);
+  } finally { await f.dispose(); }
+});
+
+test('unrelated native stream retains independently mounted panel hosts and exact unchanged data actions', async () => {
+  const f = await fixture(2);
+  try {
+    await until(() => f.stats().live === 2); const panel = f.panel();
+    await until(() => f.stats().live === 4 && panel.container.querySelectorAll('[data-supplier]').length === 2);
+    const hosts = [...panel.container.querySelectorAll('[data-supplier]')], dock = document.querySelector('[data-timeline-row-id="opaque-0"] [data-supplier]');
+    const lists = f.stats().listCalls;
+    for (let i = 0; i < 8; i++) {
+      await act(async () => { streamUnrelatedRow(f, i); await tick(60); });
+      assert.deepEqual([...panel.container.querySelectorAll('[data-supplier]')], hosts);
+      assert.equal(document.querySelector('[data-timeline-row-id="opaque-0"] [data-supplier]'), dock);
+    }
+    assert.equal(f.stats().listCalls, lists); assert.equal(f.stats().peak, 4);
+    const before = f.navigation.length;
+    await act(async () => { hosts[0].click(); }); assert.equal(f.navigation.length, before + 1);
+    await f.hidden(true); await until(() => f.stats().live === 0);
+    const hiddenCalls = f.nativeCalls.length; await settle(200); assert.equal(f.nativeCalls.length, hiddenCalls);
+    await f.hidden(false); await until(() => f.stats().live === 4);
+  } finally { await f.dispose(); }
+});
+
+test('same-thread split keeps its exact unchanged custom host while another pane streams native content', async () => {
+  const f = await fixture(2); let rightSlot;
+  try {
+    await until(() => f.stats().live === 2);
+    const right = document.createElement('section'); right.dataset.threadWindow = '';
+    right.innerHTML = '<div data-timeline-row-list="top-level"><div data-timeline-row-id="opaque-0"><button>Right native row</button></div></div>';
+    document.body.append(right);
+    const Sentinel = f.app.composerCustomizations[0].banners[0].component;
+    let rightReads = 0;
+    const sdk = { ...f.sdk, threads: { ...f.sdk.threads, timeline(input) { rightReads++; return f.sdk.threads.timeline(input); } } };
+    await act(async () => { rightSlot = renderSlot({ component: () => createPortal(h(Sentinel), right) }, {}, {
+      sdk, composer: { scope: { kind: 'thread', threadId: 'thread' } }, realtimeConnectionState: 'connected',
+      openUrl(url) { f.navigation.push(url); return true; },
+    }); });
+    await until(() => right.querySelector('[data-supplier]') && f.stats().live === 3);
+    const host = right.querySelector('[data-supplier]'), shell = host.closest('[data-turn-results-gallery]'), reads = rightReads;
+    for (let i = 0; i < 7; i++) {
+      await act(async () => { streamUnrelatedRow(f, i); await tick(60); });
+      assert.equal(right.querySelector('[data-supplier]'), host);
+    }
+    assert.equal(rightReads, reads); assert.equal(host.closest('[data-turn-results-gallery]'), shell);
+    const before = f.navigation.length; await act(async () => host.click()); assert.equal(f.navigation.length, before + 1);
+    assert.ok(f.stats().peak <= 4);
+  } finally { if (rightSlot) await act(async () => rightSlot.unmount()); await f.dispose(); }
+});
+
+test('exact native row mutation revokes custom callbacks before fresh proof; unload fences delayed discovery', async () => {
+  const f = await fixture(1);
+  try {
+    await until(() => f.stats().live === 1);
+    const old = f.captured.at(-1), before = f.navigation.length;
+    const native = document.querySelector('[data-timeline-row-id="opaque-0"] > button');
+    await act(async () => { native.firstChild.data = 'This target changed'; await tick(10); });
+    old.navigate.openUrl('https://fixture.invalid/stale-target'); old.requestFull();
+    assert.equal(f.navigation.length, before); assert.equal(document.querySelector('dialog'), null);
+    await until(() => f.stats().live === 1);
+    const calls = delayDescriptions(f, 350);
+    await f.notify(); await until(() => calls.length === 1);
+    await act(async () => f.controller.abort());
+    await until(() => f.stats().live === 0);
+    assert.equal(calls[0].aborted, true);
+    const lists = f.stats().listCalls; await settle(400);
+    assert.equal(f.stats().live, 0); assert.equal(f.stats().listCalls, lists);
+  } finally { await f.dispose(); }
+});
+
+test('earlier public row of same proven turn invalidates its terminal custom host; unknown scope stays broad', async () => {
+  const f = await fixture(2);
+  try {
+    await until(() => f.stats().live === 2);
+    const original = f.sdk.threads.timeline;
+    f.sdk.threads.timeline = async input => {
+      const page = await original(input);
+      return { ...page, rows: [{ id: 'public-earlier-sibling', threadId: 'thread', turnId: 'turn-0', kind: 'conversation', role: 'assistant', status: 'completed', sourceSeqStart: 1, sourceSeqEnd: 2 },
+        { ...page.rows[0], sourceSeqStart: 3 }, page.rows[1]], timelinePage: { historySnapshot: 'public-multirow-turn', olderCursor: null } };
+    };
+    const sibling = document.createElement('div'); sibling.dataset.timelineRowId = 'public-earlier-sibling'; sibling.innerHTML = '<button>Earlier native row in same turn</button>';
+    document.querySelector('[data-timeline-row-list="top-level"]').prepend(sibling);
+    await until(() => f.stats().live === 2 && f.nativeCalls.length >= 2);
+    await settle(180); // Let this structural hint commit its new public scope.
+    const old = f.captured.findLast(props => props.identity.id === 'artifact-0'), other = document.querySelector('[data-timeline-row-id="opaque-1"] [data-supplier]');
+    const before = f.navigation.length;
+    await act(async () => { sibling.querySelector('button').firstChild.data = 'Earlier same-turn row changed'; await tick(10); });
+    old.navigate.openUrl('https://fixture.invalid/stale-sibling'); assert.equal(f.navigation.length, before);
+    assert.equal(document.querySelector('[data-timeline-row-id="opaque-0"] [data-supplier]'), null);
+    assert.equal(document.querySelector('[data-timeline-row-id="opaque-1"] [data-supplier]'), other);
+    await until(() => f.stats().live === 2);
+    const unknown = document.createElement('aside'); unknown.textContent = 'Native structural change';
+    await act(async () => { document.body.append(unknown); await tick(10); });
+    assert.equal(f.stats().live, 0, 'unknown pane structure conservatively invalidates every docked boundary');
+    await until(() => f.stats().live === 2);
+  } finally { await f.dispose(); }
+});
+
+function navigationProbe() {
+  const probe = { rendered: 0, committed: null, calls: [], originalSdk: null, sdkOverride: null };
+  globalThis.__turnResultsNavigationFixture = probe; return probe;
+}
+test('fresh public navigation objects/callbacks preserve scope, host and discovery; actions use latest committed callbacks', async () => {
+  const probe = navigationProbe(), f = await fixture(1, true, { definition: navigationDefinition });
+  try {
+    await until(() => f.stats().live === 1);
+    const host = document.querySelector('[data-supplier]'), captured = f.captured.at(-1);
+    const initial = { native: f.nativeCalls.length, lists: f.stats().listCalls, setups: f.stats().setups, cleanups: f.stats().cleanups };
+    for (let i = 0; i < 13; i++) {
+      await f.rerender(); assert.equal(document.querySelector('[data-supplier]'), host);
+    }
+    assert.ok(probe.rendered >= 14); assert.equal(probe.committed, probe.rendered);
+    assert.deepEqual({ native: f.nativeCalls.length, lists: f.stats().listCalls, setups: f.stats().setups, cleanups: f.stats().cleanups }, initial);
+    const before = f.navigation.length;
+    captured.navigate.openUrl('https://fixture.invalid/latest-committed');
+    assert.equal(f.navigation.length, before + 1); assert.equal(probe.calls.at(-1).version, probe.committed);
+    await act(async () => [...host.closest('.tr-card').querySelectorAll('.tr-caption button')].find(button => button.textContent === 'Open').click());
+    assert.equal(probe.calls.at(-1).version, probe.committed);
+    await f.reconnect(); await until(() => f.stats().live === 1 && f.nativeCalls.length > initial.native);
+    const recovered = f.nativeCalls.length, recoveredLists = f.stats().listCalls;
+    await f.rerender(); await settle(180);
+    assert.equal(f.nativeCalls.length, recovered); assert.equal(f.stats().listCalls, recoveredLists);
+  } finally { await f.dispose(); delete globalThis.__turnResultsNavigationFixture; }
+});
+
+test('speculative navigation render cannot publish callbacks before real React commit', async () => {
+  const probe = navigationProbe(); let blocked = false, release;
+  const gate = new Promise(resolve => { release = resolve; });
+  function Gate() { if (blocked) throw gate; return null; }
+  let Wrapper;
+  const f = await fixture(1, true, { definition: navigationDefinition, wrapBanner(Sentinel) {
+    Wrapper = function Wrapper() { return h(Suspense, { fallback: h('span', { 'data-test-fallback': '' }, 'Waiting') }, h(Sentinel), h(Gate)); };
+    return Wrapper;
+  } });
+  try {
+    await until(() => f.stats().live === 1);
+    const host = document.querySelector('[data-supplier]'), captured = f.captured.at(-1), committed = probe.committed;
+    const native = f.nativeCalls.length, lists = f.stats().listCalls;
+    blocked = true;
+    await act(async () => { startTransition(() => f.slot().lifecycle.rerender(h(Wrapper))); await tick(15); });
+    assert.ok(probe.rendered > committed); assert.equal(probe.committed, committed);
+    assert.equal(document.querySelector('[data-supplier]'), host);
+    const before = f.navigation.length; captured.navigate.openUrl('https://fixture.invalid/while-speculative');
+    assert.equal(f.navigation.length, before + 1); assert.equal(probe.calls.at(-1).version, committed, 'only previous committed API may act');
+    blocked = false; await act(async () => { release(); await tick(20); });
+    await until(() => probe.committed !== null && probe.committed > committed);
+    console.log('NAVIGATION_COMMIT_FENCE', JSON.stringify({ previousCommitted: committed, rendered: probe.rendered, nextCommitted: probe.committed }));
+    assert.equal(document.querySelector('[data-supplier]'), host);
+    captured.navigate.openUrl('https://fixture.invalid/after-commit'); assert.equal(probe.calls.at(-1).version, probe.committed);
+    assert.equal(f.nativeCalls.length, native); assert.equal(f.stats().listCalls, lists);
+    await act(async () => f.controller.abort());
+    const calls = probe.calls.length; captured.navigate.openUrl('https://fixture.invalid/after-retirement'); assert.equal(probe.calls.length, calls);
+  } finally { blocked = false; release(); await f.dispose(); delete globalThis.__turnResultsNavigationFixture; }
+});
+
+test('real SDK/thread scope replacement fences old navigation and A-to-B-to-A cannot revive stale callbacks', async () => {
+  const probe = navigationProbe(), f = await fixture(1, true, { definition: navigationDefinition });
+  try {
+    await until(() => f.stats().live === 1);
+    const old = f.captured.at(-1), originalReads = f.nativeCalls.length;
+    probe.sdkOverride = Object.create(probe.originalSdk); await f.rerender();
+    await until(() => f.stats().live === 1 && f.captured.at(-1) !== old && f.nativeCalls.length > originalReads);
+    const calls = probe.calls.length; old.navigate.openUrl('https://fixture.invalid/old-sdk'); assert.equal(probe.calls.length, calls);
+    const beforeScope = f.captured.at(-1);
+    await f.slot().behavior.setComposerScope({ kind: 'thread', threadId: 'other-thread' }); await until(() => f.stats().live === 0);
+    beforeScope.navigate.openUrl('https://fixture.invalid/old-scope'); assert.equal(probe.calls.length, calls);
+    await f.slot().behavior.setComposerScope({ kind: 'thread', threadId: 'thread' }); await until(() => f.stats().live === 1);
+    beforeScope.navigate.openUrl('https://fixture.invalid/reused-scope'); assert.equal(probe.calls.length, calls);
+    f.captured.at(-1).navigate.openUrl('https://fixture.invalid/current-scope'); assert.equal(probe.calls.length, calls + 1);
+    assert.equal(probe.calls.at(-1).version, probe.committed);
+  } finally { await f.dispose(); delete globalThis.__turnResultsNavigationFixture; }
 });

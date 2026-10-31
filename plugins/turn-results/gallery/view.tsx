@@ -77,12 +77,15 @@ export function ResultCard({ row, runtime, sdk, navigate, current, lifetime, pre
   presentationRoot?: GalleryPresentationRoot | undefined; mode?: 'docked' | 'full'; customEnabled?: boolean;
 }) {
   const site = useRef<CardSite | null>(null);
+  const expandButton = useRef<HTMLButtonElement>(null);
   const value = row.resolution;
   const open = () => { if (current() && value) navigateResult(navigate, value.route); };
   const full = () => {
     if (!current() || !value || !site.current || !runtime.isActive()) return;
+    // Contributor controls retire with the dock. The consumer action survives
+    // that handoff; dialog close still checks its exact native/revision scope.
     runtime.openDialog({ row, sdk, navigate, siteKey: site.current.key, retireDock: site.current.retire,
-      opener: document.activeElement instanceof HTMLElement ? document.activeElement : null, openerCurrent: current });
+      opener: expandButton.current, openerCurrent: current });
   };
   const fallback = value?.fallback.kind === 'image' ? <ImageCanvas row={row} runtime={runtime} sdk={sdk} open={open} lifetime={lifetime} />
     : <button className="tr-canvas tr-data-action" onClick={open} disabled={!value || value.route.kind === 'unavailable'}>
@@ -94,7 +97,7 @@ export function ResultCard({ row, runtime, sdk, navigate, current, lifetime, pre
     <PresentationCanvas row={row} runtime={runtime} sdk={sdk} navigate={navigate} current={current} lifetime={lifetime}
       presentationRoot={presentationRoot} mode={mode} enabled={customEnabled} site={site} requestFull={full} fallback={fallback} />
     <div className="tr-caption"><span>{runtime.caption(row)}</span><div>
-      {mode === 'docked' && value?.presentation && <button onClick={full}>Expand result</button>}
+      {mode === 'docked' && value?.presentation && <button ref={expandButton} onClick={full}>Expand result</button>}
       <button onClick={open} disabled={!value || value.route.kind === 'unavailable'}>Open</button>
     </div></div>
     {row.freshness !== 'fresh' && <small className="tr-freshness" title="This describes the result source record, separately from image loading and byte verification.">
