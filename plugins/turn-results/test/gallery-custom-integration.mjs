@@ -136,7 +136,7 @@ async function fixture(count = 6, mount = true, contribution = {}) {
   Object.assign(globalThis, { window: dom.window, document: dom.window.document, Element: dom.window.Element, HTMLElement: dom.window.HTMLElement,
     MutationObserver: dom.window.MutationObserver, ResizeObserver: Observer, IntersectionObserver: Observer, IS_REACT_ACT_ENVIRONMENT: true });
   const box = { top: 0, bottom: 600, left: 0, right: 800, width: 800, height: 600, x: 0, y: 0, toJSON() {} };
-  dom.window.HTMLElement.prototype.getBoundingClientRect = function () { return this.hasAttribute('data-thread-window') ? box : { ...box, width: 400, right: 400, height: 216, bottom: 216 }; };
+  dom.window.HTMLElement.prototype.getBoundingClientRect = function () { return this.hasAttribute('data-thread-window') ? box : { ...box, width: contribution.width ?? 400, right: contribution.width ?? 400, height: 216, bottom: 216 }; };
   let rows = Array.from({ length: count }, (_, i) => record(i)), enabled = true, listCalls = 0, rpc = 0, live = 0, peak = 0, setups = 0, cleanups = 0, full = 0, fullPeak = 0;
   if (contribution.fileRoute) rows = rows.map(row => ({ ...row, resolution: { ...row.resolution,
     route: { kind: 'file', target: { kind: 'host', hostId: 'recorded-host', path: '/saved/result.png' } } } }));
@@ -681,7 +681,9 @@ test('lazy renderer late completion after disable stays inert; nonempty owner me
     f.enabled(false); await f.notify();
     await act(async () => { release(f.renderer); await tick(); });
     await settle(50); assert.equal(f.stats().live, 0); assert.equal(f.stats().rpc, 0);
-    assert.ok(document.querySelector('.tr-caption > span').textContent); assert.ok(document.querySelector('.tr-fallback [aria-label^="Open "]'));
+    assert.equal(document.querySelector('.tr-result-title').textContent, 'Saved result 0');
+    assert.equal(document.querySelector('.tr-caption > span').textContent, '', 'unavailable owner label never duplicates the retained primary title');
+    assert.ok(document.querySelector('.tr-fallback [aria-label^="Open Saved result 0 — https://fixture.invalid/0"]'));
     f.enabled(true); await act(async () => { f.register(async () => f.renderer, ['requires-io']); }); await f.notify();
     await settle(100); assert.equal(f.stats().live, 0); assert.equal(f.stats().rpc, 0);
     await act(async () => { f.register(); }); await until(() => f.stats().live === 1);
@@ -1470,4 +1472,113 @@ test('later collected-row Open declines source revision/route changes and wrong-
       assert.equal(document.body.textContent.includes('Checking this saved result'), false);
     } finally { release(); await f.dispose(); }
   });
+});
+
+
+test('five data-only reply cards keep distinct primary text, exact click/Enter targets and zero custom leases across focus', async () => {
+  const f = await fixture(5, true, { kind: 'github/reply-posted' });
+  try {
+    await until(() => f.stats().live === 4);
+    const rows = structuredClone(f.rows()).map((row, i) => {
+      delete row.resolution.presentation; row.resolution.revision.sequence = 2;
+      row.identity.ref.kind = 'github/reply-posted'; row.resolution.identity = row.identity;
+      row.resolution.fallback = { kind: 'card', title: `Distinct posted reply ${i}`, description: 'a/b#12' };
+      row.resolution.route = { kind: 'url', href: `https://github.com/a/b/pull/12#discussion_r${100 + i}` }; return row;
+    });
+    f.setRows(rows); await f.notify(); await until(() => f.stats().live === 0 && document.querySelectorAll('.tr-result-title').length === 5);
+    const cards = [...document.querySelectorAll('[data-result-key]')], text = cards.map(card => card.textContent);
+    assert.equal(cards.length, 5); assert.equal(document.querySelectorAll('.tr-result-symbol, .tr-expand-icon').length, 0);
+    for (const [i, card] of cards.entries()) {
+      assert.equal(card.querySelector('.tr-result-title').textContent, `Distinct posted reply ${i}`);
+      assert.equal(card.querySelector('.tr-excerpt').textContent, 'a/b#12');
+      const button = card.querySelector('.tr-data-action');
+      assert.equal(button.getAttribute('aria-label'), `Open Distinct posted reply ${i} — https://github.com/a/b/pull/12#discussion_r${100+i}`);
+      await act(async () => { button.focus(); button.dispatchEvent(new f.dom.window.MouseEvent('mouseover', { bubbles: true }));
+        if (i % 2) button.dispatchEvent(new f.dom.window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+        button.dispatchEvent(new f.dom.window.MouseEvent('click', { bubbles: true, detail: i % 2 ? 0 : 1 })); });
+      assert.equal(f.navigation.at(-1), rows[i].resolution.route.href);
+    }
+    assert.equal(f.navigation.length, 5); assert.equal(f.stats().live, 0); assert.deepEqual(cards.map(card => card.textContent), text);
+    assert.equal(f.stats().rpc, 0, 'plain occurrence cards never acquire a custom RPC/lease');
+  } finally { await f.dispose(); }
+});
+
+
+// Exact five source-owned v2 titles from final ordinary native migration,
+// live-rows-after-final-native.json SHA f47411d27d3a533bb849f18f0c5b114f839075d545242c7aa1a7817cdc2f67ea.
+test('actual five long reply excerpts honor bounded two-column width; narrow and short cards stay compact', async () => {
+  const titles = ["Published five correction commits through ae5e7fdc936adb25e519a39654dd7b0f43450090, preserving the author's history thro", "Fixed in 3669d8a25764d2ab22ece7241d4ca2f7c83b098e. Shipping Query now acquires explicitly granted Past and Landing for e", "Fixed in a6172e5e2b35bfe32ce2ee8be65eadf20551833e. Ordinary authenticated renewal establishes the canonical deployment p", "Fixed in fd2c3adc7ac7a956b2c52fa9626480d299015aee. The finite navigation lease now keys concrete Tasks under the logical", "Fixed in ccddc3c6b00f512e5646531ecf19de187fc4dcb6. Prepared interpretations no longer receive incompatible raw confirmed"];
+  const visibleTitles = [titles[0], "Fixed in 3669d8a2… Shipping Query now acquires explicitly granted Past and Landing for e", "Fixed in a6172e5e… Ordinary authenticated renewal establishes the canonical deployment p", "Fixed in fd2c3adc… The finite navigation lease now keys concrete Tasks under the logical", "Fixed in ccddc3c6… Prepared interpretations no longer receive incompatible raw confirmed"];
+  const destinations = ["https://github.com/phosphorco/monorepo/pull/1891#issuecomment-6545603502", "https://github.com/phosphorco/monorepo/pull/1891#discussion_r4432291225", "https://github.com/phosphorco/monorepo/pull/1891#discussion_r4432291018", "https://github.com/phosphorco/monorepo/pull/1891#discussion_r4432290744", "https://github.com/phosphorco/monorepo/pull/1891#discussion_r4432290444"];
+  for (const width of [400, 150]) {
+    const f = await fixture(5, true, { kind: 'github/reply-posted', width, captureRuntime: true });
+    try {
+      const rows = structuredClone(f.rows()).map((row, i) => {
+        delete row.resolution.presentation; row.resolution.revision.sequence = 2;
+        row.resolution.fallback = { kind: 'card', title: titles[i], description: 'phosphorco/monorepo#1891' };
+        row.resolution.spans = { width: 2, height: 1 }; row.resolution.route = { kind: 'url', href: destinations[i] }; return row;
+      });
+      const savedFacts = JSON.stringify(rows);
+      f.setRows(rows); await f.notify(); await until(() => f.stats().live === 0 && document.querySelectorAll('.tr-result-title').length === 5);
+      const cards = () => [...document.querySelectorAll('[data-result-key]')];
+      const placement = card => ({ column: card.parentElement.style.gridColumn, row: card.parentElement.style.gridRow });
+      const placements = cards().map(placement);
+      console.log('ACTUAL_REPLY_WIDTH', JSON.stringify({ width, placements, titles: cards().map(card => card.querySelector('.tr-result-title').textContent) }));
+      for (const [i, card] of cards().entries()) {
+        assert.equal(card.querySelector('.tr-result-title').textContent, visibleTitles[i]);
+        assert.equal(card.querySelector('.tr-data-action').getAttribute('aria-label'), `Open ${titles[i]} — ${destinations[i]}`);
+        assert.ok(placement(card).column.endsWith(` / span ${width === 400 ? 2 : 1}`), 'long actual source card may use its supplied width, clamped to the pane');
+        assert.ok(placement(card).row.endsWith(' / span 1'));
+      }
+      assert.equal(JSON.stringify(f.rows()), savedFacts, 'abbreviation never edits source facts, revisions or full titles');
+      const originalCards = cards();
+      const compact = structuredClone(rows);
+      compact[0].resolution.fallback.title = 'Short saved artifact';
+      compact[1].resolution.fallback.title = '😀'.repeat(40) + 'x'.repeat(40);
+      compact[2].resolution.fallback.title = '😀'.repeat(40) + 'x'.repeat(41); compact[2].resolution.spans = { width: 4, height: 4 };
+      compact[3].resolution.fallback.title = 'Long unprefixed saved artifact description: '.repeat(2).trim();
+      compact[3].resolution.spans = { width: 1, height: 4 };
+      compact[4].resolution.fallback.title = 'x'.repeat(80);
+      for (const row of compact) row.resolution.revision.sequence++;
+      f.setRows(compact); await f.notify(); await until(() => [...document.querySelectorAll('.tr-result-title')].every((title, i) => title.textContent === compact[i].resolution.fallback.title)
+        && f.runtime().stats().running === 0 && f.runtime().stats().queued === 0);
+      assert.deepEqual(cards(), originalCards, 'revision geometry keeps the keyed physical cards');
+      for (const [i, card] of cards().entries()) {
+        assert.ok(placement(card).column.endsWith(` / span ${width === 400 && i === 2 ? 2 : 1}`), 'short/codepoint80 and supplied width1 stay compact; long width4 is capped at2');
+        assert.ok(placement(card).row.endsWith(' / span 1'), 'plain card never inherits tall custom geometry');
+      }
+      assert.equal(f.navigation.length, 0); assert.equal(f.stats().rpc, 0); assert.equal(f.stats().live, 0);
+    } finally { await f.dispose(); }
+  }
+});
+
+
+test('only a complete leading Fixed-in commit prefix is shortened visually; full factual names survive', async () => {
+  const sha = '0123456789abcdef0123456789abcdef01234567';
+  const titles = [
+    `Fixed in ${sha}. Distinct substantive reply`,
+    `Note: Fixed in ${sha}. Preserve this authored text`,
+    `Fixed in ${sha}.`,
+    `Fixed in ${sha}. Custom fallback remains complete`,
+    `Fixed in ${sha}. Link fallback remains complete`,
+  ];
+  const expected = [`Fixed in 01234567… Distinct substantive reply`, ...titles.slice(1)];
+  const f = await fixture(5, true, { kind: 'github/reply-posted', captureRuntime: true });
+  try {
+    f.enabled(false); await f.membership();
+    const rows = structuredClone(f.rows()).map((row, i) => {
+      delete row.resolution.presentation; row.resolution.revision.sequence = 2;
+      row.resolution.fallback = { kind: i === 4 ? 'link' : 'card', title: titles[i], description: 'a/b#12' };
+      if (i === 3) row.resolution.presentation = { schema, data: { label: 'Custom referent' } };
+      return row;
+    });
+    const saved = JSON.stringify(rows); f.setRows(rows); await f.notify();
+    await until(() => [...document.querySelectorAll('.tr-result-title')].every((node, i) => node.textContent === expected[i])
+      && document.querySelectorAll('.tr-result-title').length === 5 && f.runtime().stats().running === 0 && f.runtime().stats().queued === 0);
+    for (const [i, card] of [...document.querySelectorAll('[data-result-key]')].entries()) {
+      assert.equal(card.querySelector('.tr-result-title').textContent, expected[i]);
+      assert.equal(card.querySelector('.tr-data-action').getAttribute('aria-label'), `Open ${titles[i]} — ${rows[i].resolution.route.href}`);
+    }
+    assert.equal(JSON.stringify(f.rows()), saved); assert.equal(f.navigation.length, 0); assert.equal(f.stats().rpc, 0);
+  } finally { await f.dispose(); }
 });

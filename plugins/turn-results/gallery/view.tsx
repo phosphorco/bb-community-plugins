@@ -193,21 +193,26 @@ export function ResultCard({ row, runtime, sdk, navigate, current, lifetime, pre
   };
   const destination = Boolean(value && (value.route.kind === 'file' || value.route.kind === 'url'));
   const caption = runtime.caption(row);
-  const detail = value && 'description' in value.fallback && value.fallback.description || value?.fallback.title;
+  const title = value?.fallback.title.replace(/\s+/gu, ' ').trim().slice(0, 256);
+  const visibleTitle = !value?.presentation && value?.fallback.kind === 'card'
+    ? title?.replace(/^Fixed in ([0-9a-fA-F]{8})[0-9a-fA-F]{32}\. (.+)$/u, 'Fixed in $1… $2') : title;
+  const detail = value && 'description' in value.fallback ? value.fallback.description : undefined;
   const description = detail?.replace(/\s+/gu, ' ').trim().slice(0, 140);
-  const content = <><span className="tr-result-symbol" aria-hidden="true">{value?.route.kind === 'file' ? '▤' : value?.route.kind === 'url' ? '↗' : '•'}</span>
-    {description && description !== caption && <span className="tr-excerpt">{description}</span>}</>;
+  const target = value?.route.kind === 'url' ? value.route.href : value?.route.kind === 'file' ? value.route.target.path : '';
+  const openName = `Open ${title || caption}${target ? ` — ${target}` : ''}`;
+  const content = <>{title && <span className="tr-result-title">{visibleTitle}</span>}
+    {description && description !== title && description !== caption && <span className="tr-excerpt">{description}</span>}</>;
   const fallback = value?.fallback.kind === 'image' ? <ImageCanvas row={row} runtime={runtime} sdk={sdk} open={open} lifetime={lifetime} />
-    : destination ? <button className="tr-canvas tr-data-action" onClick={open} aria-label={`Open ${caption}`}>{content}</button>
+    : destination ? <button className="tr-canvas tr-data-action" onClick={open} aria-label={openName}>{content}</button>
       : <div className="tr-canvas tr-data-action">{content}</div>;
   return <article ref={card} className="tr-card" data-result-key={row.key}>
     <PresentationCanvas row={row} runtime={runtime} sdk={sdk} navigate={navigate} current={current} lifetime={lifetime}
       presentationRoot={presentationRoot} mode={mode} enabled={customEnabled} site={site} requestFull={full} fallback={fallback} />
-    <div className="tr-caption"><span>{caption}</span><div>
+    <div className="tr-caption"><span>{value?.fallback.kind !== 'image' && title === caption ? null : caption}</span><div>
       {mode === 'docked' && value?.presentation && <button ref={expandButton} onClick={full} className="tr-expand-icon" aria-label="Expand result" title="Expand result">
         <svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true" focusable="false"><path d="M6 2H2v4M10 2h4v4M14 10v4h-4M6 14H2v-4" /></svg>
       </button>}
-      {destination && <button onClick={open} className={mode === 'docked' ? 'tr-open-icon' : undefined} aria-label={`Open ${caption}`} title="Open result">
+      {destination && <button onClick={open} className={mode === 'docked' ? 'tr-open-icon' : undefined} aria-label={openName} title="Open result">
         {mode === 'docked' ? <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true" focusable="false"><path d="M6 3H3v10h10v-3M9 3h4v4M7 9l6-6" /></svg> : 'Open'}
       </button>}
     </div></div>
@@ -348,7 +353,8 @@ function GalleryContents({ resource, runtime, sdk, navigate, current, lifetime, 
     if (!value || result.row.unresolved) { memory.spans.delete(result.key); return { key: result.key, width: 1, height: 1 }; }
     const revision = canonicalJson([result.row.owner, value.revision]), prior = memory.spans.get(result.key);
     if (!prior || prior.revision !== revision) memory.spans.set(result.key, { revision,
-      ...(value.presentation ? value.spans : value.fallback.kind === 'image' ? { width: 2, height: 2 } : { width: 1, height: 1 }) });
+      ...(value.presentation ? value.spans : value.fallback.kind === 'image' ? { width: 2, height: 2 }
+        : { width: value.fallback.kind === 'card' && Array.from(value.fallback.title).length > 80 ? Math.min(2, value.spans.width) : 1, height: 1 }) });
     return { key: result.key, ...memory.spans.get(result.key)! };
   }), columns);
   if (!hasContent) return null;
