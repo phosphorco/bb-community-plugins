@@ -188,7 +188,7 @@ async function fixture(count = 6, mount = true, contribution = {}) {
     captured.push(props);
     useEffect(() => { live++; setups++; peak = Math.max(peak, live); if (props.mode === 'full') { full++; fullPeak = Math.max(fullPeak, full); }
       return () => { live--; cleanups++; if (props.mode === 'full') full--; }; }, []);
-    if (contribution.customExpand && props.mode === 'docked') return h('button', {
+    if (contribution.customExpand && props.mode === 'docked' && props.requestFull) return h('button', {
       'data-supplier': props.identity.id, 'data-mode': props.mode, 'data-contributor-expand': '', onClick: props.requestFull,
     }, 'Expand contributor result');
     return h('button', { 'data-supplier': props.identity.id, 'data-mode': props.mode, onClick: () => props.navigate.openUrl('https://fixture.invalid/referent') }, props.data.label ?? `${props.data.repository}#${props.data.pullNumber}`);
@@ -264,7 +264,7 @@ test('actual app readiness/realm/revision/retry fences, four resources and quiet
     const native = f.nativeCalls.length, lists = f.stats().listCalls; await settle(200);
     assert.equal(f.nativeCalls.length, native); assert.equal(f.stats().listCalls, lists);
     f.enabled(false); await f.membership(); await until(() => f.stats().live === 0);
-    const navigations = f.navigation.length; first.navigate.openUrl('https://fixture.invalid/stale'); first.requestFull(); first.refresh();
+    const navigations = f.navigation.length; first.navigate.openUrl('https://fixture.invalid/stale'); assert.equal(first.requestFull, undefined); first.refresh();
     assert.equal(f.navigation.length, navigations); assert.equal(document.querySelector('dialog'), null);
     f.enabled(true); await f.notify(); await until(() => f.stats().live === 4);
     const old = f.captured.at(-1); await act(async () => { f.register(); old.navigate.openUrl('https://fixture.invalid/stale'); await tick(); });
@@ -554,28 +554,22 @@ test('cancelled Checking stays declined until a later explicit Open; native refu
   } finally { release(); await f.dispose(); }
 });
 
-test('contributor requestFull retires its custom trigger and Escape focuses the same-card stable consumer Expand', async () => {
+test('gallery exposes one stable consumer Expand; optional contributor requestFull stays absent and Escape restores exact focus', async () => {
   const f = await fixture(1, true, { customExpand: true });
   try {
-    await until(() => document.querySelector('[data-contributor-expand]'));
-    const custom = document.querySelector('[data-contributor-expand]');
-    const card = custom.closest('[data-result-key]'), consumer = card.querySelector('.tr-caption button');
-    assert.equal(consumer.textContent, ''); assert.equal(consumer.getAttribute('aria-label'), 'Expand result'); assert.equal(consumer.title, 'Expand result');
-    assert.equal(consumer.querySelector('svg').getAttribute('aria-hidden'), 'true');
+    await until(() => f.stats().live === 1 && document.querySelector('[data-supplier]'));
+    assert.equal(document.querySelector('[data-contributor-expand]'), null);
+    assert.equal(f.captured.at(-1).requestFull, undefined);
+    const card = document.querySelector('[data-result-key="row-0"]'), consumer = card.querySelector('[aria-label="Expand result"]');
+    assert.equal(document.querySelectorAll('[aria-label="Expand result"]').length, 1);
+    assert.equal(consumer.textContent, ''); assert.equal(consumer.title, 'Expand result');
     const style = document.createElement('style'); style.textContent = readFileSync(new URL('../app.css', import.meta.url), 'utf8'); document.head.append(style);
-    assert.equal(window.getComputedStyle(consumer).width, '32px'); assert.equal(window.getComputedStyle(consumer).height, '32px');
-    assert.equal(custom.textContent, 'Expand contributor result', 'independent contributor requestFull control remains untouched');
-    style.remove();
-    await act(async () => { custom.focus(); custom.click(); });
-    await until(() => f.stats().full === 1);
-    assert.equal(custom.isConnected, false, 'the old custom trigger is retired for full mode');
+    assert.equal(window.getComputedStyle(consumer).width, '32px'); assert.equal(window.getComputedStyle(consumer).height, '32px'); style.remove();
+    await act(async () => { consumer.focus(); consumer.click(); }); await until(() => f.stats().full === 1);
     assert.equal(consumer.isConnected, true); assert.equal(consumer.closest('[data-result-key]'), card);
     await act(async () => document.querySelector('dialog').dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })));
     await until(() => !document.querySelector('dialog'));
-    console.log('CONTRIBUTOR_FOCUS_RETURN', JSON.stringify({ customConnected: custom.isConnected, consumerConnected: consumer.isConnected,
-      sameCard: consumer.closest('[data-result-key]') === card, consumerFocused: document.activeElement === consumer }));
-    assert.ok(document.activeElement === consumer, 'Escape returns focus to the exact stable consumer Expand on the same source card');
-    assert.equal(f.stats().fullPeak, 1); assert.ok(f.stats().peak <= 4); assert.equal(f.stats().rpc, 0);
+    assert.equal(document.activeElement, consumer); assert.equal(f.stats().fullPeak, 1); assert.ok(f.stats().peak <= 4); assert.equal(f.stats().rpc, 0);
   } finally { await f.dispose(); }
 });
 
@@ -1096,7 +1090,7 @@ test('exact native row mutation revokes custom callbacks before fresh proof; unl
     const old = f.captured.at(-1), before = f.navigation.length;
     const native = document.querySelector('[data-timeline-row-id="opaque-0"] > button');
     await act(async () => { native.firstChild.data = 'This target changed'; await tick(10); });
-    old.navigate.openUrl('https://fixture.invalid/stale-target'); old.requestFull();
+    old.navigate.openUrl('https://fixture.invalid/stale-target'); assert.equal(old.requestFull, undefined);
     assert.equal(f.navigation.length, before); assert.equal(document.querySelector('dialog'), null);
     await until(() => f.stats().live === 1);
     const calls = delayDescriptions(f, 350);
@@ -1508,7 +1502,7 @@ test('five data-only reply cards keep distinct primary text, exact click/Enter t
 // live-rows-after-final-native.json SHA f47411d27d3a533bb849f18f0c5b114f839075d545242c7aa1a7817cdc2f67ea.
 test('actual five long reply excerpts honor bounded two-column width; narrow and short cards stay compact', async () => {
   const titles = ["Published five correction commits through ae5e7fdc936adb25e519a39654dd7b0f43450090, preserving the author's history thro", "Fixed in 3669d8a25764d2ab22ece7241d4ca2f7c83b098e. Shipping Query now acquires explicitly granted Past and Landing for e", "Fixed in a6172e5e2b35bfe32ce2ee8be65eadf20551833e. Ordinary authenticated renewal establishes the canonical deployment p", "Fixed in fd2c3adc7ac7a956b2c52fa9626480d299015aee. The finite navigation lease now keys concrete Tasks under the logical", "Fixed in ccddc3c6b00f512e5646531ecf19de187fc4dcb6. Prepared interpretations no longer receive incompatible raw confirmed"];
-  const visibleTitles = [titles[0], "Fixed in 3669d8a2… Shipping Query now acquires explicitly granted Past and Landing for e", "Fixed in a6172e5e… Ordinary authenticated renewal establishes the canonical deployment p", "Fixed in fd2c3adc… The finite navigation lease now keys concrete Tasks under the logical", "Fixed in ccddc3c6… Prepared interpretations no longer receive incompatible raw confirmed"];
+  const visibleTitles = ["Published five correction commits through ae5e7fdc…, preserving the author's history…", "Fixed in 3669d8a2… Shipping Query now acquires explicitly granted Past and Landing for…", "Fixed in a6172e5e… Ordinary authenticated renewal establishes the canonical deployment…", "Fixed in fd2c3adc… The finite navigation lease now keys concrete Tasks under the…", "Fixed in ccddc3c6… Prepared interpretations no longer receive incompatible raw…"];
   const destinations = ["https://github.com/phosphorco/monorepo/pull/1891#issuecomment-6545603502", "https://github.com/phosphorco/monorepo/pull/1891#discussion_r4432291225", "https://github.com/phosphorco/monorepo/pull/1891#discussion_r4432291018", "https://github.com/phosphorco/monorepo/pull/1891#discussion_r4432290744", "https://github.com/phosphorco/monorepo/pull/1891#discussion_r4432290444"];
   for (const width of [400, 150]) {
     const f = await fixture(5, true, { kind: 'github/reply-posted', width, captureRuntime: true });
@@ -1553,7 +1547,7 @@ test('actual five long reply excerpts honor bounded two-column width; narrow and
 });
 
 
-test('only a complete leading Fixed-in commit prefix is shortened visually; full factual names survive', async () => {
+test('standalone full commits shorten only card visual text while custom/link and complete factual names survive', async () => {
   const sha = '0123456789abcdef0123456789abcdef01234567';
   const titles = [
     `Fixed in ${sha}. Distinct substantive reply`,
@@ -1562,7 +1556,7 @@ test('only a complete leading Fixed-in commit prefix is shortened visually; full
     `Fixed in ${sha}. Custom fallback remains complete`,
     `Fixed in ${sha}. Link fallback remains complete`,
   ];
-  const expected = [`Fixed in 01234567… Distinct substantive reply`, ...titles.slice(1)];
+  const expected = [`Fixed in 01234567… Distinct substantive reply`, `Note: Fixed in 01234567…. Preserve this authored text`, 'Fixed in 01234567….', ...titles.slice(3)];
   const f = await fixture(5, true, { kind: 'github/reply-posted', captureRuntime: true });
   try {
     f.enabled(false); await f.membership();
@@ -1581,4 +1575,134 @@ test('only a complete leading Fixed-in commit prefix is shortened visually; full
     }
     assert.equal(JSON.stringify(f.rows()), saved); assert.equal(f.navigation.length, 0); assert.equal(f.stats().rpc, 0);
   } finally { await f.dispose(); }
+});
+
+test('5978 queued primary fallback focus stays visible when its custom host is admitted', async () => {
+  const f = await fixture(6);
+  try {
+    await until(() => f.stats().live === 4);
+    const card = document.querySelector('[data-result-key="row-5"]');
+    const primary = card.querySelector('.tr-fallback .tr-data-action');
+    assert.equal(card.querySelector('[data-supplier]'), null);
+    await act(async () => primary.focus());
+    await until(() => card.querySelector('[data-supplier="artifact-5"]'));
+    const fallback = primary.closest('.tr-fallback');
+    const result = { stillConnected: primary.isConnected, activePrimary: document.activeElement === primary,
+      visibility: fallback.style.visibility, ariaHidden: fallback.getAttribute('aria-hidden'),
+      customMounted: Boolean(card.querySelector('[data-supplier]')), peak: f.stats().peak, navigation: f.navigation.length };
+    console.log('PROBE queued-primary-focus', JSON.stringify(result));
+    assert.ok(f.stats().peak <= 4); assert.equal(f.navigation.length, 0);
+    assert.notEqual(result.visibility, 'hidden', 'the focused primary fallback must not disappear beneath a newly admitted custom renderer');
+    assert.equal(card.querySelector('.tr-hosted').hasAttribute('inert'), true);
+    assert.equal(card.querySelector('.tr-hosted').getAttribute('aria-hidden'), 'true');
+    const stable = card.querySelector('[aria-label="Expand result"]');
+    await act(async () => stable.focus()); await until(() => fallback.style.visibility === 'hidden');
+    assert.equal(card.querySelector('.tr-hosted').hasAttribute('inert'), false);
+    const old = f.captured.findLast(props => props.identity.id === 'artifact-5'), before = f.navigation.length;
+    await f.hidden(true); await until(() => f.stats().live === 0);
+    old.navigate.openUrl('https://fixture.invalid/retired-focused-host'); assert.equal(f.navigation.length, before);
+    await f.hidden(false); await until(() => f.stats().live === 4);
+    assert.ok(f.stats().peak <= 4); assert.equal(f.stats().rpc, 0);
+  } finally { await f.dispose(); }
+});
+
+test('5978 contested suspended choice matches ordinary one-intent verification rather than silent no-op', async () => {
+  const f = await fixture(3, true, { captureRuntime: true });
+  let release = () => {}; const original = f.sdk.threads.timeline;
+  try {
+    const nativePage = await original({ threadId: 'thread' });
+    f.sdk.threads.timeline = async () => nativePage;
+    const base = structuredClone(f.rows()[0]); delete base.resolution.presentation;
+    base.identity.equivalence = { namespace: 'example.operation', operationId: 'same-operation', member: 'same-result' };
+    base.resolution.identity = base.identity; base.resolution.route = { kind: 'url', href: 'https://fixture.invalid/choice-a' };
+    const other = structuredClone(base); other.key = 'other-choice'; other.owner = 'other-fixture'; other.resolution.route.href = 'https://fixture.invalid/choice-b';
+    const ordinary = structuredClone(f.rows()[2]); delete ordinary.resolution.presentation; ordinary.resolution.route = { kind: 'url', href: 'https://fixture.invalid/ordinary' };
+    f.setRows([base, other, ordinary]); await f.notify();
+    await until(() => [...document.querySelectorAll('.tr-card')].some(card => card.textContent.includes('Multiple result sources')) && document.querySelector('[data-result-key="row-2"] .tr-data-action')?.getAttribute('aria-label')?.includes('https://fixture.invalid/ordinary') && f.runtime().stats().running === 0 && f.runtime().stats().queued === 0);
+    const contested = [...document.querySelectorAll('.tr-card')].find(card => card.textContent.includes('Multiple result sources'));
+    const choice = [...contested.querySelectorAll('button')].find(button => button.textContent === owner);
+    const direct = document.querySelector('[data-result-key="row-2"] .tr-data-action');
+    let heldCalls = 0;
+    f.sdk.threads.timeline = async () => { if (++heldCalls === 1) await new Promise(resolve => { release = resolve; }); return nativePage; };
+    await f.notify(); await until(() => heldCalls === 1);
+    const before = heldCalls;
+    await act(async () => choice.click()); await settle(20);
+    const refused = { navigation: f.navigation.length, extraReads: heldCalls - before,
+      status: contested.querySelector('[role="status"]')?.textContent ?? null, connected: choice.isConnected };
+    console.log('PROBE contested-before-ordinary', JSON.stringify(refused));
+    await act(async () => direct.click());
+    assert.match(direct.closest('.tr-card').querySelector('[role="status"]')?.textContent ?? '', /Checking/);
+    await act(async () => { release(); await tick(); }); await until(() => f.navigation.length === 1);
+    console.log('PROBE contested-currentfalse', JSON.stringify({ contested: refused, ordinary: { navigation: f.navigation, extraReads: heldCalls - before } }));
+    assert.deepEqual(f.navigation, ['https://fixture.invalid/ordinary']);
+    assert.ok(refused.extraReads > 0 || refused.status, 'suspended source choice must start guarded checking or provide outcome feedback');
+  } finally { release(); f.sdk.threads.timeline = original; await settle(); await f.dispose(); }
+});
+
+
+test('bounded visible prose/hash formatting preserves full factual names and only one data-card action', async () => {
+  const sha = '0123456789abcdef0123456789abcdef01234567';
+  const titles = ['Short note', 'x'.repeat(95), 'x'.repeat(96), 'x'.repeat(130),
+    '😀'.repeat(40) + 'x'.repeat(80), 'a '.repeat(70).trim(), `é${sha}z`, `Commit ${sha} saved`];
+  const expected = ['Short note', 'x'.repeat(95), 'x'.repeat(95) + '…', 'x'.repeat(95) + '…',
+    '😀'.repeat(40) + 'x'.repeat(55) + '…', null, `é${sha}z`, 'Commit 01234567… saved'];
+  const f = await fixture(titles.length, true, { captureRuntime: true });
+  try {
+    const rows = structuredClone(f.rows()).map((row, i) => { delete row.resolution.presentation; row.resolution.revision.sequence++;
+      row.resolution.fallback = { kind: 'card', title: titles[i], description: 'Saved artifact' }; return row; });
+    const saved = JSON.stringify(rows); f.setRows(rows); await f.notify();
+    await until(() => f.stats().live === 0 && document.querySelectorAll('.tr-result-title').length === titles.length);
+    const cards = [...document.querySelectorAll('[data-result-key]')];
+    for (const [i, card] of cards.entries()) {
+      const visual = card.querySelector('.tr-result-title').textContent;
+      if (expected[i] !== null) assert.equal(visual, expected[i]);
+      else { assert.ok(visual.endsWith('…')); assert.ok(visual.slice(0,-1).split(' ').every(word => word === 'a')); }
+      assert.ok(Array.from(visual).length <= 96);
+      assert.equal(card.querySelectorAll('button').length, 1, 'data-only result has one guarded primary target');
+      assert.equal(card.querySelector('button').getAttribute('aria-label'), `Open ${titles[i]} — ${rows[i].resolution.route.href}`);
+    }
+    assert.equal(JSON.stringify(f.rows()), saved); assert.equal(f.stats().rpc, 0);
+  } finally { await f.dispose(); }
+});
+
+async function sourceChoices(file = false) {
+  const f = await fixture(3, true, { captureRuntime: true }); const original = f.sdk.threads.timeline;
+  const page = await original({ threadId: 'thread' }); f.sdk.threads.timeline = async () => page;
+  const base = structuredClone(f.rows()[0]); delete base.resolution.presentation;
+  base.identity.equivalence = { namespace: 'example.operation', operationId: 'shared', member: 'same' }; base.resolution.identity = base.identity;
+  base.resolution.route = file ? { kind: 'file', target: { kind: 'host', hostId: 'recorded-host', path: '/saved/choice-a' } } : { kind: 'url', href: 'https://fixture.invalid/choice-a' };
+  const other = structuredClone(base); other.key = 'other-choice'; other.owner = 'other-fixture';
+  if (file) other.resolution.route.target.path = '/saved/choice-b'; else other.resolution.route.href = 'https://fixture.invalid/choice-b';
+  const ordinary = structuredClone(f.rows()[2]); delete ordinary.resolution.presentation;
+  f.setRows([base, other, ordinary]); await f.notify();
+  await until(() => document.querySelectorAll('.tr-card').length === 2 && [...document.querySelectorAll('.tr-card')].some(card => card.textContent.includes('Multiple result sources'))
+    && f.runtime().stats().running === 0 && f.runtime().stats().queued === 0);
+  const buttons = [...document.querySelectorAll('.tr-card button')];
+  let release = () => {}, reads = 0;
+  return { f, choice: buttons.find(b => b.textContent === owner), other: buttons.find(b => b.textContent === 'other-fixture'),
+    async suspend() { f.sdk.threads.timeline = async () => { if (++reads === 1) await new Promise(r => { release = r; }); return page; }; await f.notify(); await until(() => reads === 1); },
+    async release() { await act(async () => { release(); await tick(); }); },
+    async close() { release(); f.sdk.threads.timeline = original; await settle(); await f.dispose(); } };
+}
+
+for (const boundary of ['recovered', 'facts', 'removed', 'superseded', 'direct-refusal']) test(`source choice shares ordinary Open authority and feedback for ${boundary}`, async () => {
+  const h = await sourceChoices(boundary === 'direct-refusal'); let lease;
+  try {
+    assert.ok(h.choice.getAttribute('aria-label').startsWith(`${owner}: Open `));
+    if (boundary === 'direct-refusal') {
+      h.f.fileOpenAccepted(false); const before = h.f.nativeCalls.length;
+      await act(async () => h.choice.click()); assert.equal(h.f.fileOpenCalls.length, 1); assert.equal(h.f.nativeCalls.length, before);
+      assert.match(h.choice.closest('article').querySelector('[role="status"]').textContent, /not accepted/); return;
+    }
+    await h.suspend(); await act(async () => h.choice.click());
+    assert.match(h.choice.closest('article').querySelector('[role="status"]').textContent, /Checking/);
+    if (boundary === 'facts') {
+      lease = h.f.runtime().retain({ threadId: 'thread', turnId: 'turn-0', rowId: 'opaque-0', sourceSeqStart: 1, sourceSeqEnd: 5, turnSeqStart: 1, turnSeqEnd: 5, historySnapshot: 'public-snapshot' }, false);
+      await act(async () => lease.store.setState(previous => ({ ...previous, rows: previous.rows.map(row => row.key === 'row-0'
+        ? { ...row, sourceExpired: { epoch: 'fixture', sequence: 2 } } : row) })));
+    } else if (boundary === 'removed') await act(async () => document.querySelector('[data-timeline-row-id="opaque-0"]').remove());
+    else if (boundary === 'superseded') await act(async () => h.other.click());
+    await h.release(); await settle(80);
+    assert.deepEqual(h.f.navigation, boundary === 'superseded' ? ['https://fixture.invalid/choice-b'] : boundary === 'recovered' ? ['https://fixture.invalid/choice-a'] : []);
+  } finally { lease?.dispose(); await h.close(); }
 });

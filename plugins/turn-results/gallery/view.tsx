@@ -95,12 +95,23 @@ export function openAvailable(row: GalleryObservation) {
 interface OpenOperation { cancel(): void; supersede(): void }
 let pendingOpen: OpenOperation | null = null;
 let openOutcome: symbol | null = null;
+/** Visual text only. Full source title remains the action name/fingerprint. */
+function visibleCardTitle(title: string): string {
+  const visible = title.replace(/^Fixed in ([0-9a-fA-F]{8})[0-9a-fA-F]{32}\. /u, 'Fixed in $1… ').replace(/(?<![\p{L}\p{N}_])([0-9a-fA-F]{8})[0-9a-fA-F]{32}(?![\p{L}\p{N}_])/gu, '$1…');
+  const points = Array.from(visible);
+  if (points.length <= 95 && Array.from(title).length < 120) return visible;
+  const limit = Math.min(95, points.length - 1);
+  let prefix = points.slice(0, limit).join('');
+  const boundary = prefix.lastIndexOf(' ');
+  if (boundary >= prefix.length / 2) prefix = prefix.slice(0, boundary);
+  return prefix.trimEnd() + '…';
+}
 export function ResultCard({ row, runtime, sdk, navigate, current, lifetime, presentationRoot, mode = 'docked', customEnabled = true,
-  actionScope, requestOpen, currentRow, watchCurrent, readAfter }: {
+  actionScope, requestOpen, currentRow, watchCurrent, readAfter, sourceChoice = false }: {
   row: GalleryObservation; runtime: GalleryRuntime; sdk: Sdk; navigate: BbNavigate; current(): boolean; lifetime: AbortSignal;
   presentationRoot?: GalleryPresentationRoot | undefined; mode?: 'docked' | 'full'; customEnabled?: boolean;
   actionScope?: GalleryActionScope | undefined; requestOpen?: GalleryOpenPort | undefined;
-  readAfter?: { seq: number; key: string } | undefined;
+  readAfter?: { seq: number; key: string } | undefined; sourceChoice?: boolean;
   currentRow?: (() => GalleryObservation | null) | undefined; watchCurrent?: ((changed: () => void) => () => void) | undefined;
 }) {
   const site = useRef<CardSite | null>(null);
@@ -195,38 +206,43 @@ export function ResultCard({ row, runtime, sdk, navigate, current, lifetime, pre
   const caption = runtime.caption(row);
   const title = value?.fallback.title.replace(/\s+/gu, ' ').trim().slice(0, 256);
   const visibleTitle = !value?.presentation && value?.fallback.kind === 'card'
-    ? title?.replace(/^Fixed in ([0-9a-fA-F]{8})[0-9a-fA-F]{32}\. (.+)$/u, 'Fixed in $1… $2') : title;
+    ? title && visibleCardTitle(title) : title;
   const detail = value && 'description' in value.fallback ? value.fallback.description : undefined;
   const description = detail?.replace(/\s+/gu, ' ').trim().slice(0, 140);
   const target = value?.route.kind === 'url' ? value.route.href : value?.route.kind === 'file' ? value.route.target.path : '';
   const openName = `Open ${title || caption}${target ? ` — ${target}` : ''}`;
   const content = <>{title && <span className="tr-result-title">{visibleTitle}</span>}
     {description && description !== title && description !== caption && <span className="tr-excerpt">{description}</span>}</>;
+  if (sourceChoice) return <article ref={card}>
+    <button onClick={open} aria-label={`${row.owner}: ${openName}`}>{row.owner}</button>
+    {openStatus && <small className="tr-freshness" role="status" data-turn-result-open-status="">{openStatus}</small>}
+  </article>;
   const fallback = value?.fallback.kind === 'image' ? <ImageCanvas row={row} runtime={runtime} sdk={sdk} open={open} lifetime={lifetime} />
     : destination ? <button className="tr-canvas tr-data-action" onClick={open} aria-label={openName}>{content}</button>
       : <div className="tr-canvas tr-data-action">{content}</div>;
   return <article ref={card} className="tr-card" data-result-key={row.key}>
     <PresentationCanvas row={row} runtime={runtime} sdk={sdk} navigate={navigate} current={current} lifetime={lifetime}
-      presentationRoot={presentationRoot} mode={mode} enabled={customEnabled} site={site} requestFull={full} fallback={fallback} />
+      presentationRoot={presentationRoot} mode={mode} enabled={customEnabled} site={site} fallback={fallback} />
     <div className="tr-caption"><span>{value?.fallback.kind !== 'image' && title === caption ? null : caption}</span><div>
       {mode === 'docked' && value?.presentation && <button ref={expandButton} onClick={full} className="tr-expand-icon" aria-label="Expand result" title="Expand result">
         <svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true" focusable="false"><path d="M6 2H2v4M10 2h4v4M14 10v4h-4M6 14H2v-4" /></svg>
       </button>}
-      {destination && <button onClick={open} className={mode === 'docked' ? 'tr-open-icon' : undefined} aria-label={openName} title="Open result">
+      {destination && (value?.presentation || value?.fallback.kind === 'image') && <button onClick={open} className={mode === 'docked' ? 'tr-open-icon' : undefined} aria-label={openName} title="Open result">
         {mode === 'docked' ? <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true" focusable="false"><path d="M6 3H3v10h10v-3M9 3h4v4M7 9l6-6" /></svg> : 'Open'}
       </button>}
     </div></div>
     {openStatus && <small className="tr-freshness" role="status" data-turn-result-open-status="">{openStatus}</small>}
   </article>;
 }
-function PresentationCanvas({ row, runtime, sdk, navigate, current, lifetime, presentationRoot, mode, enabled, site, requestFull, fallback }: {
+function PresentationCanvas({ row, runtime, sdk, navigate, current, lifetime, presentationRoot, mode, enabled, site, fallback }: {
   row: GalleryObservation; runtime: GalleryRuntime; sdk: Sdk; navigate: BbNavigate; current(): boolean; lifetime: AbortSignal;
   presentationRoot?: GalleryPresentationRoot | undefined; mode: 'docked' | 'full'; enabled: boolean;
-  site: { current: CardSite | null }; requestFull(): void; fallback: React.ReactNode;
+  site: { current: CardSite | null }; fallback: React.ReactNode;
 }) {
   const container = useRef<HTMLDivElement>(null), latest = useRef({ current, row, enabled });
   const ownedSite = useRef<PresentationLifetime | null>(null);
   const [scope, setScope] = useState<PresentationLifetime | null>(null), [retry, setRetry] = useState(0);
+  const [fallbackFocused, setFallbackFocused] = useState(false);
   const [ready, setReady] = useState<{ id: number; key: string } | null>(null), [failed, setFailed] = useState(false);
   const [size, setSize] = useState({ maxWidth: 320, maxHeight: 240, preferredHeight: 240 });
   const readyPlugins = useSelector(runtime.readyOwners), dialogs = useSelector(runtime.dialogSites);
@@ -252,6 +268,7 @@ function PresentationCanvas({ row, runtime, sdk, navigate, current, lifetime, pr
     const handle: CardSite = { key, retire: () => owned.request.setAvailable(false) }; site.current = handle;
     let activation = 0;
     const update = () => {
+      setFallbackFocused(node.querySelector('.tr-fallback')?.contains(document.activeElement) ?? false);
       const rect = node.getBoundingClientRect(), focus = node.closest('.tr-card')?.contains(document.activeElement) ?? false;
       const shown = !document.hidden && rect.height > 0 && rect.width > 0 && rect.bottom > 0 && rect.top < window.innerHeight && rect.right > 0 && rect.left < window.innerWidth;
       owned.request.update({ visible: shown, focused: focus, dialog: mode === 'full', order: root.id, activation });
@@ -285,15 +302,15 @@ function PresentationCanvas({ row, runtime, sdk, navigate, current, lifetime, pr
   const snapshot = useSyncExternalStore(scope?.request.subscribe ?? (() => () => {}), scope?.request.getSnapshot ?? (() => null), () => null);
   const revision = row.resolution ? canonicalJson([row.resolution.revision.epoch, row.resolution.revision.sequence]) : '';
   const binding = canonicalJson([revision, presentation ?? null, retry]);
-  const shown = enabled && snapshot?.state === 'granted' && snapshot.lease?.id === ready?.id && ready?.key === binding
+  const shown = enabled && !fallbackFocused && snapshot?.state === 'granted' && snapshot.lease?.id === ready?.id && ready?.key === binding
     && !snapshot.signal?.aborted && readyPlugins.has(row.owner) && (mode === 'full' || dialogs.active !== site.current?.key && dialogs.pending !== site.current?.key);
   return <div ref={container} className={`tr-upper${mode === 'full' ? ' tr-upper-full' : ''}`}>
     <div className="tr-fallback" style={{ visibility: shown ? 'hidden' : 'visible' }} aria-hidden={shown || undefined}>{fallback}</div>
-    {presentation && scope && snapshot?.state !== 'capacity' && snapshot?.state !== 'released' && <div className="tr-hosted" style={{ pointerEvents: shown ? 'auto' : 'none' }}>
+    {presentation && scope && snapshot?.state !== 'capacity' && snapshot?.state !== 'released' && <div className="tr-hosted" inert={!shown} aria-hidden={!shown || undefined} style={{ pointerEvents: shown ? 'auto' : 'none' }}>
       <HostedCanvas lifetime={scope} identity={row.identity.artifact} stamp={{ ...presentation, pluginId: row.owner }} revision={revision}
         sdk={sdk} readyPlugins={enabled && committedAuthority === authorityKey ? readyPlugins : new Set()} mode={mode} size={size} consumer={{ pluginId: 'turn-results', surface: mode === 'full' ? 'dialog' : 'gallery' }}
         navigate={{ toThread: id => navigate.toThread(id), openUrl: url => { navigate.openUrl(url); }, openFile: () => false }}
-        fallback={null} retryKey={retry} {...(mode === 'docked' ? { requestFull } : {})}
+        fallback={null} retryKey={retry}
         refresh={() => { runtime.invalidate(row.identity.ref.source.threadId, true); setRetry(value => value + 1); }}
         onReady={() => { const lease = scope.request.getSnapshot().lease; if (lease) {
           setReady(previous => previous?.id === lease.id && previous.key === binding ? previous : { id: lease.id, key: binding }); setFailed(false);
@@ -370,11 +387,14 @@ function GalleryContents({ resource, runtime, sdk, navigate, current, lifetime, 
             currentRow={() => resource.store.state.rows.find(row => row.key === result.row.key && row.owner === result.row.owner) ?? null}
             watchCurrent={changed => { const subscription = resource.store.subscribe(changed); return () => subscription.unsubscribe(); }} />
             : <article className="tr-card"><div className="tr-data-action">
-              {result.rows.map(row => openAvailable(row) ? <button key={row.key} onClick={() => {
-                openOutcome = Symbol(); pendingOpen?.supersede();
-                const latest = resource.store.state.rows.find(next => next.key === row.key && next.owner === row.owner), fact = openFingerprint(row);
-                if (current() && fact && latest && openAvailable(latest) && openFingerprint(latest) === fact) navigateResult(navigate, row.resolution!.route);
-              }}>{row.owner}</button> : <span key={row.key}>{row.owner}</span>)}
+              {result.rows.map(row => openAvailable(row) ? <ResultCard key={row.key} sourceChoice row={row} runtime={runtime} sdk={sdk} navigate={navigate}
+                current={() => current() && resource.store.state.rows.some(next => next.key === row.key && next.owner === row.owner
+                  && canonicalJson(next.identity) === canonicalJson(row.identity) && canonicalJson(next.resolution?.revision ?? null) === canonicalJson(row.resolution?.revision ?? null))}
+                lifetime={lifetime} actionScope={actionScope} requestOpen={requestOpen}
+                readAfter={state.bindings?.[row.key]?.after ?? undefined}
+                currentRow={() => resource.store.state.rows.find(next => next.key === row.key && next.owner === row.owner) ?? null}
+                watchCurrent={changed => { const subscription = resource.store.subscribe(changed); return () => subscription.unsubscribe(); }} />
+                : <span key={row.key}>{row.owner}</span>)}
             </div><div className="tr-caption">Multiple result sources</div></article>}
         </div>;
       })}
