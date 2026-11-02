@@ -4,6 +4,9 @@ import { idCodec } from "@phosphorco/bb-identity/model";
 import { createIdentityWireFake } from "@phosphorco/bb-identity/testing";
 import {
   inputDraftResource,
+  createRenderContext,
+  type RenderContext,
+  type InvocationSample,
   starterDefinitions,
   legacyGenericStarterDefinitions,
   validateDefinition,
@@ -58,6 +61,7 @@ export async function appFixture(instanceId = "templates-app-instance") {
           },
     latestRevision: definition.destination.kind === "new-project" ? 0 : 1,
   }));
+  const samples = new Map<string, InvocationSample[]>();
   const receipts = new Map<string, RecentLaunch>();
   const removed = new Map<
     string,
@@ -70,6 +74,7 @@ export async function appFixture(instanceId = "templates-app-instance") {
     catalogError: false,
     contextError: false,
     previewError: false,
+    samplesError: false,
     saveError: false,
     launchMode: "success" as "success" | "unknown" | "failed" | "lost",
     launchCount: 0,
@@ -128,6 +133,7 @@ export async function appFixture(instanceId = "templates-app-instance") {
     definition: TemplateDefinition,
     inputs: Record<string, string | number | boolean>,
     projectId?: string,
+    renderContext?: RenderContext,
   ): ResolvedEffects => {
     const d = definition.destination,
       pid =
@@ -149,10 +155,11 @@ export async function appFixture(instanceId = "templates-app-instance") {
       throw new Error("The selected machine has no available project source");
     const targetHost = d.kind === "new-project" ? d.hostId : source!.hostId;
     return {
+      ...(renderContext ? { renderContext } : {}),
       projectId: d.kind === "new-project" ? null : project.id,
       projectName:
         d.kind === "new-project"
-          ? renderText(d.nameTemplate, inputs)
+          ? renderText(d.nameTemplate, inputs, undefined, renderContext)
           : project.name,
       hostId: targetHost,
       hostName:
@@ -182,12 +189,31 @@ export async function appFixture(instanceId = "templates-app-instance") {
         permissionMode: null,
         inherited: definition.execution.kind === "project-default",
       },
-      title: renderText(definition.titleTemplate, inputs),
-      prompt: renderText(definition.promptTemplate, inputs),
+      title: renderText(
+        definition.titleTemplate,
+        inputs,
+        undefined,
+        renderContext,
+      ),
+      prompt: renderText(
+        definition.promptTemplate,
+        inputs,
+        undefined,
+        renderContext,
+      ),
       warnings: [],
     };
   };
   const methods = {
+    recentSamples({ templateId }: { templateId: string }) {
+      if (flags.samplesError)
+        throw new Error("Samples temporarily unavailable");
+      return {
+        samples: structuredClone(
+          samples.get(`${wire.actor!.identity.key}:${templateId}`) ?? [],
+        ).slice(0, 5),
+      };
+    },
     recentLaunches({ offset = 0 }: { offset?: number }) {
       const rows = [...launches.values()].sort(
         (a, b) =>
@@ -303,7 +329,11 @@ export async function appFixture(instanceId = "templates-app-instance") {
       definition: TemplateDefinition;
       inputs: Record<string, string | number | boolean>;
       projectId?: string;
+      renderContext?: RenderContext;
     }) {
+      const renderContext =
+        input.renderContext ??
+        createRenderContext(input.definition.timeZone ?? "UTC");
       if (flags.previewError)
         throw new Error("Preview temporarily unavailable");
       const issues = [
@@ -313,7 +343,12 @@ export async function appFixture(instanceId = "templates-app-instance") {
       let resolved: ResolvedEffects | null = null;
       if (!issues.length) {
         try {
-          resolved = effects(input.definition, input.inputs, input.projectId);
+          resolved = effects(
+            input.definition,
+            input.inputs,
+            input.projectId,
+            renderContext,
+          );
         } catch (error) {
           issues.push({
             path: "destination",
@@ -322,6 +357,7 @@ export async function appFixture(instanceId = "templates-app-instance") {
         }
       }
       return {
+        renderContext,
         issues,
         effects: resolved,
         nativeSeed: resolved?.projectId
@@ -351,6 +387,7 @@ export async function appFixture(instanceId = "templates-app-instance") {
     launch(input: LaunchRequest) {
       flags.launchCount++;
       const status: LaunchStatus = {
+        renderContext: input.renderContext ?? createRenderContext(),
         operationId: input.operationId,
         templateId: input.templateId,
         revision: input.revision,
@@ -392,12 +429,19 @@ export async function appFixture(instanceId = "templates-app-instance") {
         )!.published!;
         receipts.set(input.operationId, {
           status,
+          ...(input.renderContext
+            ? {
+                requestedRenderContext: structuredClone(input.renderContext),
+                renderContext: structuredClone(input.renderContext),
+              }
+            : {}),
           revision: structuredClone(revision),
           ...(input.projectId ? { requestedProjectId: input.projectId } : {}),
           effects: effects(
             revision.definition,
             input.inputs,
             input.nativeSubmission?.projectId ?? input.projectId,
+            status.renderContext,
           ),
           ...(input.nativeSubmission
             ? { nativeSubmission: structuredClone(input.nativeSubmission) }
@@ -474,6 +518,13 @@ export async function appFixture(instanceId = "templates-app-instance") {
     flags,
     context,
     launches,
+    seedSamples(
+      templateId: string,
+      records: InvocationSample[],
+      actor = wire.actor!.identity.key,
+    ) {
+      samples.set(`${actor}:${templateId}`, structuredClone(records));
+    },
     // Synthetic verified-person snapshot for UI eligibility tests only. The
     // shared wire/controller is real; this is not provider/native identity proof.
     useVerifiedAssignmentActor() {
@@ -518,7 +569,12 @@ export async function appFixture(instanceId = "templates-app-instance") {
           status,
           revision,
           requestedProjectId: "project-a",
-          effects: effects(revision.definition, status.inputs, "project-a"),
+          effects: effects(
+            revision.definition,
+            status.inputs,
+            "project-a",
+            status.renderContext,
+          ),
         });
       }
       entries.find((e) => e.id === "review-pr")!.published = null;
@@ -569,13 +625,23 @@ export async function appFixture(instanceId = "templates-app-instance") {
       status: LaunchStatus,
       definition: TemplateEntry["published"],
       nativeSubmission?: LaunchRequest["nativeSubmission"],
+      requestedRenderContext?: RenderContext,
     ) {
       if (!definition) throw new Error("fixture revision");
       launches.set(status.operationId, status);
       receipts.set(status.operationId, {
         status,
         revision: structuredClone(definition),
-        effects: effects(definition.definition, status.inputs),
+        ...(status.renderContext
+          ? { renderContext: status.renderContext }
+          : {}),
+        ...(requestedRenderContext ? { requestedRenderContext } : {}),
+        effects: effects(
+          definition.definition,
+          status.inputs,
+          undefined,
+          status.renderContext,
+        ),
         ...(nativeSubmission ? { nativeSubmission } : {}),
       });
     },

@@ -1,7 +1,7 @@
 import type { BbPluginApi } from '@get-bb/plugin-sdk';
 import { z } from 'zod';
 import {nativeEnvironmentSchema,nativeInputSchema,nativeSubmissionSchema,executionSourcesSchema,type NativeSubmission,type NativeEditorSeed,nativeEditorSeedSchema} from './native-submission';
-import { PLUGIN_ID, renderText, validateDefinition, validateInputs, type Inputs, type TemplateDefinition } from './model';
+import { PLUGIN_ID, renderText, validateDefinition, validateInputs, type Inputs, type TemplateDefinition, type RenderContext,createRenderContext,renderContextSchema,isValidTimeZone } from './model';
 import type { PreviewResult, ResolvedEffects, TemplatesContext } from './rpc-contract';
 import type { LaunchRecord } from './store';
 import { canonical } from './store';
@@ -38,8 +38,8 @@ export interface Preparation {
   creation:{name:string;hostId:string;path:string}|null;
 }
 export interface NativePort {
-  resolve(definition:TemplateDefinition,inputs:Inputs,projectId?:string,confirmedProjectId?:string):Promise<Preparation>;
-  resolveNative(definition:TemplateDefinition,inputs:Inputs,submission:NativeSubmission,originProjectId?:string):Promise<Preparation>;
+  resolve(definition:TemplateDefinition,inputs:Inputs,projectId?:string,confirmedProjectId?:string,renderContext?:RenderContext):Promise<Preparation>;
+  resolveNative(definition:TemplateDefinition,inputs:Inputs,submission:NativeSubmission,originProjectId?:string,renderContext?:RenderContext):Promise<Preparation>;
   createProject(creation:NonNullable<Preparation['creation']>):Promise<string>;
   findProject(creation:NonNullable<Preparation['creation']>):Promise<string|null>;
   spawn(request:NativeRequest):Promise<string>;
@@ -54,19 +54,21 @@ export function matchesNativeReceipt(metadata:unknown,record:LaunchRecord):boole
 }
 export class NativeTemplates implements NativePort {
   constructor(readonly sdk:NativeApi) {}
+  private renderingContext(definition:TemplateDefinition,provided?:RenderContext):RenderContext {if(!isValidTimeZone(definition.timeZone??'UTC'))throw new Error('Use a valid IANA time zone');return provided?renderContextSchema.parse(provided):createRenderContext(definition.timeZone??'UTC');}
   async findProject(creation:NonNullable<Preparation['creation']>) {
     const matches=(await this.sdk.projects.list()).filter(p=>p.sources.some(s=>s.hostId===creation.hostId&&normalizeSourcePath(s.path)===normalizeSourcePath(creation.path)));
     if(matches.length>1)throw new Error('Multiple projects match the local source; provisioning remains unknown.');
     return matches[0]?.id??null;
   }
   async createProject(c:NonNullable<Preparation['creation']>) {return (await this.sdk.projects.create({name:c.name,source:{hostId:c.hostId,path:c.path,type:'local_path'}})).id;}
-  async resolve(definition:TemplateDefinition,inputs:Inputs,projectId?:string,confirmedProjectId?:string):Promise<Preparation> {
+  async resolve(definition:TemplateDefinition,inputs:Inputs,projectId?:string,confirmedProjectId?:string,providedContext?:RenderContext):Promise<Preparation> {
+    const renderContext=this.renderingContext(definition,providedContext);
     const d=definition.destination;const warnings:string[]=[];
     if(d.kind!=='new-project'&&d.hostId&&d.environment.kind==='project-default')throw new Error('A specific machine requires a source checkout or worktree. Use BB default machine to keep automatic environment selection.');
     let creation:Preparation['creation']=null;
     let finalId=confirmedProjectId??(d.kind==='existing-project'?d.projectId:d.kind==='choose-at-launch'?projectId:undefined);
     if(d.kind==='new-project') {
-      const c={name:renderText(d.nameTemplate,inputs).trim(),hostId:d.hostId,path:normalizeSourcePath(d.path)};
+      const c={name:renderText(d.nameTemplate,inputs,undefined,renderContext).trim(),hostId:d.hostId,path:normalizeSourcePath(d.path)};
       if(!c.name || !c.hostId || !c.path.startsWith('/') || c.path==='/')throw new Error('New projects need a name, enrolled host and existing absolute project directory.');
       finalId=confirmedProjectId??await this.findProject(c)??undefined;
       if(!finalId)creation=c;
@@ -139,9 +141,10 @@ export class NativeTemplates implements NativePort {
     if(explicit?.serviceTier && explicit.serviceTier!=='default' && !tierOptions.some(t=>t.id===explicit.serviceTier))throw new Error('The selected service tier is unavailable for this model.');
     const execution:Preparation['execution']=explicit?{providerId,model:chosen.model,...(explicit.reasoningLevel?{reasoningLevel:explicit.reasoningLevel}:{}),...(explicit.serviceTier?{serviceTier:explicit.serviceTier}:{}),executionInputSources:{providerId:'explicit',model:'explicit',...(explicit.reasoningLevel?{reasoningLevel:'explicit' as const}:{}),...(explicit.serviceTier?{serviceTier:'explicit' as const}:{})}}:{};
     if(!explicit)warnings.push('Uses this project’s model and environment defaults at launch.');
-    return {creation,environment,execution,effects:{projectId:finalId??null,projectName:project?.name??creation?.name??'',hostId,hostName:host.name,path,environment:environmentLabel,mode:'template',nativeEnvironment:environment,createsProject:creation!==null,routing,execution:{providerId,model:chosen.model,reasoningLevel:reasoning,serviceTier:tier,permissionMode:inheritedDefaults?.permissionMode??null,inherited:!explicit},title:renderText(definition.titleTemplate,inputs,4000),prompt:renderText(definition.promptTemplate,inputs),warnings}};
+    return {creation,environment,execution,effects:{renderContext,projectId:finalId??null,projectName:project?.name??creation?.name??'',hostId,hostName:host.name,path,environment:environmentLabel,mode:'template',nativeEnvironment:environment,createsProject:creation!==null,routing,execution:{providerId,model:chosen.model,reasoningLevel:reasoning,serviceTier:tier,permissionMode:inheritedDefaults?.permissionMode??null,inherited:!explicit},title:renderText(definition.titleTemplate,inputs,4000,renderContext),prompt:renderText(definition.promptTemplate,inputs,undefined,renderContext),warnings}};
   }
-  async resolveNative(definition:TemplateDefinition,inputs:Inputs,raw:NativeSubmission,originProjectId?:string):Promise<Preparation> {
+  async resolveNative(definition:TemplateDefinition,inputs:Inputs,raw:NativeSubmission,originProjectId?:string,providedContext?:RenderContext):Promise<Preparation> {
+    const renderContext=this.renderingContext(definition,providedContext);
     const submission=nativeSubmissionSchema.parse(raw),environment=submission.environment;
     // Opening eligibility belongs to preview; the submitted native destination is final.
     // Original source changes cannot retarget or invalidate this immutable origin.
@@ -223,18 +226,19 @@ export class NativeTemplates implements NativePort {
     const {input:_input,environment:_environment,projectId:_projectId,...execution}=submission;
     return {
       creation:null,environment,execution,
-      effects:{projectId:project.id,projectName:project.name,hostId,...(hostName?{hostName}:{}),path,environment:environmentLabel,createsProject:false,routing,mode:'native',nativeEnvironment:environment,validation:hostId?'target-host':'deferred-native',
+      effects:{renderContext,projectId:project.id,projectName:project.name,hostId,...(hostName?{hostName}:{}),path,environment:environmentLabel,createsProject:false,routing,mode:'native',nativeEnvironment:environment,validation:hostId?'target-host':'deferred-native',
         execution:{providerId:submission.providerId,model:submission.model,reasoningLevel:submission.reasoningLevel,serviceTier:submission.serviceTier??null,permissionMode:submission.permissionMode,inherited:false},
-        title:renderText(definition.titleTemplate,inputs,4000),prompt:submission.input.filter(p=>p.type==='text').map(p=>p.text).join('\n'),warnings},
+        title:renderText(definition.titleTemplate,inputs,4000,renderContext),prompt:submission.input.filter(p=>p.type==='text').map(p=>p.text).join('\n'),warnings},
     };
   }
-  async preview(definition:TemplateDefinition,submitted:Inputs,projectId?:string):Promise<PreviewResult> {
+  async preview(definition:TemplateDefinition,submitted:Inputs,projectId?:string,providedContext?:RenderContext):Promise<PreviewResult> {
     const checked=validateInputs(definition,submitted);const issues=[...validateDefinition(definition),...checked.issues];
     if(issues.length)return {issues,effects:null};
     try{
-      const prepared=await this.resolve(definition,checked.inputs,projectId),e=prepared.effects;
+      const renderContext=this.renderingContext(definition,providedContext);
+      const prepared=await this.resolve(definition,checked.inputs,projectId,undefined,renderContext),e=prepared.effects;
       const nativeSeed:NativeEditorSeed|null=e.projectId?nativeEditorSeedSchema.parse({defaultProjectId:e.projectId,defaultEnvironment:prepared.environment,initialPrompt:e.prompt,defaultProviderId:e.execution.providerId,defaultModel:e.execution.model,...(e.execution.reasoningLevel?{defaultReasoningLevel:e.execution.reasoningLevel}:{}),...(e.execution.serviceTier?{defaultServiceTier:e.execution.serviceTier}:{}),...(e.execution.permissionMode?{defaultPermissionMode:e.execution.permissionMode}:{})}):null;
-      return {issues:[],effects:e,nativeSeed};
+      return {renderContext,issues:[],effects:e,nativeSeed};
     }catch(error){return {issues:[{path:'destination',message:error instanceof Error?error.message:String(error)}],effects:null};}
   }
   async context(input:{projectId?:string;hostId?:string;environmentId?:string}) {

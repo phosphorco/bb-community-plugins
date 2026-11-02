@@ -1,9 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import {
-  defaultInputs,
-  renderText,
   validateDefinition,
-  type Inputs,
   type TemplateDefinition,
   type ValidationIssue,
 } from "../model.ts";
@@ -17,12 +14,9 @@ import {
   matchesEditorWork,
   type NumericText,
 } from "./editor-checkpoint.ts";
-import {
-  FIELD_TYPES,
-  FieldsEditor,
-  InputFields,
-  TextField,
-} from "./fields.tsx";
+import { FIELD_TYPES, FieldsEditor, TextField } from "./fields.tsx";
+
+import { PromptWorkbench } from "./prompt-workbench.tsx";
 
 type Tab = "Fields" | "Destination" | "Model" | "Prompt";
 const tabs: Tab[] = ["Fields", "Destination", "Model", "Prompt"];
@@ -73,9 +67,7 @@ export function TemplateEditor({
     [baseline, setBaseline] = useState(
       restored?.baseline ?? definitionFingerprint(initial),
     );
-  const [tab, setTab] = useState<Tab>("Fields"),
-    [preview, setPreview] = useState(false),
-    [samples, setSamples] = useState<Inputs>(defaultInputs(initial));
+  const [tab, setTab] = useState<Tab>("Fields");
   const [checkpoint, setCheckpoint] = useState(() =>
     restored
       ? { value: null, error: null }
@@ -107,19 +99,6 @@ export function TemplateEditor({
   const dirty =
     !matchesEditorBaseline(definition, baseline) ||
     Object.keys(numericText).length > 0;
-  let sampleTitle = "",
-    samplePrompt = "",
-    sampleError: string | null = null;
-  if (preview) {
-    try {
-      if (incomplete)
-        throw new Error("Complete the unfinished number before previewing.");
-      sampleTitle = renderText(definition.titleTemplate, samples);
-      samplePrompt = renderText(definition.promptTemplate, samples);
-    } catch (error) {
-      sampleError = error instanceof Error ? error.message : String(error);
-    }
-  }
   const root = useRef<HTMLDivElement>(null),
     pendingNavigation = useRef<(() => void) | null>(null),
     previousFocus = useRef<HTMLElement | null>(null),
@@ -286,8 +265,10 @@ export function TemplateEditor({
   };
   const publish = async () => {
     if (!checkNumbers()) return;
-    const invalid =
-      root.current?.querySelector<HTMLInputElement>("input:invalid");
+    const invalid = [
+      ...(root.current?.querySelectorAll<HTMLInputElement>("input:invalid") ??
+        []),
+    ].find((input) => !input.closest(".ntt-prompt-preview"));
     if (invalid) {
       invalid.reportValidity();
       invalid.focus();
@@ -532,84 +513,89 @@ export function TemplateEditor({
         )}
         {tab === "Destination" && renderDestination(definition, change)}
         {tab === "Model" && renderModel(definition, change)}
-        {tab === "Prompt" && (
-          <>
-            <p className="ntt-help">
-              Use {"{{field_key}}"} or {"{{field_key|fallback}}"}. Unknown
-              tokens block publication.
-            </p>
-            <div
-              className="ntt-placeholders"
-              role="group"
-              aria-label="Field placeholders"
-            >
-              {placeholders.map((field) => (
-                <button
-                  key={field.key}
-                  type="button"
-                  className="ntt-token"
-                  onPointerDown={(event) => event.preventDefault()}
-                  onClick={() => insertPlaceholder(field.key)}
+        <div hidden={tab !== "Prompt"}>
+          <PromptWorkbench
+            definition={definition}
+            revision={publishedRevision}
+            incomplete={!!incomplete}
+            onChange={change}
+            source={
+              <>
+                <p className="ntt-help">
+                  Use {"{{field_key}}"} or {"{{field_key|fallback}}"}. Unknown
+                  tokens block publication.
+                </p>
+                <div
+                  className="ntt-placeholders"
+                  role="group"
+                  aria-label="Field placeholders"
                 >
-                  <code>{`{{${field.key}}}`}</code>
-                  <span>
-                    {field.label || field.key} ·{" "}
-                    {
-                      FIELD_TYPES.find((type) => type.value === field.type)
-                        ?.label
-                    }
-                  </span>
-                </button>
-              ))}
-            </div>
-            {keyIssues.length > 0 && (
-              <p className="ntt-error">
-                Fix field keys in Fields:{" "}
-                {keyIssues
-                  .map(
-                    (issue) =>
-                      `${definition.fields[Number(issue.path.split(".")[1])]?.label || "Unnamed field"}: ${issue.message}`,
-                  )
-                  .join("; ")}
-              </p>
-            )}
-            <TextField
-              label="Thread title template"
-              elementRef={(element) => {
-                if (element) promptElements.current.titleTemplate = element;
-                else delete promptElements.current.titleTemplate;
-              }}
-              onSelection={(element) => selectPrompt("titleTemplate", element)}
-              value={definition.titleTemplate}
-              onChange={(titleTemplate) =>
-                change({ ...definition, titleTemplate })
-              }
-            />
-            <TextField
-              label="First message template"
-              elementRef={(element) => {
-                if (element) promptElements.current.promptTemplate = element;
-                else delete promptElements.current.promptTemplate;
-              }}
-              onSelection={(element) => selectPrompt("promptTemplate", element)}
-              multiline
-              value={definition.promptTemplate}
-              onChange={(promptTemplate) =>
-                change({ ...definition, promptTemplate })
-              }
-            />
-          </>
-        )}
+                  {placeholders.map((field) => (
+                    <button
+                      key={field.key}
+                      type="button"
+                      className="ntt-token"
+                      onPointerDown={(event) => event.preventDefault()}
+                      onClick={() => insertPlaceholder(field.key)}
+                    >
+                      <code>{`{{${field.key}}}`}</code>
+                      <span>
+                        {field.label || field.key} ·{" "}
+                        {
+                          FIELD_TYPES.find((type) => type.value === field.type)
+                            ?.label
+                        }
+                      </span>
+                    </button>
+                  ))}
+                </div>
+                {keyIssues.length > 0 && (
+                  <p className="ntt-error">
+                    Fix field keys in Fields:{" "}
+                    {keyIssues
+                      .map(
+                        (issue) =>
+                          `${definition.fields[Number(issue.path.split(".")[1])]?.label || "Unnamed field"}: ${issue.message}`,
+                      )
+                      .join("; ")}
+                  </p>
+                )}
+                <TextField
+                  label="Thread title template"
+                  elementRef={(element) => {
+                    if (element) promptElements.current.titleTemplate = element;
+                    else delete promptElements.current.titleTemplate;
+                  }}
+                  onSelection={(element) =>
+                    selectPrompt("titleTemplate", element)
+                  }
+                  value={definition.titleTemplate}
+                  onChange={(titleTemplate) =>
+                    change({ ...definition, titleTemplate })
+                  }
+                />
+                <TextField
+                  label="First message template"
+                  elementRef={(element) => {
+                    if (element)
+                      promptElements.current.promptTemplate = element;
+                    else delete promptElements.current.promptTemplate;
+                  }}
+                  onSelection={(element) =>
+                    selectPrompt("promptTemplate", element)
+                  }
+                  multiline
+                  value={definition.promptTemplate}
+                  onChange={(promptTemplate) =>
+                    change({ ...definition, promptTemplate })
+                  }
+                />
+              </>
+            }
+          />
+        </div>
       </section>
       <div className="ntt-footer">
-        <button
-          type="button"
-          className="ntt-button"
-          aria-expanded={preview}
-          onClick={() => setPreview(!preview)}
-        >
-          Preview with sample inputs
-        </button>
         <div className="ntt-row">
           <button
             type="button"
@@ -654,32 +640,6 @@ export function TemplateEditor({
           </button>
         </div>
       </div>
-      {preview && (
-        <section className="ntt-surface ntt-stack" aria-label="Sample preview">
-          <h3>Sample preview</h3>
-          <p className="ntt-help">
-            No projects, environments, or threads are created.
-          </p>
-          <InputFields
-            definition={definition}
-            inputs={samples}
-            onChange={setSamples}
-          />
-          {sampleError && (
-            <p className="ntt-alert" role="alert">
-              Preview unavailable: {sampleError}
-            </p>
-          )}
-          <div>
-            <strong>Thread title</strong>
-            <pre className="ntt-preview">{sampleTitle}</pre>
-          </div>
-          <div>
-            <strong>First message</strong>
-            <pre className="ntt-preview">{samplePrompt}</pre>
-          </div>
-        </section>
-      )}
       {leave && (
         <div className="ntt-dialog">
           <div

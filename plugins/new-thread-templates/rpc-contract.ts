@@ -3,7 +3,7 @@ export {assignmentStatusSchema,type AssignmentStatus} from './inbox-assignment-c
 import { defineRpcContract } from '@get-bb/plugin-sdk';
 import { z } from 'zod';
 import { nativeSubmissionSchema, nativeEditorSeedSchema, nativeEnvironmentSchema } from './native-submission';
-import { launchRequestSchema, launchCheckpointSchema, actorSchema, definitionSchema, draftSchema, entrySchema, inputsSchema, issueSchema, revisionSchema } from './model';
+import { launchRequestSchema, launchCheckpointSchema, renderContextSchema, invocationSampleSchema, actorSchema, definitionSchema, draftSchema, entrySchema, inputsSchema, issueSchema, revisionSchema } from './model';
 
 const id = z.string().min(1).max(120);
 export {launchRequestSchema,launchCheckpointSchema,type LaunchRequest,type LaunchCheckpoint} from './model';
@@ -13,6 +13,8 @@ export const launchStatusSchema = z.object({
   projectId: z.string().nullable(), threadId: z.string().nullable(), message: z.string().nullable(),
   candidate:z.object({threadId:z.string(),state:z.enum(['pending','failed','deleted'])}).strict().nullable().optional(),
   assignment:assignmentStatusSchema.optional(),
+  renderContext:renderContextSchema.optional(),
+  sampleCapture:z.object({state:z.enum(['saved','unavailable']),message:z.string().nullable()}).strict().optional(),
   retryable: z.boolean(), actor: actorSchema, inputs: inputsSchema,
   nativeAttribution: z.literal('plugin-origin'), createdAt: z.number(), updatedAt: z.number(),
 }).strict();
@@ -22,6 +24,7 @@ export const hostChoiceSchema = z.object({ id: z.string(), name: z.string(), onl
 export const environmentChoiceSchema = z.object({ id: z.string(), projectId: z.string(), hostId: z.string(), name: z.string(), path: z.string().nullable() }).strict();
 export const modelChoiceSchema = z.object({ providerId: z.string(), model: z.string(), label: z.string(), reasoningLevels: z.array(z.string()), serviceTiers: z.array(z.string()) }).strict();
 export const resolvedEffectsSchema = z.object({
+  renderContext:renderContextSchema.optional(),
   projectId: z.string().nullable(), projectName: z.string(), hostId: z.string().nullable(),hostName:z.string().optional(),mode:z.enum(['template','native']).optional(),validation:z.enum(['target-host','deferred-native']).optional(),nativeEnvironment:nativeEnvironmentSchema.optional(), path: z.string().nullable(),
   environment: z.string(), createsProject: z.boolean(),
   routing: z.union([z.object({ kind: z.literal('host'), hostId: z.string() }).strict(), z.object({ kind: z.literal('environment'), environmentId: z.string() }).strict()]).nullable(),
@@ -29,12 +32,12 @@ export const resolvedEffectsSchema = z.object({
   title: z.string(), prompt: z.string(), warnings: z.array(z.string()),
 }).strict();
 export type ResolvedEffects = z.infer<typeof resolvedEffectsSchema>;
-export const previewRequestSchema = z.object({ definition: definitionSchema, inputs: inputsSchema, projectId: z.string().optional() }).strict();
-export const previewResultSchema = z.object({ issues: z.array(issueSchema), effects: resolvedEffectsSchema.nullable(),nativeSeed:nativeEditorSeedSchema.nullable().optional() }).strict();
+export const previewRequestSchema = z.object({ renderContext:renderContextSchema.optional(), definition: definitionSchema, inputs: inputsSchema, projectId: z.string().optional() }).strict();
+export const previewResultSchema = z.object({ renderContext:renderContextSchema.optional(), issues: z.array(issueSchema), effects: resolvedEffectsSchema.nullable(),nativeSeed:nativeEditorSeedSchema.nullable().optional() }).strict();
 export type PreviewResult = z.infer<typeof previewResultSchema>;
 export const contextResultSchema = z.object({ projects: z.array(projectChoiceSchema), hosts: z.array(hostChoiceSchema), environments: z.array(environmentChoiceSchema), models: z.array(modelChoiceSchema), actor: actorSchema, session: z.string(), primaryHostId:z.string().nullable(), warnings: z.array(z.string()) }).strict();
 export type TemplatesContext = z.infer<typeof contextResultSchema>;
-export const recentLaunchSchema=z.object({status:launchStatusSchema,revision:revisionSchema,requestedProjectId:z.string().optional(),effects:resolvedEffectsSchema.nullable(),nativeSubmission:nativeSubmissionSchema.optional()}).strict();
+export const recentLaunchSchema=z.object({renderContext:renderContextSchema.optional(),requestedRenderContext:renderContextSchema.optional(),status:launchStatusSchema,revision:revisionSchema,requestedProjectId:z.string().optional(),effects:resolvedEffectsSchema.nullable(),nativeSubmission:nativeSubmissionSchema.optional()}).strict();
 export type RecentLaunch=z.infer<typeof recentLaunchSchema>;
 export const removeRequestSchema=z.object({templateId:id,expectedGeneration:z.number().int().nonnegative().nullable(),expectedRevision:z.number().int().positive().nullable(),expectedLatestRevision:z.number().int().nonnegative()}).strict();
 export const removalSchema=z.object({templateId:id,removedAt:z.number(),removedBy:actorSchema}).strict();
@@ -51,6 +54,7 @@ export const templatesContract = defineRpcContract({
   preview: { input: previewRequestSchema, output: previewResultSchema },
   launch: { input: launchRequestSchema, output: launchStatusSchema },
   resumeLaunch:{input:z.object({checkpoint:launchCheckpointSchema,expectedActor:z.string().min(1),expectedSession:z.string().min(1)}).strict(),output:launchStatusSchema},
+  recentSamples:{input:z.object({templateId:id}).strict(),output:z.object({samples:z.array(invocationSampleSchema).max(5)}).strict()},
   recentLaunches: {input:z.object({offset:z.number().int().nonnegative().optional()}).strict(),output:z.object({launches:z.array(recentLaunchSchema),nextOffset:z.number().int().nullable()}).strict()},
   retryAssignment:{input:z.object({operationId:z.string().uuid(),expectedActor:z.string().min(1),expectedSession:z.string().min(1)}).strict(),output:launchStatusSchema},
   launchStatus: { input: z.object({ operationId: z.string().uuid() }).strict(), output: launchStatusSchema.nullable() },

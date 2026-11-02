@@ -1,3 +1,5 @@
+import type { RenderContext } from "../model.ts";
+import { RenderClock } from "./render-clock.tsx";
 import {
   experimental_NewThreadComposer as NewThreadComposer,
   type NewThreadComposerProps,
@@ -8,6 +10,7 @@ export function NativeTemplateEditor({
   draftKey,
   seed,
   revision,
+  renderContext,
   originChanged,
   replacedInAnotherView,
   reopened,
@@ -28,6 +31,7 @@ export function NativeTemplateEditor({
     | "initialPrompt"
   >;
   revision: number;
+  renderContext?: RenderContext;
   originChanged: boolean;
   replacedInAnotherView: boolean;
   reopened: boolean;
@@ -53,6 +57,7 @@ export function NativeTemplateEditor({
           request runs.
         </p>
       </div>
+      {renderContext && <RenderClock context={renderContext} />}
       {replacedInAnotherView && (
         <p className="ntt-status">
           Another view saved a different BB editor draft. This editor keeps your

@@ -397,7 +397,10 @@ test("actual product browser: chooser, validation, retained drafts, editor publi
       .getByLabel("First message template")
       .fill("Help with {{unknown}}.");
     await page.getByRole("button", { name: "Publish", exact: true }).click();
-    await page.getByText(/Unknown field unknown/).waitFor();
+    await page
+      .locator("[data-definition-errors]")
+      .filter({ hasText: /Unknown field unknown/ })
+      .waitFor();
     expect(fixture.calls.filter((c) => c.method === "publish")).toHaveLength(0);
     const promptBody = page.getByLabel("First message template");
     await promptBody.fill("Help with REPLACE.");
@@ -428,9 +431,7 @@ test("actual product browser: chooser, validation, retained drafts, editor publi
       path: join(artifacts, "prompt-placeholders-desktop.png"),
       fullPage: false,
     });
-    await page
-      .getByRole("button", { name: "Preview with sample inputs" })
-      .click();
+    await page.getByRole("region", { name: "Sample preview" }).waitFor();
     await page.getByLabel("Goal", { exact: false }).fill("A focused feature");
     await page
       .getByText("Help with A focused feature.", { exact: true })
@@ -768,5 +769,12 @@ const { browserSavedRequestRecovery } = await import("./browser-recovery.ts");
 test(
   "actual product browser reload resumes exact saved direct and native request",
   browserSavedRequestRecovery,
+  60000,
+);
+
+const { browserPromptWorkbench } = await import("./browser-prompt.ts");
+test(
+  "actual product Prompt live samples syntax caret and short mobile wheel reachability",
+  browserPromptWorkbench,
   60000,
 );

@@ -2,6 +2,7 @@ import { afterAll, expect, test } from "bun:test";
 import { JSDOM } from "jsdom";
 import { indexedDB, IDBKeyRange } from "fake-indexeddb";
 import { appFixture } from "./app-fixture.ts";
+import { createRenderContext, type InvocationSample } from "../model.ts";
 import { TEMPLATES_CHANGED } from "../rpc-contract.ts";
 const dom = new JSDOM("<!doctype html><html><body></body></html>", {
   url: "http://templates.test/",
@@ -763,18 +764,17 @@ test("editor tabs, preview, unknown-token publication error and shared save fail
       });
       t.slot.getByRole("button", { name: "Publish" }).click();
     });
-    await t.slot.findByText(/Unknown field missing/);
+    await waitFor(() =>
+      expect(
+        t.slot.container.querySelector("[data-definition-errors]")?.textContent,
+      ).toContain("Unknown field missing"),
+    );
     expect(t.fixture.entries[0]!.published!.definition.promptTemplate).toBe(
       baseline,
     );
     expect(t.fixture.calls.filter((c) => c.method === "publish")).toHaveLength(
       0,
     );
-    await act(async () => {
-      t.slot
-        .getByRole("button", { name: "Preview with sample inputs" })
-        .click();
-    });
     expect(t.slot.getByRole("region", { name: "Sample preview" })).toBeTruthy();
     expect(t.fixture.flags.launchCount).toBe(0);
     t.fixture.flags.saveError = true;
@@ -2869,7 +2869,11 @@ test("Prompt lists only current valid field placeholders and inserts into saved 
     await act(async () =>
       t.slot.getByRole("button", { name: "Publish" }).click(),
     );
-    await t.slot.findByText(/Unknown field subject/);
+    await waitFor(() =>
+      expect(
+        t.slot.queryAllByText(/Unknown field subject/).length,
+      ).toBeGreaterThan(0),
+    );
     expect(
       t.fixture.calls.filter((call) => call.method === "publish"),
     ).toHaveLength(0);
@@ -3053,11 +3057,9 @@ test("Project Machine persists exact pin, requires deliberate workspace, routes 
     await waitFor(() =>
       expect(t.slot.queryByText(/ · unsaved changes/)).toBeNull(),
     );
-    await act(async () =>
-      t.slot
-        .getByRole("button", { name: "Preview with sample inputs" })
-        .click(),
-    );
+    await act(async () => t.slot.getByRole("tab", { name: "Prompt" }).click());
+    expect(t.slot.getByRole("region", { name: "Sample preview" })).toBeTruthy();
+    await act(async () => t.slot.getByRole("tab", { name: "Project" }).click());
     expect(
       t.slot.queryByText(
         /A specific machine requires a source checkout or worktree/,
@@ -4833,6 +4835,914 @@ test("panel correction: History refresh follows variable authoritative page boun
       name: "Historical unpublished review",
     });
     expect(t.slot.getAllByRole("heading", { level: 3 })).toHaveLength(8);
+    expect(t.fixture.flags.launchCount).toBe(0);
+  } finally {
+    await t.close();
+  }
+});
+
+test("Prompt continuously renders title and message from editable sample inputs without a preview toggle", async () => {
+  const t = await setup(true);
+  try {
+    await managementReady(t.slot);
+    await act(async () =>
+      t.slot.getAllByRole("button", { name: "Edit" })[0]!.click(),
+    );
+    await act(async () => t.slot.getByRole("tab", { name: "Prompt" }).click());
+    expect(
+      t.slot.queryAllByRole("region", { name: "Sample preview" }),
+    ).toHaveLength(1);
+    await act(async () => {
+      fireEvent.change(t.slot.getByLabelText("Thread title template"), {
+        target: { value: "{{upper subject}}" },
+      });
+      fireEvent.change(t.slot.getByLabelText("First message template"), {
+        target: {
+          value: "{{#if focus}}Focus: {{trim focus}}{{else}}No focus{{/if}}",
+        },
+      });
+      fireEvent.change(
+        t.slot.getByLabelText(/What are we giving feedback on/),
+        { target: { value: "Compact forms" } },
+      );
+      fireEvent.change(t.slot.getByLabelText(/Main focus and context/), {
+        target: { value: "  Clear choices  " },
+      });
+    });
+    expect(t.slot.getByText("COMPACT FORMS", { exact: true })).toBeTruthy();
+    expect(
+      t.slot.getByText("Focus: Clear choices", { exact: true }),
+    ).toBeTruthy();
+    expect(
+      t.fixture.calls.filter((call) =>
+        ["saveDraft", "publish", "launch"].includes(call.method),
+      ),
+    ).toHaveLength(0);
+  } finally {
+    await t.close();
+  }
+});
+
+async function openFeedbackPrompt(t: Awaited<ReturnType<typeof setup>>) {
+  await managementReady(t.slot);
+  const row = [
+    ...t.slot.container.querySelectorAll<HTMLElement>(".ntt-list-row"),
+  ].find((node) => node.textContent?.includes("Feedback Session"))!;
+  await act(async () =>
+    row.querySelector<HTMLButtonElement>("button")!.click(),
+  );
+  await act(async () => t.slot.getByRole("tab", { name: "Prompt" }).click());
+  await t.slot.findByRole("region", { name: "Sample preview" });
+}
+function previewSample(
+  overrides: Partial<InvocationSample> = {},
+): InvocationSample {
+  return {
+    operationId: crypto.randomUUID(),
+    templateId: "feedback-session",
+    revision: 1,
+    inputs: { subject: "Original sample", focus: "Historic focus" },
+    renderContext: createRenderContext(
+      "Europe/Berlin",
+      Date.parse("2024-03-31T00:30:00Z"),
+    ),
+    submittedAt: Date.parse("2024-03-31T00:35:00Z"),
+    inputKey: "a".repeat(64),
+    ...overrides,
+  };
+}
+
+test("Prompt syntax diagnostics have useful locations and unchanged successful correction clears them without sending", async () => {
+  const t = await setup(true);
+  try {
+    await openFeedbackPrompt(t);
+    const reads = t.fixture.calls.filter(
+      (call) => call.method === "recentSamples",
+    ).length;
+    await act(async () =>
+      fireEvent.change(t.slot.getByLabelText("First message template"), {
+        target: { value: "Intro\n{{#if subject}}unfinished" },
+      }),
+    );
+    await t.slot.findByText(/Preview unavailable:.*line 2, column 1/);
+    await act(async () => {
+      fireEvent.change(t.slot.getByLabelText("First message template"), {
+        target: { value: "{{subject}} {{focus|literal | fallback  }}" },
+      });
+      fireEvent.change(
+        t.slot.getByLabelText(/What are we giving feedback on/),
+        { target: { value: "<b>{{upper focus}}</b>" } },
+      );
+    });
+    expect(
+      t.slot.getByLabelText("Rendered first message").textContent,
+    ).toContain("<b>{{upper focus}}</b> literal | fallback  ");
+    expect(
+      t.slot.getByLabelText("Rendered first message").querySelector("b"),
+    ).toBeNull();
+    expect(t.slot.queryAllByText(/Preview unavailable/)).toHaveLength(0);
+    expect(
+      t.fixture.calls.filter((call) => call.method === "recentSamples"),
+    ).toHaveLength(reads);
+    expect(t.fixture.flags.launchCount).toBe(0);
+  } finally {
+    await t.close();
+  }
+});
+
+test("historical sample preserves original inputs revision and clock while editable corrections render only the current draft", async () => {
+  const original = previewSample({
+    revision: 7,
+    inputs: { subject: 12, obsolete: "Retained old value" },
+  });
+  const t = await setup(true, (fixture) => {
+    fixture.seedSamples("feedback-session", [original]);
+    const entry = fixture.entries.find(
+      (entry) => entry.id === "feedback-session",
+    )!;
+    entry.draft!.definition.promptTemplate =
+      '{{upper subject}} / {{focus}} / {{date @now "HH:mm"}}';
+  });
+  try {
+    await openFeedbackPrompt(t);
+    await t.slot.findByRole("option", { name: /Revision 7/ });
+    const source = (
+      t.slot.getByLabelText("First message template") as HTMLTextAreaElement
+    ).value;
+    await act(async () =>
+      fireEvent.change(t.slot.getByLabelText("Sample inputs"), {
+        target: { value: original.operationId },
+      }),
+    );
+    expect(t.slot.getByText(/This sample needs correction/)).toBeTruthy();
+    expect(t.slot.getByText("Enter text", { exact: true })).toBeTruthy();
+    expect(t.slot.getByText("Required", { exact: true })).toBeTruthy();
+    expect(
+      t.slot.getByLabelText("Rendered first message").textContent,
+    ).toContain("GMT+01:00 [Europe/Berlin]");
+    await act(async () => {
+      fireEvent.change(
+        t.slot.getByLabelText(/What are we giving feedback on/),
+        { target: { value: "Corrected" } },
+      );
+      fireEvent.change(t.slot.getByLabelText(/Main focus and context/), {
+        target: { value: "Current focus" },
+      });
+      t.slot
+        .getByRole("button", { name: "Remove obsolete from preview" })
+        .click();
+    });
+    expect(t.slot.getByLabelText("Rendered first message").textContent).toBe(
+      "CORRECTED / Current focus / 01:30 GMT+01:00 [Europe/Berlin]",
+    );
+    expect(t.slot.queryAllByText(/This sample needs correction/)).toHaveLength(
+      0,
+    );
+    expect(t.slot.getByText(/Original submission · revision 7/)).toBeTruthy();
+    expect(t.slot.container.textContent).toContain(
+      '"obsolete": "Retained old value"',
+    );
+    expect(
+      (t.slot.getByLabelText("First message template") as HTMLTextAreaElement)
+        .value,
+    ).toBe(source);
+    expect(await t.fixture.readPersonal("feedback-session")).toBeNull();
+    expect(
+      t.fixture.calls.filter((call) =>
+        ["saveDraft", "publish", "launch"].includes(call.method),
+      ),
+    ).toHaveLength(0);
+    await act(async () => t.slot.getByRole("tab", { name: "Fields" }).click());
+    await act(async () =>
+      fireEvent.change(t.slot.getAllByLabelText("Stable key")[0]!, {
+        target: { value: "renamed_subject" },
+      }),
+    );
+    await act(async () => t.slot.getByRole("tab", { name: "Prompt" }).click());
+    expect(
+      t.slot.getByRole("button", { name: "Remove subject from preview" }),
+    ).toBeTruthy();
+    expect(t.slot.getByText(/Unknown field subject.*line/)).toBeTruthy();
+    expect(
+      (t.slot.getByLabelText("Sample inputs") as HTMLSelectElement).value,
+    ).toBe(original.operationId);
+  } finally {
+    await t.close();
+  }
+});
+
+test("sample failure keeps local edited sample and same authoritative recovery clears only that read failure", async () => {
+  const sample = previewSample();
+  const t = await setup(true, (fixture) =>
+    fixture.seedSamples("feedback-session", [sample]),
+  );
+  try {
+    await openFeedbackPrompt(t);
+    await t.slot.findByRole("option", { name: /Revision 1/ });
+    await act(async () =>
+      fireEvent.change(t.slot.getByLabelText("Sample inputs"), {
+        target: { value: sample.operationId },
+      }),
+    );
+    await act(async () =>
+      fireEvent.change(
+        t.slot.getByLabelText(/What are we giving feedback on/),
+        { target: { value: "Local correction" } },
+      ),
+    );
+    t.fixture.flags.samplesError = true;
+    await act(async () => t.slot.behavior.emitRealtime(TEMPLATES_CHANGED, {}));
+    await t.slot.findByText(/Your recent samples could not refresh/);
+    expect(
+      (
+        t.slot.getByLabelText(
+          /What are we giving feedback on/,
+        ) as HTMLInputElement
+      ).value,
+    ).toBe("Local correction");
+    t.fixture.flags.saveError = true;
+    await act(async () =>
+      t.slot.getByRole("button", { name: "Save draft" }).click(),
+    );
+    await t.slot.findByText("Shared draft write failed");
+    t.fixture.flags.samplesError = false;
+    await act(async () => t.slot.behavior.emitRealtime(TEMPLATES_CHANGED, {}));
+    await waitFor(() =>
+      expect(
+        t.slot.queryAllByText(/Your recent samples could not refresh/),
+      ).toHaveLength(0),
+    );
+    expect(t.slot.getByText("Shared draft write failed")).toBeTruthy();
+    expect(
+      (
+        t.slot.getByLabelText(
+          /What are we giving feedback on/,
+        ) as HTMLInputElement
+      ).value,
+    ).toBe("Local correction");
+    expect(t.fixture.flags.launchCount).toBe(0);
+  } finally {
+    await t.close();
+  }
+});
+
+test("late personal sample reads cannot cross actor or editor disposal boundaries", async () => {
+  const sample = previewSample();
+  const t = await setup(true, (fixture) =>
+    fixture.seedSamples("feedback-session", [sample]),
+  );
+  const release = t.fixture.holdResponse("recentSamples");
+  try {
+    await openFeedbackPrompt(t);
+    await waitFor(() =>
+      expect(
+        t.fixture.calls.filter((call) => call.method === "recentSamples")
+          .length,
+      ).toBeGreaterThan(0),
+    );
+    await act(async () => t.fixture.wire.switchActor("bea"));
+    await managementReady(t.slot);
+    await openFeedbackPrompt(t);
+    await act(async () => release());
+    await waitFor(() =>
+      expect(
+        t.slot.queryAllByText(/Loading your recent submissions/),
+      ).toHaveLength(0),
+    );
+    expect(
+      t.slot.queryAllByRole("option", { name: /Revision 1/ }),
+    ).toHaveLength(0);
+    expect(t.slot.container.textContent).not.toContain("Original sample");
+    t.slot.lifecycle.unmount();
+    const count = t.fixture.calls.length;
+    await act(pause);
+    expect(t.fixture.calls.length).toBe(count);
+  } finally {
+    release();
+    await t.close();
+  }
+});
+
+test("opening and previewing an existing form never migrates personal time; intentional input and Refresh save one explicit clock", async () => {
+  let saves = 0;
+  const t = await setup(false, (fixture) => {
+    fixture.seedPersonal({
+      inputs: {
+        subject: "Retained subject",
+        pr_url: "https://example.test/pull/9",
+      },
+    });
+    const save = fixture.handlers["bb-identity.v1.state.save"]!;
+    fixture.handlers["bb-identity.v1.state.save"] = (input) => {
+      saves++;
+      return save(input);
+    };
+  });
+  try {
+    await openReview(t.slot);
+    await t.slot.findByLabelText("Template time");
+    await act(pause);
+    expect(saves).toBe(0);
+    expect((await t.fixture.readPersonal())?.renderContext).toBeUndefined();
+    const observed = t.slot
+      .getByLabelText("Template time")
+      .querySelector("time")!.dateTime;
+    await act(async () =>
+      t.slot.getByRole("button", { name: "Details" }).click(),
+    );
+    await act(pause);
+    expect(
+      t.slot.getByLabelText("Template time").querySelector("time")!.dateTime,
+    ).toBe(observed);
+    expect(saves).toBe(0);
+    await act(async () =>
+      fireEvent.change(t.slot.getByLabelText(/Important context or concerns/), {
+        target: { value: "An intentional edit" },
+      }),
+    );
+    await waitFor(async () =>
+      expect((await t.fixture.readPersonal())?.renderContext?.instant).toBe(
+        Date.parse(observed),
+      ),
+    );
+    expect(saves).toBeGreaterThan(0);
+    await act(async () =>
+      t.slot.getByRole("button", { name: "Refresh time" }).click(),
+    );
+    await waitFor(async () =>
+      expect(
+        (await t.fixture.readPersonal())!.renderContext!.instant,
+      ).toBeGreaterThan(Date.parse(observed)),
+    );
+    expect(t.fixture.flags.launchCount).toBe(0);
+  } finally {
+    await t.close();
+  }
+});
+
+test("direct preview and immutable checkpoint share the supplied clock through edits unknown status and remount", async () => {
+  const clock = createRenderContext(
+    "Asia/Kolkata",
+    Date.parse("2026-11-02T09:30:00Z"),
+  );
+  const t = await setup(false, (fixture) => {
+    const entry = fixture.entries.find((entry) => entry.id === "review-pr")!;
+    entry.published!.definition.promptTemplate =
+      '{{subject}} / {{date @now "yyyy-MM-dd HH:mm"}}';
+    fixture.seedPersonal({
+      inputs: { subject: "Frozen time", pr_url: "https://example.test/pull/9" },
+      renderContext: clock,
+    });
+    fixture.flags.launchMode = "unknown";
+  });
+  let remount: ReturnType<typeof renderSlot> | null = null;
+  try {
+    await openReview(t.slot);
+    await t.slot.findByLabelText("Final launch destination");
+    await act(async () =>
+      t.slot.getByRole("button", { name: "Details" }).click(),
+    );
+    await t.slot.findByText(
+      "Frozen time / 2026-11-02 15:00 GMT+05:30 [Asia/Kolkata]",
+      { exact: true },
+    );
+    const previews = t.fixture.calls.filter(
+      (call) => call.method === "preview",
+    );
+    expect(
+      (previews.at(-1)!.input as { renderContext: unknown }).renderContext,
+    ).toEqual(clock);
+    await act(async () =>
+      t.slot.getByRole("button", { name: "Start thread" }).click(),
+    );
+    await waitFor(() => expect(t.fixture.flags.launchCount).toBe(1));
+    const request = t.fixture.calls.find((call) => call.method === "launch")!
+      .input as import("../model.ts").LaunchRequest;
+    expect(request.renderContext).toEqual(clock);
+    expect((await t.fixture.readPersonal())?.launchCheckpoint?.request).toEqual(
+      request,
+    );
+    expect(
+      t.slot.queryAllByRole("button", { name: "Refresh time" }),
+    ).toHaveLength(0);
+    t.slot.lifecycle.unmount();
+    remount = renderSlot(
+      app.homepageSections[0]!,
+      { projectId: "project-b" },
+      { pluginId: "new-thread-templates", rpc: t.fixture.handlers },
+    );
+    await openReview(remount);
+    await remount.findByRole("button", { name: "Check launch status" });
+    expect(remount.getByLabelText("Template time").textContent).toContain(
+      "Asia/Kolkata",
+    );
+    expect(
+      remount.getByLabelText("Template time").querySelector("time")!.dateTime,
+    ).toBe(new Date(clock.instant).toISOString());
+    expect(t.fixture.flags.launchCount).toBe(1);
+  } finally {
+    remount?.lifecycle.unmount();
+    await t.close();
+  }
+});
+
+test("native origin keeps its generated title seed and clock after Back form refresh and exact native submission", async () => {
+  const clock = createRenderContext(
+    "Europe/Berlin",
+    Date.parse("2026-10-25T00:30:00Z"),
+  );
+  const t = await setup(false, (fixture) => {
+    const entry = fixture.entries.find((entry) => entry.id === "review-pr")!;
+    entry.published!.definition.titleTemplate =
+      '{{subject}} {{date @now "HH:mm"}}';
+    entry.published!.definition.promptTemplate =
+      '{{subject}} {{date @now "HH:mm"}}';
+    fixture.seedPersonal({
+      inputs: {
+        subject: "Original title",
+        pr_url: "https://example.test/pull/9",
+      },
+      renderContext: clock,
+    });
+  });
+  const release = t.fixture.holdResponse("launch");
+  try {
+    await openReview(t.slot);
+    await t.slot.findByLabelText("Final launch destination");
+    await act(async () =>
+      t.slot.getByRole("button", { name: "Edit with BB" }).click(),
+    );
+    await t.slot.findByTestId("bb-new-thread-composer");
+    const before = structuredClone(
+      (await t.fixture.readPersonal())!.nativeEditor!,
+    );
+    expect(before.renderContext).toEqual(clock);
+    expect(before.title).toContain("GMT+02:00 [Europe/Berlin]");
+    await act(async () => {
+      fireEvent.change(t.slot.getByTestId("bb-new-thread-composer-input"), {
+        target: { value: "User-edited request without generated date" },
+      });
+      t.slot.getByRole("button", { name: "‹ Back to form" }).click();
+    });
+    await act(async () => {
+      t.slot.getByRole("button", { name: "Refresh time" }).click();
+      fireEvent.change(t.slot.getByLabelText(/Main change or review goal/), {
+        target: { value: "Changed form" },
+      });
+    });
+    await waitFor(async () =>
+      expect(
+        (await t.fixture.readPersonal())!.renderContext!.instant,
+      ).toBeGreaterThan(clock.instant),
+    );
+    await act(async () =>
+      t.slot.getByRole("button", { name: "Resume BB editor" }).click(),
+    );
+    expect((await t.fixture.readPersonal())!.nativeEditor).toEqual(before);
+    expect(
+      t.slot
+        .getByRole("region", { name: "Edit with BB" })
+        .querySelector("time")!.dateTime,
+    ).toBe(new Date(clock.instant).toISOString());
+    await act(async () =>
+      t.slot.getByTestId("bb-new-thread-composer-submit").click(),
+    );
+    await waitFor(() => expect(t.fixture.flags.launchCount).toBe(1));
+    const request = t.fixture.calls.find((call) => call.method === "launch")!
+      .input as import("../model.ts").LaunchRequest;
+    expect(request.renderContext).toEqual(clock);
+    expect(request.inputs).toEqual(before.inputs);
+    expect(request.nativeSubmission!.input).toEqual([
+      {
+        type: "text",
+        text: "User-edited request without generated date",
+        mentions: [],
+      },
+    ]);
+    expect((await t.fixture.readPersonal())!.launchCheckpoint!.request).toEqual(
+      request,
+    );
+    await act(async () => release());
+    await waitFor(() =>
+      expect(
+        t.slot.inspection.navigateCalls.some(
+          (call) => call.method === "toThread",
+        ),
+      ).toBe(true),
+    );
+  } finally {
+    release();
+    await t.close();
+  }
+});
+
+test("History retry preserves original requested clock presence separately from the effective admitted clock", async () => {
+  for (const supplied of [false, true]) {
+    const clock = createRenderContext(
+      "Asia/Kathmandu",
+      Date.parse("2026-11-02T09:30:00Z"),
+    );
+    const t = await setup(true, (fixture) => {
+      const revision = fixture.entries.find(
+        (entry) => entry.id === "review-pr",
+      )!.published!;
+      fixture.seedReceipt(
+        {
+          operationId: crypto.randomUUID(),
+          templateId: revision.templateId,
+          revision: revision.revision,
+          phase: "failed",
+          retryable: true,
+          projectId: "project-a",
+          threadId: null,
+          message: "Preparation unavailable",
+          actor: { key: fixture.wire.actor!.identity.key, name: "Ada Fixture" },
+          inputs: {
+            subject: "Historical clock",
+            pr_url: "https://example.test/pull/9",
+          },
+          nativeAttribution: "plugin-origin",
+          createdAt: 1,
+          updatedAt: 1,
+          renderContext: clock,
+        },
+        revision,
+        undefined,
+        supplied ? clock : undefined,
+      );
+    });
+    try {
+      await managementReady(t.slot);
+      await act(async () =>
+        t.slot.getByRole("button", { name: "History" }).click(),
+      );
+      await t.slot.findByRole("button", { name: "Retry preparation" });
+      expect(t.slot.getByLabelText("Template time").textContent).toContain(
+        "Asia/Kathmandu",
+      );
+      await act(async () =>
+        t.slot.getByRole("button", { name: "Retry preparation" }).click(),
+      );
+      await waitFor(() => expect(t.fixture.flags.launchCount).toBe(1));
+      const request = t.fixture.calls.find((call) => call.method === "launch")!
+        .input as import("../model.ts").LaunchRequest;
+      expect(Object.hasOwn(request, "renderContext")).toBe(supplied);
+      if (supplied) expect(request.renderContext).toEqual(clock);
+    } finally {
+      await t.close();
+    }
+  }
+});
+
+test("Prompt time zone is a deliberate shared setting while historical preview time stays frozen until explicit refresh", async () => {
+  const original = previewSample();
+  const t = await setup(true, (fixture) =>
+    fixture.seedSamples("feedback-session", [original]),
+  );
+  try {
+    await openFeedbackPrompt(t);
+    expect((t.slot.getByLabelText("Time zone") as HTMLInputElement).value).toBe(
+      "UTC",
+    );
+    await t.slot.findByRole("option", { name: /Revision 1/ });
+    await act(async () => {
+      fireEvent.change(t.slot.getByLabelText("Sample inputs"), {
+        target: { value: original.operationId },
+      });
+      fireEvent.change(t.slot.getByLabelText("First message template"), {
+        target: { value: '{{date @now "yyyy-MM-dd HH:mm"}}' },
+      });
+    });
+    const originalText = t.slot.getByLabelText(
+      "Rendered first message",
+    ).textContent;
+    await act(async () =>
+      fireEvent.change(t.slot.getByLabelText("Time zone"), {
+        target: { value: "Mars/Olympus" },
+      }),
+    );
+    await t.slot.findByText(/Choose a valid IANA time zone/);
+    await act(async () =>
+      t.slot.getByRole("button", { name: "Publish" }).click(),
+    );
+    expect(
+      t.fixture.calls.filter((call) => call.method === "publish"),
+    ).toHaveLength(0);
+    await act(async () =>
+      fireEvent.change(t.slot.getByLabelText("Time zone"), {
+        target: { value: "Asia/Kathmandu" },
+      }),
+    );
+    expect(t.slot.getByLabelText("Rendered first message").textContent).toBe(
+      "2024-03-31 06:15 GMT+05:45 [Asia/Kathmandu]",
+    );
+    expect(
+      t.slot.getByLabelText("Rendered first message").textContent,
+    ).not.toBe(originalText);
+    await act(async () =>
+      t.slot.getByRole("button", { name: "Refresh time" }).click(),
+    );
+    expect(
+      t.slot.getByLabelText("Rendered first message").textContent,
+    ).not.toContain("2024-03-31");
+    expect(t.slot.queryAllByText(/Preview unavailable/)).toHaveLength(0);
+    await act(async () =>
+      t.slot.getByRole("button", { name: "Save draft" }).click(),
+    );
+    await waitFor(() =>
+      expect(
+        t.fixture.entries.find((entry) => entry.id === "feedback-session")!
+          .draft!.definition.timeZone,
+      ).toBe("Asia/Kathmandu"),
+    );
+    expect(await t.fixture.readPersonal("feedback-session")).toBeNull();
+    expect(t.fixture.flags.launchCount).toBe(0);
+  } finally {
+    await t.close();
+  }
+});
+
+test("legacy native origin captures a single clock only on explicit reopen without replacing title source inputs or draft identity", async () => {
+  const editorDraftId = crypto.randomUUID();
+  const t = await setup(false, (fixture) => {
+    fixture.seedPersonal({
+      inputs: { obsolete: "Retained unfinished form" },
+      nativeEditor: {
+        editorDraftId,
+        instanceId: fixture.personalAddress().instanceId,
+        actor: fixture.wire.actor!.identity.key,
+        templateId: "review-pr",
+        revision: 1,
+        inputs: {
+          subject: "Original origin",
+          pr_url: "https://example.test/pull/8",
+        },
+        seed: {
+          defaultProjectId: "project-a",
+          defaultEnvironment: {
+            type: "host",
+            hostId: "host-a",
+            workspace: { type: "unmanaged", path: null },
+          },
+          initialPrompt: "Untouched historical native seed",
+        },
+        title: "Untouched original title",
+        createdAt: 1,
+      },
+    });
+  });
+  try {
+    const before = structuredClone(
+      (await t.fixture.readPersonal())!.nativeEditor!,
+    );
+    await openReview(t.slot);
+    await t.slot.findByRole("button", { name: "Resume BB editor" });
+    expect(
+      (await t.fixture.readPersonal())!.nativeEditor!.renderContext,
+    ).toBeUndefined();
+    await act(async () =>
+      t.slot.getByRole("button", { name: "Resume BB editor" }).click(),
+    );
+    await t.slot.findByTestId("bb-new-thread-composer");
+    const after = (await t.fixture.readPersonal())!.nativeEditor!;
+    const { renderContext, ...facts } = after;
+    expect(facts).toEqual(before);
+    expect(renderContext?.timeZone).toBe("UTC");
+    const composer = t.slot.getByTestId("bb-new-thread-composer");
+    expect(
+      (
+        t.slot.getByTestId(
+          "bb-new-thread-composer-input",
+        ) as HTMLTextAreaElement
+      ).value,
+    ).toBe(before.seed.initialPrompt);
+    await act(async () =>
+      t.slot.getByRole("button", { name: "‹ Back to form" }).click(),
+    );
+    await act(async () =>
+      t.slot.getByRole("button", { name: "Resume BB editor" }).click(),
+    );
+    expect(t.slot.getByTestId("bb-new-thread-composer")).toBe(composer);
+    expect(
+      (await t.fixture.readPersonal())!.nativeEditor!.renderContext,
+    ).toEqual(renderContext);
+    expect(t.fixture.flags.launchCount).toBe(0);
+  } finally {
+    await t.close();
+  }
+});
+
+test("switching to a borrowed identity view fences an in-flight personal sample and exposes no viewed-person history", async () => {
+  const fixture = await appFixture(`sample-view-${crypto.randomUUID()}`);
+  fixture.seedSamples("feedback-session", [previewSample()]);
+  const release = fixture.holdResponse("recentSamples");
+  const identity = await import("@phosphorco/bb-identity/react");
+  const { useMemo, useState } = await import("react");
+  const { PromptWorkbench } = await import("../ui/prompt-workbench.tsx");
+  let borrow!: () => void;
+  function Scope() {
+    const session = identity.useIdentitySession(),
+      [overriding, setOverriding] = useState(false);
+    borrow = () => setOverriding(true);
+    const view = useMemo<
+      import("@phosphorco/bb-identity/client").IdentityView | null
+    >(() => {
+      if (session.status !== "ready") return null;
+      const snapshot = {
+        status: "ready" as const,
+        session,
+        subject: overriding
+          ? {
+              kind: "person" as const,
+              key: fixture.wire.personKey("bea"),
+              issuer: "fixture",
+              subject: "bea",
+            }
+          : session.actor.identity,
+        overriding,
+        viewGeneration: overriding ? 2 : 1,
+      };
+      const unsupported = async () => ({
+        ok: false as const,
+        error: {
+          code: "unsupported" as const,
+          message: "Static borrowed-view fixture",
+          retry: "never" as const,
+        },
+      });
+      return {
+        getSnapshot: () => snapshot,
+        subscribe: () => () => {},
+        select: unsupported,
+        reset: unsupported,
+        registerGuard: () => () => {},
+        dispose() {},
+      };
+    }, [session, overriding]);
+    return view ? (
+      <identity.BbIdentity.Context view={view}>
+        <PromptWorkbench
+          definition={
+            fixture.entries.find((entry) => entry.id === "feedback-session")!
+              .draft!.definition
+          }
+          revision={1}
+          incomplete={false}
+          source={
+            <p>
+              Actual Prompt workbench in a static public borrowed-view fixture.
+            </p>
+          }
+          onChange={() => {}}
+        />
+      </identity.BbIdentity.Context>
+    ) : null;
+  }
+  function Surface() {
+    const client = identity.useBbIdentityClient();
+    return (
+      <identity.BbIdentity.Provider client={client}>
+        <div className="ntt">
+          <Scope />
+        </div>
+      </identity.BbIdentity.Provider>
+    );
+  }
+  const slot = renderSlot(
+    { component: Surface },
+    {},
+    { pluginId: "new-thread-templates", rpc: fixture.handlers },
+  );
+  try {
+    await waitFor(() =>
+      expect(
+        fixture.calls.filter((call) => call.method === "recentSamples"),
+      ).toHaveLength(1),
+    );
+    await act(async () => borrow());
+    await slot.findByText(
+      "Personal samples are available only in your own identity view.",
+    );
+    await act(async () => release());
+    await waitFor(() =>
+      expect(
+        slot.queryAllByText(/Loading your recent submissions/),
+      ).toHaveLength(0),
+    );
+    expect(slot.queryAllByRole("option", { name: /Revision 1/ })).toHaveLength(
+      0,
+    );
+    expect(
+      (slot.getByLabelText("Sample inputs") as HTMLSelectElement).disabled,
+    ).toBe(true);
+    expect(
+      fixture.calls.filter((call) => call.method === "recentSamples"),
+    ).toHaveLength(1);
+    expect(fixture.flags.launchCount).toBe(0);
+  } finally {
+    release();
+    slot.lifecycle.unmount();
+    await act(async () => {});
+    await fixture.dispose();
+  }
+});
+
+test("empty time zone remains visibly invalid unfinished work and optional suggestions API absence cannot crash Prompt", async () => {
+  const descriptor = Object.getOwnPropertyDescriptor(Intl, "supportedValuesOf");
+  Object.defineProperty(Intl, "supportedValuesOf", {
+    configurable: true,
+    value: undefined,
+  });
+  const t = await setup(true);
+  try {
+    await openFeedbackPrompt(t);
+    const zone = t.slot.getByLabelText("Time zone") as HTMLInputElement;
+    expect(zone.value).toBe("UTC");
+    expect(zone.getAttribute("aria-invalid")).toBe("false");
+    await act(async () => fireEvent.change(zone, { target: { value: "" } }));
+    expect(zone.getAttribute("aria-invalid")).toBe("true");
+    expect(
+      t.slot.getByText("Choose a valid IANA time zone, such as Europe/Berlin."),
+    ).toBeTruthy();
+    expect(
+      t.slot.getByText(
+        /Preview unavailable:.*Choose a valid template time zone/,
+      ),
+    ).toBeTruthy();
+    await act(async () =>
+      t.slot.getByRole("button", { name: "Save draft" }).click(),
+    );
+    await waitFor(() =>
+      expect(
+        t.fixture.entries.find((entry) => entry.id === "feedback-session")!
+          .draft!.definition.timeZone,
+      ).toBe(""),
+    );
+    await act(async () =>
+      t.slot.getByRole("button", { name: "Publish" }).click(),
+    );
+    expect(
+      t.fixture.calls.filter((call) => call.method === "publish"),
+    ).toHaveLength(0);
+    await act(async () => fireEvent.change(zone, { target: { value: "UTC" } }));
+    expect(zone.getAttribute("aria-invalid")).toBe("false");
+    expect(t.slot.queryAllByText(/Preview unavailable/)).toHaveLength(0);
+    expect(t.fixture.flags.launchCount).toBe(0);
+  } finally {
+    await t.close();
+    if (descriptor)
+      Object.defineProperty(Intl, "supportedValuesOf", descriptor);
+    else Reflect.deleteProperty(Intl, "supportedValuesOf");
+  }
+});
+
+test("live title enforces the server 4000-byte budget while body remains independently valid and correction recovers", async () => {
+  const t = await setup(true);
+  try {
+    await openFeedbackPrompt(t);
+    const oversized = "é".repeat(2001);
+    await act(async () => {
+      fireEvent.change(t.slot.getByLabelText("Thread title template"), {
+        target: { value: "{{subject}}" },
+      });
+      fireEvent.change(t.slot.getByLabelText("First message template"), {
+        target: { value: "Body {{subject}}" },
+      });
+      fireEvent.change(
+        t.slot.getByLabelText(/What are we giving feedback on/),
+        { target: { value: oversized } },
+      );
+    });
+    expect(
+      t.slot.getByLabelText("Rendered thread title").textContent?.length,
+    ).toBe(0);
+    expect(
+      t.slot.getByText(
+        /Preview unavailable: Thread title: Rendered text exceeds the size limit/,
+      ),
+    ).toBeTruthy();
+    expect(t.slot.getByLabelText("Rendered first message").textContent).toBe(
+      `Body ${oversized}`,
+    );
+    const boundary = "é".repeat(2000);
+    await act(async () =>
+      fireEvent.change(
+        t.slot.getByLabelText(/What are we giving feedback on/),
+        { target: { value: boundary } },
+      ),
+    );
+    expect(t.slot.getByLabelText("Rendered thread title").textContent).toBe(
+      boundary,
+    );
+    expect(t.slot.getByLabelText("Rendered first message").textContent).toBe(
+      `Body ${boundary}`,
+    );
+    expect(t.slot.queryAllByText(/Preview unavailable/)).toHaveLength(0);
+    expect(
+      t.fixture.calls.filter((call) =>
+        ["saveDraft", "publish", "launch"].includes(call.method),
+      ),
+    ).toHaveLength(0);
     expect(t.fixture.flags.launchCount).toBe(0);
   } finally {
     await t.close();

@@ -26,7 +26,7 @@ This option opens for existing projects, including a matching existing local sou
 
 Definitions and saved editor drafts are shared across this trusted workspace. Collaborators can edit them; identity records who made the change. Concurrent changes use revision checks. Unsaved editor work is guarded on plugin navigation and retained in a personal recovery checkpoint across shell exits. Compact field rows expand the selected configuration; the management panel owns its scroll area so the last field and actions remain reachable.
 
-Fields support short text, long text, URL, number, select and checkbox, with stable unique keys, labels, order, help, defaults, required values and bounded validation. Prompt, title and new-project name templates accept `{{field_key}}` and `{{field_key|literal fallback}}`. Empty optional values render as empty text or the literal fallback; zero and false retain their values. An unchecked checkbox without an explicit default is false. Unknown or malformed tokens block publication. Interpolation performs text substitution only.
+Fields support short text, long text, URL, number, select and checkbox, with stable unique keys, labels, order, help, defaults, required values and bounded validation. Prompt, title and new-project name templates accept `{{field_key}}` and `{{field_key|literal fallback}}`. Empty optional values render as empty text or the literal fallback; zero and false retain their values. An unchecked checkbox without an explicit default is false. Unknown or malformed tokens block publication. Rendering uses the bounded plain-text language described below.
 
 The **Prompt** tab lists the valid placeholders for the current fields, with their labels and types. Choose a placeholder to insert it at the selection in the title or first message. Renaming or removing a field updates the list immediately; any old token in the text still needs correcting before publication. Routine local checkpointing and successful saves are silent. Recovery or conflict notices retain the unfinished work they describe.
 
@@ -63,3 +63,21 @@ The canonical plugin ID, collection entry and directory are `new-thread-template
 From the community repository, install with `npm ci`. Run `npm run test`, `npm run typecheck` and `npm run build` before handoff. Focused checks use the same commands with `--workspace @phosphorco/bb-plugin-new-thread-templates`. The build uses the repository’s pinned BB target CLI and public Plugin SDK declarations. Generated `dist/` stays uncommitted.
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for the RPC/state contract, durable claims and verification boundaries. Fault-injection/database-reopen tests, hosted plugin smoke and a complete BB process restart prove different things; delivery evidence must name which ran.
+
+### Live prompt preview and saved samples
+
+The Prompt tab continuously renders the current draft’s title and first message alongside the source, or below it on narrow screens. Its editable sample inputs are preview-only. Selecting one of your last five complete, distinct submissions keeps the original revision, values and observed time available for comparison; it does not replace the shared definition, personal launch form or BB editor draft. Missing, unknown or incompatible values are shown for correction against the current fields. Samples follow the actual submitting identity, including a stable fallback identity; they are not another person’s history. Only confirmed thread admission records a sample. Typing, previewing, failed preparation and provisional native rows do not.
+
+The shared plain-text language is a bounded subset, not full Handlebars or Hugo. Existing `{{field}}` and `{{field|literal fallback}}` keep their behavior, including literal pipes/spaces, zero and false. Values are never evaluated again or HTML-escaped. Helpers are `upper`, `lower`, `trim`, `concat`, `default`, `eq`, `not`, `and`, `or` and `date`; `if`/`unless` blocks support `else` and parenthesized helper expressions. `default` replaces missing values or empty text only. Conditions treat missing values, empty text, false and zero as false; `eq` compares values and types. Bare field names may match helper names. There are no loops, property traversal, custom registrations, scripts, filesystem or network operations. Syntax errors include line/column locations and block publication.
+
+For example:
+
+```text
+{{upper subject}}
+{{#if (and subject (not focus))}}Add focus{{else}}{{trim focus}}{{/if}}
+{{date @now "yyyy-MM-dd HH:mm"}}
+```
+
+Set a real IANA time zone on the template, such as `Europe/Berlin`; the visible default is UTC. The observed instant stays fixed until **Refresh time** or selecting a different preview sample. Date arguments accept `@now` or calendar-valid ISO timestamps with an explicit `Z`/offset. Format tokens are `yyyy MM dd HH mm ss EEE`: **MM is month; mm is minute**. Every generated date includes its actual GMT offset and `[IANA zone]`, even a time-only or year-only format.
+
+The invocation form displays its own frozen clock. Opening/previewing existing personal work does not rewrite it; an intentional input/time edit or send saves the clock with that work. Preview, exact request, recovery checkpoint and server journal use the same context. An opened BB editor retains its original generated title, prompt and clock across Back, form changes and reload; refreshing the form never rewrites edited native text. Explicit reset creates a fresh origin. History retries preserve whether the original request supplied a context, and unknown operations retain their exact saved request.

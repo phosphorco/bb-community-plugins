@@ -1,5 +1,7 @@
 import { z } from 'zod';
 import { nativeSubmissionSchema, nativeEditorSeedSchema } from './native-submission';
+import {renderContextSchema,validateTemplate,isValidTimeZone} from './template-renderer';
+export {renderText,createRenderContext,renderContextSchema,isValidTimeZone,validateTemplate,TemplateError,TEMPLATE_LIMITS,type RenderContext,type TemplateDiagnostic} from './template-renderer';
 import type { Codec, PluginId } from '@phosphorco/bb-identity/model';
 import type { StateResource } from '@phosphorco/bb-identity/state';
 
@@ -35,6 +37,7 @@ export const executionSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('explicit'), providerId: z.string(), model: z.string(), reasoningLevel: z.string().optional(), serviceTier: z.string().optional() }).strict(),
 ]);
 export const definitionSchema = z.object({
+  timeZone:z.string().max(200).optional(),
   id, name: z.string().max(200), description: z.string().max(2000), fields: z.array(fieldSchema).max(50),
   destination: destinationSchema, execution: executionSchema,
   titleTemplate: z.string().max(1000), promptTemplate: z.string().max(100000),
@@ -51,19 +54,23 @@ export type TemplateEntry = z.infer<typeof entrySchema>;
 export const issueSchema = z.object({ path: z.string(), message: z.string() }).strict();
 export type ValidationIssue = z.infer<typeof issueSchema>;
 export const nativeEditorOriginSchema=z.object({
+  renderContext:renderContextSchema.optional(),
   editorDraftId:z.string().uuid(),instanceId:z.string(),actor:z.string(),templateId:id,revision:z.number().int().positive(),
   inputs:inputsSchema,projectId:z.string().optional(),seed:nativeEditorSeedSchema,title:z.string(),createdAt:z.number(),
 }).strict();
 export type NativeEditorOrigin=z.infer<typeof nativeEditorOriginSchema>;
 export const nativeOperationSchema=z.object({
+  renderContext:renderContextSchema.optional(),
   templateId:id,revision:z.number().int().positive(),inputs:inputsSchema,projectId:z.string().optional(),nativeSubmission:nativeSubmissionSchema,
 }).strict();
 // Saved before dispatch; lifecycle freshness is supplied separately when explicitly resuming.
-export const launchRequestSchema = z.object({ operationId: z.string().uuid(), templateId: id, revision: z.number().int().positive(), inputs: inputsSchema, projectId: z.string().optional(), expectedActor: z.string().min(1), expectedSession: z.string().min(1),nativeSubmission:nativeSubmissionSchema.optional() }).strict();
+export const launchRequestSchema = z.object({ renderContext:renderContextSchema.optional(), operationId: z.string().uuid(), templateId: id, revision: z.number().int().positive(), inputs: inputsSchema, projectId: z.string().optional(), expectedActor: z.string().min(1), expectedSession: z.string().min(1),nativeSubmission:nativeSubmissionSchema.optional() }).strict();
 export type LaunchRequest = z.infer<typeof launchRequestSchema>;
 export const launchCheckpointSchema=z.object({version:z.literal(1),request:launchRequestSchema}).strict();
 export type LaunchCheckpoint=z.infer<typeof launchCheckpointSchema>;
-export const personalDraftSchema = z.object({ inputs: inputsSchema, projectId: z.string().optional(), operationId: z.string().optional(), revision: z.number().int().optional(),nativeEditor:nativeEditorOriginSchema.optional(),nativeOperation:nativeOperationSchema.optional(),launchCheckpoint:launchCheckpointSchema.optional() }).strict();
+export const personalDraftSchema = z.object({ renderContext:renderContextSchema.optional(), inputs: inputsSchema, projectId: z.string().optional(), operationId: z.string().optional(), revision: z.number().int().optional(),nativeEditor:nativeEditorOriginSchema.optional(),nativeOperation:nativeOperationSchema.optional(),launchCheckpoint:launchCheckpointSchema.optional() }).strict();
+export const invocationSampleSchema=z.object({operationId:z.string().uuid(),templateId:id,revision:z.number().int().positive(),inputs:inputsSchema,renderContext:renderContextSchema,submittedAt:z.number().finite(),inputKey:z.string().regex(/^[a-f0-9]{64}$/)}).strict();
+export type InvocationSample=z.infer<typeof invocationSampleSchema>;
 export type PersonalDraft = z.infer<typeof personalDraftSchema>;
 export function schemaCodec<T>(schema: z.ZodType<T>): Codec<T> {
   return { decode(value) { const r = schema.safeParse(value); return r.success ? { ok: true, value: r.data } : { ok: false, error: { code: 'invalid-input', message: r.error.message, retry: 'never' } }; }, encode(value) { return JSON.parse(JSON.stringify(schema.parse(value))); } };
@@ -77,15 +84,6 @@ export function emptyDefinition(templateId: string): TemplateDefinition {
 }
 export function defaultInputs(definition: TemplateDefinition): Inputs {
   return Object.fromEntries(definition.fields.filter(f => f.default !== undefined || f.type === 'checkbox').map(f => [f.key, f.default ?? false]));
-}
-// Tokens support {{field}} and a literal fallback {{field|fallback}}. No evaluation.
-const TOKEN = /\{\{\s*([a-zA-Z][a-zA-Z0-9_]*)(?:\|([^{}]*))?\s*\}\}/g;
-export function renderText(template: string, inputs: Inputs,limit=RENDER_BYTES_LIMIT): string {
-  let size=bytes(template);if(size>limit)throw new Error('Rendered text exceeds the size limit');
-  return template.replace(TOKEN, (all, key: string, fallback: string | undefined) => {
-    const value = inputs[key];const replacement=value === undefined || value === '' ? (fallback ?? '') : String(value);
-    size+=bytes(replacement)-bytes(all);if(size>limit)throw new Error('Rendered text exceeds the size limit');return replacement;
-  });
 }
 export function validateInputs(definition: TemplateDefinition, submitted: Inputs): { inputs: Inputs; issues: ValidationIssue[] } {
   const inputs = { ...defaultInputs(definition), ...submitted }; const issues: ValidationIssue[] = [];
@@ -108,6 +106,7 @@ export function validateInputs(definition: TemplateDefinition, submitted: Inputs
 }
 export function validateDefinition(definition: TemplateDefinition): ValidationIssue[] {
   const issues: ValidationIssue[] = []; const add=(path:string,message:string)=>issues.push({path,message});
+  if(!isValidTimeZone(definition.timeZone??'UTC'))add('timeZone','Use a valid IANA time zone; the default is UTC');
   if (!definition.name.trim()) add('name','Name is required');
   if (!definition.promptTemplate.trim()) add('promptTemplate','First message is required');
   const keys = new Set<string>();
@@ -128,7 +127,7 @@ export function validateDefinition(definition: TemplateDefinition): ValidationIs
   if(d.environment.kind === 'reuse' && !d.environment.environmentId) add('destination.environment','Choose an environment');
   if(d.environment.kind === 'worktree' && !d.environment.baseBranch.trim()) add('destination.environment','Choose a base branch');
   if(definition.execution.kind === 'explicit' && (!definition.execution.providerId || !definition.execution.model)) add('execution','Choose provider and model');
-  for (const [path,t] of texts) { for(const match of t.matchAll(TOKEN)) if(!keys.has(match[1]!)) add(path,`Unknown field ${match[1]}`); if(t.replace(TOKEN,'').includes('{{') || t.replace(TOKEN,'').includes('}}')) add(path,'Invalid template token'); }
+  for(const [path,text] of texts)for(const issue of validateTemplate(text,keys))add(path,`${issue.message} (line ${issue.line}, column ${issue.column})`);
   return issues;
 }
 /** Exact pre-customer seed, retained solely for preserving installed authored work. */

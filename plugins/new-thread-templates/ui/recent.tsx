@@ -12,6 +12,7 @@ import {
 } from "../rpc-contract.ts";
 import { useMountedRead } from "./read.ts";
 import { EffectsSummary } from "./destination.tsx";
+import { RenderClock } from "./render-clock.tsx";
 import { AssignmentResult } from "./assignment.tsx";
 
 export function RecentLaunches({ onBack }: { onBack(): void }) {
@@ -204,6 +205,9 @@ function LaunchReceipt({
         templateId: status.templateId,
         revision: status.revision,
         inputs: status.inputs,
+        ...(initial.requestedRenderContext
+          ? { renderContext: initial.requestedRenderContext }
+          : {}),
         ...(initial.requestedProjectId
           ? { projectId: initial.requestedProjectId }
           : {}),
@@ -291,6 +295,17 @@ function LaunchReceipt({
             </button>
           )}
       </div>
+      {(status.renderContext ?? initial.renderContext) && (
+        <RenderClock
+          context={(status.renderContext ?? initial.renderContext)!}
+        />
+      )}
+      {status.sampleCapture?.state === "unavailable" && (
+        <p className="ntt-help" role="status">
+          Thread started. Recent sample could not be saved:{" "}
+          {status.sampleCapture.message}
+        </p>
+      )}
       {status.phase === "succeeded" && status.assignment && (
         <AssignmentResult key={status.operationId} status={status} />
       )}

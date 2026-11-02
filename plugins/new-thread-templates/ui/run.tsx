@@ -13,6 +13,7 @@ import {
 } from "@phosphorco/bb-identity/react";
 import {
   defaultInputs,
+  createRenderContext,
   inputDraftResource,
   validateInputs,
   type Inputs,
@@ -31,6 +32,7 @@ import type { DraftStorage } from "@phosphorco/bb-identity/state";
 import type { Result } from "@phosphorco/bb-identity/model";
 import { TemplatePurposeIcon } from "./icon.tsx";
 import { AssignmentResult } from "./assignment.tsx";
+import { RenderClock } from "./render-clock.tsx";
 import { InputFields } from "./fields.tsx";
 import { EffectsSummary, ProjectSelect } from "./destination.tsx";
 import { useMountedRead } from "./read.ts";
@@ -223,10 +225,21 @@ export function TemplateRun({
     [rpc, chosen],
   );
   const context = useMountedRead(loadContext, TEMPLATES_CHANGED);
+  const initialClock = useMemo(
+    () => createRenderContext(template.definition.timeZone ?? "UTC"),
+    [
+      ownerSession,
+      template.templateId,
+      template.revision,
+      template.definition.timeZone,
+    ],
+  );
+  const renderContext = personal?.renderContext ?? initialClock;
   const signature = JSON.stringify({
     definition: template.definition,
     inputs,
     projectId: chosen,
+    renderContext,
   });
   const [settled, setSettled] = useState(signature);
   useEffect(() => {
@@ -238,12 +251,14 @@ export function TemplateRun({
       definition: PublishedRevision["definition"];
       inputs: Inputs;
       projectId: string;
+      renderContext: typeof renderContext;
     };
     return {
       signature: settled,
       result: await rpc.call("preview", {
         definition: captured.definition,
         inputs: captured.inputs,
+        renderContext: captured.renderContext,
         ...(captured.projectId ? { projectId: captured.projectId } : {}),
       }),
     };
@@ -268,8 +283,31 @@ export function TemplateRun({
     if (result && !result.ok) setWriteError(result.error.message);
   };
   const changeInputs = (next: Inputs) => {
-    edit({ ...personal, inputs: next });
+    const current = binding?.getSnapshot();
+    if (current?.status !== "ready") return;
+    edit({
+      ...current.desired,
+      inputs: next,
+      renderContext: current.desired.renderContext ?? renderContext,
+    });
     setIssues([]);
+  };
+  const changeProject = (projectId: string) => {
+    const current = binding?.getSnapshot();
+    if (current?.status !== "ready") return;
+    edit({
+      ...current.desired,
+      projectId,
+      renderContext: current.desired.renderContext ?? renderContext,
+    });
+  };
+  const refreshTime = () => {
+    const current = binding?.getSnapshot();
+    if (!ready || busy || pending || current?.status !== "ready") return;
+    edit({
+      ...current.desired,
+      renderContext: createRenderContext(template.definition.timeZone ?? "UTC"),
+    });
   };
   const loadStatus = useCallback(
     async () =>
@@ -590,7 +628,7 @@ export function TemplateRun({
       openingEditor
     )
       return;
-    if (ownsNative && !reset) {
+    if (ownsNative && nativeOrigin?.renderContext && !reset) {
       setActiveNativeOrigin(nativeOrigin!);
       setNativeVisited(true);
       setNativeMode(true);
@@ -604,15 +642,18 @@ export function TemplateRun({
       )
     )
       return;
-    const validation = validateInputs(template.definition, inputs);
+    const legacyOrigin = ownsNative && !reset ? nativeOrigin : null;
+    const validation = legacyOrigin
+      ? { inputs: legacyOrigin.inputs, issues: [] }
+      : validateInputs(template.definition, inputs);
     setIssues(validation.issues);
     if (validation.issues.length) {
       setNativeMode(false);
       focusFirst(validation.issues);
       return;
     }
-    const seed = currentPreview?.nativeSeed;
-    if (!seed || !currentPreview?.effects?.projectId) {
+    const seed = legacyOrigin?.seed ?? currentPreview?.nativeSeed;
+    if (!seed || (!legacyOrigin && !currentPreview?.effects?.projectId)) {
       setWriteError(
         "BB editor is available for existing projects. This template creates its project when sent.",
       );
@@ -622,25 +663,39 @@ export function TemplateRun({
       owner = captured.currentOwnerSession(),
       actor = session.actor.identity.key,
       stamp = session.stamp;
-    const origin: NativeEditorOrigin = {
-      editorDraftId: crypto.randomUUID(),
-      instanceId: session.instanceId,
-      actor,
-      templateId: template.templateId,
-      revision: template.revision,
-      inputs: structuredClone(validation.inputs),
-      ...(chosen ? { projectId: chosen } : {}),
-      seed: structuredClone(seed),
-      title: currentPreview.effects.title,
-      createdAt: Date.now(),
-    };
+    const origin: NativeEditorOrigin = legacyOrigin
+      ? {
+          ...legacyOrigin,
+          renderContext: createRenderContext(
+            template.definition.timeZone ?? "UTC",
+          ),
+        }
+      : {
+          editorDraftId: crypto.randomUUID(),
+          instanceId: session.instanceId,
+          actor,
+          templateId: template.templateId,
+          revision: template.revision,
+          inputs: structuredClone(validation.inputs),
+          ...(chosen ? { projectId: chosen } : {}),
+          seed: structuredClone(seed),
+          title: currentPreview!.effects!.title,
+          createdAt: Date.now(),
+          renderContext: structuredClone(
+            currentPreview!.renderContext ?? renderContext,
+          ),
+        };
     createdEditors.current.add(origin.editorDraftId);
     setOpeningEditor(true);
     try {
       const live = captured.getSnapshot();
       if (live.status !== "ready")
         throw new Error("Personal inputs are not ready.");
-      const edited = captured.edit({ ...live.desired, nativeEditor: origin });
+      const edited = captured.edit({
+        ...live.desired,
+        renderContext: live.desired.renderContext ?? renderContext,
+        nativeEditor: origin,
+      });
       if (!edited.ok) throw new Error(edited.error.message);
       const saved = await captured.flush();
       if (!saved.ok) throw new Error(saved.error.message);
@@ -693,6 +748,7 @@ export function TemplateRun({
       inputs: origin.inputs,
       ...(origin.projectId ? { projectId: origin.projectId } : {}),
       nativeSubmission,
+      ...(origin.renderContext ? { renderContext: origin.renderContext } : {}),
     };
     const request: LaunchRequest = {
       operationId: id,
@@ -841,6 +897,9 @@ export function TemplateRun({
       templateId: template.templateId,
       revision: template.revision,
       inputs: structuredClone(validation.inputs),
+      renderContext: structuredClone(
+        currentPreview?.renderContext ?? renderContext,
+      ),
       ...(chosen ? { projectId: chosen } : {}),
       expectedActor: actor,
       expectedSession: stamp,
@@ -856,6 +915,7 @@ export function TemplateRun({
       const result = captured.edit({
         ...directBase,
         inputs: request.inputs,
+        renderContext: request.renderContext,
         ...(chosen ? { projectId: chosen } : {}),
         operationId: id,
         revision: template.revision,
@@ -1289,6 +1349,12 @@ export function TemplateRun({
             </button>
           </div>
         )}
+      {operation?.sampleCapture?.state === "unavailable" && (
+        <p className="ntt-help" role="status">
+          Thread started. Recent sample could not be saved:{" "}
+          {operation.sampleCapture.message}
+        </p>
+      )}
       {operation?.phase === "succeeded" &&
         operation.assignment &&
         (!operationId || operationId === operation.operationId) && (
@@ -1328,6 +1394,7 @@ export function TemplateRun({
             )}
             seed={publicNativeSeed(nativeOrigin.seed)}
             revision={nativeOrigin.revision}
+            renderContext={nativeOrigin.renderContext}
             reopened={
               !createdEditors.current.has(nativeOrigin.editorDraftId) ||
               interruptedEditors.current.has(nativeOrigin.editorDraftId)
@@ -1341,7 +1408,9 @@ export function TemplateRun({
             originChanged={
               nativeOrigin.revision !== template.revision ||
               JSON.stringify(nativeOrigin.inputs) !== JSON.stringify(inputs) ||
-              (nativeOrigin.projectId ?? "") !== chosen
+              (nativeOrigin.projectId ?? "") !== chosen ||
+              JSON.stringify(nativeOrigin.renderContext) !==
+                JSON.stringify(renderContext)
             }
             onSubmit={submitNative}
             onBack={() => setNativeMode(false)}
@@ -1377,7 +1446,7 @@ export function TemplateRun({
             <ProjectSelect
               context={context.value}
               value={chosen}
-              onChange={(projectId) => edit({ ...personal, inputs, projectId })}
+              onChange={changeProject}
               disabled={!ready || busy}
             />
           )}
@@ -1396,6 +1465,17 @@ export function TemplateRun({
               {i.message}
             </p>
           ))}
+        <RenderClock
+          context={
+            pending
+              ? (savedCheckpoint?.request.renderContext ??
+                operation?.renderContext ??
+                renderContext)
+              : renderContext
+          }
+          disabled={!ready || busy || pending}
+          onRefresh={pending ? undefined : refreshTime}
+        />
         {effective && !details && (
           <EffectsSummary effects={effective} compact />
         )}

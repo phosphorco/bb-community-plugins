@@ -565,3 +565,57 @@
     padding-bottom: 7rem;
   }
 }
+
+/* Prompt source and its plain-text result remain visible together when there
+   is room. Each side keeps its own natural focus order and wraps on mobile. */
+.ntt .ntt-prompt-workbench {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  align-items: start;
+  gap: 20px;
+}
+.ntt .ntt-prompt-source,
+.ntt .ntt-prompt-preview {
+  min-width: 0;
+}
+.ntt .ntt-prompt-preview {
+  border-left: 1px solid var(--border);
+  padding-left: 20px;
+}
+.ntt .ntt-prompt-preview .ntt-preview {
+  padding: 10px;
+  margin-top: 5px;
+}
+.ntt .ntt-clock {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px 12px;
+}
+.ntt .ntt-template-help summary {
+  cursor: pointer;
+  color: var(--muted-foreground);
+  font-size: 12px;
+}
+.ntt .ntt-template-help p {
+  margin: 8px 0 0;
+  overflow-wrap: anywhere;
+}
+@media (max-width: 700px) {
+  .ntt .ntt-prompt-workbench {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .ntt .ntt-prompt-preview {
+    padding: 16px 0 0;
+    border-left: 0;
+    border-top: 1px solid var(--border);
+  }
+}
+/* Removed fields may contain long unbroken historic values or keys. Keep all
+   recovery text available without widening the preview or its scroll parent. */
+.ntt .ntt-prompt-preview .ntt-row > span,
+.ntt .ntt-prompt-preview .ntt-link {
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}

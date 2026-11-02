@@ -72,13 +72,14 @@ export default function newThreadTemplates(bb:BbPluginApi) {
     unpublish:{origin:'interactive-user',handle:async(input,invocation)=>person(invocation,async request=>{const validate=await writeGuard(request,'shared-definitions',input.templateId);const result=store.unpublish(input.templateId,input.expectedRevision,validate);changed();return result;})},
     duplicate:{origin:'interactive-user',handle:async(input,invocation)=>person(invocation,async request=>{const validate=await writeGuard(request,'shared-definitions',input.newId);const result=store.duplicate(input.templateId,input.newId,actorSummary(request.actor),validate);changed();return result;})},
     remove:{origin:'interactive-user',handle:async(input,invocation)=>person(invocation,async request=>{const validate=await writeGuard(request,'shared-definitions',input.templateId);const result=store.remove(input,actorSummary(request.actor),validate);changed();return result;})},
-    preview:{origin:'interactive-user',handle:async(input,invocation)=>person(invocation,()=>native.preview(input.definition,input.inputs,input.projectId))},
+    preview:{origin:'interactive-user',handle:async(input,invocation)=>person(invocation,()=>native.preview(input.definition,input.inputs,input.projectId,input.renderContext))},
     launch:{origin:'interactive-user',handle:async(input,invocation)=>person(invocation,request=>runLaunch(input,request))},
     resumeLaunch:{origin:'interactive-user',handle:async(input,invocation)=>person(invocation,request=>{
       if(input.expectedActor!==request.actor.identity.key||input.expectedSession!==request.expected.session||input.checkpoint.request.expectedActor!==request.actor.identity.key)throw new Error('Saved launch requires its original current actor/session.');
       // Session freshness is not business identity; every immutable request field remains pinned.
       return runLaunch({...input.checkpoint.request,expectedSession:input.expectedSession},request);
     })},
+    recentSamples:{origin:'interactive-user',handle:async(input,invocation)=>person(invocation,request=>({samples:store.recentSamples(request.actor.identity.key,input.templateId)}))},
     recentLaunches:{origin:'interactive-user',handle:async(input,invocation)=>person(invocation,request=>store.recentLaunches(request.actor.identity.key,input.offset??0))},
     retryAssignment:{origin:'interactive-user',handle:async(input,invocation)=>person(invocation,async request=>{
       if(input.expectedActor!==request.actor.identity.key||input.expectedSession!==request.expected.session)throw new Error('Captured assignment actor/session changed.');

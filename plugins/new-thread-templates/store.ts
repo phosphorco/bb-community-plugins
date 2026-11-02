@@ -4,7 +4,7 @@ import { z } from 'zod';
 import type { AtomicStateStorage, StateAddress, StateRead, StateMutation, StateOutcome } from '@phosphorco/bb-identity/state';
 import { stateCodecs } from '@phosphorco/bb-identity/state';
 import type { Result, OperationLookup, ActorSnapshot } from '@phosphorco/bb-identity/model';
-import { definitionSchema, draftSchema, entrySchema, revisionSchema, schemaCodec, personalDraftSchema, starterDefinitions, legacyPrReviewDefinition, prReviewDefinition, validateDefinition, type TemplateDefinition, type TemplateActor, type TemplateEntry, type PersonalDraft } from './model';
+import { definitionSchema, draftSchema, entrySchema, revisionSchema, schemaCodec, personalDraftSchema, starterDefinitions, legacyPrReviewDefinition, prReviewDefinition, validateDefinition, type TemplateDefinition, type TemplateActor, type TemplateEntry, type PersonalDraft, renderContextSchema, invocationSampleSchema, type InvocationSample } from './model';
 import { launchRequestSchema, launchStatusSchema, resolvedEffectsSchema, removeRequestSchema, removalSchema, type RemoveRequest, type TemplateRemoval, type AssignmentStatus, type LaunchStatus, type RecentLaunch } from './rpc-contract';
 
 export const HISTORY_PAGE_BYTES_LIMIT=4*1024*1024;
@@ -25,6 +25,7 @@ const identitySchema = z.discriminatedUnion('kind', [
 ]);
 export const capturedActorSchema = z.object({identity:identitySchema,presentation:z.object({displayName:z.string(),handle:z.string().nullable(),avatarUrl:z.string().nullable()}).strict(),evidence:z.enum(['provider-verified','local-user','upstream-default','integration-asserted','legacy','machine'])}).strict();
 export const journalSchema = z.object({
+  renderContext:renderContextSchema.optional(),sampleIntent:z.boolean().optional(),sampleRecorded:z.boolean().optional(),
   status: launchStatusSchema, request: launchRequestSchema, revision: revisionSchema,
   capturedActor: capturedActorSchema, fingerprint: z.string(), token: z.string(),
   assignmentDispatch:z.object({attempted:z.boolean(),generation:z.string(),claim:z.string(),rawPending:z.boolean(),sent:z.boolean().default(false)}).strict().optional(),
@@ -38,7 +39,9 @@ const tombstoneSchema=removalSchema.extend({entry:entrySchema}).strict();
 const fail = (message:string): Result<never> => ({ok:false,error:{code:'invalid-operation',message,retry:'never'}});
 export class TemplatesStore {
   constructor(readonly db: Db, readonly now: () => number = Date.now) {
-    db.exec(`CREATE TABLE IF NOT EXISTS templates (id TEXT PRIMARY KEY, data TEXT NOT NULL);
+    db.exec(`CREATE TABLE IF NOT EXISTS template_invocation_samples (owner_key TEXT NOT NULL, template_id TEXT NOT NULL, input_key TEXT NOT NULL, admission_order INTEGER NOT NULL, data TEXT NOT NULL, PRIMARY KEY(owner_key,template_id,input_key));
+      CREATE INDEX IF NOT EXISTS template_samples_recency ON template_invocation_samples(owner_key,template_id,admission_order DESC);
+      CREATE TABLE IF NOT EXISTS templates (id TEXT PRIMARY KEY, data TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS template_tombstones (id TEXT PRIMARY KEY, data TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS template_revisions (id TEXT NOT NULL, revision INTEGER NOT NULL, data TEXT NOT NULL, PRIMARY KEY(id,revision));
       CREATE TABLE IF NOT EXISTS template_launches (id TEXT PRIMARY KEY, data TEXT NOT NULL);
@@ -160,13 +163,28 @@ export class TemplatesStore {
     for(const row of rows) {
       if(launches.length===50){hasMore=true;break;}
       const r=journalSchema.parse(JSON.parse(rowSchema.parse(row).data));
-      const record:RecentLaunch={status:r.status,revision:r.revision,...(r.request.projectId?{requestedProjectId:r.request.projectId}:{}),effects:r.effects,...(r.request.nativeSubmission?{nativeSubmission:r.request.nativeSubmission}:{})};
+      const record:RecentLaunch={...(r.request.renderContext?{requestedRenderContext:r.request.renderContext}:{}),...(r.renderContext?{renderContext:r.renderContext}:{}),status:r.status,revision:r.revision,...(r.request.projectId?{requestedProjectId:r.request.projectId}:{}),effects:r.effects,...(r.request.nativeSubmission?{nativeSubmission:r.request.nativeSubmission}:{})};
       const size=utf8Bytes(record)+(launches.length?1:0);
       // An unusually large historical record is returned alone, never truncated or stranded.
       if(launches.length&&used+size>HISTORY_PAGE_BYTES_LIMIT){hasMore=true;break;}
       launches.push(record);used+=size;
     }
     return {launches,nextOffset:hasMore?offset+launches.length:null};
+  }
+  recentSamples(actorKey:string,templateId:string):InvocationSample[] {
+    return this.db.prepare('SELECT data FROM template_invocation_samples WHERE owner_key=? AND template_id=? ORDER BY admission_order DESC LIMIT 5').all(actorKey,templateId).map(row=>invocationSampleSchema.parse(JSON.parse(rowSchema.parse(row).data)));
+  }
+  captureSample(id:string):void {
+    this.atomic(()=>{
+      const row=this.launch(id);if(!row?.sampleIntent||row.sampleRecorded||!row.renderContext||row.status.phase!=='succeeded'||!row.confirmation||!row.status.threadId||this.wasThreadRemoved(row.status.threadId))return;
+      const order=z.object({admission_order:z.number().int()}).parse(this.db.prepare('SELECT rowid AS admission_order FROM template_launches WHERE id=?').get(id)).admission_order;
+      const inputKey=fingerprint(row.status.inputs),actor=row.capturedActor.identity.key,templateId=row.revision.templateId;
+      const sample:InvocationSample=invocationSampleSchema.parse({operationId:id,templateId,revision:row.revision.revision,inputs:row.status.inputs,renderContext:row.renderContext,submittedAt:row.status.createdAt,inputKey});
+      this.db.prepare('INSERT INTO template_invocation_samples(owner_key,template_id,input_key,admission_order,data) VALUES(?,?,?,?,?) ON CONFLICT(owner_key,template_id,input_key) DO UPDATE SET admission_order=excluded.admission_order,data=excluded.data WHERE excluded.admission_order>template_invocation_samples.admission_order').run(actor,templateId,inputKey,order,JSON.stringify(sample));
+      this.db.prepare('DELETE FROM template_invocation_samples WHERE owner_key=? AND template_id=? AND input_key NOT IN (SELECT input_key FROM template_invocation_samples WHERE owner_key=? AND template_id=? ORDER BY admission_order DESC LIMIT 5)').run(actor,templateId,actor,templateId);
+      const next=journalSchema.parse({...row,sampleRecorded:true,status:{...row.status,sampleCapture:{state:'saved',message:null}}});
+      this.db.prepare('UPDATE template_launches SET data=? WHERE id=?').run(JSON.stringify(next),id);
+    });
   }
   launch(id:string):LaunchRecord|null {const data=this.readRow('template_launches',id);return data?journalSchema.parse(JSON.parse(data)):null;}
   patchAssignment(id:string,update:(record:LaunchRecord)=>{value:AssignmentStatus;dispatch?:LaunchRecord['assignmentDispatch']},validate:()=>void=()=>{}):LaunchRecord|null {
@@ -193,7 +211,7 @@ export class TemplatesStore {
       if(kind==='spawn') {
         if(current.status.phase==='succeeded'&&evidence==='native-ack'&&current.status.threadId===nativeId)return this.transition(id,current.token,['succeeded'],r=>({...r,confirmation:'native-ack'}));
         if(!['spawn-claimed','indeterminate'].includes(current.status.phase))return current;
-        return this.transition(id,current.token,[current.status.phase],r=>({...r,confirmation:evidence,status:{...r.status,phase:'succeeded',threadId:nativeId,candidate:null,retryable:false,message:evidence==='native-ack'?'Native creation acknowledged.':'Confirmed an active or completed native thread.'}}));
+        return this.transition(id,current.token,[current.status.phase],r=>({...r,confirmation:evidence,status:{...r.status,...(r.sampleIntent&&!r.sampleRecorded?{sampleCapture:{state:'unavailable' as const,message:'Recent input sample has not been saved.'}}:{}),phase:'succeeded',threadId:nativeId,candidate:null,retryable:false,message:evidence==='native-ack'?'Native creation acknowledged.':'Confirmed an active or completed native thread.'}}));
       }
       if(!['project-claimed','project-unknown'].includes(current.status.phase))return current;
       return this.transition(id,current.token,[current.status.phase],r=>({...r,status:{...r.status,projectId:nativeId,phase:r.token===ownerToken?'ready':'failed',retryable:r.token!==ownerToken,message:r.token===ownerToken?null:'Recovered a late native project receipt. Retry the same operation to continue.'}}));
