@@ -113,8 +113,14 @@ export async function browserPromptWorkbench() {
       .selectOption(sample.operationId);
     await browserExpect(renderedTitle).toHaveText("HISTORICAL SUBJECT");
     await browserExpect(renderedBody).toHaveText(
-      "Saved focus · 15:15 GMT+05:45 [Asia/Kathmandu]",
+      "Saved focus · 15:15 GMT+5:45",
     );
+    await browserExpect(
+      page.locator(".ntt-prompt-preview > .ntt-clock"),
+    ).toContainText("GMT+05:45");
+    await browserExpect(
+      page.locator(".ntt-prompt-preview > .ntt-clock"),
+    ).toContainText("Asia/Kathmandu");
     await page
       .getByLabel(/What are we giving feedback on/)
       .fill("Edited example");

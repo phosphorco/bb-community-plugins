@@ -96,13 +96,30 @@ export function renderText(source:string,inputs:Record<string,string|number|bool
   if(!Number.isInteger(limit)||limit<0)throw new TemplateError(source,0,'Invalid output size limit');if(source.length>TEMPLATE_LIMITS.sourceBytes)throw new TemplateError(source,0,'Template source exceeds the size limit');if(source.length>limit||utf8(source)>limit)throw new TemplateError(source,0,'Rendered text exceeds the size limit');if(context)renderContextSchema.parse(context);
   const tree=parse(source);let steps=0,work=0;const fail=(at:number,message:string):never=>{throw new TemplateError(source,at,message);};
   function bound(value:string,at:number):string{if(value.length>limit)fail(at,'Rendered text exceeds the size limit');const size=utf8(value);if(size>limit)fail(at,'Rendered text exceeds the size limit');work+=size;if(work>TEMPLATE_LIMITS.workBytes)fail(at,'Template string work budget exceeded');return value;}
-  const partsCache=new Map<number,Record<string,string>>();let formatter:Intl.DateTimeFormat|undefined;
+  const partsCache=new Map<number,Record<string,string>>(),suffixCache=new Map<number,string>(),shortFormatters=new Map<string,Intl.DateTimeFormat>();let formatter:Intl.DateTimeFormat|undefined;
+  function zoneSuffix(instant:number,longOffset:string):string {
+    const cached=suffixCache.get(instant);if(cached!==undefined)return cached;
+    const canonicalZone=formatter!.resolvedOptions().timeZone;
+    let result:string|undefined;
+    if(canonicalZone==='UTC')result='UTC';
+    else for(const locale of canonicalZone==='America/Sao_Paulo'?['en-US','en-GB','pt-BR']:['en-US','en-GB']) {
+      let short=shortFormatters.get(locale);if(!short){short=new Intl.DateTimeFormat(locale,{timeZone:context?.timeZone??'UTC',timeZoneName:'short'});shortFormatters.set(locale,short);}
+      const name=short.formatToParts(new Date(instant)).find(part=>part.type==='timeZoneName')?.value;
+      if(name&&/^[A-Z]{2,8}$/.test(name)){result=name;break;}
+    }
+    if(result===undefined){
+      // The actual instant's offset is the fallback, including historical seconds.
+      const offset=/^GMT([+-])(\d{2}):(\d{2})(?::(\d{2}))?$/.exec(longOffset);
+      result=offset?`GMT${offset[1]}${Number(offset[2])}${offset[3]!=='00'||offset[4]&&offset[4]!=='00'?':'+offset[3]:''}${offset[4]&&offset[4]!=='00'?':'+offset[4]:''}`:longOffset;
+    }
+    suffixCache.set(instant,result);return result;
+  }
   function date(instant:number,format:string,at:number):string {
     const zone=context?.timeZone??'UTC';let parts=partsCache.get(instant);if(!parts){formatter??=new Intl.DateTimeFormat('en-US-u-ca-gregory-nu-latn',{timeZone:zone,calendar:'gregory',numberingSystem:'latn',era:'short',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit',weekday:'short',hourCycle:'h23',timeZoneName:'longOffset'});parts=Object.fromEntries(formatter.formatToParts(new Date(instant)).map(p=>[p.type,p.value]));partsCache.set(instant,parts);}
     const year=parts.era==='BC'?1-Number(parts.year):Number(parts.year);
     const yearText=year<0?'-'+String(-year).padStart(6,'0'):year>9999?'+'+String(year).padStart(6,'0'):String(year).padStart(4,'0');
     const values:Record<string,string>={yyyy:yearText,MM:parts.month!,dd:parts.day!,HH:parts.hour!,mm:parts.minute!,ss:parts.second!,EEE:parts.weekday!};
-    const suffix=` ${parts.timeZoneName==='GMT'?'GMT+00:00':parts.timeZoneName} [${zone}]`,chunks:string[]=[];let size=utf8(suffix);
+    const suffix=` ${zoneSuffix(instant,parts.timeZoneName!)}`,chunks:string[]=[];let size=utf8(suffix);
     for(const match of format.matchAll(/yyyy|MM|dd|HH|mm|ss|EEE|[\p{L}]+|[^\p{L}]+/gu)){const token=match[0];if(/^\p{L}/u.test(token)&&!Object.hasOwn(values,token))fail(at,`Unknown date format token ${token}; use yyyy MM dd HH mm ss EEE`);const value=values[token]??token;size+=utf8(value);if(size>limit)fail(at,'Rendered text exceeds the size limit');chunks.push(value);}
     if(size>limit)fail(at,'Rendered text exceeds the size limit');return bound(chunks.join('')+suffix,at);
   }

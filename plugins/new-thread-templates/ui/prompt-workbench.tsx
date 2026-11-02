@@ -199,7 +199,10 @@ function PersonalPromptWorkbench({
               <code>{'{{date @now "yyyy-MM-dd HH:mm"}}'}</code> or{" "}
               <code>{'{{date "2026-11-02T09:30:00Z" "EEE HH:mm"}}'}</code>.
               Formats: yyyy MM dd HH mm ss EEE. MM means month; mm means minute.
-              Dates always append their actual GMT offset and [IANA zone].
+              Dates append a date-correct short zone: CET/CEST, EST/EDT,
+              BRT/BRST or UTC; otherwise a compact actual offset such as GMT-3
+              or GMT+5:45. The full observed offset and IANA zone remain visible
+              in the clock.
             </p>
             <p>
               A bounded subset, not full Handlebars or Hugo: no loops, property

@@ -4979,7 +4979,15 @@ test("historical sample preserves original inputs revision and clock while edita
     expect(t.slot.getByText("Required", { exact: true })).toBeTruthy();
     expect(
       t.slot.getByLabelText("Rendered first message").textContent,
-    ).toContain("GMT+01:00 [Europe/Berlin]");
+    ).toContain("CET");
+    const observedClock = t.slot.container.querySelector(
+      ".ntt-prompt-preview > .ntt-clock",
+    )!;
+    expect(observedClock.textContent).toContain("GMT+01:00");
+    expect(observedClock.textContent).toContain("Europe/Berlin");
+    expect(observedClock.querySelector("time")!.dateTime).toBe(
+      new Date(original.renderContext.instant).toISOString(),
+    );
     await act(async () => {
       fireEvent.change(
         t.slot.getByLabelText(/What are we giving feedback on/),
@@ -4993,7 +5001,7 @@ test("historical sample preserves original inputs revision and clock while edita
         .click();
     });
     expect(t.slot.getByLabelText("Rendered first message").textContent).toBe(
-      "CORRECTED / Current focus / 01:30 GMT+01:00 [Europe/Berlin]",
+      "CORRECTED / Current focus / 01:30 CET",
     );
     expect(t.slot.queryAllByText(/This sample needs correction/)).toHaveLength(
       0,
@@ -5202,10 +5210,9 @@ test("direct preview and immutable checkpoint share the supplied clock through e
     await act(async () =>
       t.slot.getByRole("button", { name: "Details" }).click(),
     );
-    await t.slot.findByText(
-      "Frozen time / 2026-11-02 15:00 GMT+05:30 [Asia/Kolkata]",
-      { exact: true },
-    );
+    await t.slot.findByText("Frozen time / 2026-11-02 15:00 GMT+5:30", {
+      exact: true,
+    });
     const previews = t.fixture.calls.filter(
       (call) => call.method === "preview",
     );
@@ -5277,7 +5284,7 @@ test("native origin keeps its generated title seed and clock after Back form ref
       (await t.fixture.readPersonal())!.nativeEditor!,
     );
     expect(before.renderContext).toEqual(clock);
-    expect(before.title).toContain("GMT+02:00 [Europe/Berlin]");
+    expect(before.title).toContain("CEST");
     await act(async () => {
       fireEvent.change(t.slot.getByTestId("bb-new-thread-composer-input"), {
         target: { value: "User-edited request without generated date" },
@@ -5401,6 +5408,16 @@ test("Prompt time zone is a deliberate shared setting while historical preview t
   );
   try {
     await openFeedbackPrompt(t);
+    expect(
+      t.slot.getByText(
+        /Dates append a date-correct short zone: CET\/CEST, EST\/EDT, BRT\/BRST or UTC/,
+      ),
+    ).toBeTruthy();
+    expect(
+      t.slot.getByText(
+        /The full observed offset and IANA zone remain visible in the clock/,
+      ),
+    ).toBeTruthy();
     expect((t.slot.getByLabelText("Time zone") as HTMLInputElement).value).toBe(
       "UTC",
     );
@@ -5434,7 +5451,7 @@ test("Prompt time zone is a deliberate shared setting while historical preview t
       }),
     );
     expect(t.slot.getByLabelText("Rendered first message").textContent).toBe(
-      "2024-03-31 06:15 GMT+05:45 [Asia/Kathmandu]",
+      "2024-03-31 06:15 GMT+5:45",
     );
     expect(
       t.slot.getByLabelText("Rendered first message").textContent,
