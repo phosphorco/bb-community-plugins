@@ -1,0 +1,93 @@
+/** Actual product components in the public SDK slot harness. Native chrome/pickers remain a separate smoke. */
+import { loadPluginApp, renderSlot } from "@get-bb/plugin-sdk/testing/app";
+import appDefinition from "../app.tsx";
+import { templatesContract } from "../rpc-contract.ts";
+const app = await loadPluginApp(appDefinition);
+const methods = [
+  ...Object.keys(templatesContract),
+  "bb-identity.v1.bootstrap",
+  "bb-identity.v1.selfProfile",
+  "bb-identity.v1.search",
+  "bb-identity.v1.profiles",
+  "bb-identity.v1.participants",
+  "bb-identity.v1.participantPreviews",
+  "bb-identity.v1.state.load",
+  "bb-identity.v1.state.save",
+  "bb-identity.v1.state.reconcile",
+];
+const rpc = Object.fromEntries(
+  methods.map((method) => [
+    method,
+    async (input: unknown) => {
+      const response = await fetch(`/rpc/${method}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(input),
+      });
+      const value = await response.json();
+      if (!response.ok) throw new Error(value.error);
+      return value;
+    },
+  ]),
+) as Record<string, (input: any) => Promise<any>>;
+let slot: ReturnType<typeof renderSlot> | null = null;
+function mount(panel: boolean | "settings" = false) {
+  const previous = slot?.container;
+  slot?.lifecycle.unmount();
+  previous?.remove();
+  slot =
+    panel === "settings"
+      ? renderSlot(
+          app.settingsSections[0]!,
+          {},
+          { pluginId: "new-thread-templates", rpc },
+        )
+      : panel
+        ? renderSlot(
+            app.navPanels[0]!,
+            { subPath: "" },
+            { pluginId: "new-thread-templates", rpc },
+          )
+        : renderSlot(
+            app.homepageSections[0]!,
+            { projectId: "project-a" },
+            { pluginId: "new-thread-templates", rpc },
+          );
+  // Fixture supplies the bounded native-panel parent; product owns its scroll region.
+  if (panel === true) {
+    slot.container.style.height = "calc(100dvh - 140px)";
+    slot.container.style.minHeight = "0";
+  }
+}
+window.templatesHarness = {
+  mount,
+  unmount: () => {
+    const container = slot?.container;
+    slot?.lifecycle.unmount();
+    container?.remove();
+    slot = null;
+  },
+  emit: async () => {
+    await slot?.behavior.emitRealtime("new-thread-templates:changed", {});
+  },
+  reconnect: async () => {
+    await slot?.behavior.setRealtimeConnectionState("reconnecting");
+    await slot?.behavior.setRealtimeConnectionState("connected");
+  },
+  stats: () => ({
+    navigation: slot?.inspection.navigateCalls ?? [],
+    rpc: slot?.inspection.rpcCalls ?? [],
+  }),
+};
+declare global {
+  interface Window {
+    templatesHarness: {
+      mount(panel?: boolean | "settings"): void;
+      unmount(): void;
+      emit(): Promise<void>;
+      reconnect(): Promise<void>;
+      stats(): unknown;
+    };
+  }
+}
+mount(location.search.includes("manage"));

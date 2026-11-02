@@ -15,6 +15,7 @@
     { "name": "attach-text-snippets", "source": "./plugins/attach-text-snippets" },
     { "name": "figma", "source": "./plugins/figma" },
     { "name": "sentry", "source": "./plugins/sentry" },
+    { "name": "new-thread-templates", "source": "./plugins/new-thread-templates" },
     { "name": "turn-results", "source": "./plugins/turn-results" },
     { "name": "turn-result-images", "source": "./plugins/turn-result-images" }
   ]

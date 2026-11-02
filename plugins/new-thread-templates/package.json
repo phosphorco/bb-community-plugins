@@ -1,0 +1,85 @@
+{
+  "name": "@phosphorco/bb-plugin-new-thread-templates",
+  "version": "0.1.0",
+  "type": "module",
+  "license": "MIT",
+  "description": "Turn reusable first messages into forms and start ordinary BB threads with the right destination and model.",
+  "author": "Phosphor",
+  "homepage": "https://github.com/phosphorco/bb-community-plugins/tree/main/plugins/new-thread-templates#readme",
+  "bugs": {
+    "url": "https://github.com/phosphorco/bb-community-plugins/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/phosphorco/bb-community-plugins.git",
+    "directory": "plugins/new-thread-templates"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org"
+  },
+  "keywords": [
+    "bb",
+    "bb-plugin",
+    "templates",
+    "threads",
+    "forms"
+  ],
+  "engines": {
+    "bb": ">=0.46.1 <1.0.0",
+    "bbPluginSdk": ">=0.6.52"
+  },
+  "bb": {
+    "name": "New Thread Templates",
+    "description": "Turn reusable first messages into forms and start ordinary BB threads with the right destination and model.",
+    "branding": {
+      "icon": "./icons/templates.svg"
+    },
+    "server": "./server.ts",
+    "app": "./app.tsx",
+    "skills": []
+  },
+  "files": [
+    "dist/",
+    "README.md",
+    "PLUGIN_OVERVIEW.md",
+    "ARCHITECTURE.md",
+    "LICENSE",
+    "*.ts",
+    "*.tsx",
+    "app.css",
+    "ui/",
+    "icons/"
+  ],
+  "dependencies": {
+    "@phosphorco/bb-identity": "0.5.0",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@get-bb/plugin-sdk": "0.6.52",
+    "@playwright/test": "1.63.0",
+    "@testing-library/react": "^16.3.2",
+    "@types/better-sqlite3": "^7.6.12",
+    "@types/bun": "1.3.14",
+    "@types/jsdom": "^27.0.0",
+    "@types/node": "^22",
+    "@types/react": "19.2.2",
+    "@types/react-dom": "19.2.2",
+    "better-sqlite3": "^12.0.0",
+    "bun": "1.3.14",
+    "fake-indexeddb": "6.2.7",
+    "jsdom": "^27.0.0",
+    "react": "19.2.1",
+    "react-dom": "19.2.1",
+    "typescript": "^5.9.3"
+  },
+  "scripts": {
+    "build": "node ../../tools/bb-target-cli.mjs plugin build .",
+    "dev": "node ../../tools/bb-target-cli.mjs plugin dev .",
+    "test": "bun test test/*.test.ts test/*.test.tsx",
+    "test:backend": "bun test test/model*.test.ts test/store*.test.ts test/launch*.test.ts test/backend*.test.ts",
+    "test:app": "bun test test/app*.test.ts test/app*.test.tsx test/browser.test.ts",
+    "typecheck": "tsc --noEmit",
+    "test:browser": "bun test test/browser.test.ts"
+  }
+}
