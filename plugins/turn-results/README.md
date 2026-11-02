@@ -13,6 +13,14 @@ for the shared result protocol. Historical outcome evidence, current artifact
 availability, coverage and source freshness are separate. Missing or pruned
 native history does not erase a previously indexed occurrence.
 
+## In use
+
+![Customer screenshot of Turn Results showing a generated image beneath its original conversation turn](docs/generated-image-in-turn.png)
+
+Actual customer screenshot, shared with permission: a generated image remains
+visible beneath its original turn. The image inside the screenshot is an
+exploratory account-settings mockup, not implemented account-controls functionality.
+
 ## Integration status
 
 Its public dependencies are published exact versions:

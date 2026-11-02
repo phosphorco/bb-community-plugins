@@ -42,6 +42,7 @@
   "files": [
     "dist/",
     "icons/",
+    "docs/",
     "app.tsx",
     "app.css",
     "probe/anchor.ts",
