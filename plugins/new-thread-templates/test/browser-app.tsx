@@ -30,6 +30,23 @@ const rpc = Object.fromEntries(
     },
   ]),
 ) as Record<string, (input: any) => Promise<any>>;
+const configListeners = new Map<string, Set<() => void>>();
+const sdk = {
+  subscribe({
+    event,
+    callback,
+  }: {
+    event: string;
+    callback: (...args: any[]) => void;
+  }) {
+    const listeners = configListeners.get(event) ?? new Set<() => void>();
+    configListeners.set(event, listeners);
+    listeners.add(callback);
+    return () => {
+      listeners.delete(callback);
+    };
+  },
+};
 let slot: ReturnType<typeof renderSlot> | null = null;
 function mount(panel: boolean | "settings" = false) {
   const previous = slot?.container;
@@ -40,18 +57,18 @@ function mount(panel: boolean | "settings" = false) {
       ? renderSlot(
           app.settingsSections[0]!,
           {},
-          { pluginId: "new-thread-templates", rpc },
+          { pluginId: "new-thread-templates", rpc, sdk },
         )
       : panel
         ? renderSlot(
             app.navPanels[0]!,
             { subPath: "" },
-            { pluginId: "new-thread-templates", rpc },
+            { pluginId: "new-thread-templates", rpc, sdk },
           )
         : renderSlot(
             app.homepageSections[0]!,
             { projectId: "project-a" },
-            { pluginId: "new-thread-templates", rpc },
+            { pluginId: "new-thread-templates", rpc, sdk },
           );
   // Fixture supplies the bounded native-panel parent; product owns its scroll region.
   if (panel === true) {
@@ -68,7 +85,13 @@ window.templatesHarness = {
     slot = null;
   },
   emit: async () => {
-    await slot?.behavior.emitRealtime("new-thread-templates:changed", {});
+    for (const suffix of ["catalog", "definitions", "journal"])
+      await slot?.behavior.emitRealtime(
+        `new-thread-templates:${suffix}-changed`,
+        {},
+      );
+    for (const listeners of configListeners.values())
+      for (const callback of listeners) callback();
   },
   reconnect: async () => {
     await slot?.behavior.setRealtimeConnectionState("reconnecting");

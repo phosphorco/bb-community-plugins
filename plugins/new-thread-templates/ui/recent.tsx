@@ -7,7 +7,7 @@ import {
 } from "@phosphorco/bb-identity/react";
 import {
   templatesContract,
-  TEMPLATES_CHANGED,
+  TEMPLATES_JOURNAL_CHANGED,
   type RecentLaunch,
 } from "../rpc-contract.ts";
 import { useMountedRead } from "./read.ts";
@@ -36,7 +36,7 @@ export function RecentLaunches({ onBack }: { onBack(): void }) {
       nextOffset,
     };
   }, [rpc, pageCount]);
-  const recent = useMountedRead(load, TEMPLATES_CHANGED);
+  const recent = useMountedRead(load, TEMPLATES_JOURNAL_CHANGED);
   return (
     <div className="ntt-stack">
       <div className="ntt-row ntt-between">

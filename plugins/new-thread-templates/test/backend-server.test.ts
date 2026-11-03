@@ -98,7 +98,7 @@ test('current-generation native event wakes an unknown observer after replacemen
     await old.harness.lifecycle.dispose();server(current.bb);
     const unknown=templatesContract.launchStatus.output.parse(await current.harness.behavior.callRpc('launchStatus',{operationId}));expect(unknown!.phase).toBe('indeterminate');
     observed=unknown;observing=true;
-    const currentSignals=current.harness.inspection.realtimeSignals.length;
+    const currentSignals=current.harness.inspection.realtimeSignals.filter(signal=>signal.channel===TEMPLATES_CHANGED).length;
     const receipt=f.store.launch(operationId)!.nativeRequest!.pluginMetadata as Record<string,unknown>;
     const listReads=n.harness.callsTo('threads.list').length;
     await current.harness.behavior.emitThreadEvent('thread.created',{thread:makeThreadResponse({id:'unrelated',originPluginId:'another-plugin'})});
@@ -106,22 +106,22 @@ test('current-generation native event wakes an unknown observer after replacemen
     n.metadata.set('invalid-receipt',{...receipt,fingerprint:'mismatch'});
     await current.harness.behavior.emitThreadEvent('thread.created',{thread:makeThreadResponse({id:'invalid-receipt',originPluginId:PLUGIN_ID})});
     expect(f.store.launch(operationId)!.status.phase).toBe('indeterminate');
-    expect(current.harness.inspection.realtimeSignals.length).toBe(currentSignals);
+    expect(current.harness.inspection.realtimeSignals.filter(signal=>signal.channel===TEMPLATES_CHANGED).length).toBe(currentSignals);
     // The retained metadata is committed before the original native HTTP response.
     n.metadata.set('confirmed-after-reload',receipt);
     await current.harness.behavior.emitThreadEvent('thread.active',{thread:makeThreadResponse({id:'confirmed-after-reload',originPluginId:PLUGIN_ID,status:'active'})});
     // Creation and the now-eligible portable user's optional-provider lookup each change once.
-    await Promise.all(reads);expect(current.harness.inspection.realtimeSignals.length).toBe(currentSignals+2);expect(observed).toMatchObject({phase:'succeeded',threadId:'confirmed-after-reload'});expect(readError).toBeNull();
+    await Promise.all(reads);expect(current.harness.inspection.realtimeSignals.filter(signal=>signal.channel===TEMPLATES_CHANGED).length).toBe(currentSignals+2);expect(observed).toMatchObject({phase:'succeeded',threadId:'confirmed-after-reload'});expect(readError).toBeNull();
     expect(n.harness.callsTo('threads.list').length).toBe(listReads);
     hold.resolve({id:'confirmed-after-reload'});await pending;
     expect(f.store.launch(operationId)!.status.threadId).toBe('confirmed-after-reload');
-    expect(old.harness.inspection.realtimeSignals.length).toBe(oldSignals);expect(current.harness.inspection.realtimeSignals.length).toBe(currentSignals+2);
+    expect(old.harness.inspection.realtimeSignals.length).toBe(oldSignals);expect(current.harness.inspection.realtimeSignals.filter(signal=>signal.channel===TEMPLATES_CHANGED).length).toBe(currentSignals+2);
     expect(n.harness.callsTo('threads.spawn')).toHaveLength(1);
-    const settled=current.harness.inspection.realtimeSignals.length;
-    for(let i=0;i<3;i++)await current.harness.behavior.callRpc('launchStatus',{operationId});expect(current.harness.inspection.realtimeSignals.length).toBe(settled);
+    const settled=current.harness.inspection.realtimeSignals.filter(signal=>signal.channel===TEMPLATES_CHANGED).length;
+    for(let i=0;i<3;i++)await current.harness.behavior.callRpc('launchStatus',{operationId});expect(current.harness.inspection.realtimeSignals.filter(signal=>signal.channel===TEMPLATES_CHANGED).length).toBe(settled);
     // A lifecycle notification without any matching receipt cannot fabricate success.
     const unrelatedId=crypto.randomUUID();await current.harness.behavior.emitThreadEvent('thread.created',{thread:makeThreadResponse({id:'no-matching-receipt',originPluginId:PLUGIN_ID})});await Promise.all(reads);expect(await current.harness.behavior.callRpc('launchStatus',{operationId:unrelatedId})).toBeNull();
-    observing=false;const finalSignals=current.harness.inspection.realtimeSignals.length;await current.harness.lifecycle.dispose();await current.harness.behavior.emitThreadEvent('thread.created',{thread:makeThreadResponse({originPluginId:PLUGIN_ID})});expect(current.harness.inspection.realtimeSignals.length).toBe(finalSignals);
+    observing=false;const finalSignals=current.harness.inspection.realtimeSignals.filter(signal=>signal.channel===TEMPLATES_CHANGED).length;await current.harness.lifecycle.dispose();await current.harness.behavior.emitThreadEvent('thread.created',{thread:makeThreadResponse({originPluginId:PLUGIN_ID})});expect(current.harness.inspection.realtimeSignals.filter(signal=>signal.channel===TEMPLATES_CHANGED).length).toBe(finalSignals);
   }finally{observing=false;await old.harness.lifecycle.dispose();await current.harness.lifecycle.dispose();f.close();}
 });
 

@@ -3,7 +3,7 @@ export {assignmentStatusSchema,type AssignmentStatus} from './inbox-assignment-c
 import { defineRpcContract } from '@get-bb/plugin-sdk';
 import { z } from 'zod';
 import { nativeSubmissionSchema, nativeEditorSeedSchema, nativeEnvironmentSchema } from './native-submission';
-import { launchRequestSchema, launchCheckpointSchema, renderContextSchema, invocationSampleSchema, actorSchema, definitionSchema, draftSchema, entrySchema, inputsSchema, issueSchema, revisionSchema } from './model';
+import { launchRequestSchema, launchCheckpointSchema, renderContextSchema, invocationSampleSchema, destinationSchema, environmentPolicySchema, executionSchema, actorSchema, definitionSchema, draftSchema, entrySchema, inputsSchema, issueSchema, revisionSchema } from './model';
 
 const id = z.string().min(1).max(120);
 export {launchRequestSchema,launchCheckpointSchema,type LaunchRequest,type LaunchCheckpoint} from './model';
@@ -35,6 +35,31 @@ export type ResolvedEffects = z.infer<typeof resolvedEffectsSchema>;
 export const previewRequestSchema = z.object({ renderContext:renderContextSchema.optional(), definition: definitionSchema, inputs: inputsSchema, projectId: z.string().optional() }).strict();
 export const previewResultSchema = z.object({ renderContext:renderContextSchema.optional(), issues: z.array(issueSchema), effects: resolvedEffectsSchema.nullable(),nativeSeed:nativeEditorSeedSchema.nullable().optional() }).strict();
 export type PreviewResult = z.infer<typeof previewResultSchema>;
+export const targetDestinationSchema=z.discriminatedUnion('kind',[
+  destinationSchema.options[0],destinationSchema.options[1],
+  z.object({kind:z.literal('new-project'),name:z.string().max(262144),hostId:z.string(),path:z.string(),environment:environmentPolicySchema}).strict(),
+]);
+export const targetPreviewRequestSchema=z.object({destination:targetDestinationSchema,execution:executionSchema,projectId:z.string().optional()}).strict().superRefine((input,ctx)=>{
+  const d=input.destination;const issue=(path:(string|number)[],message:string)=>ctx.addIssue({code:'custom',path,message});
+  if(d.kind==='existing-project'&&!d.projectId.trim()||d.kind==='choose-at-launch'&&!input.projectId?.trim())issue(['destination'],'Choose a destination project.');
+  if(d.kind==='new-project'){
+    if(!d.name.trim()||!d.hostId||!d.path.trim().startsWith('/')||/^\/+$/u.test(d.path.trim()))issue(['destination'],'New projects need a name, enrolled host and existing absolute source directory.');
+    if(d.environment.kind==='reuse'||d.environment.kind==='project-default')issue(['destination','environment'],'New projects require a source checkout or worktree.');
+  }else if(d.hostId&&d.environment.kind==='project-default')issue(['destination','environment'],'A specific machine requires a source checkout or worktree.');
+  if(d.environment.kind==='reuse'&&!d.environment.environmentId)issue(['destination','environment'],'Choose an environment.');
+  if(d.environment.kind==='worktree'&&!d.environment.baseBranch.trim())issue(['destination','environment'],'Choose a base branch.');
+  if(input.execution.kind==='explicit'&&(!input.execution.providerId||!input.execution.model))issue(['execution'],'Choose provider and model.');
+});
+export const targetEffectsSchema=resolvedEffectsSchema.omit({title:true,prompt:true,renderContext:true});
+export const targetPreviewResultSchema=z.object({issues:z.array(issueSchema),effects:targetEffectsSchema.nullable()}).strict();
+export type TargetPreviewRequest=z.infer<typeof targetPreviewRequestSchema>;
+export type TargetEffects=z.infer<typeof targetEffectsSchema>;
+export type TargetPreviewResult=z.infer<typeof targetPreviewResultSchema>;
+export const choicesResultSchema=z.object({projects:z.array(projectChoiceSchema),hosts:z.array(hostChoiceSchema),environments:z.array(environmentChoiceSchema),primaryHostId:z.string().nullable(),warnings:z.array(z.string())}).strict();
+export type TemplatesChoices=z.infer<typeof choicesResultSchema>;
+export const publishedCatalogSchema=z.object({instanceId:z.string().min(1),catalogId:z.string().uuid(),version:z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),revisions:z.array(revisionSchema)}).strict();
+export type PublishedCatalog=z.infer<typeof publishedCatalogSchema>;
+
 export const contextResultSchema = z.object({ projects: z.array(projectChoiceSchema), hosts: z.array(hostChoiceSchema), environments: z.array(environmentChoiceSchema), models: z.array(modelChoiceSchema), actor: actorSchema, session: z.string(), primaryHostId:z.string().nullable(), warnings: z.array(z.string()) }).strict();
 export type TemplatesContext = z.infer<typeof contextResultSchema>;
 export const recentLaunchSchema=z.object({renderContext:renderContextSchema.optional(),requestedRenderContext:renderContextSchema.optional(),status:launchStatusSchema,revision:revisionSchema,requestedProjectId:z.string().optional(),effects:resolvedEffectsSchema.nullable(),nativeSubmission:nativeSubmissionSchema.optional()}).strict();
@@ -44,6 +69,9 @@ export const removalSchema=z.object({templateId:id,removedAt:z.number(),removedB
 export type RemoveRequest=z.infer<typeof removeRequestSchema>;
 export type TemplateRemoval=z.infer<typeof removalSchema>;
 export const templatesContract = defineRpcContract({
+  publishedCatalog:{input:z.object({}).strict(),output:publishedCatalogSchema},
+  choices:{input:z.object({projectId:z.string().optional()}).strict(),output:choicesResultSchema},
+  targetPreview:{input:targetPreviewRequestSchema,output:targetPreviewResultSchema},
   catalog: { input: z.object({}).strict(), output: z.object({ entries: z.array(entrySchema) }).strict() },
   context: { input: z.object({ projectId: z.string().optional(), environmentId: z.string().optional(), hostId: z.string().optional() }).strict(), output: contextResultSchema },
   saveDraft: { input: z.object({ definition: definitionSchema, expectedGeneration: z.number().int().nonnegative().nullable() }).strict(), output: draftSchema },
@@ -60,4 +88,4 @@ export const templatesContract = defineRpcContract({
   launchStatus: { input: z.object({ operationId: z.string().uuid() }).strict(), output: launchStatusSchema.nullable() },
 });
 export const contract = templatesContract;
-export const TEMPLATES_CHANGED = 'new-thread-templates:changed';
+export {TEMPLATES_CHANGED,TEMPLATES_DEFINITIONS_CHANGED,TEMPLATES_CATALOG_CHANGED,TEMPLATES_JOURNAL_CHANGED,TEMPLATES_CONFIG_EVENTS} from './events';

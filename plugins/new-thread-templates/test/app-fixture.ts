@@ -26,6 +26,7 @@ import {
   type RemoveRequest,
   type TemplateRemoval,
   type AssignmentStatus,
+  type TargetPreviewRequest,
 } from "../rpc-contract.ts";
 
 export async function appFixture(instanceId = "templates-app-instance") {
@@ -166,6 +167,14 @@ export async function appFixture(instanceId = "templates-app-instance") {
         context.hosts.find((host) => host.id === targetHost)?.name ??
         targetHost,
       path: d.kind === "new-project" ? d.path : source!.path,
+      nativeEnvironment: {
+        type: "host",
+        hostId: targetHost,
+        workspace: {
+          type: "unmanaged",
+          path: d.kind !== "new-project" && d.hostId ? source!.path : null,
+        },
+      },
       environment:
         d.environment.kind === "reuse"
           ? "Feature worktree"
@@ -186,7 +195,7 @@ export async function appFixture(instanceId = "templates-app-instance") {
             : "model-a",
         reasoningLevel: "medium",
         serviceTier: null,
-        permissionMode: null,
+        permissionMode: "auto",
         inherited: definition.execution.kind === "project-default",
       },
       title: renderText(
@@ -204,7 +213,89 @@ export async function appFixture(instanceId = "templates-app-instance") {
       warnings: [],
     };
   };
+  const configListeners = new Map<string, Set<() => void>>();
+  const sdk = {
+    subscribe({
+      event,
+      callback,
+    }: {
+      event: string;
+      callback: (...args: any[]) => void;
+    }) {
+      const listeners = configListeners.get(event) ?? new Set<() => void>();
+      configListeners.set(event, listeners);
+      listeners.add(callback);
+      return () => {
+        listeners.delete(callback);
+      };
+    },
+  };
+  let catalogVersion = 0,
+    publishedSignature = "";
+  const catalogId = crypto.randomUUID();
   const methods = {
+    publishedCatalog() {
+      if (flags.catalogError)
+        throw new Error("Catalog temporarily unavailable");
+      const revisions = entries.flatMap((entry) =>
+        entry.published ? [structuredClone(entry.published)] : [],
+      );
+      const signature = JSON.stringify(revisions);
+      if (signature !== publishedSignature) {
+        publishedSignature = signature;
+        catalogVersion++;
+      }
+      return { instanceId, catalogId, version: catalogVersion, revisions };
+    },
+    choices() {
+      if (flags.contextError)
+        throw new Error("Context temporarily unavailable");
+      const { projects, hosts, environments, primaryHostId, warnings } =
+        context;
+      return { projects, hosts, environments, primaryHostId, warnings };
+    },
+    targetPreview(input: TargetPreviewRequest) {
+      if (flags.previewError)
+        throw new Error("Preview temporarily unavailable");
+      const destination =
+        input.destination.kind === "new-project"
+          ? { ...input.destination, nameTemplate: "Fixture project" }
+          : input.destination;
+      const definition = {
+        ...starterDefinitions()[0]!,
+        destination,
+        execution: input.execution,
+        fields: [],
+        titleTemplate: "",
+        promptTemplate: "fixture",
+      };
+      const issues = validateDefinition(definition).filter(
+        (issue) =>
+          issue.path.startsWith("destination") ||
+          issue.path.startsWith("execution"),
+      );
+      if (issues.length) return { issues, effects: null };
+      try {
+        const { title, prompt, renderContext, ...resolved } = effects(
+          definition,
+          {},
+          input.projectId,
+        );
+        if (input.destination.kind === "new-project")
+          resolved.projectName = input.destination.name;
+        return { issues: [], effects: resolved };
+      } catch (error) {
+        return {
+          issues: [
+            {
+              path: "destination",
+              message: error instanceof Error ? error.message : String(error),
+            },
+          ],
+          effects: null,
+        };
+      }
+    },
     recentSamples({ templateId }: { templateId: string }) {
       if (flags.samplesError)
         throw new Error("Samples temporarily unavailable");
@@ -513,6 +604,16 @@ export async function appFixture(instanceId = "templates-app-instance") {
   }
   return {
     wire,
+    sdk,
+    emitConfig(event = "project:changed") {
+      for (const callback of configListeners.get(event) ?? []) callback();
+    },
+    configSubscriptionCount() {
+      return [...configListeners.values()].reduce(
+        (count, listeners) => count + listeners.size,
+        0,
+      );
+    },
     handlers,
     calls,
     flags,
@@ -711,4 +812,137 @@ export function assertStrictJson(value: unknown, path = "$input"): void {
     return;
   }
   throw new Error(`RPC value at ${path} is not a JSON value`);
+}
+
+/** Synthetic optional cache I/O stalls around real IndexedDB transactions. */
+export function controlledGalleryIO(factory: IDBFactory) {
+  let transactionMode: IDBTransactionMode = "readwrite";
+  let holdOpen = 0,
+    holdTransaction = 0,
+    opened = 0,
+    closed = 0;
+  const pending: {
+    release(): void;
+    fail(): void;
+    kind: "open" | "transaction";
+  }[] = [];
+  const bound = (target: object, key: PropertyKey) => {
+    const value = Reflect.get(target, key, target);
+    return typeof value === "function" ? value.bind(target) : value;
+  };
+  const wrapped = new Proxy(factory, {
+    get(target, key) {
+      if (key !== "open") return bound(target, key);
+      return (name: string, version?: number) => {
+        const request = target.open(name, version),
+          isCache = name === "new-thread-templates-published-gallery-v1";
+        const stalled = isCache && holdOpen-- > 0;
+        request.addEventListener("success", () => {
+          if (!isCache) return;
+          opened++;
+          const db = request.result,
+            close = db.close.bind(db),
+            nativeTransaction = db.transaction.bind(db);
+          let didClose = false;
+          db.close = () => {
+            if (!didClose) {
+              closed++;
+              didClose = true;
+            }
+            close();
+          };
+          db.transaction = (
+            ...args: Parameters<IDBDatabase["transaction"]>
+          ) => {
+            const tx = nativeTransaction(...args);
+            if (!(args[1] === transactionMode && holdTransaction-- > 0))
+              return tx;
+            const callbacks: (() => void)[] = [];
+            pending.push({
+              kind: "transaction",
+              release() {
+                for (const callback of callbacks.splice(0)) callback();
+              },
+              fail() {
+                try {
+                  tx.abort();
+                } catch {}
+              },
+            });
+            const wrapRequest = (raw: IDBRequest) =>
+              new Proxy<IDBRequest>(raw, {
+                get: bound,
+                set(t, property, callback) {
+                  if (property === "onsuccess") {
+                    t.addEventListener("success", (event) =>
+                      callbacks.push(() => callback.call(t, event)),
+                    );
+                    return true;
+                  }
+                  return Reflect.set(t, property, callback, t);
+                },
+              });
+            return new Proxy(tx, {
+              get(t, property) {
+                if (property !== "objectStore") return bound(t, property);
+                return (storeName: string) => {
+                  const store = t.objectStore(storeName);
+                  return new Proxy(store, {
+                    get(object, field) {
+                      if (field !== "get") return bound(object, field);
+                      return (query: IDBValidKey | IDBKeyRange) =>
+                        wrapRequest(object.get(query));
+                    },
+                  });
+                };
+              },
+              set(t, property, callback) {
+                if (property === "oncomplete") {
+                  t.addEventListener("complete", (event) =>
+                    callbacks.push(() => callback.call(t, event)),
+                  );
+                  return true;
+                }
+                return Reflect.set(t, property, callback, t);
+              },
+            });
+          };
+        });
+        if (!stalled) return request;
+        return new Proxy<IDBOpenDBRequest>(request, {
+          get: bound,
+          set(t, property, callback) {
+            if (property !== "onsuccess")
+              return Reflect.set(t, property, callback, t);
+            t.addEventListener("success", (event) =>
+              pending.push({
+                kind: "open",
+                release: () => callback.call(t, event),
+                fail: () => t.onerror?.call(t, new Event("error")),
+              }),
+            );
+            return true;
+          },
+        });
+      };
+    },
+  });
+  return {
+    factory: wrapped,
+    pending,
+    holdNextOpen() {
+      holdOpen = 1;
+    },
+    holdAllOpens() {
+      holdOpen = Infinity;
+    },
+    holdNextTransaction(mode: IDBTransactionMode = "readwrite") {
+      transactionMode = mode;
+      holdTransaction = 1;
+    },
+    stats: () => ({ opened, closed }),
+    releaseAll() {
+      for (const item of pending.splice(0)) item.release();
+    },
+  };
 }

@@ -15,8 +15,12 @@ import {
   type TemplateDefinition,
   type TemplateEntry,
 } from "../model.ts";
-import { templatesContract, TEMPLATES_CHANGED } from "../rpc-contract.ts";
-import { useMountedRead } from "./read.ts";
+import {
+  templatesContract,
+  TEMPLATES_DEFINITIONS_CHANGED,
+} from "../rpc-contract.ts";
+import { useMountedRead, useMountedResource } from "./read.ts";
+import { useConfigurationEvents } from "./config-events.ts";
 import {
   DestinationEditor,
   ModelEditor,
@@ -90,15 +94,16 @@ export function Management({
     };
   }, []);
   const load = useCallback(() => rpc.call("catalog", {}), [rpc]);
-  const catalog = useMountedRead(load, TEMPLATES_CHANGED);
+  const catalog = useMountedRead(load, TEMPLATES_DEFINITIONS_CHANGED);
   const loadContext = useCallback(
     () =>
-      rpc.call("context", {
+      rpc.call("choices", {
         ...(previewProject ? { projectId: previewProject } : {}),
       }),
     [rpc, previewProject],
   );
-  const context = useMountedRead(loadContext, TEMPLATES_CHANGED);
+  const context = useMountedResource(loadContext);
+  useConfigurationEvents(context.refresh);
   const entries = catalog.value?.entries ?? [];
   const select = (entry: TemplateEntry) => {
     setRestored(null);

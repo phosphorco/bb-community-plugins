@@ -1,5 +1,11 @@
 import "./app.css";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import {
   definePluginApp,
   useBbNavigate,
@@ -12,17 +18,22 @@ import {
   useBbIdentityClient,
   useIdentitySession,
 } from "@phosphorco/bb-identity/react";
-import { templatesContract, TEMPLATES_CHANGED } from "./rpc-contract.ts";
+import type { templatesContract } from "./rpc-contract.ts";
+import { TEMPLATES_CATALOG_CHANGED } from "./events.ts";
 import { inputDraftResource, type PublishedRevision } from "./model.ts";
 import { browserDrafts } from "./ui/drafts.ts";
 import type { DraftStorage } from "@phosphorco/bb-identity/state";
 import type { PersonalDraft } from "./model.ts";
 import { TemplatesIcon, TemplatePurposeIcon } from "./ui/icon.tsx";
-import { useMountedRead } from "./ui/read.ts";
-import { TemplateRun } from "./ui/run.tsx";
-import { rememberFormReturn, takeFormReturn } from "./ui/return.ts";
+import { galleryCache } from "./ui/gallery-cache.ts";
+import { useMountedRead, type MountedReadContext } from "./ui/read.ts";
+import {
+  rememberFormReturn,
+  takeFormReturn,
+  armFormReturn,
+} from "./ui/return.ts";
 import { mountMobileTemplates } from "./ui/mobile-home.ts";
-import { Management } from "./ui/management.tsx";
+import { DeferredScreen, templateScreens } from "./ui/deferred-screen.tsx";
 
 function TemplateGallery({
   projectId,
@@ -31,8 +42,62 @@ function TemplateGallery({
   const rpc = useRpc<typeof templatesContract>(),
     navigate = useBbNavigate(),
     session = useIdentitySession();
-  const load = useCallback(() => rpc.call("catalog", {}), [rpc]);
-  const catalog = useMountedRead(load, TEMPLATES_CHANGED);
+  const liveSession = useRef(session);
+  liveSession.current = session;
+  const origin = window.location.origin;
+  const load = useCallback(
+    async (read: MountedReadContext) => {
+      // Metadata ticket precedes dispatch, even before the first public instance fact.
+      const ticket = await galleryCache.beginRequest(origin);
+      if (!read.isCurrent()) throw new Error("Templates read was superseded.");
+      const value = await rpc.call("publishedCatalog", {});
+      const live = liveSession.current;
+      if (live.status === "ready" && live.instanceId !== value.instanceId)
+        throw new Error(
+          "Templates belongs to a different instance. Reconnect to refresh it.",
+        );
+      return galleryCache.accept(
+        ticket(value.instanceId),
+        value,
+        read.isCurrent,
+      );
+    },
+    [rpc, origin],
+  );
+  const instanceId = session.status === "ready" ? session.instanceId : null;
+  const catalog = useMountedRead(
+    load,
+    TEMPLATES_CATALOG_CHANGED,
+    instanceId ? galleryCache.readMemory({ origin, instanceId }) : null,
+  );
+  const previousInstance = useRef(instanceId);
+  useEffect(() => {
+    const previous = previousInstance.current;
+    previousInstance.current = instanceId;
+    if (
+      instanceId &&
+      ((previous && previous !== instanceId) ||
+        (catalog.value && catalog.value.instanceId !== instanceId))
+    )
+      catalog.refresh();
+  }, [instanceId, catalog.value, catalog.refresh]);
+  useLayoutEffect(() => {
+    if (!instanceId) return;
+    let current = true;
+    const scope = { origin, instanceId };
+    catalog.seed(galleryCache.readMemory(scope));
+    void galleryCache.read(scope).then((value) => {
+      if (current) catalog.seed(value);
+    });
+    return () => {
+      current = false;
+    };
+  }, [instanceId, origin, catalog.seed]);
+  const currentCatalog =
+    instanceId && catalog.value?.instanceId === instanceId
+      ? catalog.value
+      : null;
+  const verified = !!instanceId && !!currentCatalog && catalog.fresh;
   const [search, setSearch] = useState(""),
     [selected, setSelected] = useState<PublishedRevision | null>(null);
   const [returnProject, setReturnProject] = useState<string | null | undefined>(
@@ -47,7 +112,8 @@ function TemplateGallery({
   useEffect(() => {
     if (
       !returnOwner ||
-      !catalog.value ||
+      !currentCatalog ||
+      !verified ||
       admittedReturn.current === returnOwner
     )
       return;
@@ -62,10 +128,10 @@ function TemplateGallery({
     }
     const restored = takeFormReturn(returnOwner);
     if (!restored) return;
-    const live = catalog.value.entries.find(
-      (e) => e.id === restored.revision.templateId,
+    const live = currentCatalog.revisions.find(
+      (revision) => revision.templateId === restored.revision.templateId,
     );
-    if (!live?.published) {
+    if (!live) {
       setReturnError(
         "The edited template is no longer published. Your inputs remain saved; choose another template or open Manage.",
       );
@@ -73,16 +139,10 @@ function TemplateGallery({
     }
     setSelected(restored.revision);
     setReturnProject(restored.projectId);
-  }, [returnOwner, catalog.value]);
+  }, [returnOwner, currentCatalog, verified]);
   const lastCard = useRef<HTMLButtonElement | null>(null);
   const lastCardId = useRef<string | null>(null);
-  const entries = useMemo(
-    () =>
-      catalog.value?.entries.flatMap((e) =>
-        e.published ? [e.published] : [],
-      ) ?? [],
-    [catalog.value],
-  );
+  const entries = currentCatalog?.revisions ?? [];
   const matches = entries.filter((e) =>
     `${e.definition.name} ${e.definition.description}`
       .toLowerCase()
@@ -104,7 +164,10 @@ function TemplateGallery({
       {catalog.error && (
         <div className="ntt-alert" role="alert">
           Templates could not refresh: {catalog.error}
-          {catalog.value && " Showing the last available templates."}
+          {currentCatalog && " Showing the last available templates."}
+          <button type="button" className="ntt-link" onClick={catalog.refresh}>
+            Retry templates
+          </button>
         </div>
       )}
       {returnError && (
@@ -113,12 +176,12 @@ function TemplateGallery({
         </p>
       )}
       {selected ? (
-        <TemplateRun
-          key={`${selected.templateId}:${selected.revision}`}
-          template={selected}
-          projectId={returnProject === undefined ? projectId : returnProject}
-          drafts={drafts}
-          onEdit={() => {
+        <DeferredScreen
+          key={`${returnOwner}:${selected.templateId}:${selected.revision}`}
+          load={templateScreens.run}
+          heading={selected.definition.name}
+          selected
+          onReload={() => {
             if (!returnOwner) return;
             const problem = rememberFormReturn(
               returnOwner,
@@ -126,15 +189,39 @@ function TemplateGallery({
               returnProject === undefined ? projectId : returnProject,
             );
             setReturnError(problem);
-            if (!problem)
-              navigate.toPluginPanel("templates", {
-                subPath: `compose/edit/${encodeURIComponent(selected.templateId)}`,
-              });
+            if (problem) return;
+            const armProblem = armFormReturn(returnOwner, selected.templateId);
+            setReturnError(armProblem);
+            if (armProblem) return;
+            window.location.reload();
           }}
           onBack={() => {
             setSelected(null);
             setReturnProject(undefined);
             requestAnimationFrame(() => lastCard.current?.focus());
+          }}
+          screenProps={{
+            template: selected,
+            projectId: returnProject === undefined ? projectId : returnProject,
+            drafts,
+            onEdit: () => {
+              if (!returnOwner) return;
+              const problem = rememberFormReturn(
+                returnOwner,
+                selected,
+                returnProject === undefined ? projectId : returnProject,
+              );
+              setReturnError(problem);
+              if (!problem)
+                navigate.toPluginPanel("templates", {
+                  subPath: `compose/edit/${encodeURIComponent(selected.templateId)}`,
+                });
+            },
+            onBack: () => {
+              setSelected(null);
+              setReturnProject(undefined);
+              requestAnimationFrame(() => lastCard.current?.focus());
+            },
           }}
         />
       ) : (
@@ -167,7 +254,12 @@ function TemplateGallery({
               New template
             </button>
           </div>
-          {catalog.loading && !catalog.value ? (
+          {!verified && entries.length > 0 && (
+            <p className="ntt-help" role="status">
+              Checking templates…
+            </p>
+          )}
+          {catalog.loading && !currentCatalog ? (
             <p role="status" className="ntt-muted">
               Loading templates…
             </p>
@@ -182,7 +274,9 @@ function TemplateGallery({
                   }}
                   type="button"
                   className="ntt-card"
+                  disabled={!verified}
                   onClick={(e) => {
+                    if (!verified || !catalog.isFresh()) return;
                     lastCard.current = e.currentTarget;
                     lastCardId.current = template.templateId;
                     setSelected(template);
@@ -240,7 +334,7 @@ export function TemplatesPanel(props: PluginNavPanelProps) {
       }
     >
       <BbIdentity.Context pendingEdits="preserve">
-        <Management {...props} />
+        <DeferredManagement {...props} />
       </BbIdentity.Context>
     </BbIdentity.Provider>
   );
@@ -257,9 +351,41 @@ export function TemplatesSettings() {
       }
     >
       <BbIdentity.Context pendingEdits="preserve">
-        <Management subPath="" surface="settings" />
+        <DeferredManagement subPath="" surface="settings" />
       </BbIdentity.Context>
     </BbIdentity.Provider>
+  );
+}
+function DeferredManagement(
+  props: PluginNavPanelProps & { surface?: "panel" | "settings" },
+) {
+  const navigate = useBbNavigate(),
+    session = useIdentitySession();
+  const owner =
+    session.status === "ready"
+      ? `${session.instanceId}:${session.actor.identity.key}`
+      : "";
+  return (
+    <DeferredScreen
+      key={owner}
+      load={templateScreens.management}
+      screenProps={props}
+      heading="Templates"
+      settings={props.surface === "settings"}
+      onBack={() => {
+        if (owner && props.subPath.startsWith("compose/edit/")) {
+          try {
+            armFormReturn(
+              owner,
+              decodeURIComponent(props.subPath.slice("compose/edit/".length)),
+            );
+          } catch {
+            /* Return to chooser for malformed routes. */
+          }
+        }
+        navigate.toCompose();
+      }}
+    />
   );
 }
 export default definePluginApp((app) => {

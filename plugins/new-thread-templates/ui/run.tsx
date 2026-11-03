@@ -24,7 +24,7 @@ import {
 } from "../model.ts";
 import {
   templatesContract,
-  TEMPLATES_CHANGED,
+  TEMPLATES_JOURNAL_CHANGED,
   type LaunchStatus,
   type LaunchRequest,
 } from "../rpc-contract.ts";
@@ -35,7 +35,13 @@ import { AssignmentResult } from "./assignment.tsx";
 import { RenderClock } from "./render-clock.tsx";
 import { InputFields } from "./fields.tsx";
 import { EffectsSummary, ProjectSelect } from "./destination.tsx";
-import { useMountedRead } from "./read.ts";
+import { useMountedRead, useMountedResource } from "./read.ts";
+import { useConfigurationEvents } from "./config-events.ts";
+import {
+  projectTemplateTarget,
+  renderTemplatePreview,
+  composeTemplatePreview,
+} from "../template-preview.ts";
 import {
   decodeNativeSubmission,
   publicNativeSeed,
@@ -221,10 +227,10 @@ export function TemplateRun({
   // A completed reference stays pending until its removal is acknowledged.
   const pending = !!operationId;
   const loadContext = useCallback(
-    () => rpc.call("context", { ...(chosen ? { projectId: chosen } : {}) }),
+    () => rpc.call("choices", { ...(chosen ? { projectId: chosen } : {}) }),
     [rpc, chosen],
   );
-  const context = useMountedRead(loadContext, TEMPLATES_CHANGED);
+  const context = useMountedResource(loadContext);
   const initialClock = useMemo(
     () => createRenderContext(template.definition.timeZone ?? "UTC"),
     [
@@ -235,49 +241,71 @@ export function TemplateRun({
     ],
   );
   const renderContext = personal?.renderContext ?? initialClock;
-  const signature = JSON.stringify({
-    definition: template.definition,
+  const localPreview = useMemo(
+    () => renderTemplatePreview(template.definition, inputs, renderContext),
+    [template.definition, inputs, renderContext],
+  );
+  const projection = projectTemplateTarget(
+    template.definition,
     inputs,
-    projectId: chosen,
+    chosen || undefined,
     renderContext,
+  );
+  const targetKey = JSON.stringify({
+    templateId: template.templateId,
+    revision: template.revision,
+    request: projection.request,
   });
-  const [settled, setSettled] = useState(signature);
-  useEffect(() => {
-    const timer = setTimeout(() => setSettled(signature), 250);
-    return () => clearTimeout(timer);
-  }, [signature]);
-  const loadPreview = useCallback(async () => {
-    const captured = JSON.parse(settled) as {
-      definition: PublishedRevision["definition"];
-      inputs: Inputs;
-      projectId: string;
-      renderContext: typeof renderContext;
+  const loadTarget = useCallback(async () => {
+    const captured = JSON.parse(targetKey) as {
+      request: typeof projection.request;
     };
     return {
-      signature: settled,
-      result: await rpc.call("preview", {
-        definition: captured.definition,
-        inputs: captured.inputs,
-        renderContext: captured.renderContext,
-        ...(captured.projectId ? { projectId: captured.projectId } : {}),
-      }),
+      key: targetKey,
+      result: captured.request
+        ? await rpc.call("targetPreview", captured.request)
+        : { issues: [], effects: null },
     };
-  }, [rpc, settled]);
-  const preview = useMountedRead(loadPreview, TEMPLATES_CHANGED);
-  const currentPreview =
-    preview.value?.signature === signature ? preview.value.result : null;
+  }, [rpc, targetKey]);
+  const target = useMountedResource(loadTarget);
+  const refreshConfiguration = useCallback(() => {
+    context.refresh();
+    target.refresh();
+  }, [context.refresh, target.refresh]);
+  useConfigurationEvents(refreshConfiguration);
+  const targetSnapshot =
+    target.value?.key === targetKey ? target.value.result : null;
+  const currentPreview = composeTemplatePreview(
+    localPreview,
+    projection.issues.length
+      ? { issues: projection.issues, effects: null }
+      : (targetSnapshot ?? { issues: [], effects: null }),
+    renderContext,
+  );
+  const authoritativePreview =
+    target.fresh && targetSnapshot ? currentPreview : null;
   const loadHistory = useCallback(
     async () =>
       operationId ? rpc.call("recentLaunches", {}) : { launches: [] },
     [rpc, operationId],
   );
-  const history = useMountedRead(loadHistory, TEMPLATES_CHANGED);
+  const history = useMountedRead(loadHistory, TEMPLATES_JOURNAL_CHANGED);
   const receipt = history.value?.launches.find(
     (launch) => launch.status.operationId === operationId,
   );
   const effective = pending
     ? (receipt?.effects ?? null)
-    : (currentPreview?.effects ?? null);
+    : (authoritativePreview?.effects ?? null);
+  const visibleEffects = pending
+    ? (receipt?.effects ?? null)
+    : targetSnapshot?.effects
+      ? {
+          ...targetSnapshot.effects,
+          renderContext,
+          title: localPreview.title ?? "",
+          prompt: localPreview.prompt ?? "",
+        }
+      : null;
   const edit = (next: PersonalDraft) => {
     const result = binding?.edit(next);
     if (result && !result.ok) setWriteError(result.error.message);
@@ -319,7 +347,7 @@ export function TemplateRun({
         : null,
     [rpc, operationId],
   );
-  const journal = useMountedRead(loadStatus, TEMPLATES_CHANGED);
+  const journal = useMountedRead(loadStatus, TEMPLATES_JOURNAL_CHANGED);
   const matchesOperation = (
     captured: NonNullable<typeof binding>,
     id: string,
@@ -652,8 +680,10 @@ export function TemplateRun({
       focusFirst(validation.issues);
       return;
     }
-    const seed = legacyOrigin?.seed ?? currentPreview?.nativeSeed;
-    if (!seed || (!legacyOrigin && !currentPreview?.effects?.projectId)) {
+    const seed =
+      legacyOrigin?.seed ??
+      (target.isFresh() ? authoritativePreview?.nativeSeed : null);
+    if (!seed || (!legacyOrigin && !authoritativePreview?.effects?.projectId)) {
       setWriteError(
         "BB editor is available for existing projects. This template creates its project when sent.",
       );
@@ -679,10 +709,10 @@ export function TemplateRun({
           inputs: structuredClone(validation.inputs),
           ...(chosen ? { projectId: chosen } : {}),
           seed: structuredClone(seed),
-          title: currentPreview!.effects!.title,
+          title: authoritativePreview!.effects!.title,
           createdAt: Date.now(),
           renderContext: structuredClone(
-            currentPreview!.renderContext ?? renderContext,
+            authoritativePreview!.renderContext ?? renderContext,
           ),
         };
     createdEditors.current.add(origin.editorDraftId);
@@ -871,13 +901,15 @@ export function TemplateRun({
       focusFirst(validation.issues);
       return;
     }
-    if (!effective) {
-      const errors = currentPreview?.issues ?? [
-        {
-          path: "destination",
-          message: "Wait for the final destination and model to resolve.",
-        },
-      ];
+    if (!effective || !target.isFresh()) {
+      const errors = currentPreview.issues.length
+        ? currentPreview.issues
+        : [
+            {
+              path: "destination",
+              message: "Wait for the final destination and model to resolve.",
+            },
+          ];
       setIssues(errors);
       focusFirst(errors);
       return;
@@ -1376,9 +1408,9 @@ export function TemplateRun({
           Destination choices could not refresh: {context.error}
         </div>
       )}
-      {preview.error && (
+      {target.error && (
         <div className="ntt-alert" role="alert">
-          Final launch details are unavailable: {preview.error}
+          Final launch details are unavailable: {target.error}
         </div>
       )}
       {nativeVisited && ownsNative && nativeOrigin && ready && (
@@ -1476,8 +1508,8 @@ export function TemplateRun({
           disabled={!ready || busy || pending}
           onRefresh={pending ? undefined : refreshTime}
         />
-        {effective && !details && (
-          <EffectsSummary effects={effective} compact />
+        {visibleEffects && !details && (
+          <EffectsSummary effects={visibleEffects} compact />
         )}
         {!effective &&
           currentPreview?.issues
@@ -1500,8 +1532,8 @@ export function TemplateRun({
         )}
         {details && (
           <div className="ntt-stack">
-            {effective && <EffectsSummary effects={effective} />}
-            {effective?.warnings.map((w, i) => (
+            {visibleEffects && <EffectsSummary effects={visibleEffects} />}
+            {visibleEffects?.warnings.map((w, i) => (
               <p className="ntt-help" key={i}>
                 {w}
               </p>
@@ -1516,14 +1548,20 @@ export function TemplateRun({
             <div>
               <strong>Thread title</strong>
               <pre className="ntt-preview">
-                {effective?.title ?? "Complete the form to resolve the title."}
+                {pending
+                  ? (receipt?.effects?.title ?? "Checking saved title…")
+                  : (localPreview.title ??
+                    "Complete the form to resolve the title.")}
               </pre>
             </div>
             <div>
               <strong>First message</strong>
               <pre className="ntt-preview">
-                {effective?.prompt ??
-                  "Complete the form to resolve the first message."}
+                {pending
+                  ? (receipt?.effects?.prompt ??
+                    "Checking saved first message…")
+                  : (localPreview.prompt ??
+                    "Complete the form to resolve the first message.")}
               </pre>
             </div>
           </div>
@@ -1640,14 +1678,14 @@ export function TemplateRun({
                   className="ntt-link"
                   disabled={
                     openingEditor ||
-                    (!ownsNative && !currentPreview?.nativeSeed)
+                    (!ownsNative && !authoritativePreview?.nativeSeed)
                   }
                   onClick={() => void openNative()}
                 >
                   {ownsNative ? "Resume BB editor" : "Edit with BB"}
                 </button>
               </div>
-              {!currentPreview?.nativeSeed &&
+              {!authoritativePreview?.nativeSeed &&
                 template.definition.destination.kind === "new-project" &&
                 !ownsNative && (
                   <p className="ntt-help">

@@ -5,7 +5,11 @@ import {
   type ExperimentalProviderModelPickerValue,
 } from "@get-bb/plugin-sdk/app";
 import type { TemplateDefinition } from "../model.ts";
-import type { ResolvedEffects, TemplatesContext } from "../rpc-contract.ts";
+import type {
+  ResolvedEffects,
+  TemplatesContext,
+  TemplatesChoices,
+} from "../rpc-contract.ts";
 import { TextField } from "./fields.tsx";
 
 export function ProjectSelect({
@@ -16,7 +20,7 @@ export function ProjectSelect({
   label = "Destination project",
   disabled,
 }: {
-  context: TemplatesContext;
+  context: TemplatesContext | TemplatesChoices;
   value: string;
   onChange(value: string): void;
   id?: string;
@@ -50,7 +54,7 @@ export function DestinationEditor({
 }: {
   definition: TemplateDefinition;
   change(next: TemplateDefinition): void;
-  context: TemplatesContext | null;
+  context: TemplatesContext | TemplatesChoices | null;
 }) {
   const destination = definition.destination,
     policy = destination.environment;

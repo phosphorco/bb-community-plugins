@@ -16,7 +16,10 @@ import {
   type RenderContext,
   type TemplateDefinition,
 } from "../model.ts";
-import { templatesContract, TEMPLATES_CHANGED } from "../rpc-contract.ts";
+import {
+  templatesContract,
+  TEMPLATES_JOURNAL_CHANGED,
+} from "../rpc-contract.ts";
 import { InputFields } from "./fields.tsx";
 import { useMountedRead } from "./read.ts";
 import { RenderClock, TimeZoneField } from "./render-clock.tsx";
@@ -93,7 +96,7 @@ function PersonalPromptWorkbench({
         : { samples: [] },
     [rpc, eligible, definition.id],
   );
-  const recent = useMountedRead(load, TEMPLATES_CHANGED);
+  const recent = useMountedRead(load, TEMPLATES_JOURNAL_CHANGED);
   const validation = useMemo(
     () => validateInputs(definition, inputs),
     [definition, inputs],

@@ -24,18 +24,23 @@ export function rememberFormReturn(
     return "The selected form could not be retained for return. Try again or open Manage.";
   }
 }
-export function armFormReturn(owner: string, templateId: string): void {
+export function armFormReturn(
+  owner: string,
+  templateId: string,
+): string | null {
   try {
     const raw = sessionStorage.getItem(key(owner));
-    if (!raw) return;
+    if (!raw) throw new Error("Missing selected form return");
     const value = handoffSchema.parse(JSON.parse(raw));
-    if (value.revision.templateId === templateId)
-      sessionStorage.setItem(
-        key(owner),
-        JSON.stringify({ ...value, armed: true }),
-      );
+    if (value.revision.templateId !== templateId)
+      throw new Error("Selected form return changed");
+    sessionStorage.setItem(
+      key(owner),
+      JSON.stringify({ ...value, armed: true }),
+    );
+    return null;
   } catch {
-    /* Supported compose navigation still returns to the chooser. */
+    return "The selected form could not be retained for return. Try again or open Manage.";
   }
 }
 export function takeFormReturn(

@@ -2,7 +2,9 @@ import type { BbPluginApi } from '@get-bb/plugin-sdk';
 import { z } from 'zod';
 import {nativeEnvironmentSchema,nativeInputSchema,nativeSubmissionSchema,executionSourcesSchema,type NativeSubmission,type NativeEditorSeed,nativeEditorSeedSchema} from './native-submission';
 import { PLUGIN_ID, renderText, validateDefinition, validateInputs, type Inputs, type TemplateDefinition, type RenderContext,createRenderContext,renderContextSchema,isValidTimeZone } from './model';
-import type { PreviewResult, ResolvedEffects, TemplatesContext } from './rpc-contract';
+import {projectTemplateTarget,renderTemplatePreview,composeTemplatePreview} from './template-preview';
+import {targetPreviewRequestSchema} from './rpc-contract';
+import type { TargetPreviewRequest,TargetPreviewResult,TargetEffects,TemplatesChoices,PreviewResult, ResolvedEffects, TemplatesContext } from './rpc-contract';
 import type { LaunchRecord } from './store';
 import { canonical } from './store';
 
@@ -62,13 +64,23 @@ export class NativeTemplates implements NativePort {
   }
   async createProject(c:NonNullable<Preparation['creation']>) {return (await this.sdk.projects.create({name:c.name,source:{hostId:c.hostId,path:c.path,type:'local_path'}})).id;}
   async resolve(definition:TemplateDefinition,inputs:Inputs,projectId?:string,confirmedProjectId?:string,providedContext?:RenderContext):Promise<Preparation> {
-    const renderContext=this.renderingContext(definition,providedContext);
-    const d=definition.destination;const warnings:string[]=[];
+    const renderContext=this.renderingContext(definition,providedContext),projection=projectTemplateTarget(definition,inputs,projectId,renderContext);
+    if(!projection.request)throw new Error(projection.issues.map(i=>i.message).join('; '));
+    const target=await this.resolveTarget(projection.request,confirmedProjectId);
+    return {...target,effects:{...target.effects,renderContext,title:renderText(definition.titleTemplate,inputs,4000,renderContext),prompt:renderText(definition.promptTemplate,inputs,undefined,renderContext)}};
+  }
+  async targetPreview(input:TargetPreviewRequest):Promise<TargetPreviewResult> {
+    try{const prepared=await this.resolveTarget(input);return {issues:[],effects:prepared.effects};}
+    catch(error){return {issues:[{path:'destination',message:error instanceof Error?error.message:String(error)}],effects:null};}
+  }
+  async resolveTarget(input:TargetPreviewRequest,confirmedProjectId?:string):Promise<Omit<Preparation,'effects'>&{effects:TargetEffects}> {
+    input=targetPreviewRequestSchema.parse(input);
+    const d=input.destination,projectId=input.projectId;const warnings:string[]=[];
     if(d.kind!=='new-project'&&d.hostId&&d.environment.kind==='project-default')throw new Error('A specific machine requires a source checkout or worktree. Use BB default machine to keep automatic environment selection.');
     let creation:Preparation['creation']=null;
     let finalId=confirmedProjectId??(d.kind==='existing-project'?d.projectId:d.kind==='choose-at-launch'?projectId:undefined);
     if(d.kind==='new-project') {
-      const c={name:renderText(d.nameTemplate,inputs,undefined,renderContext).trim(),hostId:d.hostId,path:normalizeSourcePath(d.path)};
+      const c={name:d.name.trim(),hostId:d.hostId,path:normalizeSourcePath(d.path)};
       if(!c.name || !c.hostId || !c.path.startsWith('/') || c.path==='/')throw new Error('New projects need a name, enrolled host and existing absolute project directory.');
       finalId=confirmedProjectId??await this.findProject(c)??undefined;
       if(!finalId)creation=c;
@@ -113,7 +125,7 @@ export class NativeTemplates implements NativePort {
     const defaults=finalId?await this.sdk.projects.defaultExecutionOptions({projectId:finalId}):null;
     const route=routing.kind==='environment'?{environmentId:routing.environmentId}:{hostId, ...(finalId?{projectId:finalId}:{})};
     const providers=(await this.sdk.providers.list(routing.kind==='environment'?{environmentId:routing.environmentId}:{hostId})).filter(p=>p.available);
-    const explicit=definition.execution.kind==='explicit'?definition.execution:null;
+    const explicit=input.execution.kind==='explicit'?input.execution:null;
     const enabledCatalog=await this.sdk.providers.catalog();
     const storedDefaults=defaults&&enabledCatalog.some(p=>p.id===defaults.providerId&&p.enabled)?defaults:null;
     const defaultProvider=storedDefaults?.providerId??config.generalSettings.defaultProviderId;
@@ -141,7 +153,7 @@ export class NativeTemplates implements NativePort {
     if(explicit?.serviceTier && explicit.serviceTier!=='default' && !tierOptions.some(t=>t.id===explicit.serviceTier))throw new Error('The selected service tier is unavailable for this model.');
     const execution:Preparation['execution']=explicit?{providerId,model:chosen.model,...(explicit.reasoningLevel?{reasoningLevel:explicit.reasoningLevel}:{}),...(explicit.serviceTier?{serviceTier:explicit.serviceTier}:{}),executionInputSources:{providerId:'explicit',model:'explicit',...(explicit.reasoningLevel?{reasoningLevel:'explicit' as const}:{}),...(explicit.serviceTier?{serviceTier:'explicit' as const}:{})}}:{};
     if(!explicit)warnings.push('Uses this project’s model and environment defaults at launch.');
-    return {creation,environment,execution,effects:{renderContext,projectId:finalId??null,projectName:project?.name??creation?.name??'',hostId,hostName:host.name,path,environment:environmentLabel,mode:'template',nativeEnvironment:environment,createsProject:creation!==null,routing,execution:{providerId,model:chosen.model,reasoningLevel:reasoning,serviceTier:tier,permissionMode:inheritedDefaults?.permissionMode??null,inherited:!explicit},title:renderText(definition.titleTemplate,inputs,4000,renderContext),prompt:renderText(definition.promptTemplate,inputs,undefined,renderContext),warnings}};
+    return {creation,environment,execution,effects:{projectId:finalId??null,projectName:project?.name??creation?.name??'',hostId,hostName:host.name,path,environment:environmentLabel,mode:'template',nativeEnvironment:environment,createsProject:creation!==null,routing,execution:{providerId,model:chosen.model,reasoningLevel:reasoning,serviceTier:tier,permissionMode:inheritedDefaults?.permissionMode??null,inherited:!explicit},warnings}};
   }
   async resolveNative(definition:TemplateDefinition,inputs:Inputs,raw:NativeSubmission,originProjectId?:string,providedContext?:RenderContext):Promise<Preparation> {
     const renderContext=this.renderingContext(definition,providedContext);
@@ -232,31 +244,23 @@ export class NativeTemplates implements NativePort {
     };
   }
   async preview(definition:TemplateDefinition,submitted:Inputs,projectId?:string,providedContext?:RenderContext):Promise<PreviewResult> {
-    const checked=validateInputs(definition,submitted);const issues=[...validateDefinition(definition),...checked.issues];
-    if(issues.length)return {issues,effects:null};
+    const definitionIssues=validateDefinition(definition);if(definitionIssues.length)return {issues:definitionIssues,effects:null};
     try{
-      const renderContext=this.renderingContext(definition,providedContext);
-      const prepared=await this.resolve(definition,checked.inputs,projectId,undefined,renderContext),e=prepared.effects;
-      const nativeSeed:NativeEditorSeed|null=e.projectId?nativeEditorSeedSchema.parse({defaultProjectId:e.projectId,defaultEnvironment:prepared.environment,initialPrompt:e.prompt,defaultProviderId:e.execution.providerId,defaultModel:e.execution.model,...(e.execution.reasoningLevel?{defaultReasoningLevel:e.execution.reasoningLevel}:{}),...(e.execution.serviceTier?{defaultServiceTier:e.execution.serviceTier}:{}),...(e.execution.permissionMode?{defaultPermissionMode:e.execution.permissionMode}:{})}):null;
-      return {renderContext,issues:[],effects:e,nativeSeed};
+      const renderContext=this.renderingContext(definition,providedContext),local=renderTemplatePreview(definition,submitted,renderContext);
+      if(local.issues.length)return {renderContext,issues:local.issues,effects:null};
+      const projection=projectTemplateTarget(definition,local.inputs,projectId,renderContext);
+      if(!projection.request)return {renderContext,issues:projection.issues,effects:null};
+      return composeTemplatePreview(local,await this.targetPreview(projection.request),renderContext);
     }catch(error){return {issues:[{path:'destination',message:error instanceof Error?error.message:String(error)}],effects:null};}
   }
+  async choices(input:{projectId?:string}):Promise<TemplatesChoices> {
+    const [projects,hosts,environments,config]=await Promise.all([this.sdk.projects.list({includePersonal:true}),this.sdk.hosts.list(),this.sdk.environments.list({...(input.projectId?{projectId:input.projectId}:{}),limit:200}),this.sdk.system.config()]);
+    return {primaryHostId:config.primaryHostId,projects:projects.map(p=>({id:p.id,name:p.name,sources:p.sources.map(s=>({hostId:s.hostId,path:s.path,isDefault:s.isDefault}))})),hosts:hosts.map(h=>({id:h.id,name:h.name,online:h.status==='connected'&&h.lifecycle.phase==='active'})),environments:environments.filter(e=>e.lifecycle.phase==='active'&&e.status==='ready').map(e=>({id:e.id,projectId:e.projectId,hostId:e.hostId,name:e.name??e.id,path:e.path})),warnings:[]};
+  }
   async context(input:{projectId?:string;hostId?:string;environmentId?:string}) {
-    const [projects,hosts,environments]=await Promise.all([this.sdk.projects.list({includePersonal:true}),this.sdk.hosts.list(),this.sdk.environments.list({...(input.projectId?{projectId:input.projectId}:{}),limit:200})]);
-    const config=await this.sdk.system.config();
-    const route=input.environmentId?{environmentId:input.environmentId}:{hostId:input.hostId??config.primaryHostId??undefined,...(input.projectId?{projectId:input.projectId}:{})};
-    const warnings:string[]=[];const models:TemplatesContext['models']=[];
-    const catalogHostId=input.hostId??config.primaryHostId;
-    if(!input.environmentId&&!catalogHostId)throw new Error('No primary host is configured.');
-    const providers=await this.sdk.providers.list(input.environmentId?{environmentId:input.environmentId}:catalogHostId?{hostId:catalogHostId}:{});
-    for(const provider of providers.filter(p=>p.available)) {
-      try {
-        const catalog=await this.sdk.providers.models({...route,providerId:provider.id});
-        if(catalog.modelLoadError){warnings.push(`${provider.displayName}: ${catalog.modelLoadError.detail??catalog.modelLoadError.code}`);continue;}
-        for(const model of [...catalog.models,...catalog.selectedOnlyModels])models.push({providerId:model.routeProviderId??provider.id,model:model.model,label:model.displayName,reasoningLevels:model.supportedReasoningEfforts.map(r=>r.reasoningEffort),serviceTiers:['default',...(provider.capabilities.supportsServiceTier?(provider.serviceTiers??[]).filter(t=>t.id!=='default'&&(model.supportedServiceTiers===undefined||model.supportedServiceTiers.some(m=>m.id===t.id))).map(t=>t.id):[])]});
-      }catch(error){warnings.push(`${provider.displayName}: ${error instanceof Error?error.message:String(error)}`);}
-    }
-    return {primaryHostId:config.primaryHostId,projects:projects.map(p=>({id:p.id,name:p.name,sources:p.sources.map(s=>({hostId:s.hostId,path:s.path,isDefault:s.isDefault}))})),hosts:hosts.map(h=>({id:h.id,name:h.name,online:h.status==='connected'&&h.lifecycle.phase==='active'})),environments:environments.filter(e=>e.lifecycle.phase==='active'&&e.status==='ready').map(e=>({id:e.id,projectId:e.projectId,hostId:e.hostId,name:e.name??e.id,path:e.path})),models,warnings};
+    // Compatibility shape only: no product consumer used this model list. Native
+    // pickers and final target resolution own routed model discovery.
+    return {...await this.choices(input),models:[]};
   }
   async threadMetadata(threadId:string) {return this.sdk.threads.getPluginMetadata({pluginId:PLUGIN_ID,threadId});}
   async spawn(request:NativeRequest) {return (await this.sdk.threads.spawn(nativeRequestSchema.parse(request))).id;}

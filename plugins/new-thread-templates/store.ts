@@ -53,6 +53,14 @@ export class TemplatesStore {
       CREATE TABLE IF NOT EXISTS template_seed_updates (id TEXT PRIMARY KEY, applied_at INTEGER NOT NULL, outcome TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS template_personal_state (address TEXT PRIMARY KEY, data TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS template_state_receipts (id TEXT NOT NULL, address TEXT NOT NULL, fingerprint TEXT NOT NULL, data TEXT NOT NULL, created_at INTEGER NOT NULL, PRIMARY KEY(address,id));`);
+    // One durable namespace/counter for the public published projection. Trigger
+    // increments share each mutation transaction, including seed upgrades/removal.
+    db.exec('CREATE TABLE IF NOT EXISTS template_catalog_clock (singleton INTEGER PRIMARY KEY CHECK(singleton=1), catalog_id TEXT NOT NULL, version INTEGER NOT NULL CHECK(version>=0 AND version<=9007199254740991))');
+    db.prepare('INSERT OR IGNORE INTO template_catalog_clock(singleton,catalog_id,version) VALUES(1,?,0)').run(randomUUID());
+    const bump="UPDATE template_catalog_clock SET version=version+1 WHERE singleton=1 AND version<9007199254740991; SELECT CASE WHEN changes()!=1 THEN RAISE(ABORT,'Published catalog version exhausted') END;";
+    db.exec(`CREATE TRIGGER IF NOT EXISTS template_catalog_insert AFTER INSERT ON templates WHEN json_extract(NEW.data,'$.published') IS NOT NULL BEGIN ${bump} END;
+      CREATE TRIGGER IF NOT EXISTS template_catalog_update AFTER UPDATE OF data ON templates WHEN json_type(OLD.data,'$.published') IS NOT json_type(NEW.data,'$.published') OR json_extract(OLD.data,'$.published.revision') IS NOT json_extract(NEW.data,'$.published.revision') OR json_extract(OLD.data,'$.published.templateId') IS NOT json_extract(NEW.data,'$.published.templateId') BEGIN ${bump} END;
+      CREATE TRIGGER IF NOT EXISTS template_catalog_remove AFTER INSERT ON template_tombstones WHEN json_extract(NEW.data,'$.entry.published') IS NOT NULL BEGIN ${bump} END;`);
   }
   private atomic<T>(run:()=>T):T { return this.db.transaction(run).immediate(); }
   private readRow(table: string, key: string): string | null {
@@ -62,6 +70,14 @@ export class TemplatesStore {
   private tombstone(id:string) {const data=this.readRow('template_tombstones',id);return data?tombstoneSchema.parse(JSON.parse(data)):null;}
   get(id:string):TemplateEntry|null { if(this.tombstone(id))return null;const data=this.readRow('templates',id); return data ? entrySchema.parse(JSON.parse(data)) : null; }
   catalog():TemplateEntry[] { return this.db.prepare('SELECT data FROM templates WHERE NOT EXISTS (SELECT 1 FROM template_tombstones WHERE template_tombstones.id=templates.id) ORDER BY id').all().map(row=>entrySchema.parse(JSON.parse(rowSchema.parse(row).data))); }
+  publishedCatalog() {
+    return this.db.transaction(()=>{
+      const clock=z.object({catalog_id:z.string().uuid(),version:z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER)}).parse(this.db.prepare('SELECT catalog_id,version FROM template_catalog_clock WHERE singleton=1').get());
+      // Extract only the published JSON; unfinished shared drafts never enter the wire/cache.
+      const revisions=this.db.prepare("SELECT json_extract(data,'$.published') AS data FROM templates WHERE json_extract(data,'$.published') IS NOT NULL AND NOT EXISTS (SELECT 1 FROM template_tombstones WHERE template_tombstones.id=templates.id) ORDER BY id").all().map(row=>revisionSchema.parse(JSON.parse(rowSchema.parse(row).data)));
+      return {catalogId:clock.catalog_id,version:clock.version,revisions};
+    })();
+  }
   private putEntry(entry:TemplateEntry) { this.db.prepare('INSERT INTO templates(id,data) VALUES(?,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data').run(entry.id,JSON.stringify(entrySchema.parse(entry))); }
   seed() {
     const actor={key:'starter',name:'New Thread Templates'};

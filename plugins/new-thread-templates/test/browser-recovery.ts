@@ -2,6 +2,7 @@
 import { expect } from "bun:test";
 import { chromium, expect as browserExpect } from "@playwright/test";
 import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
+import { appendFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { appFixture } from "./app-fixture.ts";
@@ -15,6 +16,30 @@ export async function browserSavedRequestRecovery() {
       "templates-recovery",
     );
   await mkdir(artifacts, { recursive: true });
+  const started = performance.now();
+  const phase = (name: string, detail: Record<string, unknown> = {}) =>
+    appendFileSync(
+      join(artifacts, "phases.jsonl"),
+      JSON.stringify({
+        phase: name,
+        elapsedMs: performance.now() - started,
+        ...detail,
+      }) + "\n",
+    );
+  const step = async <T>(name: string, action: () => Promise<T>) => {
+    phase(`${name}:start`);
+    try {
+      const value = await action();
+      phase(`${name}:done`);
+      return value;
+    } catch (error) {
+      phase(`${name}:error`, {
+        error: error instanceof Error ? error.stack : String(error),
+      });
+      throw error;
+    }
+  };
+  phase("build:start");
   const built = Bun.spawnSync(
     [
       process.execPath,
@@ -30,6 +55,7 @@ export async function browserSavedRequestRecovery() {
     script: string;
     css: string | null;
   };
+  phase("build:done");
   let cut = false,
     captured: LaunchRequest | null = null;
   const held = new Set<() => void>();
@@ -42,6 +68,7 @@ export async function browserSavedRequestRecovery() {
         try {
           const method = decodeURIComponent(url.pathname.slice(5)),
             input = await request.json();
+          phase("rpc", { method });
           if (method === "launch" && cut) {
             captured = launchRequestSchema.parse(input);
             return await new Promise<Response>((resolve) => {
@@ -81,24 +108,36 @@ export async function browserSavedRequestRecovery() {
       );
     },
   });
-  const browser = await chromium.launch({ headless: true }),
-    page = await browser.newPage({ viewport: { width: 1100, height: 900 } }),
+  const browser = await step("browser-launch", () =>
+      chromium.launch({ headless: true }),
+    ),
+    page = await step("page", () =>
+      browser.newPage({ viewport: { width: 1100, height: 900 } }),
+    ),
     errors: string[] = [],
     evidence: unknown[] = [];
   page.on("pageerror", (error) => errors.push(error.message));
+  page.on("close", () => phase("page:close"));
+  page.on("crash", () => phase("page:crash"));
+  browser.on("disconnected", () => phase("browser:disconnected"));
   try {
-    await page.goto(`http://127.0.0.1:${server.port}`);
+    await step("goto", () => page.goto(`http://127.0.0.1:${server.port}`));
     for (const native of [false, true]) {
-      await page.getByRole("button", { name: /PR Review/ }).click();
+      phase("mode", { native });
+      await step("select", () =>
+        page.getByRole("button", { name: /PR Review/ }).click(),
+      );
       await page
         .getByLabel(/Pull request URL/)
         .fill(`https://example.test/pull/${native ? "native" : "direct"}`);
       await page
         .getByLabel(/Main change or review goal/)
         .fill(native ? "Native saved checkpoint" : "Direct saved checkpoint");
-      await browserExpect(
-        page.getByRole("button", { name: "Edit with BB" }),
-      ).toBeEnabled();
+      await step("target-ready", () =>
+        browserExpect(
+          page.getByRole("button", { name: "Edit with BB" }),
+        ).toBeEnabled(),
+      );
       cut = true;
       captured = null;
       const before = fixture.flags.launchCount;
@@ -111,7 +150,9 @@ export async function browserSavedRequestRecovery() {
           .fill("Exact native text saved before dispatch");
         await page.getByTestId("bb-new-thread-composer-submit").click();
       } else await page.getByRole("button", { name: "Start thread" }).click();
-      await browserExpect.poll(() => captured).not.toBeNull();
+      await step("captured", () =>
+        browserExpect.poll(() => captured).not.toBeNull(),
+      );
       const original = structuredClone(captured!);
       const personal = await fixture.readPersonal();
       expect(personal?.launchCheckpoint).toEqual({
@@ -122,16 +163,18 @@ export async function browserSavedRequestRecovery() {
       expect(fixture.launches.has(original.operationId)).toBe(false);
       // Lose the entire old browser lifecycle before its held request can return.
       fixture.wire.switchActor("ada");
-      await page.reload();
+      await step("reload", () => page.reload());
       cut = false;
       for (const release of [...held]) release();
-      await page.getByRole("button", { name: /PR Review/ }).click();
+      await step("reselect", () =>
+        page.getByRole("button", { name: /PR Review/ }).click(),
+      );
       const resume = page.getByRole("button", { name: "Resume saved request" });
-      await browserExpect(resume).toBeEnabled();
+      await step("resume-ready", () => browserExpect(resume).toBeEnabled());
       await page.screenshot({
         path: join(artifacts, `${native ? "native" : "direct"}-restored.png`),
       });
-      await resume.click();
+      await step("resume-click", () => resume.click());
       await browserExpect
         .poll(
           () =>
@@ -195,9 +238,15 @@ export async function browserSavedRequestRecovery() {
         2,
       ),
     );
+  } catch (error) {
+    phase("body:error", {
+      error: error instanceof Error ? error.stack : String(error),
+    });
+    console.error("Saved-request browser body failed before cleanup:", error);
+    throw error;
   } finally {
     for (const release of [...held]) release();
-    await browser.close();
+    await step("browser-close", () => browser.close());
     server.stop(true);
     await fixture.dispose();
     await rm(scratch, { recursive: true, force: true });

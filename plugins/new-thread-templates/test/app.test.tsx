@@ -1,9 +1,13 @@
 import { afterAll, expect, test } from "bun:test";
 import { JSDOM } from "jsdom";
 import { indexedDB, IDBKeyRange } from "fake-indexeddb";
-import { appFixture } from "./app-fixture.ts";
+import { appFixture, controlledGalleryIO } from "./app-fixture.ts";
 import { createRenderContext, type InvocationSample } from "../model.ts";
-import { TEMPLATES_CHANGED } from "../rpc-contract.ts";
+import {
+  TEMPLATES_CATALOG_CHANGED,
+  TEMPLATES_DEFINITIONS_CHANGED,
+  TEMPLATES_JOURNAL_CHANGED,
+} from "../rpc-contract.ts";
 const dom = new JSDOM("<!doctype html><html><body></body></html>", {
   url: "http://templates.test/",
   pretendToBeVisual: true,
@@ -78,6 +82,14 @@ afterAll(() => {
     else Reflect.deleteProperty(globalThis, name);
   }
 });
+async function emitFixtureFacts(slot: ReturnType<typeof renderSlot>) {
+  for (const channel of [
+    TEMPLATES_CATALOG_CHANGED,
+    TEMPLATES_DEFINITIONS_CHANGED,
+    TEMPLATES_JOURNAL_CHANGED,
+  ])
+    await slot.behavior.emitRealtime(channel, {});
+}
 const pause = () => new Promise((resolve) => setTimeout(resolve, 350));
 async function setup(
   panel = false,
@@ -91,12 +103,20 @@ async function setup(
     ? renderSlot(
         app.navPanels[0]!,
         { subPath: "" },
-        { pluginId: "new-thread-templates", rpc: fixture.handlers },
+        {
+          pluginId: "new-thread-templates",
+          rpc: fixture.handlers,
+          sdk: fixture.sdk,
+        },
       )
     : renderSlot(
         app.homepageSections[0]!,
         { projectId: "project-a" },
-        { pluginId: "new-thread-templates", rpc: fixture.handlers },
+        {
+          pluginId: "new-thread-templates",
+          rpc: fixture.handlers,
+          sdk: fixture.sdk,
+        },
       );
   const stop = fixture.wire.onRealtime((channel, payload) => {
     void slot.behavior.emitRealtime(channel, payload);
@@ -125,7 +145,10 @@ async function managementReady(slot: ReturnType<typeof renderSlot>) {
   );
 }
 async function openReview(slot: ReturnType<typeof renderSlot>) {
-  await slot.findByRole("button", { name: /(?:Review a PR|PR Review)/ });
+  const card = await slot.findByRole("button", {
+    name: /(?:Review a PR|PR Review)/,
+  });
+  await waitFor(() => expect((card as HTMLButtonElement).disabled).toBe(false));
   await act(async () => {
     slot.getByRole("button", { name: /(?:Review a PR|PR Review)/ }).click();
   });
@@ -324,7 +347,7 @@ test("journal and active RPC completion share one cleanup and active navigation 
     const savesBeforeCleanup = t.fixture.wire.saveInputs.length;
     const held = t.fixture.wire.holdSaves();
     releaseCleanup = held.release;
-    await t.slot.behavior.emitRealtime(TEMPLATES_CHANGED, {});
+    await emitFixtureFacts(t.slot);
     await held.reached;
     await act(async () => {
       releaseLaunch();
@@ -667,7 +690,7 @@ test("unknown launch survives remount, keeps captured snapshot and never resends
     ).toBe(true);
     await t.slot.behavior.setRealtimeConnectionState("reconnecting");
     await t.slot.behavior.setRealtimeConnectionState("connected");
-    await t.slot.behavior.emitRealtime(TEMPLATES_CHANGED, {});
+    await emitFixtureFacts(t.slot);
     expect(t.fixture.flags.launchCount).toBe(1);
     expect(
       t.slot.inspection.navigateCalls.filter((c) => c.method === "toThread"),
@@ -679,7 +702,7 @@ test("unknown launch survives remount, keeps captured snapshot and never resends
       threadId: "recovered-thread",
       message: "Confirmed receipt",
     });
-    await t.slot.behavior.emitRealtime(TEMPLATES_CHANGED, {});
+    await emitFixtureFacts(t.slot);
     await t.slot.findByRole("button", { name: "Open thread" });
     await waitFor(() =>
       expect(
@@ -715,15 +738,17 @@ test("same authoritative catalog recovery clears error with unchanged content; s
   try {
     await t.slot.findByRole("button", { name: /(?:Review a PR|PR Review)/ });
     t.fixture.flags.catalogError = true;
-    await t.slot.behavior.emitRealtime(TEMPLATES_CHANGED, {});
+    await emitFixtureFacts(t.slot);
     await t.slot.findByText(/Catalog temporarily unavailable/);
     expect(
       t.slot.getByRole("button", { name: /(?:Review a PR|PR Review)/ }),
     ).toBeTruthy();
     t.fixture.flags.catalogError = false;
-    await t.slot.behavior.emitRealtime(TEMPLATES_CHANGED, {});
+    await emitFixtureFacts(t.slot);
     await waitFor(() =>
-      expect(t.slot.queryByText(/Catalog temporarily unavailable/)).toBeNull(),
+      expect(
+        t.slot.queryAllByText(/Catalog temporarily unavailable/),
+      ).toHaveLength(0),
     );
     const count = t.fixture.calls.length;
     await act(pause);
@@ -782,7 +807,7 @@ test("editor tabs, preview, unknown-token publication error and shared save fail
       t.slot.getByRole("button", { name: "Save draft" }).click();
     });
     await t.slot.findByText("Shared draft write failed");
-    await t.slot.behavior.emitRealtime(TEMPLATES_CHANGED, {});
+    await emitFixtureFacts(t.slot);
     expect(t.slot.getByText("Shared draft write failed")).toBeTruthy();
   } finally {
     await t.close();
@@ -819,7 +844,11 @@ test("unsaved edits guard Back and restore from captured-owner checkpoint after 
     const again = renderSlot(
       app.navPanels[0]!,
       { subPath: "" },
-      { pluginId: "new-thread-templates", rpc: t.fixture.handlers },
+      {
+        pluginId: "new-thread-templates",
+        rpc: t.fixture.handlers,
+        sdk: t.fixture.sdk,
+      },
     );
     try {
       await managementReady(again);
@@ -1007,7 +1036,11 @@ test("unsaved NEW template is discoverable after shell exit with original id and
     const again = renderSlot(
       app.navPanels[0]!,
       { subPath: "" },
-      { pluginId: "new-thread-templates", rpc: t.fixture.handlers },
+      {
+        pluginId: "new-thread-templates",
+        rpc: t.fixture.handlers,
+        sdk: t.fixture.sdk,
+      },
     );
     try {
       await again.findByRole("button", { name: "Resume unfinished template" });
@@ -1162,7 +1195,11 @@ test("number authoring never poisons recovery through partial negative edits and
     const again = renderSlot(
       app.navPanels[0]!,
       { subPath: "" },
-      { pluginId: "new-thread-templates", rpc: t.fixture.handlers },
+      {
+        pluginId: "new-thread-templates",
+        rpc: t.fixture.handlers,
+        sdk: t.fixture.sdk,
+      },
     );
     try {
       await again.findByRole("button", { name: "Resume unfinished template" });
@@ -1265,7 +1302,11 @@ test("unfinished numeric defaults and bounds survive collapse and checkpoint rem
     again = renderSlot(
       app.navPanels[0]!,
       { subPath: "" },
-      { pluginId: "new-thread-templates", rpc: t.fixture.handlers },
+      {
+        pluginId: "new-thread-templates",
+        rpc: t.fixture.handlers,
+        sdk: t.fixture.sdk,
+      },
     );
     await managementReady(again);
     await act(async () => {
@@ -1430,7 +1471,7 @@ test("older unpublished unknown launch remains reachable through Manage History 
     });
     await t.slot.findByText("Status temporarily unavailable");
     t.fixture.flags.statusError = false;
-    await t.slot.behavior.emitRealtime(TEMPLATES_CHANGED, {});
+    await emitFixtureFacts(t.slot);
     await waitFor(() =>
       expect(t.slot.queryByText("Status temporarily unavailable")).toBeNull(),
     );
@@ -1528,7 +1569,7 @@ test("checkbox without explicit default displays and previews false without requ
       promptTemplate: "Enabled {{enabled}}",
       titleTemplate: "Checkbox",
     };
-    await t.slot.behavior.emitRealtime(TEMPLATES_CHANGED, {});
+    await emitFixtureFacts(t.slot);
     await openReviewCheckbox();
     async function openReviewCheckbox() {
       await t.slot.findByRole("button", { name: /(?:Review a PR|PR Review)/ });
@@ -1621,7 +1662,7 @@ test("real form renders all six approved field types with defaults, options, hel
       promptTemplate:
         "{{short}}\n{{long}}\n{{link}}\n{{count}}\n{{priority}}\n{{enabled}}",
     };
-    await t.slot.behavior.emitRealtime(TEMPLATES_CHANGED, {});
+    await emitFixtureFacts(t.slot);
     await t.slot.findByRole("button", { name: /All field types/ });
     await act(async () => {
       t.slot.getByRole("button", { name: /All field types/ }).click();
@@ -1769,7 +1810,11 @@ test("management admits ready identity before enabling New so one click cannot b
   const slot = renderSlot(
     app.navPanels[0]!,
     { subPath: "" },
-    { pluginId: "new-thread-templates", rpc: fixture.handlers },
+    {
+      pluginId: "new-thread-templates",
+      rpc: fixture.handlers,
+      sdk: fixture.sdk,
+    },
   );
   try {
     await act(async () => {});
@@ -2373,7 +2418,11 @@ test("Settings reuses authoring, per-template Project, exact removal and History
   const slot = renderSlot(
     app.settingsSections[0]!,
     {},
-    { pluginId: "new-thread-templates", rpc: fixture.handlers },
+    {
+      pluginId: "new-thread-templates",
+      rpc: fixture.handlers,
+      sdk: fixture.sdk,
+    },
   );
   const stop = fixture.wire.onRealtime(
     (channel, payload) => void slot.behavior.emitRealtime(channel, payload),
@@ -2447,7 +2496,7 @@ test("Settings reuses authoring, per-template Project, exact removal and History
       expectedLatestRevision: 0,
     });
     fixture.entries.splice(0);
-    await slot.behavior.emitRealtime(TEMPLATES_CHANGED, {});
+    await emitFixtureFacts(slot);
     await slot.findByText("Create your first template.");
     await act(async () =>
       slot.getByRole("button", { name: "History" }).click(),
@@ -2571,7 +2620,11 @@ test("contextual Edit survives full slot unmount and returns once to original pi
     panel = renderSlot(
       app.navPanels[0]!,
       { subPath: "compose/edit/review-pr" },
-      { pluginId: "new-thread-templates", rpc: t.fixture.handlers },
+      {
+        pluginId: "new-thread-templates",
+        rpc: t.fixture.handlers,
+        sdk: t.fixture.sdk,
+      },
     );
     stopPanel = t.fixture.wire.onRealtime(
       (channel, payload) => void panel?.behavior.emitRealtime(channel, payload),
@@ -2597,7 +2650,11 @@ test("contextual Edit survives full slot unmount and returns once to original pi
     home = renderSlot(
       app.homepageSections[0]!,
       { projectId: "project-b" },
-      { pluginId: "new-thread-templates", rpc: t.fixture.handlers },
+      {
+        pluginId: "new-thread-templates",
+        rpc: t.fixture.handlers,
+        sdk: t.fixture.sdk,
+      },
     );
     stopHome = t.fixture.wire.onRealtime(
       (channel, payload) => void home?.behavior.emitRealtime(channel, payload),
@@ -2622,7 +2679,11 @@ test("contextual Edit survives full slot unmount and returns once to original pi
     home = renderSlot(
       app.homepageSections[0]!,
       { projectId: "project-a" },
-      { pluginId: "new-thread-templates", rpc: t.fixture.handlers },
+      {
+        pluginId: "new-thread-templates",
+        rpc: t.fixture.handlers,
+        sdk: t.fixture.sdk,
+      },
     );
     await home.findByRole("searchbox");
     expect(home.queryByLabelText(/Pull request URL/)).toBeNull();
@@ -2652,7 +2713,11 @@ test("armed contextual return cannot cross owners and unpublished or removed tar
     const slot = renderSlot(
       app.homepageSections[0]!,
       { projectId: "project-b" },
-      { pluginId: "new-thread-templates", rpc: fixture.handlers },
+      {
+        pluginId: "new-thread-templates",
+        rpc: fixture.handlers,
+        sdk: fixture.sdk,
+      },
     );
     const stop = fixture.wire.onRealtime(
       (channel, payload) => void slot.behavior.emitRealtime(channel, payload),
@@ -3161,6 +3226,7 @@ test("Project Machine persists exact pin, requires deliberate workspace, routes 
       t.fixture.context.hosts.findIndex((host) => host.id === "host-a"),
       1,
     );
+    await act(async () => t.fixture.emitConfig());
     const definition = t.fixture.entries[0]!.draft!.definition;
     definition.destination = {
       kind: "existing-project",
@@ -3168,7 +3234,7 @@ test("Project Machine persists exact pin, requires deliberate workspace, routes 
       hostId: "host-a",
       environment: { kind: "local-source" },
     };
-    await t.slot.behavior.emitRealtime(TEMPLATES_CHANGED, {});
+    await emitFixtureFacts(t.slot);
     await act(async () =>
       t.slot.getAllByRole("button", { name: "Edit" })[0]!.click(),
     );
@@ -3178,7 +3244,7 @@ test("Project Machine persists exact pin, requires deliberate workspace, routes 
         .value,
     ).toBe("host-a");
     expect(
-      t.slot.getByText(/saved machine is unavailable or disconnected/),
+      await t.slot.findByText(/saved machine is unavailable or disconnected/),
     ).toBeTruthy();
     expect(t.fixture.flags.launchCount).toBe(0);
   } finally {
@@ -3240,7 +3306,7 @@ test("genuinely newer external checkpoint survives held save and restored raw nu
     ).toBeNull();
     await act(async () => release());
     await t.slot.findByText("A newer local editor checkpoint was retained.");
-    await t.slot.behavior.emitRealtime(TEMPLATES_CHANGED, {});
+    await emitFixtureFacts(t.slot);
     expect(
       t.slot.getByText("A newer local editor checkpoint was retained."),
     ).toBeTruthy();
@@ -3253,7 +3319,11 @@ test("genuinely newer external checkpoint survives held save and restored raw nu
     again = renderSlot(
       app.navPanels[0]!,
       { subPath: "" },
-      { pluginId: "new-thread-templates", rpc: t.fixture.handlers },
+      {
+        pluginId: "new-thread-templates",
+        rpc: t.fixture.handlers,
+        sdk: t.fixture.sdk,
+      },
     );
     stop = t.fixture.wire.onRealtime(
       (channel, payload) => void again?.behavior.emitRealtime(channel, payload),
@@ -3314,7 +3384,7 @@ test("save error survives unrelated catalog recovery and pending retry then clea
     );
     await t.slot.findByText("Shared draft write failed");
     t.fixture.flags.saveError = false;
-    await t.slot.behavior.emitRealtime(TEMPLATES_CHANGED, {});
+    await emitFixtureFacts(t.slot);
     expect(t.slot.getByText("Shared draft write failed")).toBeTruthy();
     release = t.fixture.holdResponse("saveDraft");
     await act(async () =>
@@ -3366,7 +3436,8 @@ test("mobile reachability keeps selected recovery and last-good content while co
     );
     t.fixture.flags.catalogError = true;
     t.fixture.flags.contextError = true;
-    await t.slot.behavior.emitRealtime(TEMPLATES_CHANGED, {});
+    await act(async () => t.fixture.emitConfig());
+    await emitFixtureFacts(t.slot);
     await t.slot.findByText(/Destination choices could not refresh/);
     await t.slot.findByText(/Templates could not refresh/);
     expect(form().getAttribute("data-new-thread-templates-form")).toBe(
@@ -3374,7 +3445,8 @@ test("mobile reachability keeps selected recovery and last-good content while co
     );
     t.fixture.flags.catalogError = false;
     t.fixture.flags.contextError = false;
-    await t.slot.behavior.emitRealtime(TEMPLATES_CHANGED, {});
+    await act(async () => t.fixture.emitConfig());
+    await emitFixtureFacts(t.slot);
     await waitFor(() =>
       expect(
         t.slot.queryByText(/Destination choices could not refresh/),
@@ -3399,7 +3471,7 @@ test("mobile reachability keeps selected recovery and last-good content while co
       "usable",
     );
     for (const entry of t.fixture.entries) entry.published = null;
-    await t.slot.behavior.emitRealtime(TEMPLATES_CHANGED, {});
+    await emitFixtureFacts(t.slot);
     expect(home().getAttribute("data-new-thread-templates-homepage")).toBe(
       "selected",
     );
@@ -3438,7 +3510,8 @@ test("mobile selected recovery stays reachable before first successful context",
       "recovery",
     );
     t.fixture.flags.contextError = false;
-    await t.slot.behavior.emitRealtime(TEMPLATES_CHANGED, {});
+    await act(async () => t.fixture.emitConfig());
+    await emitFixtureFacts(t.slot);
     await waitFor(() =>
       expect(form.getAttribute("data-new-thread-templates-form")).toBe(
         "usable",
@@ -3520,7 +3593,11 @@ test("mobile borrowed read-only form keeps Back reachable with real shared perso
   const slot = renderSlot(
     { component: Surface },
     {},
-    { pluginId: "new-thread-templates", rpc: fixture.handlers },
+    {
+      pluginId: "new-thread-templates",
+      rpc: fixture.handlers,
+      sdk: fixture.sdk,
+    },
   );
   const stop = fixture.wire.onRealtime(
     (channel, payload) => void slot.behavior.emitRealtime(channel, payload),
@@ -3617,7 +3694,7 @@ test("assignment History separates initial claim from current manual Unassign wi
       (c) => c.method === "recentLaunches",
     ).length;
     releaseRecent = t.fixture.holdResponse("recentLaunches");
-    await t.slot.behavior.emitRealtime(TEMPLATES_CHANGED, {});
+    await emitFixtureFacts(t.slot);
     await waitFor(() =>
       expect(
         t.fixture.calls.filter((c) => c.method === "recentLaunches").length,
@@ -3674,7 +3751,7 @@ test("unknown assignment permits only explicit same-op retry and matching Check 
       t.slot.getByRole("button", { name: "Check assignment" }).click(),
     );
     await t.slot.findByText("Assignment lookup unavailable");
-    await t.slot.behavior.emitRealtime(TEMPLATES_CHANGED, {});
+    await emitFixtureFacts(t.slot);
     expect(t.slot.getByText("Assignment lookup unavailable")).toBeTruthy();
     t.fixture.flags.assignmentCheckError = false;
     await act(async () =>
@@ -3694,7 +3771,7 @@ test("unknown assignment permits only explicit same-op retry and matching Check 
       t.slot.getByRole("button", { name: "Retry assignment" }).click(),
     );
     await t.slot.findByText("Assignment response lost");
-    await t.slot.behavior.emitRealtime(TEMPLATES_CHANGED, {});
+    await emitFixtureFacts(t.slot);
     expect(t.slot.getByText("Assignment response lost")).toBeTruthy();
     t.fixture.flags.assignmentRetryError = false;
     t.fixture.launches.get(id)!.assignment = assignmentFor(t.fixture, id, {
@@ -3951,7 +4028,7 @@ test("borrowed view-as cannot Check or Retry assignment for the submitting actor
   const slot = renderSlot(
     { component: Surface },
     {},
-    { pluginId: "new-thread-templates", rpc: f.handlers },
+    { pluginId: "new-thread-templates", rpc: f.handlers, sdk: f.sdk },
   );
   try {
     await slot.findByText("Inbox assignment outcome unknown.");
@@ -4066,7 +4143,7 @@ test("held assignment Check cannot undo newer parent ownership and does not reas
       truncated: false,
       explicitlyUnassigned: true,
     };
-    await t.slot.behavior.emitRealtime(TEMPLATES_CHANGED, {});
+    await emitFixtureFacts(t.slot);
     await t.slot.findByText("Inbox: unassigned.");
     await act(async () => release());
     await waitFor(() =>
@@ -4131,7 +4208,7 @@ test("replayed parent facts already learned by Check cannot clear a newer provid
     const beforeReads = t.fixture.calls.filter(
       (c) => c.method === "recentLaunches",
     ).length;
-    await t.slot.behavior.emitRealtime(TEMPLATES_CHANGED, {});
+    await emitFixtureFacts(t.slot);
     await waitFor(() =>
       expect(
         t.fixture.calls.filter((c) => c.method === "recentLaunches").length,
@@ -4202,7 +4279,11 @@ test("assignment response after surface disposal remains recoverable by original
     reopened = renderSlot(
       app.navPanels[0]!,
       { subPath: "" },
-      { pluginId: "new-thread-templates", rpc: t.fixture.handlers },
+      {
+        pluginId: "new-thread-templates",
+        rpc: t.fixture.handlers,
+        sdk: t.fixture.sdk,
+      },
     );
     stop = t.fixture.wire.onRealtime(
       (channel, payload) =>
@@ -4277,7 +4358,7 @@ test("panel correction: stale History Check rejection cannot replace newer autho
     );
     const current = [...t.fixture.launches.values()][0]!;
     current.message = "New authoritative History state";
-    await t.slot.behavior.emitRealtime(TEMPLATES_CHANGED, {});
+    await emitFixtureFacts(t.slot);
     await t.slot.findByText("New authoritative History state");
     await act(async () => reject(new Error("Obsolete History failure")));
     expect(t.slot.queryByText("Obsolete History failure")).toBeNull();
@@ -4470,7 +4551,7 @@ test("panel correction: unreadable local recovery is visible and retained when r
     await t.slot.findByText(
       "A saved recovery draft is unreadable. It has been retained.",
     );
-    await t.slot.behavior.emitRealtime(TEMPLATES_CHANGED, {});
+    await emitFixtureFacts(t.slot);
     expect(
       t.slot.getByText(
         "A saved recovery draft is unreadable. It has been retained.",
@@ -4527,7 +4608,7 @@ test("panel correction: older History catch and finally cannot clear a newer bus
           .click(),
       );
       status.message = "Newer authoritative status";
-      await t.slot.behavior.emitRealtime(TEMPLATES_CHANGED, {});
+      await emitFixtureFacts(t.slot);
       await t.slot.findByText("Newer authoritative status");
       t.fixture.handlers.launchStatus = () => newer;
       await act(async () =>
@@ -4805,7 +4886,7 @@ test("panel correction: History refresh follows variable authoritative page boun
     await t.slot.findByRole("heading", { name: "Recent fixture 5" });
     t.fixture.flags.recentPageSize = 2;
     const before = t.fixture.calls.length;
-    await t.slot.behavior.emitRealtime(TEMPLATES_CHANGED, {});
+    await emitFixtureFacts(t.slot);
     await waitFor(() =>
       expect(
         t.fixture.calls
@@ -5059,7 +5140,7 @@ test("sample failure keeps local edited sample and same authoritative recovery c
       ),
     );
     t.fixture.flags.samplesError = true;
-    await act(async () => t.slot.behavior.emitRealtime(TEMPLATES_CHANGED, {}));
+    await act(async () => emitFixtureFacts(t.slot));
     await t.slot.findByText(/Your recent samples could not refresh/);
     expect(
       (
@@ -5074,7 +5155,7 @@ test("sample failure keeps local edited sample and same authoritative recovery c
     );
     await t.slot.findByText("Shared draft write failed");
     t.fixture.flags.samplesError = false;
-    await act(async () => t.slot.behavior.emitRealtime(TEMPLATES_CHANGED, {}));
+    await act(async () => emitFixtureFacts(t.slot));
     await waitFor(() =>
       expect(
         t.slot.queryAllByText(/Your recent samples could not refresh/),
@@ -5213,12 +5294,18 @@ test("direct preview and immutable checkpoint share the supplied clock through e
     await t.slot.findByText("Frozen time / 2026-11-02 15:00 GMT+5:30", {
       exact: true,
     });
-    const previews = t.fixture.calls.filter(
-      (call) => call.method === "preview",
-    );
     expect(
-      (previews.at(-1)!.input as { renderContext: unknown }).renderContext,
-    ).toEqual(clock);
+      t.fixture.calls.filter((call) => call.method === "preview"),
+    ).toHaveLength(0);
+    const targets = t.fixture.calls.filter(
+      (call) => call.method === "targetPreview",
+    );
+    expect(targets.length).toBeGreaterThan(0);
+    // Ordinary target identity excludes the form clock; the rendered output and
+    // immutable launch checkpoint retain the exact observed clock below.
+    expect(
+      Object.hasOwn(targets.at(-1)!.input as object, "renderContext"),
+    ).toBe(false);
     await act(async () =>
       t.slot.getByRole("button", { name: "Start thread" }).click(),
     );
@@ -5236,7 +5323,11 @@ test("direct preview and immutable checkpoint share the supplied clock through e
     remount = renderSlot(
       app.homepageSections[0]!,
       { projectId: "project-b" },
-      { pluginId: "new-thread-templates", rpc: t.fixture.handlers },
+      {
+        pluginId: "new-thread-templates",
+        rpc: t.fixture.handlers,
+        sdk: t.fixture.sdk,
+      },
     );
     await openReview(remount);
     await remount.findByRole("button", { name: "Check launch status" });
@@ -5628,7 +5719,11 @@ test("switching to a borrowed identity view fences an in-flight personal sample 
   const slot = renderSlot(
     { component: Surface },
     {},
-    { pluginId: "new-thread-templates", rpc: fixture.handlers },
+    {
+      pluginId: "new-thread-templates",
+      rpc: fixture.handlers,
+      sdk: fixture.sdk,
+    },
   );
   try {
     await waitFor(() =>
@@ -5763,5 +5858,713 @@ test("live title enforces the server 4000-byte budget while body remains indepen
     expect(t.fixture.flags.launchCount).toBe(0);
   } finally {
     await t.close();
+  }
+});
+
+test("mounted read invalidation and loader replacement fence stale success and rejection with one raw request", async () => {
+  const React = await import("react"),
+    { useMountedResource } = await import("../ui/read.ts");
+  const pending: {
+    resolve(value: string): void;
+    reject(error: Error): void;
+    current(): boolean;
+  }[] = [];
+  let calls = 0;
+  function Surface() {
+    const [version, setVersion] = React.useState(0);
+    const load = React.useCallback(
+      (read: import("../ui/read.ts").MountedReadContext) =>
+        new Promise<string>((resolve, reject) => {
+          calls++;
+          pending.push({ resolve, reject, current: read.isCurrent });
+        }),
+      [version],
+    );
+    const result = useMountedResource(load);
+    return (
+      <>
+        <button onClick={result.refresh}>Invalidate read</button>
+        <button onClick={() => setVersion((value) => value + 1)}>
+          Replace loader
+        </button>
+        <output aria-label="Read result">{result.value ?? "empty"}</output>
+        <output aria-label="Read error">{result.error ?? "none"}</output>
+        <output aria-label="Read freshness">
+          {result.fresh ? "fresh" : "checking"}
+        </output>
+      </>
+    );
+  }
+  const slot = renderSlot(
+    { component: Surface },
+    {},
+    { pluginId: "new-thread-templates" },
+  );
+  try {
+    await waitFor(() => expect(calls).toBe(1));
+    fireEvent.click(slot.getByRole("button", { name: "Invalidate read" }));
+    fireEvent.click(slot.getByRole("button", { name: "Replace loader" }));
+    await act(async () => {});
+    expect(calls).toBe(1);
+    expect(pending[0]!.current()).toBe(false);
+    await act(async () => pending[0]!.resolve("stale success"));
+    await waitFor(() => expect(calls).toBe(2));
+    expect(slot.getByLabelText("Read result").textContent).toBe("empty");
+    await act(async () => pending[1]!.resolve("last good"));
+    await waitFor(() =>
+      expect(slot.getByLabelText("Read freshness").textContent).toBe("fresh"),
+    );
+    fireEvent.click(slot.getByRole("button", { name: "Invalidate read" }));
+    await waitFor(() => expect(calls).toBe(3));
+    fireEvent.click(slot.getByRole("button", { name: "Replace loader" }));
+    expect(slot.getByLabelText("Read result").textContent).toBe("last good");
+    await act(async () => pending[2]!.reject(new Error("stale rejected")));
+    await waitFor(() => expect(calls).toBe(4));
+    expect(slot.getByLabelText("Read error").textContent).toBe("none");
+    await act(async () => pending[3]!.reject(new Error("current failure")));
+    await waitFor(() =>
+      expect(slot.getByLabelText("Read error").textContent).toBe(
+        "current failure",
+      ),
+    );
+    fireEvent.click(slot.getByRole("button", { name: "Invalidate read" }));
+    await waitFor(() => expect(calls).toBe(5));
+    await act(async () => pending[4]!.resolve("last good"));
+    await waitFor(() =>
+      expect(slot.getByLabelText("Read error").textContent).toBe("none"),
+    );
+    fireEvent.click(slot.getByRole("button", { name: "Invalidate read" }));
+    await waitFor(() => expect(calls).toBe(6));
+    slot.lifecycle.unmount();
+    expect(pending[5]!.current()).toBe(false);
+    await act(async () => pending[5]!.resolve("after disposal"));
+    expect(calls).toBe(6);
+  } finally {
+    slot.lifecycle.unmount();
+  }
+});
+
+test("ordinary form input renders immediately with stable native target and journal facts do not reread configuration", async () => {
+  const t = await setup(false, (fixture) =>
+    fixture.seedPersonal({
+      inputs: {
+        subject: "Review",
+        pr_url: "https://example.test/pull/1",
+        focus: "Initial focus",
+      },
+    }),
+  );
+  const count = (name: string) =>
+    t.fixture.calls.filter((call) => call.method === name).length;
+  try {
+    fireEvent.click(await t.slot.findByRole("button", { name: /PR Review/ }));
+    await t.slot.findByLabelText("Final launch destination");
+    fireEvent.click(t.slot.getByRole("button", { name: /^Details$/ }));
+    const summary = t.slot.container.querySelector(".ntt-summary")!,
+      field = t.slot.getByLabelText(/Important context or concerns/);
+    const choices = count("choices"),
+      targets = count("targetPreview"),
+      previews = count("preview");
+    await waitFor(() =>
+      expect((field as HTMLTextAreaElement).disabled).toBe(false),
+    );
+    field.focus();
+    fireEvent.change(field, { target: { value: "Immediate local output" } });
+    await waitFor(() =>
+      expect(
+        [...t.slot.container.querySelectorAll(".ntt-preview")].some((node) =>
+          node.textContent?.includes("Immediate local output"),
+        ),
+      ).toBe(true),
+    );
+    expect(t.slot.container.querySelector(".ntt-summary") === summary).toBe(
+      true,
+    );
+    expect(document.activeElement === field).toBe(true);
+    await t.slot.behavior.emitRealtime(TEMPLATES_JOURNAL_CHANGED, {});
+    await act(async () => {});
+    expect(count("choices")).toBe(choices);
+    expect(count("targetPreview")).toBe(targets);
+    expect(count("preview")).toBe(previews);
+    fireEvent.change(t.slot.getByLabelText(/Main change or review goal/), {
+      target: { value: "" },
+    });
+    await act(async () => {});
+    expect(t.slot.container.querySelector(".ntt-summary") === summary).toBe(
+      true,
+    );
+    expect(count("targetPreview")).toBe(targets);
+    await act(async () => t.fixture.emitConfig());
+    await waitFor(() => expect(count("targetPreview")).toBe(targets + 1));
+    await waitFor(() => expect(count("choices")).toBe(choices + 1));
+    expect(t.fixture.flags.launchCount).toBe(0);
+    expect(t.fixture.configSubscriptionCount()).toBe(5);
+  } finally {
+    await t.close();
+  }
+  expect(t.fixture.configSubscriptionCount()).toBe(0);
+});
+
+test("verified-instance warm gallery is advisory until checked and invalidation cannot reauthorize a held removed publication", async () => {
+  const t = await setup();
+  let reopened: ReturnType<typeof renderSlot> | null = null,
+    stop = () => {},
+    release = () => {};
+  try {
+    const original = await t.slot.findByRole("button", { name: /PR Review/ });
+    await waitFor(() =>
+      expect((original as HTMLButtonElement).disabled).toBe(false),
+    );
+    t.slot.lifecycle.unmount();
+    release = t.fixture.holdResponse("publishedCatalog");
+    reopened = renderSlot(
+      app.homepageSections[0]!,
+      { projectId: "project-a" },
+      {
+        pluginId: "new-thread-templates",
+        rpc: t.fixture.handlers,
+        sdk: t.fixture.sdk,
+      },
+    );
+    stop = t.fixture.wire.onRealtime(
+      (channel, payload) =>
+        void reopened!.behavior.emitRealtime(channel, payload),
+    );
+    const cached = await reopened.findByRole("button", { name: /PR Review/ });
+    expect((cached as HTMLButtonElement).disabled).toBe(true);
+    expect(
+      reopened.container
+        .querySelector("[data-new-thread-templates-homepage]")
+        ?.getAttribute("data-new-thread-templates-homepage"),
+    ).toBe("usable");
+    fireEvent.click(cached);
+    expect(reopened.queryAllByLabelText(/Pull request URL/)).toHaveLength(0);
+    await waitFor(() =>
+      expect(
+        t.fixture.calls.filter((call) => call.method === "publishedCatalog")
+          .length,
+      ).toBe(2),
+    );
+    for (const entry of t.fixture.entries) entry.published = null;
+    await reopened.behavior.emitRealtime(TEMPLATES_CATALOG_CHANGED, {});
+    await act(async () => release());
+    await waitFor(() =>
+      expect(
+        reopened!.queryAllByRole("button", { name: /PR Review/ }),
+      ).toHaveLength(0),
+    );
+    expect(
+      reopened.container
+        .querySelector("[data-new-thread-templates-homepage]")
+        ?.getAttribute("data-new-thread-templates-homepage"),
+    ).toBe("unavailable");
+    expect(
+      t.fixture.calls.filter((call) => call.method === "launch"),
+    ).toHaveLength(0);
+  } finally {
+    release();
+    stop();
+    reopened?.lifecycle.unmount();
+    await t.close();
+  }
+});
+
+test("cached checking gallery retains same error until matching publication succeeds and never crosses instances", async () => {
+  const t = await setup();
+  let reopened: ReturnType<typeof renderSlot> | null = null;
+  try {
+    const original = await t.slot.findByRole("button", { name: /PR Review/ });
+    await waitFor(() =>
+      expect((original as HTMLButtonElement).disabled).toBe(false),
+    );
+    t.slot.lifecycle.unmount();
+    t.fixture.flags.catalogError = true;
+    reopened = renderSlot(
+      app.homepageSections[0]!,
+      { projectId: "project-a" },
+      {
+        pluginId: "new-thread-templates",
+        rpc: t.fixture.handlers,
+        sdk: t.fixture.sdk,
+      },
+    );
+    const cached = await reopened.findByRole("button", { name: /PR Review/ });
+    await reopened.findByText(/Templates could not refresh/);
+    expect((cached as HTMLButtonElement).disabled).toBe(true);
+    await reopened.behavior.emitRealtime(TEMPLATES_JOURNAL_CHANGED, {});
+    expect(reopened.queryAllByText(/Templates could not refresh/)).toHaveLength(
+      1,
+    );
+    t.fixture.flags.catalogError = false;
+    fireEvent.click(reopened.getByRole("button", { name: "Retry templates" }));
+    await waitFor(() =>
+      expect((cached as HTMLButtonElement).disabled).toBe(false),
+    );
+    expect(reopened.queryAllByText(/Templates could not refresh/)).toHaveLength(
+      0,
+    );
+    reopened.lifecycle.unmount();
+    reopened = null;
+    const other = await setup(false, (fixture) => {
+      for (const entry of fixture.entries) entry.published = null;
+    });
+    try {
+      await waitFor(() =>
+        expect(
+          other.fixture.calls.some(
+            (call) => call.method === "publishedCatalog",
+          ),
+        ).toBe(true),
+      );
+      await act(async () => {});
+      expect(
+        other.slot.queryAllByRole("button", { name: /PR Review/ }),
+      ).toHaveLength(0);
+    } finally {
+      await other.close();
+    }
+  } finally {
+    reopened?.lifecycle.unmount();
+    await t.close();
+  }
+});
+
+test("new-project target RPC follows rendered name while unrelated fields and clock keep its snapshot", async () => {
+  const t = await setup(false, (fixture) => {
+    const definition = fixture.entries.find(
+      (entry) => entry.id === "review-pr",
+    )!.published!.definition;
+    definition.destination = {
+      kind: "new-project",
+      nameTemplate: "{{subject}}",
+      hostId: "host-a",
+      path: "/workspace/fixture",
+      environment: { kind: "local-source" },
+    };
+    fixture.seedPersonal({
+      inputs: {
+        subject: "First target",
+        pr_url: "https://example.test/pull/1",
+        focus: "First focus",
+      },
+    });
+  });
+  const count = () =>
+    t.fixture.calls.filter((call) => call.method === "targetPreview").length;
+  try {
+    await openReview(t.slot);
+    await t.slot.findByLabelText("Final launch destination");
+    const first = count();
+    fireEvent.change(t.slot.getByLabelText(/Important context or concerns/), {
+      target: { value: "No target influence" },
+    });
+    fireEvent.click(t.slot.getByRole("button", { name: "Refresh time" }));
+    await act(async () => {});
+    expect(count()).toBe(first);
+    fireEvent.change(t.slot.getByLabelText(/Main change or review goal/), {
+      target: { value: "Second target" },
+    });
+    await waitFor(() => expect(count()).toBe(first + 1));
+    await waitFor(() =>
+      expect(
+        t.slot.getByLabelText("Final launch destination").textContent,
+      ).toContain("Second target"),
+    );
+    const request = t.fixture.calls
+      .filter((call) => call.method === "targetPreview")
+      .at(-1)!.input as import("../rpc-contract.ts").TargetPreviewRequest;
+    expect(request.destination.kind).toBe("new-project");
+    expect(request.destination).toHaveProperty("name", "Second target");
+    expect(Object.hasOwn(request, "renderContext")).toBe(false);
+    expect(t.fixture.flags.launchCount).toBe(0);
+  } finally {
+    await t.close();
+  }
+});
+
+test("known native config invalidation keeps last target visible and blocks held stale seed until same read recovers", async () => {
+  const t = await setup(false, (fixture) =>
+    fixture.seedPersonal({
+      inputs: { subject: "Review", pr_url: "https://example.test/pull/1" },
+    }),
+  );
+  let release = () => {};
+  try {
+    await openReview(t.slot);
+    await t.slot.findByLabelText("Final launch destination");
+    const targets = t.fixture.calls.filter(
+      (call) => call.method === "targetPreview",
+    ).length;
+    release = t.fixture.holdResponse("targetPreview");
+    await act(async () => t.fixture.emitConfig());
+    await waitFor(() =>
+      expect(
+        t.fixture.calls.filter((call) => call.method === "targetPreview")
+          .length,
+      ).toBe(targets + 1),
+    );
+    t.fixture.flags.previewError = true;
+    await act(async () => t.fixture.emitConfig());
+    expect(
+      (
+        t.slot.getByRole("button", {
+          name: "Edit with BB",
+        }) as HTMLButtonElement
+      ).disabled,
+    ).toBe(true);
+    fireEvent.click(t.slot.getByRole("button", { name: "Start thread" }));
+    expect(t.fixture.flags.launchCount).toBe(0);
+    await act(async () => release());
+    await t.slot.findByText(/Final launch details are unavailable/);
+    expect(t.slot.queryAllByLabelText("Final launch destination")).toHaveLength(
+      1,
+    );
+    expect(
+      (
+        t.slot.getByRole("button", {
+          name: "Edit with BB",
+        }) as HTMLButtonElement
+      ).disabled,
+    ).toBe(true);
+    t.fixture.flags.previewError = false;
+    await act(async () => t.fixture.emitConfig());
+    await waitFor(() =>
+      expect(
+        t.slot.queryAllByText(/Final launch details are unavailable/),
+      ).toHaveLength(0),
+    );
+    await waitFor(() =>
+      expect(
+        (
+          t.slot.getByRole("button", {
+            name: "Edit with BB",
+          }) as HTMLButtonElement
+        ).disabled,
+      ).toBe(false),
+    );
+    expect(t.fixture.flags.launchCount).toBe(0);
+  } finally {
+    release();
+    await t.close();
+  }
+});
+
+test("pending optional cache opens cannot block a fresh usable gallery and late handles close without writing", async () => {
+  const descriptor = Object.getOwnPropertyDescriptor(globalThis, "indexedDB")!,
+    io = controlledGalleryIO(indexedDB);
+  io.holdAllOpens();
+  Object.defineProperty(globalThis, "indexedDB", {
+    configurable: true,
+    value: io.factory,
+  });
+  let t: Awaited<ReturnType<typeof setup>> | null = null;
+  try {
+    t = await setup();
+    const card = await t.slot.findByRole("button", { name: /PR Review/ });
+    await waitFor(() =>
+      expect((card as HTMLButtonElement).disabled).toBe(false),
+    );
+    expect(
+      t.fixture.calls.filter((call) => call.method === "publishedCatalog"),
+    ).toHaveLength(1);
+    expect(io.pending.length).toBeGreaterThanOrEqual(2);
+    io.releaseAll();
+    expect(io.stats().closed).toBe(io.stats().opened);
+    expect(t.fixture.flags.launchCount).toBe(0);
+  } finally {
+    io.releaseAll();
+    if (t) await t.close();
+    Object.defineProperty(globalThis, "indexedDB", descriptor);
+  }
+});
+
+test("unavailable optional cache hashing still shows a fresh verified gallery", async () => {
+  const { spyOn } = await import("bun:test");
+  const spy = spyOn(crypto.subtle, "digest").mockRejectedValue(
+    new Error("Optional hashing unavailable"),
+  );
+  let t: Awaited<ReturnType<typeof setup>> | null = null;
+  try {
+    t = await setup();
+    const card = await t.slot.findByRole("button", { name: /PR Review/ });
+    await waitFor(() =>
+      expect((card as HTMLButtonElement).disabled).toBe(false),
+    );
+    expect(t.slot.queryAllByText(/Templates could not refresh/)).toHaveLength(
+      0,
+    );
+    expect(t.fixture.flags.launchCount).toBe(0);
+  } finally {
+    if (t) await t.close();
+    spy.mockRestore();
+  }
+});
+
+test("oversized gallery same-version hash outage preserves publication and matching recovery clears its error", async () => {
+  const { spyOn } = await import("bun:test");
+  const t = await setup(false, (fixture) => {
+    const base = structuredClone(fixture.entries[0]!);
+    for (let index = 0; index < 100; index++) {
+      const entry = structuredClone(base),
+        id = `large-catalog-${index}`;
+      entry.id = id;
+      entry.draft!.templateId = id;
+      entry.draft!.definition.id = id;
+      entry.published!.templateId = id;
+      entry.published!.definition.id = id;
+      fixture.entries.push(entry);
+    }
+  });
+  let spy: ReturnType<typeof spyOn> | null = null;
+  try {
+    const card = await t.slot.findByRole("button", { name: /PR Review/ });
+    await waitFor(() =>
+      expect((card as HTMLButtonElement).disabled).toBe(false),
+    );
+    spy = spyOn(crypto.subtle, "digest").mockRejectedValue(
+      new Error("Optional hash outage"),
+    );
+    await t.slot.behavior.emitRealtime(TEMPLATES_CATALOG_CHANGED, {});
+    await t.slot.findByText(
+      /publication cannot be verified while hashing is unavailable/,
+    );
+    expect((card as HTMLButtonElement).disabled).toBe(true);
+    spy.mockRestore();
+    spy = null;
+    await t.slot.behavior.emitRealtime(TEMPLATES_CATALOG_CHANGED, {});
+    await waitFor(() =>
+      expect((card as HTMLButtonElement).disabled).toBe(false),
+    );
+    expect(t.slot.queryAllByText(/Templates could not refresh/)).toHaveLength(
+      0,
+    );
+    expect(t.slot.container.querySelectorAll(".ntt-card").length).toBe(102);
+    expect(t.fixture.flags.launchCount).toBe(0);
+  } finally {
+    spy?.mockRestore();
+    await t.close();
+  }
+});
+
+test("lazy form failure and retry preserve exact personal origin and clock, with reachable Back and heading focus", async () => {
+  const { spyOn } = await import("bun:test"),
+    { templateScreens } = await import("../ui/deferred-screen.tsx"),
+    actual = templateScreens.run;
+  type Module = Awaited<ReturnType<typeof actual>>;
+  let reject!: (error: Error) => void, release!: (value: Module) => void;
+  const first = new Promise<Module>((_, fail) => {
+      reject = fail;
+    }),
+    second = new Promise<Module>((resolve) => {
+      release = resolve;
+    });
+  let pending = first;
+  const spy = spyOn(templateScreens, "run").mockImplementation(() => pending);
+  const clock = createRenderContext("Asia/Kathmandu", 1700000000000);
+  const t = await setup(false, (fixture) =>
+    fixture.seedPersonal({
+      inputs: {
+        subject: "Retained personal subject",
+        pr_url: "https://example.test/pull/7",
+      },
+      projectId: "project-a",
+      renderContext: clock,
+      nativeEditor: {
+        editorDraftId: crypto.randomUUID(),
+        instanceId: fixture.personalAddress().instanceId,
+        actor: fixture.wire.actor!.identity.key,
+        templateId: "review-pr",
+        revision: 1,
+        inputs: {
+          subject: "Frozen origin",
+          pr_url: "https://example.test/pull/2",
+        },
+        seed: {
+          defaultProjectId: "project-a",
+          defaultEnvironment: { type: "project-default" },
+          initialPrompt: "Retained native seed",
+        },
+        title: "Frozen native title",
+        createdAt: 1,
+        renderContext: clock,
+      },
+    }),
+  );
+  try {
+    const before = await t.fixture.readPersonal();
+    const card = await t.slot.findByRole("button", { name: /PR Review/ });
+    await waitFor(() =>
+      expect((card as HTMLButtonElement).disabled).toBe(false),
+    );
+    await act(async () => card.click());
+    const heading = await t.slot.findByRole("heading", { name: "PR Review" });
+    expect(document.activeElement).toBe(heading);
+    expect(
+      t.slot.container
+        .querySelector("[data-new-thread-templates-form]")!
+        .getAttribute("data-new-thread-templates-form"),
+    ).toBe("recovery");
+    expect(
+      t.slot.queryAllByRole("button", { name: "Start thread" }),
+    ).toHaveLength(0);
+    expect(t.fixture.wire.saveInputs).toHaveLength(0);
+    await act(async () => reject(new Error("Scripted lazy chunk 410")));
+    await t.slot.findByText(/This view could not load/);
+    pending = second;
+    await act(async () =>
+      t.slot.getByRole("button", { name: "Retry loading" }).click(),
+    );
+    expect(t.slot.queryAllByText(/This view could not load/)).toHaveLength(1);
+    await act(async () => release(await actual()));
+    const subject = await t.slot.findByLabelText(/Main change or review goal/);
+    await waitFor(() =>
+      expect((subject as HTMLInputElement).value).toBe(
+        "Retained personal subject",
+      ),
+    );
+    expect(t.slot.queryAllByText(/This view could not load/)).toHaveLength(0);
+    expect(await t.fixture.readPersonal()).toEqual(before);
+    expect(t.fixture.wire.saveInputs).toHaveLength(0);
+    expect(t.fixture.flags.launchCount).toBe(0);
+    await act(async () =>
+      t.slot.getByRole("button", { name: "‹ All templates" }).click(),
+    );
+    await waitFor(() =>
+      expect(document.activeElement).toBe(
+        t.slot.getByRole("button", { name: /PR Review/ }),
+      ),
+    );
+  } finally {
+    spy.mockRestore();
+    await t.close();
+  }
+});
+
+test("lazy form Back and actor switch fence late module settlement without mounting departed personal work", async () => {
+  const { spyOn } = await import("bun:test"),
+    { templateScreens } = await import("../ui/deferred-screen.tsx"),
+    actual = templateScreens.run;
+  type Module = Awaited<ReturnType<typeof actual>>;
+  let release!: (value: Module) => void;
+  const held = new Promise<Module>((resolve) => {
+    release = resolve;
+  });
+  const spy = spyOn(templateScreens, "run").mockImplementation(() => held);
+  const t = await setup(false, (fixture) =>
+    fixture.seedPersonal({ inputs: { subject: "Ada private" } }),
+  );
+  try {
+    const card = await t.slot.findByRole("button", { name: /PR Review/ });
+    await waitFor(() =>
+      expect((card as HTMLButtonElement).disabled).toBe(false),
+    );
+    await act(async () => card.click());
+    await t.slot.findByText(/Loading template form/);
+    await act(async () =>
+      t.slot.getByRole("button", { name: "‹ All templates" }).click(),
+    );
+    await act(async () => t.fixture.wire.switchActor("bea"));
+    t.fixture.seedPersonal({ inputs: { subject: "Bea private" } });
+    await act(async () => release(await actual()));
+    expect(
+      t.slot.queryAllByLabelText(/Main change or review goal/),
+    ).toHaveLength(0);
+    expect(t.fixture.wire.saveInputs).toHaveLength(0);
+    spy.mockImplementation(actual);
+    await openReview(t.slot);
+    await waitFor(() =>
+      expect(
+        (
+          t.slot.getByLabelText(
+            /Main change or review goal/,
+          ) as HTMLInputElement
+        ).value,
+      ).toBe("Bea private"),
+    );
+    expect(t.slot.queryAllByDisplayValue("Ada private")).toHaveLength(0);
+    expect(t.fixture.flags.launchCount).toBe(0);
+  } finally {
+    spy.mockRestore();
+    await t.close();
+  }
+});
+
+test("lazy contextual editor failure keeps captured return and Settings retry admits the same shared editor without writes", async () => {
+  const { spyOn } = await import("bun:test"),
+    { templateScreens } = await import("../ui/deferred-screen.tsx"),
+    actual = templateScreens.management,
+    { rememberFormReturn, takeFormReturn } = await import("../ui/return.ts");
+  type Module = Awaited<ReturnType<typeof actual>>;
+  let reject!: (error: Error) => void;
+  const held = new Promise<Module>((_, fail) => {
+    reject = fail;
+  });
+  const spy = spyOn(templateScreens, "management").mockImplementation(
+    () => held,
+  );
+  const fixture = await appFixture(`lazy-editor-${crypto.randomUUID()}`),
+    owner = `${fixture.personalAddress().instanceId}:${fixture.wire.actor!.identity.key}`,
+    revision = fixture.entries.find(
+      (entry) => entry.id === "review-pr",
+    )!.published!;
+  expect(rememberFormReturn(owner, revision, "project-a")).toBeNull();
+  const slot = renderSlot(
+    app.navPanels[0]!,
+    { subPath: "compose/edit/review-pr" },
+    {
+      pluginId: "new-thread-templates",
+      rpc: fixture.handlers,
+      sdk: fixture.sdk,
+    },
+  );
+  const stop = fixture.wire.onRealtime((channel, payload) => {
+    void slot.behavior.emitRealtime(channel, payload);
+  });
+  let settings: ReturnType<typeof renderSlot> | undefined;
+  try {
+    await slot.findByRole("button", { name: "‹ New thread" });
+    await act(async () => reject(new Error("Scripted editor chunk missing")));
+    await slot.findByText(/This view could not load/);
+    await act(async () =>
+      slot.getByRole("button", { name: "‹ New thread" }).click(),
+    );
+    expect(takeFormReturn(owner)).toMatchObject({
+      revision,
+      projectId: "project-a",
+    });
+    expect(takeFormReturn(owner)).toBeNull();
+    expect(
+      fixture.calls.filter((call) =>
+        ["saveDraft", "publish", "remove"].includes(call.method),
+      ),
+    ).toHaveLength(0);
+    slot.lifecycle.unmount();
+    spy.mockImplementation(actual);
+    settings = renderSlot(
+      app.settingsSections[0]!,
+      {},
+      {
+        pluginId: "new-thread-templates",
+        rpc: fixture.handlers,
+        sdk: fixture.sdk,
+      },
+    );
+    await managementReady(settings);
+    await act(async () =>
+      settings!.getByRole("button", { name: /\+ New template/ }).click(),
+    );
+    await settings.findByLabelText("Name");
+    expect(
+      fixture.calls.filter((call) =>
+        ["saveDraft", "publish", "remove", "launch"].includes(call.method),
+      ),
+    ).toHaveLength(0);
+  } finally {
+    spy.mockRestore();
+    stop();
+    slot.lifecycle.unmount();
+    settings?.lifecycle.unmount();
+    await act(async () => {});
+    await fixture.dispose();
   }
 });

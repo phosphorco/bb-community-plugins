@@ -3,92 +3,168 @@ import {
   useRealtime,
   useRealtimeConnectionState,
 } from "@get-bb/plugin-sdk/app";
-
-/** A mounted read owns its retries. No timer runs after success or while hidden. */
+export interface MountedReadContext {
+  isCurrent(): boolean;
+}
 const isHidden = () => document.visibilityState === "hidden";
 
-export function useMountedRead<T>(load: () => Promise<T>, channel: string) {
+/** One mounted owner retains one raw request across loader replacements.
+ * Invalidation revokes freshness immediately; remote disposal is not cancellation. */
+export function useMountedResource<T>(
+  load: (context: MountedReadContext) => Promise<T>,
+  initialValue: T | null = null,
+) {
   const [state, setState] = useState<{
     value: T | null;
     error: string | null;
     loading: boolean;
-  }>({ value: null, error: null, loading: true });
-  const refreshRef = useRef<() => void>(() => {});
-  const refresh = useCallback(() => refreshRef.current(), []);
-  const connection = useRealtimeConnectionState();
-  const previousConnection = useRef(connection);
-  useRealtime(channel, refresh);
+    fresh: boolean;
+  }>({
+    value: initialValue,
+    error: null,
+    loading: initialValue === null,
+    fresh: false,
+  });
+  const latest = useRef(load);
+  latest.current = load;
+  const owner = useRef({
+    active: false,
+    generation: 0,
+    running: false,
+    queued: false,
+    failures: 0,
+    fresh: false,
+    acceptedLoad: null as ((context: MountedReadContext) => Promise<T>) | null,
+    timer: undefined as ReturnType<typeof setTimeout> | undefined,
+  });
+  const runRef = useRef<() => void>(() => {});
+  const refresh = useCallback(() => {
+    const current = owner.current;
+    current.generation++;
+    current.fresh = false;
+    current.queued = true;
+    if (current.timer) clearTimeout(current.timer);
+    current.timer = undefined;
+    if (current.active)
+      setState((previous) => ({
+        ...previous,
+        fresh: false,
+        loading: previous.value === null,
+      }));
+    runRef.current();
+  }, []);
+  const seed = useCallback((value: T | null) => {
+    if (value !== null && owner.current.active)
+      setState((previous) =>
+        previous.value === null
+          ? { ...previous, value, loading: false, fresh: false }
+          : previous,
+      );
+  }, []);
+  const isFresh = useCallback(
+    () =>
+      owner.current.active &&
+      owner.current.fresh &&
+      owner.current.acceptedLoad === latest.current,
+    [],
+  );
+  const connection = useRealtimeConnectionState(),
+    previousConnection = useRef(connection);
   useEffect(() => {
-    let disposed = false,
-      running = false,
-      again = false,
-      generation = 0,
-      failures = 0;
-    let timer: ReturnType<typeof setTimeout> | undefined;
+    const current = owner.current;
+    current.active = true;
     const clear = () => {
-      if (timer) clearTimeout(timer);
-      timer = undefined;
+      if (current.timer) clearTimeout(current.timer);
+      current.timer = undefined;
     };
-    const read = async () => {
+    const run = async () => {
       clear();
-      if (disposed || isHidden()) return;
-      if (running) {
-        again = true;
+      if (!current.active || current.running || !current.queued || isHidden())
         return;
-      }
-      running = true;
-      const request = ++generation;
+      current.running = true;
+      current.queued = false;
+      const generation = current.generation,
+        captured = latest.current;
+      const matches = () =>
+        current.active &&
+        generation === current.generation &&
+        captured === latest.current;
       try {
-        const value = await load();
-        if (!disposed && request === generation) {
-          failures = 0;
-          setState({ value, error: null, loading: false });
+        const value = await captured({ isCurrent: matches });
+        if (matches()) {
+          current.failures = 0;
+          current.fresh = true;
+          current.acceptedLoad = captured;
+          setState({ value, error: null, loading: false, fresh: true });
         }
       } catch (error) {
-        if (!disposed && request === generation) {
-          failures++;
+        if (matches()) {
+          current.failures++;
+          current.fresh = false;
           setState((previous) => ({
             ...previous,
             error: error instanceof Error ? error.message : String(error),
             loading: false,
+            fresh: false,
           }));
-          if (!isHidden())
-            timer = setTimeout(
-              () => {
-                void read();
-              },
-              Math.min(30_000, 1000 * 2 ** Math.min(failures - 1, 5)),
+          if (!isHidden() && !current.queued)
+            current.timer = setTimeout(
+              refresh,
+              Math.min(30_000, 1000 * 2 ** Math.min(current.failures - 1, 5)),
             );
         }
       } finally {
-        running = false;
-        if (again && !disposed) {
-          again = false;
-          void read();
-        }
+        current.running = false;
+        if (current.active && current.queued) void run();
       }
     };
-    refreshRef.current = () => {
-      void read();
+    runRef.current = () => {
+      void run();
     };
     const visibility = () => {
-      if (isHidden()) clear();
-      else void read();
+      if (isHidden()) {
+        clear();
+        current.generation++;
+        current.fresh = false;
+        current.queued = true;
+        setState((previous) => ({ ...previous, fresh: false }));
+      } else refresh();
     };
     document.addEventListener("visibilitychange", visibility);
-    void read();
     return () => {
-      disposed = true;
-      generation++;
+      current.active = false;
+      current.generation++;
+      current.fresh = false;
+      current.queued = false;
       clear();
-      refreshRef.current = () => {};
+      runRef.current = () => {};
       document.removeEventListener("visibilitychange", visibility);
     };
-  }, [load]);
+  }, [refresh]);
+  useEffect(() => {
+    refresh();
+  }, [load, refresh]);
   useEffect(() => {
     const previous = previousConnection.current;
     previousConnection.current = connection;
     if (previous !== "connected" && connection === "connected") refresh();
   }, [connection, refresh]);
-  return { ...state, refresh };
+  return {
+    ...state,
+    fresh: state.fresh && owner.current.acceptedLoad === load,
+    refresh,
+    isFresh,
+    seed,
+  };
+}
+
+/** Plugin facts are separate from native configuration events. */
+export function useMountedRead<T>(
+  load: (context: MountedReadContext) => Promise<T>,
+  channel: string,
+  initialValue: T | null = null,
+) {
+  const resource = useMountedResource(load, initialValue);
+  useRealtime(channel, resource.refresh);
+  return resource;
 }

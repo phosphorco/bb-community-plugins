@@ -350,9 +350,40 @@ export async function mobileReachability() {
     await page.setViewportSize({ width: 390, height: 844 });
     await page.evaluate(() => window.mobileTemplatesHarness.unmount());
     await visibleRecent();
+    const releaseCatalog = fixture.holdResponse("publishedCatalog");
+    try {
+      await page.evaluate(() => window.mobileTemplatesHarness.mount());
+      await browserExpect(card).toBeVisible();
+      await browserExpect(card).toBeDisabled();
+      await page.getByText("Checking templates…", { exact: true }).waitFor();
+      await hiddenRecent();
+    } finally {
+      releaseCatalog();
+    }
+    await browserExpect(card).toBeEnabled();
+    await page.evaluate(() => window.mobileTemplatesHarness.unmount());
     fixture.flags.catalogError = true;
     await page.evaluate(() => window.mobileTemplatesHarness.mount());
     await page.getByText(/Templates could not refresh/).waitFor();
+    // Trusted last-good published cards remain reachable but advisory only.
+    await browserExpect(card).toBeDisabled();
+    await hiddenRecent();
+    // A genuine no-good reload has no advisory publication and restores Recent.
+    await page.evaluate(async () => {
+      window.mobileTemplatesHarness.unmount();
+      await new Promise<void>((resolve, reject) => {
+        const request = indexedDB.deleteDatabase(
+          "new-thread-templates-published-gallery-v1",
+        );
+        request.onsuccess = () => resolve();
+        request.onerror = () => reject(request.error);
+        request.onblocked = () =>
+          reject(new Error("published fixture cache remained open"));
+      });
+    });
+    await page.reload();
+    await page.getByText(/Templates could not refresh/).waitFor();
+    await page.evaluate(() => window.mobileTemplatesHarness.enable());
     await visibleRecent();
     fixture.flags.catalogError = false;
     await page.evaluate(() => window.mobileTemplatesHarness.emit());

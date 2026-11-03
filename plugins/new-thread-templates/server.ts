@@ -5,7 +5,7 @@ import type { PersonRequest } from '@phosphorco/bb-identity/server';
 import type { BbPromptInput } from '@phosphorco/bb-identity/bb';
 import type { PluginId } from '@phosphorco/bb-identity/model';
 import { inputDraftResource, PLUGIN_ID } from './model';
-import { templatesContract, TEMPLATES_CHANGED, type LaunchRequest } from './rpc-contract';
+import { templatesContract, TEMPLATES_CHANGED, TEMPLATES_CATALOG_CHANGED,TEMPLATES_DEFINITIONS_CHANGED,TEMPLATES_JOURNAL_CHANGED, type LaunchRequest } from './rpc-contract';
 import { actorSummary, TemplatesStore } from './store';
 import { NativeTemplates } from './native';
 import { LaunchService } from './launch';
@@ -21,7 +21,8 @@ export default function newThreadTemplates(bb:BbPluginApi) {
   // Native calls use only the public SDK bound by the host before plugin activation.
   const native=new NativeTemplates(bb.sdk);
   let active=true;
-  const changed=()=>{if(active)bb.realtime.publish(TEMPLATES_CHANGED,{});};
+  const changed=()=>{if(active){bb.realtime.publish(TEMPLATES_CHANGED,{});bb.realtime.publish(TEMPLATES_JOURNAL_CHANGED,{});}};
+  const definitionsChanged=(catalog=false)=>{if(active){bb.realtime.publish(TEMPLATES_CHANGED,{});bb.realtime.publish(TEMPLATES_DEFINITIONS_CHANGED,{});if(catalog)bb.realtime.publish(TEMPLATES_CATALOG_CHANGED,{});}};
   const launches=new LaunchService(store,native,changed);
   const assignments=new InboxAssignmentService(store,bb.sdk,changed);
   bb.onDispose(()=>{active=false;launches.dispose();assignments.dispose();});
@@ -65,13 +66,16 @@ export default function newThreadTemplates(bb:BbPluginApi) {
     return store.launch(input.operationId)?.status??status;
   }
   const registered=binding.rpc.register(templatesContract,{
+    publishedCatalog:{origin:'interactive-user',handle:()=>({instanceId:binding.server.instanceId,...store.publishedCatalog()})},
+    choices:{origin:'interactive-user',handle:input=>native.choices(input)},
+    targetPreview:{origin:'interactive-user',handle:input=>native.targetPreview(input)},
     catalog:{origin:'interactive-user',handle:async(_input,invocation)=>person(invocation,()=>({entries:store.catalog()}))},
     context:{origin:'interactive-user',handle:async(input,invocation)=>person(invocation,async request=>({...await native.context(input),actor:actorSummary(request.actor),session:request.expected.session}))},
-    saveDraft:{origin:'interactive-user',handle:async(input,invocation)=>person(invocation,async request=>{const validate=await writeGuard(request,'shared-definitions',input.definition.id);const result=store.saveDraft(input.definition,input.expectedGeneration,actorSummary(request.actor),validate);changed();return result;})},
-    publish:{origin:'interactive-user',handle:async(input,invocation)=>person(invocation,async request=>{const validate=await writeGuard(request,'shared-definitions',input.templateId);const result=store.publish(input.templateId,input.expectedGeneration,actorSummary(request.actor),validate);changed();return result;})},
-    unpublish:{origin:'interactive-user',handle:async(input,invocation)=>person(invocation,async request=>{const validate=await writeGuard(request,'shared-definitions',input.templateId);const result=store.unpublish(input.templateId,input.expectedRevision,validate);changed();return result;})},
-    duplicate:{origin:'interactive-user',handle:async(input,invocation)=>person(invocation,async request=>{const validate=await writeGuard(request,'shared-definitions',input.newId);const result=store.duplicate(input.templateId,input.newId,actorSummary(request.actor),validate);changed();return result;})},
-    remove:{origin:'interactive-user',handle:async(input,invocation)=>person(invocation,async request=>{const validate=await writeGuard(request,'shared-definitions',input.templateId);const result=store.remove(input,actorSummary(request.actor),validate);changed();return result;})},
+    saveDraft:{origin:'interactive-user',handle:async(input,invocation)=>person(invocation,async request=>{const validate=await writeGuard(request,'shared-definitions',input.definition.id);const result=store.saveDraft(input.definition,input.expectedGeneration,actorSummary(request.actor),validate);definitionsChanged();return result;})},
+    publish:{origin:'interactive-user',handle:async(input,invocation)=>person(invocation,async request=>{const validate=await writeGuard(request,'shared-definitions',input.templateId);const result=store.publish(input.templateId,input.expectedGeneration,actorSummary(request.actor),validate);if(!result.issues.length)definitionsChanged(true);return result;})},
+    unpublish:{origin:'interactive-user',handle:async(input,invocation)=>person(invocation,async request=>{const validate=await writeGuard(request,'shared-definitions',input.templateId);const result=store.unpublish(input.templateId,input.expectedRevision,validate);definitionsChanged(true);return result;})},
+    duplicate:{origin:'interactive-user',handle:async(input,invocation)=>person(invocation,async request=>{const validate=await writeGuard(request,'shared-definitions',input.newId);const result=store.duplicate(input.templateId,input.newId,actorSummary(request.actor),validate);definitionsChanged();return result;})},
+    remove:{origin:'interactive-user',handle:async(input,invocation)=>person(invocation,async request=>{const validate=await writeGuard(request,'shared-definitions',input.templateId);const result=store.remove(input,actorSummary(request.actor),validate);definitionsChanged(true);return result;})},
     preview:{origin:'interactive-user',handle:async(input,invocation)=>person(invocation,()=>native.preview(input.definition,input.inputs,input.projectId,input.renderContext))},
     launch:{origin:'interactive-user',handle:async(input,invocation)=>person(invocation,request=>runLaunch(input,request))},
     resumeLaunch:{origin:'interactive-user',handle:async(input,invocation)=>person(invocation,request=>{

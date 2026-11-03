@@ -4,9 +4,8 @@ import {
   mountPluginContentScripts,
   renderSlot,
 } from "@get-bb/plugin-sdk/testing/app";
-import appDefinition from "../app.tsx";
 import { templatesContract, TEMPLATES_CHANGED } from "../rpc-contract.ts";
-const app = await loadPluginApp(appDefinition);
+const app = await loadPluginApp(() => import("../app.tsx"));
 const methods = [
   ...Object.keys(templatesContract),
   "bb-identity.v1.bootstrap",
@@ -34,6 +33,23 @@ const rpc = Object.fromEntries(
     },
   ]),
 ) as Record<string, (input: any) => Promise<any>>;
+const configListeners = new Map<string, Set<() => void>>();
+const sdk = {
+  subscribe({
+    event,
+    callback,
+  }: {
+    event: string;
+    callback: (...args: any[]) => void;
+  }) {
+    const listeners = configListeners.get(event) ?? new Set<() => void>();
+    configListeners.set(event, listeners);
+    listeners.add(callback);
+    return () => {
+      listeners.delete(callback);
+    };
+  },
+};
 let slot: ReturnType<typeof renderSlot> | null = null;
 let scripts: Awaited<ReturnType<typeof mountPluginContentScripts>> | null =
   null;
@@ -51,12 +67,12 @@ function mount(route: "home" | "settings" = "home") {
       ? renderSlot(
           app.homepageSections[0]!,
           { projectId: "project-a" },
-          { pluginId: "new-thread-templates", rpc },
+          { pluginId: "new-thread-templates", rpc, sdk },
         )
       : renderSlot(
           app.settingsSections[0]!,
           {},
-          { pluginId: "new-thread-templates", rpc },
+          { pluginId: "new-thread-templates", rpc, sdk },
         );
   // Construct only the fixture host around the real product slot; production never moves host DOM.
   document
@@ -97,7 +113,13 @@ window.mobileTemplatesHarness = {
     await old?.lifecycle.dispose();
   },
   emit: async () => {
-    await slot?.behavior.emitRealtime(TEMPLATES_CHANGED, {});
+    for (const suffix of ["catalog", "definitions", "journal"])
+      await slot?.behavior.emitRealtime(
+        `new-thread-templates:${suffix}-changed`,
+        {},
+      );
+    for (const listeners of configListeners.values())
+      for (const callback of listeners) callback();
   },
   reconnect: async () => {
     await slot?.behavior.setRealtimeConnectionState("reconnecting");
@@ -117,4 +139,4 @@ declare global {
     };
   }
 }
-mount();
+mount(location.search.includes("settings") ? "settings" : "home");
