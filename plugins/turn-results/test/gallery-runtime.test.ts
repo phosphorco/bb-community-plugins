@@ -1,4 +1,4 @@
-import { test } from 'node:test';
+import { test, mock } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 import { buildResolveOutput, METHODS } from '@phosphorco/bb-turn-results';
@@ -215,4 +215,187 @@ test('history saturation returns capacity without cursor/debt loss; queued cance
     const recovered = await h.runtime.readScope('capacity', new AbortController().signal, async () => 'same requested page');
     assert.deepEqual(recovered, { state: 'ready', value: 'same requested page' });
   } finally { for (const controller of controllers) controller.abort(); for (const release of releases) release(); h.dispose(); }
+});
+
+const transientDescribeError = () => Object.assign(new Error('Transient fixture Describe failure'), {
+  status: 500, body: { error: { code: 'handler_error' } },
+});
+test('one shared yielded Describe retry recovers without rediscovering healthy owners or duplicating roots', async () => {
+  const h = setup(2), rpc = h.sdk.plugins.callRpc;
+  const descriptions: string[] = [];
+  let release!: () => void, retrySignal!: AbortSignal;
+  h.sdk.plugins.callRpc = async args => {
+    if (args.method === METHODS.describe) {
+      descriptions.push(args.pluginId);
+      if (args.pluginId === 'source-000') {
+        if (descriptions.filter(id => id === args.pluginId).length === 1) throw transientDescribeError();
+        retrySignal = args.signal!; await new Promise<void>(resolve => { release = resolve; });
+      }
+    }
+    return rpc(args);
+  };
+  const leases = [h.runtime.retain(anchor('first')), h.runtime.retain(anchor('second'))];
+  try {
+    await until(() => Boolean(release));
+    assert.equal(h.runtime.isReadyOwner('source-001'), true);
+    assert.equal(h.runtime.isReadyOwner('source-000'), false);
+    assert.equal(descriptions.filter(id => id === 'source-000').length, 2);
+    assert.equal(descriptions.filter(id => id === 'source-001').length, 1);
+    assert.ok(h.reads.length >= 3, 'retry starts in a new queued unit after initial discovery');
+    assert.ok(h.runtime.stats().running <= 2); assert.equal(retrySignal.aborted, false);
+    release(); await until(() => h.runtime.isReadyOwner('source-000') && h.runtime.stats().running === 0);
+    assert.equal(descriptions.length, 3); assert.ok(h.sourceCalls.includes('source-000'));
+    const calls = h.reads.length; await tick(); await tick(); assert.equal(h.reads.length, calls);
+  } finally { release?.(); for (const lease of leases) lease.dispose(); h.dispose(); }
+});
+
+test('persistent transient Describe parks after one automatic retry; genuine new demand retries only debt', async () => {
+  const h = setup(2), rpc = h.sdk.plugins.callRpc;
+  const descriptions: string[] = []; let fail = true;
+  h.sdk.plugins.callRpc = async args => {
+    if (args.method === METHODS.describe) {
+      descriptions.push(args.pluginId);
+      if (args.pluginId === 'source-000' && fail) throw transientDescribeError();
+    }
+    return rpc(args);
+  };
+  const leases = [h.runtime.retain(anchor('first')), h.runtime.retain(anchor('second'))];
+  try {
+    await until(() => descriptions.length === 3 && h.runtime.stats().running === 0 && h.runtime.stats().queued === 0);
+    assert.equal(h.runtime.isReadyOwner('source-000'), false); assert.equal(h.runtime.isReadyOwner('source-001'), true);
+    assert.ok(leases.every(lease => lease.store.state.continued));
+    const quiet = { reads: h.reads.length, calls: descriptions.length }; await tick(); await tick(); await tick();
+    assert.deepEqual({ reads: h.reads.length, calls: descriptions.length }, quiet);
+    fail = false; h.runtime.invalidate('first'); h.runtime.invalidate('second');
+    await until(() => h.runtime.isReadyOwner('source-000') && h.runtime.stats().running === 0);
+    assert.equal(descriptions.filter(id => id === 'source-000').length, 3);
+    assert.equal(descriptions.filter(id => id === 'source-001').length, 1);
+    const calls = h.reads.length; await tick(); await tick(); assert.equal(h.reads.length, calls);
+  } finally { for (const lease of leases) lease.dispose(); h.dispose(); }
+});
+
+test('targeted retry fresh listing rejects removed and disabled debt; incompatible descriptor cannot grant readiness', async () => {
+  for (const state of ['removed', 'disabled', 'incompatible'] as const) {
+    const h = setup(2), rpc = h.sdk.plugins.callRpc, list = h.sdk.plugins.list;
+    let descriptions = 0, listCalls = 0;
+    h.sdk.plugins.list = async args => {
+      const result = await list(args); listCalls++;
+      if (listCalls > 1 && state !== 'incompatible') return { plugins: result.plugins.flatMap(row => row.id !== 'source-000'
+        ? [row] : state === 'removed' ? [] : [{ ...row, enabled: false }]) };
+      return result;
+    };
+    h.sdk.plugins.callRpc = async args => {
+      if (args.method === METHODS.describe && args.pluginId === 'source-000') {
+        descriptions++;
+        if (descriptions === 1) throw transientDescribeError();
+        return args.outputSchema.parse({ incompatible: 'not a public descriptor' });
+      }
+      return rpc(args);
+    };
+    const lease = h.runtime.retain(anchor('thread'));
+    try {
+      await until(() => listCalls === 2 && h.runtime.stats().running === 0);
+      assert.equal(h.runtime.isReadyOwner('source-000'), false, state);
+      assert.equal(h.runtime.isReadyOwner('source-001'), true, state);
+      assert.equal(descriptions, state === 'incompatible' ? 2 : 1);
+      const reads = h.reads.length; await tick(); await tick(); assert.equal(h.reads.length, reads);
+    } finally { lease.dispose(); h.dispose(); }
+  }
+});
+
+test('hidden or disposed targeted retry ignores late valid descriptor and cannot restore readiness', async () => {
+  for (const retire of ['hidden', 'dispose'] as const) {
+    const h = setup(1), rpc = h.sdk.plugins.callRpc;
+    let descriptions = 0, release!: () => void, bounded!: AbortSignal;
+    h.sdk.plugins.callRpc = async args => {
+      if (args.method === METHODS.describe) {
+        descriptions++;
+        if (descriptions === 1) throw transientDescribeError();
+        bounded = args.signal!; await new Promise<void>(resolve => { release = resolve; });
+      }
+      return rpc(args);
+    };
+    const lease = h.runtime.retain(anchor('thread'));
+    try {
+      await until(() => Boolean(release));
+      if (retire === 'hidden') h.hidden(true); else h.runtime.dispose();
+      assert.equal(bounded.aborted, true); await until(() => h.runtime.stats().running === 0);
+      release(); await tick(); await tick();
+      assert.equal(h.runtime.isReadyOwner('source-000'), false); assert.equal(h.sourceCalls.length, 0);
+      assert.equal(descriptions, 2);
+    } finally { release?.(); lease.dispose(); h.dispose(); }
+  }
+});
+
+test('named Describe retry debt yields at32 owners, advances past persistent prefix, and shares a finite wave', async () => {
+  const h = setup(33), rpc = h.sdk.plugins.callRpc;
+  const counts = new Map<string, number>(), perUnit = new Map<number, number>();
+  let held = true, clock = performance.now();
+  const monotonic = mock.method(performance, 'now', () => clock);
+  h.sdk.plugins.callRpc = async args => {
+    if (args.method === METHODS.describe) {
+      const count = (counts.get(args.pluginId) ?? 0) + 1; counts.set(args.pluginId, count);
+      perUnit.set(h.reads.length, (perUnit.get(h.reads.length) ?? 0) + 1);
+      if (count === 1) throw transientDescribeError();
+      if (held && ['source-000', 'source-001'].includes(args.pluginId)) {
+        clock += 3001; // Exercise the existing overall-deadline path without a real3s sleep.
+        throw transientDescribeError();
+      }
+    }
+    return rpc(args);
+  };
+  const leases = [h.runtime.retain(anchor('first')), h.runtime.retain(anchor('second'))];
+  try {
+    await until(() => h.runtime.isReadyOwner('source-032') && h.runtime.stats().running === 0 && h.runtime.stats().queued === 0);
+    assert.equal(h.runtime.readyOwners.state.size, 31); assert.equal(h.runtime.isReadyOwner('source-000'), false);
+    assert.ok([...counts.values()].every(count => count === 2), 'each owner gets one initial attempt and one window-shared retry');
+    assert.ok([...perUnit.values()].every(count => count <= 32), 'each discovery/retry unit admits at most32 descriptor attempts');
+    assert.ok(perUnit.size >= 5, 'deadline-deferred suffix advances in separate yielded units after two failed prefix attempts');
+    const calls = [...counts.values()].reduce((a, b) => a + b, 0); await tick(); await tick();
+    assert.equal([...counts.values()].reduce((a, b) => a + b, 0), calls);
+    held = false; h.runtime.invalidate('first'); h.runtime.invalidate('second');
+    await until(() => h.runtime.readyOwners.state.size === 33 && h.runtime.stats().running === 0);
+    assert.equal(counts.get('source-000'), 3); assert.equal(counts.get('source-001'), 3);
+    assert.equal(counts.get('source-032'), 2, 'healthy suffix is not redundantly described');
+  } finally { for (const lease of leases) lease.dispose(); h.dispose(); monotonic.mock.restore(); }
+});
+
+test('actual public500ms Describe timeout retries once; ignored late initial descriptor has no authority', async () => {
+  const h = setup(1), rpc = h.sdk.plugins.callRpc;
+  let descriptions = 0, release!: () => void, firstSignal!: AbortSignal;
+  h.sdk.plugins.callRpc = async args => {
+    if (args.method === METHODS.describe && ++descriptions === 1) {
+      firstSignal = args.signal!; await new Promise<void>(resolve => { release = resolve; });
+    }
+    return rpc(args);
+  };
+  const lease = h.runtime.retain(anchor('thread'));
+  try {
+    await until(() => descriptions === 2 && h.runtime.isReadyOwner('source-000') && h.runtime.stats().running === 0);
+    assert.equal(firstSignal.aborted, true, 'the unchanged public default call deadline aborted the first request');
+    h.runtime.invalidateReadiness(); assert.equal(h.runtime.isReadyOwner('source-000'), false);
+    release(); await tick(); await tick();
+    assert.equal(h.runtime.isReadyOwner('source-000'), false, 'late old call cannot readmit an invalidated generation');
+    assert.equal(descriptions, 2); assert.equal(h.runtime.stats().running, 0);
+  } finally { release?.(); lease.dispose(); h.dispose(); }
+});
+
+test('optional retry list failure parks without revoking a healthy owner, then new demand obtains a fresh descriptor', async () => {
+  const h = setup(2), rpc = h.sdk.plugins.callRpc, list = h.sdk.plugins.list;
+  let lists = 0, descriptions = 0;
+  h.sdk.plugins.list = async args => { if (++lists === 2) throw transientDescribeError(); return list(args); };
+  h.sdk.plugins.callRpc = async args => {
+    if (args.method === METHODS.describe && args.pluginId === 'source-000' && ++descriptions === 1) throw transientDescribeError();
+    return rpc(args);
+  };
+  const lease = h.runtime.retain(anchor('thread'));
+  try {
+    await until(() => lists === 2 && h.runtime.stats().running === 0);
+    assert.equal(descriptions, 1); assert.equal(h.runtime.isReadyOwner('source-001'), true);
+    assert.equal(h.runtime.isReadyOwner('source-000'), false);
+    await tick(); await tick(); assert.equal(lists, 2);
+    h.runtime.invalidate('thread');
+    await until(() => h.runtime.isReadyOwner('source-000') && h.runtime.stats().running === 0);
+    assert.equal(descriptions, 2); assert.equal(lists, 3);
+  } finally { lease.dispose(); h.dispose(); }
 });

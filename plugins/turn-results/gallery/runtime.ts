@@ -1,7 +1,7 @@
 import { Store } from '@tanstack/store';
 import { z } from 'zod';
 import { canonicalByteLength, canonicalJson, InputSchemas } from '@phosphorco/bb-turn-results';
-import { createResultsDiscoveryOwner, discoverResultsParticipants, classifyResultsError } from '@phosphorco/bb-turn-results/bb';
+import { createResultsDiscoveryOwner, discoverResultsParticipants, createResultsSupplierClient, classifyResultsError } from '@phosphorco/bb-turn-results/bb';
 import type { ResultsDiscoveryCursor } from '@phosphorco/bb-turn-results/bb';
 import type { GalleryAnchor } from './anchors.ts';
 import type { GalleryObservation, GalleryPage, StageRecord } from './index.ts';
@@ -61,6 +61,14 @@ export function createGalleryRuntime(sdk: Sdk) {
   const historyReads = new Set<HistoryRead>();
   let discoveryController: AbortController | null = null, discoveryGeneration = 0;
   let discoveryCapacity = false;
+  // Named, window-shared debt: a failed descriptor gets one yielded retry.
+  // A persistent failure parks until a later genuine demand, never an idle tick.
+  const descriptorDebt = new Map<string, 'queued' | 'parked'>();
+  const transientDescriptor = (state: string) => ['source-error', 'transport-error', 'timeout'].includes(state);
+  const queuedDescriptors = () => [...descriptorDebt.values()].some(state => state === 'queued');
+  function demandDescriptors() {
+    for (const [id, state] of descriptorDebt) if (state === 'parked') descriptorDebt.set(id, 'queued');
+  }
   let discoveryDemands = 0, visibleDiscoveryDemands = 0;
   const lifetime = new AbortController();
   const media = createGalleryMedia({ fetch: (url, signal) => fetch(url, { signal }),
@@ -82,7 +90,7 @@ export function createGalleryRuntime(sdk: Sdk) {
   }
   function invalidateReadiness() {
     discoveryGeneration++; discoveryController?.abort(); discovering = null;
-    sources = null; discoveryCursor = null; discoveryCapacity = false; publishReady(new Set());
+    sources = null; discoveryCursor = null; discoveryCapacity = false; descriptorDebt.clear(); publishReady(new Set());
   }
   function presentationRoot(signal: AbortSignal, current: () => boolean): GalleryPresentationRoot {
     const id = ++rootId;
@@ -168,22 +176,71 @@ export function createGalleryRuntime(sdk: Sdk) {
       if (result.state !== 'committed' && result.state !== 'unchanged') throw Error(`History ${result.state}: ${result.reason ?? 'continuation was not committed'}`);
     },
   };
-  async function discover(signal: AbortSignal) {
-    if (sources && !discoveryCursor) return sources;
+  async function discover(signal: AbortSignal, spendRetry?: () => boolean) {
+    const retry = sources !== null && !discoveryCursor && queuedDescriptors();
+    if (sources && !discoveryCursor && (!retry || !discovering && !spendRetry?.())) return sources;
     if (!discovering) {
       const controller = new AbortController(), generation = discoveryGeneration;
       discoveryController = controller;
       const operation = (async () => {
-        const result = await discoverResultsParticipants({ sdk, owner: discoveryOwner, cursor: discoveryCursor, exclude: ['turn-results'], budgets: { concurrency: 1 }, signal: controller.signal });
+        const deadline = performance.now() + 3000;
+        // Listing-only discovery retains the public list admission/capacity
+        // rules. Only failed named owners are described again; healthy owners
+        // keep their valid descriptor and canvas authority.
+        const candidates = retry ? [...descriptorDebt].filter(([, state]) => state === 'queued').slice(0, 32).map(([id]) => id) : [];
+        for (const id of candidates) descriptorDebt.set(id, 'parked');
+        const result = await discoverResultsParticipants({ sdk, owner: discoveryOwner, cursor: retry ? null : discoveryCursor,
+          exclude: ['turn-results'], budgets: { concurrency: 1, ...(retry ? { processingSlots: 0 } : {}) },
+          overallDeadline: deadline, signal: controller.signal });
         controller.signal.throwIfAborted();
         if (generation !== discoveryGeneration) throw Error('Result discovery retired.');
-        if (result.state === 'failed') { publishReady(new Set()); throw Error('Result sources are temporarily unavailable.'); }
+        if (result.state === 'failed') {
+          if (retry) return sources ?? []; // Optional retry failure cannot erase healthy owners.
+          throw Error('Result sources are temporarily unavailable.');
+        }
+        if (retry) {
+          // A list admission alone never restores a failed owner's readiness.
+          for (const row of result.rows) if (row.state === 'queued') row.state = 'prior-slice';
+          for (const id of candidates) {
+            const row = result.rows.find(row => row.pluginId === id);
+            if (!row || row.state !== 'prior-slice') { descriptorDebt.delete(id); continue; }
+            if (performance.now() >= deadline) { descriptorDebt.set(id, 'queued'); continue; }
+            // Rotate only actual attempts. Deadline-deferred suffix owners stay
+            // queued ahead of the attempted prefix for the next yielded unit.
+            descriptorDebt.delete(id); descriptorDebt.set(id, 'parked');
+            try {
+              const negotiated = await createResultsSupplierClient(sdk, id, { signal: controller.signal,
+                current: () => active && visible && generation === discoveryGeneration,
+                overallDeadline: deadline }).describe();
+              controller.signal.throwIfAborted();
+              if (generation !== discoveryGeneration) throw Error('Result discovery retired.');
+              if (negotiated.state === 'ready') { row.state = 'ready'; row.capabilities = negotiated.capabilities; }
+              else row.state = 'incompatible';
+            } catch (error) {
+              controller.signal.throwIfAborted();
+              if (generation !== discoveryGeneration) throw error;
+              row.state = classifyResultsError(error);
+            }
+          }
+        }
+        const listedOwners = new Set(result.rows.map(row => row.pluginId));
+        for (const id of descriptorDebt.keys()) if (!listedOwners.has(id)) descriptorDebt.delete(id);
+        for (const row of result.rows) {
+          if (transientDescriptor(row.state)) {
+            if (!retry && !descriptorDebt.has(row.pluginId)) descriptorDebt.set(row.pluginId, 'queued');
+          } else if (row.state !== 'queued' && row.state !== 'prior-slice') descriptorDebt.delete(row.pluginId);
+        }
         const previousReady = readyOwners.state;
         const found = result.rows.flatMap(row => row.state === 'ready' && row.capabilities?.supplier
           ? [consumerSource(sdk, row.pluginId, row.capabilities)] : []);
-        const merged = new Map((sources ?? []).map(source => [source.pluginId, source]));
+        const merged = new Map((sources ?? []).filter(source => result.rows.some(row => row.pluginId === source.pluginId
+          && !['disabled', 'not-running', 'incompatible', 'unknown-plugin', 'unknown-method', 'unauthorized'].includes(row.state)))
+          .map(source => [source.pluginId, source]));
         for (const source of found) if (merged.has(source.pluginId) || merged.size < 256) merged.set(source.pluginId, source);
-        discoveryCursor = result.cursor; discoveryCapacity = !result.capacity.complete;
+        if (!retry) discoveryCursor = result.cursor;
+        discoveryCapacity = !result.capacity.complete;
+        if (retry) for (const source of found) for (const entry of turns.values())
+          if (entry.refs && entry.afterOwner !== null && source.pluginId <= entry.afterOwner) entry.debts.add(source.pluginId);
         sources = [...merged.values()].sort((a, b) => a.pluginId < b.pluginId ? -1 : a.pluginId > b.pluginId ? 1 : 0);
         // A finite rediscovery slice can omit a still-listed owner that has
         // already supplied a valid label. Keep that display metadata without
@@ -297,7 +354,7 @@ export function createGalleryRuntime(sdk: Sdk) {
       void (async () => {
         const cached = await readTurn(anchor, signal, entry.after); signal.throwIfAborted();
         publish(entry, { ...entry.store.state, ...cached, loaded: true, next: null, continued: cached.limited, error: null }, true);
-        const available = await discover(signal); signal.throwIfAborted();
+        const available = await discover(signal, () => { if (!entry.debtBudget) return false; entry.debtBudget--; return true; }); signal.throwIfAborted();
         // Finish a finite first visit to every listed owner before revisiting
         // productive owner debt. Failures park only that owner, never this pass.
         let source = available.find(source => entry.afterOwner === null || source.pluginId > entry.afterOwner);
@@ -327,9 +384,9 @@ export function createGalleryRuntime(sdk: Sdk) {
           }
         }
         const unvisited = available.some(source => entry.afterOwner === null || source.pluginId > entry.afterOwner);
-        const productive = unvisited || discoveryCursor !== null || (entry.debts.size > 0 && entry.debtBudget > 0);
+        const productive = unvisited || discoveryCursor !== null || ((entry.debts.size > 0 || queuedDescriptors()) && entry.debtBudget > 0);
         publish(entry, { ...entry.store.state, busy: false,
-          continued: productive || entry.debts.size > 0 || cached.limited || discoveryCapacity,
+          continued: productive || entry.debts.size > 0 || descriptorDebt.size > 0 || cached.limited || discoveryCapacity,
           error: failure, coverage: discoveryCapacity ? 'source-capacity' : cached.coverage }, true);
         // Yield after the existing owner slice. One queued collection observes
         // its committed facts; there is no second page walk inside this unit.
@@ -379,7 +436,7 @@ export function createGalleryRuntime(sdk: Sdk) {
   function visibility() {
     visible = !document.hidden; media.visible(visible); canvases.setHidden(!visible);
     if (!visible) { pendingDialog = null; dialogSites.setState(previous => ({ ...previous, pending: null })); invalidateReadiness(); for (const read of historyReads) read.cancel(); for (const entry of turns.values()) entry.controller?.abort(); }
-    else { for (const entry of turns.values()) if (entry.refs && entry.visible) { reset(entry); enqueue(entry); } }
+    else { demandDescriptors(); for (const entry of turns.values()) if (entry.refs && entry.visible) { reset(entry); enqueue(entry); } }
   }
   document.addEventListener('visibilitychange', visibility);
   const api = { media, canvases, backend, readScope, readyOwners, captionLabels, presentationStatus, dialogSites, presentationRoot, invalidateReadiness,
@@ -429,6 +486,7 @@ export function createGalleryRuntime(sdk: Sdk) {
     },
     invalidate(threadId?: string, rediscover = false, turnIds?: ReadonlySet<string>) {
       if (rediscover) invalidateReadiness();
+      else demandDescriptors();
       for (const entry of turns.values()) if (entry.refs && (!threadId || entry.anchor.threadId === threadId)
         && (!turnIds || turnIds.has(entry.anchor.turnId))) { reset(entry); enqueue(entry); }
     },
@@ -456,7 +514,7 @@ export function createGalleryRuntime(sdk: Sdk) {
         turns.set(key, entry); bytes += entry.bytes;
       }
       const owned = entry;
-      if (!owned.refs) reset(owned);
+      if (!owned.refs) { demandDescriptors(); reset(owned); }
       if (owned.anchor.turnSeqStart !== anchor.turnSeqStart || owned.anchor.turnSeqEnd !== anchor.turnSeqEnd) {
         owned.controller?.abort(); reset(owned);
       }
@@ -466,8 +524,8 @@ export function createGalleryRuntime(sdk: Sdk) {
       return { after, capacity: false, store: owned.store,
         visible(next: boolean) { if (!live || shown === next) return; shown = next; owned.visible += next ? 1 : -1;
           if (!owned.visible) { owned.controller?.abort(); unqueue(owned); stopUnusedDiscovery(); }
-          else { reset(owned); enqueue(owned); } },
-        more() { if (!live) return; reset(owned); enqueue(owned); },
+          else { demandDescriptors(); reset(owned); enqueue(owned); } },
+        more() { if (!live) return; demandDescriptors(); reset(owned); enqueue(owned); },
         dispose() {
           if (!live) return; live = false; if (!active) return; owned.refs--; leases--; if (shown) owned.visible--;
           if (!owned.refs || !owned.visible) { owned.controller?.abort(); unqueue(owned); stopUnusedDiscovery(); }

@@ -138,6 +138,11 @@ async function fixture(count = 6, mount = true, contribution = {}) {
   const box = { top: 0, bottom: 600, left: 0, right: 800, width: 800, height: 600, x: 0, y: 0, toJSON() {} };
   dom.window.HTMLElement.prototype.getBoundingClientRect = function () { return this.hasAttribute('data-thread-window') ? box : { ...box, width: contribution.width ?? 400, right: contribution.width ?? 400, height: 216, bottom: 216 }; };
   let rows = Array.from({ length: count }, (_, i) => record(i)), enabled = true, listCalls = 0, rpc = 0, live = 0, peak = 0, setups = 0, cleanups = 0, full = 0, fullPeak = 0;
+  if (contribution.sameTurnClaims) rows = Array.from({ length: contribution.sameTurnClaims }, (_, i) => {
+    const row = structuredClone(rows[0]); row.key = `claim-${i}`; row.identity.ref.member = `fixture-member-${i}`;
+    row.identity.artifact.id = `artifact-${i}`; row.resolution.identity = row.identity;
+    row.resolution.presentation.data.label = `Referent ${i}`; return row;
+  });
   if (contribution.fileRoute) rows = rows.map(row => ({ ...row, resolution: { ...row.resolution,
     route: { kind: 'file', target: { kind: 'host', hostId: 'recorded-host', path: '/saved/result.png' } } } }));
   if (contribution.savedUnavailable) rows = rows.map(row => ({ ...row, currentAvailability: { state: 'unknown', asOf: 1, expiresAt: null },
@@ -158,7 +163,11 @@ async function fixture(count = 6, mount = true, contribution = {}) {
     recognize: false, resolve: true, enumerate: false, kinds: [{ kind, namespace, neutralLabel: 'Result', confirmedLabel: 'Created', specificity: 'typed', memberVersion: 'v1', equivalenceNamespaces: [] }] } },
     resolve(input) { return buildResolveOutput(input, input.items.map(() => ({ state: 'unavailable', reason: 'not used' }))); } });
   const sdk = { threads: { async timeline(input) {
-    nativeCalls.push(input); return { rows: rows.map((row, i) => ({ id: `opaque-${i}`, threadId: 'thread', turnId: row.identity.ref.source.turnId,
+    nativeCalls.push(input);
+    if (contribution.sameTurnClaims) return { rows: [{ id: 'opaque-0', threadId: 'thread', turnId: 'turn-0',
+      kind: 'turn', status: 'completed', sourceSeqStart: 1, sourceSeqEnd: 5 }], completedTurnDisplay: 'collapse',
+      timelinePage: { historySnapshot: 'public-snapshot-A', olderCursor: null } };
+    return { rows: rows.map((row, i) => ({ id: `opaque-${i}`, threadId: 'thread', turnId: row.identity.ref.source.turnId,
       kind: 'turn', status: 'completed', sourceSeqStart: i * 10 + 1, sourceSeqEnd: i * 10 + 5 })).concat(structuralRows), completedTurnDisplay: 'collapse', timelinePage: { historySnapshot: 'public-snapshot', olderCursor: null } };
   }, events: { async list() { throw Error('No native event read is allowed in this fixture'); } } }, plugins: {
     async list() { listCalls++; return { plugins: [{ id: registeredOwner, enabled, status: enabled ? 'running' : 'disabled' }] }; },
@@ -1777,4 +1786,53 @@ test('inactive public lazy host diagnostic stays visually hidden behind the usab
     assert.equal(visibility(card.querySelector('.tr-hosted')), 'visible'); assert.equal(document.activeElement, opener);
     assert.equal(card.querySelector('[data-bb-presentation-failed]'), null); assert.equal(f.stats().rpc, 0); assert.equal(f.stats().peak, 1);
   } finally { await f.dispose(); }
+});
+
+
+test('one transient public Describe failure autonomously recovers the same three cards after a yielded bounded retry', async () => {
+  const f = await fixture(1, true, { sameTurnClaims: 3 });
+  const rpc = f.sdk.plugins.callRpc;
+  let attempts = 0, release = () => {}, injected = 0;
+  const cards = () => [...document.querySelectorAll('[data-result-key]')];
+  const shown = element => element && f.dom.window.getComputedStyle(element).visibility === 'visible';
+  const rich = () => cards().filter(card => shown(card.querySelector('.tr-hosted')) && !card.querySelector('.tr-hosted').hasAttribute('inert'));
+  try {
+    await until(() => rich().length === 3 && f.stats().live === 3);
+    const original = cards(), shell = document.querySelector('[data-turn-results-gallery]');
+    const native = document.querySelector('[data-timeline-row-id="opaque-0"]');
+    const openers = original.map(card => card.querySelector('[aria-label="Expand result"]'));
+    const facts = JSON.stringify(f.rows());
+    f.sdk.plugins.callRpc = async args => {
+      if (args.pluginId === owner && args.method === METHODS.describe) {
+        attempts++;
+        if (attempts === 1) {
+          injected++;
+          throw Object.assign(new Error('one transient registered Describe handler failure'), {
+            status: 500, body: { error: { code: 'handler_error' } },
+          });
+        }
+        if (attempts === 2) await new Promise(resolve => { release = resolve; });
+      }
+      return rpc(args);
+    };
+    await f.reconnect();
+    await until(() => attempts === 2 && f.stats().live === 0 && rich().length === 0);
+    assert.equal(injected, 1); assert.equal(f.stats().listCalls, 3);
+    assert.ok(cards().every(card => shown(card.querySelector('.tr-fallback'))));
+    const beforeRelease = f.nativeCalls.length;
+    await act(async () => { release(); await tick(); });
+    await until(() => rich().length === 3 && f.stats().live === 3);
+    assert.equal(attempts, 2, 'one initial failure and one shared automatic retry, not one retry per card');
+    assert.equal(document.querySelector('[data-turn-results-gallery]'), shell);
+    assert.equal(document.querySelector('[data-timeline-row-id="opaque-0"]'), native);
+    assert.equal(JSON.stringify(f.rows()), facts);
+    for (const [i, card] of cards().entries()) { assert.equal(card, original[i]); assert.equal(card.querySelector('[aria-label="Expand result"]'), openers[i]); }
+    assert.equal(f.nativeCalls.length, beforeRelease, 'descriptor completion needs no new native hint or read');
+    await settle(50);
+    const idle = f.stats(), reads = f.nativeCalls.length;
+    await settle(100); assert.deepEqual(f.stats(), idle); assert.equal(f.nativeCalls.length, reads);
+    assert.ok(f.stats().peak <= 4); assert.equal(f.stats().rpc, 0);
+    console.log('TRANSIENT_AUTOMATIC_RECOVERY', JSON.stringify({ rich: rich().length, attempts, injected,
+      sameCards: 3, sameShell: true, sameConsumerExpand: 3, factsUnchanged: true, stats: f.stats(), nativeRecoveryClaim: false }));
+  } finally { release(); f.sdk.plugins.callRpc = rpc; await f.dispose(); }
 });
