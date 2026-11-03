@@ -67,6 +67,9 @@ export function createGalleryRuntime(sdk: Sdk) {
     createUrl: blob => URL.createObjectURL(blob), revokeUrl: url => URL.revokeObjectURL(url) });
   const canvases = createWindowCanvasOwner();
   const readyOwners = new Store<ReadonlySet<string>>(new Set<string>());
+  // Display labels have no readiness authority. Already-admitted descriptors
+  // are bounded by discovery; cards select only their primitive caption.
+  const captionLabels = new Store<ReadonlyMap<string, { neutral: string; confirmed: string }>>(new Map());
   const presentationStatus = new Store({ stalled: 0 });
   const dialogSites = new Store<{ active: string | null; pending: string | null }>({ active: null, pending: null });
   let rootId = 0, activation = 0;
@@ -176,14 +179,20 @@ export function createGalleryRuntime(sdk: Sdk) {
         if (generation !== discoveryGeneration) throw Error('Result discovery retired.');
         if (result.state === 'failed') { publishReady(new Set()); throw Error('Result sources are temporarily unavailable.'); }
         const previousReady = readyOwners.state;
-        publishReady(new Set(result.rows.filter(row => row.state === 'ready' && row.capabilities?.supplier
-          || row.state === 'prior-slice' && previousReady.has(row.pluginId)).map(row => row.pluginId)));
         const found = result.rows.flatMap(row => row.state === 'ready' && row.capabilities?.supplier
           ? [consumerSource(sdk, row.pluginId, row.capabilities)] : []);
         const merged = new Map((sources ?? []).map(source => [source.pluginId, source]));
         for (const source of found) if (merged.has(source.pluginId) || merged.size < 256) merged.set(source.pluginId, source);
         discoveryCursor = result.cursor; discoveryCapacity = !result.capacity.complete;
         sources = [...merged.values()].sort((a, b) => a.pluginId < b.pluginId ? -1 : a.pluginId > b.pluginId ? 1 : 0);
+        const labels = new Map<string, { neutral: string; confirmed: string }>();
+        for (const source of sources) for (const kind of source.capabilities.supplier?.kinds ?? [])
+          labels.set(canonicalJson([source.pluginId, kind.kind]), { neutral: kind.neutralLabel, confirmed: kind.confirmedLabel });
+        if (labels.size !== captionLabels.state.size || [...labels].some(([key, value]) => {
+          const previous = captionLabels.state.get(key); return previous?.neutral !== value.neutral || previous.confirmed !== value.confirmed;
+        })) captionLabels.setState(() => labels);
+        publishReady(new Set(result.rows.filter(row => row.state === 'ready' && row.capabilities?.supplier
+          || row.state === 'prior-slice' && previousReady.has(row.pluginId)).map(row => row.pluginId)));
         return sources;
       })();
       discovering = operation;
@@ -365,7 +374,7 @@ export function createGalleryRuntime(sdk: Sdk) {
     else { for (const entry of turns.values()) if (entry.refs && entry.visible) { reset(entry); enqueue(entry); } }
   }
   document.addEventListener('visibilitychange', visibility);
-  const api = { media, canvases, backend, readScope, readyOwners, presentationStatus, dialogSites, presentationRoot, invalidateReadiness,
+  const api = { media, canvases, backend, readScope, readyOwners, captionLabels, presentationStatus, dialogSites, presentationRoot, invalidateReadiness,
     retainDiscoveryDemand() {
       if (!active || discoveryDemands >= GALLERY_RUNTIME_LIMITS.leases) return null;
       discoveryDemands++;
@@ -405,10 +414,10 @@ export function createGalleryRuntime(sdk: Sdk) {
       return result.value;
     },
     caption(row: GalleryObservation) {
-      const kind = sources?.find(source => source.pluginId === row.owner)?.capabilities.supplier?.kinds.find(kind => kind.kind === row.identity.ref.kind);
-      return row.resolution?.knowledge === 'failed' ? row.resolution.fallback.title
-        : kind ? row.resolution?.knowledge === 'confirmed' ? kind.confirmedLabel : kind.neutralLabel
-          : row.resolution?.fallback.title ?? 'Result';
+      const kind = captionLabels.state.get(canonicalJson([row.owner, row.identity.ref.kind]));
+      return kind ? row.resolution?.knowledge === 'confirmed' ? kind.confirmed : kind.neutral
+          : row.resolution?.knowledge === 'failed' ? 'Result failed' : row.resolution?.knowledge === 'confirmed' ? 'Result recorded'
+            : row.resolution?.knowledge === 'pending' ? 'Pending result' : 'Result status unknown';
     },
     invalidate(threadId?: string, rediscover = false, turnIds?: ReadonlySet<string>) {
       if (rediscover) invalidateReadiness();

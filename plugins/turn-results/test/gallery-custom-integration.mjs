@@ -676,7 +676,7 @@ test('lazy renderer late completion after disable stays inert; nonempty owner me
     await act(async () => { release(f.renderer); await tick(); });
     await settle(50); assert.equal(f.stats().live, 0); assert.equal(f.stats().rpc, 0);
     assert.equal(document.querySelector('.tr-result-title').textContent, 'Saved result 0');
-    assert.equal(document.querySelector('.tr-caption > span').textContent, '', 'unavailable owner label never duplicates the retained primary title');
+    assert.equal(document.querySelector('.tr-caption > span').textContent, 'Result recorded', 'unknown live descriptor retains a truthful generic event caption without readiness authority');
     assert.ok(document.querySelector('.tr-fallback [aria-label^="Open Saved result 0 — https://fixture.invalid/0"]'));
     f.enabled(true); await act(async () => { f.register(async () => f.renderer, ['requires-io']); }); await f.notify();
     await settle(100); assert.equal(f.stats().live, 0); assert.equal(f.stats().rpc, 0);
@@ -1705,4 +1705,21 @@ for (const boundary of ['recovered', 'facts', 'removed', 'superseded', 'direct-r
     await h.release(); await settle(80);
     assert.deepEqual(h.f.navigation, boundary === 'superseded' ? ['https://fixture.invalid/choice-b'] : boundary === 'recovered' ? ['https://fixture.invalid/choice-a'] : []);
   } finally { lease?.dispose(); await h.close(); }
+});
+
+test('generic descriptor labels react for retained cards without row or readiness authority changes', async()=>{
+ const f=await fixture(1,false), runtime=createGalleryRuntime(f.sdk), controller=new AbortController();const shell=document.createElement('div');document.body.append(shell);const root=createRoot(shell);const row={...f.rows()[0],resolution:{...f.rows()[0].resolution,presentation:undefined}};let atReady=[];const unsub=runtime.readyOwners.subscribe(()=>atReady.push(runtime.caption(row)));
+ try{
+  await act(async()=>root.render(h(ResultCard,{row,runtime,sdk:f.sdk,navigate:{openUrl(){return true},toThread(){}},current:()=>true,lifetime:controller.signal})));
+  const before=shell.querySelector('.tr-caption > span').textContent;await act(async()=>{await runtime.readScope('thread',controller.signal,signal=>runtime.discoverReady(signal));await tick()});await settle(30);
+  const result={before,atReady,captionNow:runtime.caption(row),captionDOM:shell.querySelector('.tr-caption > span').textContent,counts:f.stats()};console.log('CAPTION_DESCRIPTOR_BEFORE',JSON.stringify(result));assert.equal(result.captionNow,'Created');assert.equal(result.captionDOM,'Created','retained noncustom card receives admitted label without another row read');
+  const calls=f.stats().listCalls, original=f.sdk.plugins.callRpc;
+  f.sdk.plugins.callRpc=async args=>{const output=await original(args);if(args.method===METHODS.describe){const value=structuredClone(output);value.capabilities.supplier.kinds[0].confirmedLabel='Delivered artifact';return args.outputSchema.parse(value)}return output};
+  runtime.invalidateReadiness();assert.equal(runtime.isReadyOwner(owner),false);
+  await act(async()=>{await runtime.readScope('thread',controller.signal,signal=>runtime.discoverReady(signal));await tick()});
+  assert.equal(shell.querySelector('.tr-caption > span').textContent,'Delivered artifact');
+  assert.equal(runtime.caption({...row,owner:'unrelated'}),'Result recorded');
+  const idle=f.stats();await settle(40);assert.deepEqual(f.stats(),idle);assert.equal(f.stats().listCalls,calls+1);assert.equal(f.stats().rpc,0);
+
+ }finally{unsub.unsubscribe();await act(async()=>root.unmount());controller.abort();runtime.dispose();await f.dispose()}
 });

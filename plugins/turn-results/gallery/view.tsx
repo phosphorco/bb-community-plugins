@@ -203,7 +203,7 @@ export function ResultCard({ row, runtime, sdk, navigate, current, lifetime, pre
       opener: expandButton.current, openerCurrent: current });
   };
   const destination = Boolean(value && (value.route.kind === 'file' || value.route.kind === 'url'));
-  const caption = runtime.caption(row);
+  const caption = useSelector(runtime.captionLabels, () => runtime.caption(row));
   const title = value?.fallback.title.replace(/\s+/gu, ' ').trim().slice(0, 256);
   const visibleTitle = !value?.presentation && value?.fallback.kind === 'card'
     ? title && visibleCardTitle(title) : title;
