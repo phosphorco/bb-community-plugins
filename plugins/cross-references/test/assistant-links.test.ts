@@ -19,6 +19,8 @@ test("collection strips authority credentials, rejects sensitive URL parameters 
   assert.equal(assistantLinkLabel(rows[0]!.label, "Link"), "link");
   assert.ok(new TextEncoder().encode(assistantLinkLabel("😀".repeat(200), "Link")).length <= 256);
   assert.ok(!assistantLinkLabel("a\nb", "Link").includes("\n"));
+  assert.equal(assistantLinkLabel("@thread:thr_qtj5xr57zv", "Thread"), "@thread:thr_qtj5xr57zv");
+  assert.equal(assistantLinkLabel("snake_case_name", "Link"), "snake_case_name");
 });
 
 test("local BB targets require matching host and verified project/thread; newest aliases merge", async () => {

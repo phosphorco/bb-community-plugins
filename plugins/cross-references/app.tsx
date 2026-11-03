@@ -1,5 +1,4 @@
-import type { ReactNode } from 'react';
-import { BriefNavigationSurface, BriefMentionRow, BriefProducerStatus, useBriefProducerState } from './brief-producer.tsx';
+import { BriefNavigationSurface, BriefMentionRow, briefStatusMessage, useBriefProducerState } from './brief-producer.tsx';
 import { createPortal } from "react-dom";
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, useMemo } from "react";
 import {
@@ -379,7 +378,9 @@ function ReferenceSection({ heading, rows, total, nextCursor, loadingMore, onLoa
   </section>;
 }
 
-function ReferencesDetail({ target, pages, loading, error, stale, loadingMore, checks, checking, checkError, trigger, popoverId, onClose, onLoadMore, briefStatus }: {
+const COVERAGE_HELP = "Coverage is limited to known sources and at most 50 timeline pages per scan. Supplier failures and scan budgets can leave retained, unconfirmed locations. Legacy Thread Links claims remain until source deletion. Up to 256 targets per source and the newest 100 locations per producer edge are retained; counts show distinct resources, not all mentions.";
+
+function ReferencesDetail({ target, pages, loading, error, stale, loadingMore, checks, checking, checkError, trigger, popoverId, onClose, onLoadMore, briefMessage }: {
   target: { provider: string; keys: Record<string, string> };
   pages: ReferencePages;
   loading: boolean;
@@ -393,7 +394,7 @@ function ReferencesDetail({ target, pages, loading, error, stale, loadingMore, c
   popoverId: string;
   onClose: () => void;
   onLoadMore: (direction: Direction) => void;
-  briefStatus?: ReactNode;
+  briefMessage?: string | null;
 }) {
   const navigate = useBbNavigate();
   const contentRef = useRef<HTMLDivElement | null>(null);
@@ -413,7 +414,7 @@ function ReferencesDetail({ target, pages, loading, error, stale, loadingMore, c
     return () => { window.removeEventListener("resize", updatePosition); window.removeEventListener("scroll", updatePosition, true); };
   }, [updatePosition]);
   useEffect(() => {
-    const firstFocusable = contentRef.current?.querySelector<HTMLElement>("button, a, [tabindex='0']");
+    const firstFocusable = contentRef.current?.querySelector<HTMLElement>("button[aria-label='Close references']") ?? contentRef.current?.querySelector<HTMLElement>("button, a, [tabindex='0']");
     (firstFocusable ?? contentRef.current)?.focus();
   }, []);
   useEffect(() => {
@@ -428,13 +429,18 @@ function ReferencesDetail({ target, pages, loading, error, stale, loadingMore, c
   }, [onClose, trigger]);
   return createPortal(
     <div ref={contentRef} className="cross-references__popover" id={popoverId} role="dialog" aria-label="References" tabIndex={-1} style={{ top: position.top, left: position.left }}>
-      <header><strong>References</strong><button type="button" className="cross-references__close" onClick={onClose} aria-label="Close references">Close</button></header>
-      <button type="button" className="cross-references__close" onClick={() => { onClose(); navigate.toPluginPanel("mentions", { subPath: mentionsSubPath({ v: 1, kind: "query", input: { version: 2, query: { kind: "resource", target, relation: "self" } } }) }); }}>View mentions</button>
-      <p className="cross-references__message">Coverage is limited to known sources and at most 50 timeline pages per scan. Supplier failures and scan budgets can leave retained, unconfirmed locations. Legacy Thread Links claims remain until source deletion. Up to 256 targets per source and the newest 100 locations per producer edge are retained; counts show distinct resources, not all mentions.</p>
-      {stale && <p className="cross-references__stale" role="status">The connection is recovering; this may be briefly out of date.</p>}
+      <header>
+        <strong>References</strong>
+        <span className="cross-references__actions">
+          <span className={briefMessage || stale ? "cross-references__info cross-references__info--warn" : "cross-references__info"} tabIndex={0} role="img" aria-label={COVERAGE_HELP} title={[stale ? "Reconnecting; these links may be briefly out of date." : null, briefMessage ?? null, COVERAGE_HELP].filter(Boolean).join("\n\n")}>i</span>
+          <button type="button" className="cross-references__icon" title="View mentions" aria-label="View mentions" onClick={() => { onClose(); navigate.toPluginPanel("mentions", { subPath: mentionsSubPath({ v: 1, kind: "query", input: { version: 2, query: { kind: "resource", target, relation: "self" } } }) }); }}>
+            <svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><circle cx="7" cy="7" r="4.5" fill="none" stroke="currentColor" strokeWidth="1.5"/><path d="M10.5 10.5 14 14" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>
+          </button>
+          <button type="button" className="cross-references__icon" onClick={onClose} aria-label="Close references" title="Close">×</button>
+        </span>
+      </header>
       {loading && pages.forward.rows.length === 0 && pages.backlink.rows.length === 0 && <p className="cross-references__message" role="status">Checking references…</p>}
       {error != null && <p className="cross-references__error" role="alert">{error}</p>}
-      {briefStatus}
       <ReferenceSection target={target} heading="Forward references" rows={pages.forward.rows} total={pages.forward.total} nextCursor={pages.forward.nextCursor} loadingMore={loadingMore.forward} onLoadMore={() => onLoadMore("forward")} direction="forward" checks={checks} checking={checking} checkError={checkError} />
       <ReferenceSection target={target} heading="Backlinks" rows={pages.backlink.rows} total={pages.backlink.total} nextCursor={pages.backlink.nextCursor} loadingMore={loadingMore.backlink} onLoadMore={() => onLoadMore("backlink")} direction="backlink" checks={[]} checking={false} checkError={false} />
     </div>,
@@ -467,7 +473,7 @@ function ThreadHeaderAction({ threadId, projectId }: { threadId: string; project
       {forwardCount > 0 && <span className="cross-references__metric" aria-hidden="true"><LinkGlyph /><span className="cross-references__count">{forwardCount}</span></span>}
       {backlinkCount > 0 && <span className="cross-references__metric" aria-hidden="true"><BacklinkGlyph /><span className="cross-references__count">{backlinkCount}</span></span>}
     </button>
-    {open && triggerRef.current != null && <ReferencesDetail target={{ provider: "bb", keys: { project: projectId, thread: threadId } }} pages={pages} loading={loading} loadingMore={loadingMore} error={error} stale={stale} checks={checks} checking={checking} checkError={checkError} trigger={triggerRef.current} popoverId={popoverId} onClose={close} onLoadMore={loadMore} briefStatus={<BriefProducerStatus threadId={threadId} view={brief}/>} />}
+    {open && triggerRef.current != null && <ReferencesDetail target={{ provider: "bb", keys: { project: projectId, thread: threadId } }} pages={pages} loading={loading} loadingMore={loadingMore} error={error} stale={stale} checks={checks} checking={checking} checkError={checkError} trigger={triggerRef.current} popoverId={popoverId} onClose={close} onLoadMore={loadMore} briefMessage={briefStatusMessage(brief.state)} />}
   </>;
 }
 

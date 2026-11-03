@@ -12,6 +12,12 @@
 .cross-references__close { min-height: 26px; padding: 3px 7px; border: 1px solid var(--border); border-radius: 6px; color: var(--foreground); background: var(--background); font: inherit; font-size: 10px; cursor: pointer; }
 .cross-references__close:hover { background: var(--accent); color: var(--accent-foreground); }
 .cross-references__close:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+.cross-references__actions { display: inline-flex; align-items: center; gap: 4px; }
+.cross-references__icon { display: inline-grid; place-items: center; width: 22px; height: 22px; padding: 0; border: 0; border-radius: 5px; color: var(--muted-foreground); background: transparent; font: inherit; font-size: 14px; line-height: 1; cursor: pointer; }
+.cross-references__icon:hover { color: var(--foreground); background: var(--accent); }
+.cross-references__icon:focus-visible, .cross-references__info:focus-visible { outline: 2px solid var(--ring); outline-offset: 1px; }
+.cross-references__info { display: inline-grid; place-items: center; width: 14px; height: 14px; border: 1px solid var(--border); border-radius: 50%; color: var(--muted-foreground); font-size: 9px; font-style: italic; font-weight: 600; line-height: 1; cursor: help; user-select: none; }
+.cross-references__info--warn { border-color: var(--muted-foreground); color: var(--foreground); }
 .cross-references__section { display: grid; gap: 6px; min-width: 0; padding-top: 8px; border-top: 1px solid var(--border); }
 .cross-references__section > header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .cross-references__section > header strong { font-size: 11px; }
