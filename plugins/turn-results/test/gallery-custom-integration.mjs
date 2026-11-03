@@ -208,7 +208,7 @@ async function fixture(count = 6, mount = true, contribution = {}) {
     const dispose = registerPresentation({ pluginId: registeredOwner, generation: ++generation, signal: controller.signal }, { schema: registeredSchema, methods, decode: value => value, load });
     registrations.push(dispose); return dispose;
   }
-  register();
+  if (!contribution.deferPresentation) register();
   const runtimeProbe = []; if (contribution.captureRuntime) globalThis.__turnResultsRuntimeFixture = runtimeProbe;
   const app = await loadPluginApp(contribution.definition ?? (contribution.captureRuntime ? runtimeDefinition : definition)), controller = new AbortController();
   let script = await app.contentScripts[0].mount({ pluginId: 'turn-results', generation: 1, signal: controller.signal });
@@ -569,9 +569,9 @@ test('gallery exposes one stable consumer Expand; optional contributor requestFu
     await until(() => f.stats().live === 1 && document.querySelector('[data-supplier]'));
     assert.equal(document.querySelector('[data-contributor-expand]'), null);
     assert.equal(f.captured.at(-1).requestFull, undefined);
-    const card = document.querySelector('[data-result-key="row-0"]'), consumer = card.querySelector('[aria-label="Expand result"]');
-    assert.equal(document.querySelectorAll('[aria-label="Expand result"]').length, 1);
-    assert.equal(consumer.textContent, ''); assert.equal(consumer.title, 'Expand result');
+    const card = document.querySelector('[data-result-key="row-0"]'), consumer = card.querySelector('.tr-expand-icon');
+    assert.equal(document.querySelectorAll('.tr-expand-icon').length, 1);
+    assert.equal(consumer.textContent, ''); assert.equal(consumer.title, 'Expand Saved result 0');
     const style = document.createElement('style'); style.textContent = readFileSync(new URL('../app.css', import.meta.url), 'utf8'); document.head.append(style);
     assert.equal(window.getComputedStyle(consumer).width, '32px'); assert.equal(window.getComputedStyle(consumer).height, '32px'); style.remove();
     await act(async () => { consumer.focus(); consumer.click(); }); await until(() => f.stats().full === 1);
@@ -1604,7 +1604,7 @@ test('5978 queued primary fallback focus stays visible when its custom host is a
     assert.notEqual(result.visibility, 'hidden', 'the focused primary fallback must not disappear beneath a newly admitted custom renderer');
     assert.equal(card.querySelector('.tr-hosted').hasAttribute('inert'), true);
     assert.equal(card.querySelector('.tr-hosted').getAttribute('aria-hidden'), 'true');
-    const stable = card.querySelector('[aria-label="Expand result"]');
+    const stable = card.querySelector('.tr-expand-icon');
     await act(async () => stable.focus()); await until(() => fallback.style.visibility === 'hidden');
     assert.equal(card.querySelector('.tr-hosted').hasAttribute('inert'), false);
     const old = f.captured.findLast(props => props.identity.id === 'artifact-5'), before = f.navigation.length;
@@ -1761,7 +1761,7 @@ test('inactive public lazy host diagnostic stays visually hidden behind the usab
   try {
     await until(() => f.stats().live === 1);
     const card = document.querySelector('[data-result-key="row-0"]');
-    const opener = card.querySelector('[aria-label="Expand result"]');
+    const opener = card.querySelector('.tr-expand-icon');
     await act(async () => { f.register(async () => { loads++; throw Error('intentional unavailable presentation chunk'); }); });
     await until(() => loads === 1 && card.querySelector('[data-bb-presentation-failed]') && f.stats().live === 0);
     const marker = card.querySelector('[data-bb-presentation-failed]');
@@ -1781,7 +1781,7 @@ test('inactive public lazy host diagnostic stays visually hidden behind the usab
     await act(async () => { f.register(); }); await until(() => f.stats().live === 1);
     assert.equal(document.activeElement, primary, 'ready replacement must not conceal its focused fallback');
     assert.equal(visibility(fallback), 'visible'); assert.equal(visibility(hosted), 'hidden');
-    assert.equal(card.querySelector('[aria-label="Expand result"]'), opener);
+    assert.equal(card.querySelector('.tr-expand-icon'), opener);
     await act(async () => opener.focus()); await until(() => visibility(fallback) === 'hidden');
     assert.equal(visibility(card.querySelector('.tr-hosted')), 'visible'); assert.equal(document.activeElement, opener);
     assert.equal(card.querySelector('[data-bb-presentation-failed]'), null); assert.equal(f.stats().rpc, 0); assert.equal(f.stats().peak, 1);
@@ -1800,7 +1800,7 @@ test('one transient public Describe failure autonomously recovers the same three
     await until(() => rich().length === 3 && f.stats().live === 3);
     const original = cards(), shell = document.querySelector('[data-turn-results-gallery]');
     const native = document.querySelector('[data-timeline-row-id="opaque-0"]');
-    const openers = original.map(card => card.querySelector('[aria-label="Expand result"]'));
+    const openers = original.map(card => card.querySelector('.tr-expand-icon'));
     const facts = JSON.stringify(f.rows());
     f.sdk.plugins.callRpc = async args => {
       if (args.pluginId === owner && args.method === METHODS.describe) {
@@ -1826,7 +1826,7 @@ test('one transient public Describe failure autonomously recovers the same three
     assert.equal(document.querySelector('[data-turn-results-gallery]'), shell);
     assert.equal(document.querySelector('[data-timeline-row-id="opaque-0"]'), native);
     assert.equal(JSON.stringify(f.rows()), facts);
-    for (const [i, card] of cards().entries()) { assert.equal(card, original[i]); assert.equal(card.querySelector('[aria-label="Expand result"]'), openers[i]); }
+    for (const [i, card] of cards().entries()) { assert.equal(card, original[i]); assert.equal(card.querySelector('.tr-expand-icon'), openers[i]); }
     assert.equal(f.nativeCalls.length, beforeRelease, 'descriptor completion needs no new native hint or read');
     await settle(50);
     const idle = f.stats(), reads = f.nativeCalls.length;
@@ -1835,4 +1835,57 @@ test('one transient public Describe failure autonomously recovers the same three
     console.log('TRANSIENT_AUTOMATIC_RECOVERY', JSON.stringify({ rich: rich().length, attempts, injected,
       sameCards: 3, sameShell: true, sameConsumerExpand: 3, factsUnchanged: true, stats: f.stats(), nativeRecoveryClaim: false }));
   } finally { release(); f.sdk.plugins.callRpc = rpc; await f.dispose(); }
+});
+
+
+test('consumer Expand names distinguish two full source titles and restore the exact second opener', async () => {
+  const f = await fixture(2);
+  try {
+    await until(() => f.stats().live === 2);
+    const buttons = [...document.querySelectorAll('.tr-expand-icon')];
+    assert.deepEqual(buttons.map(button => button.getAttribute('aria-label')), ['Expand Saved result 0', 'Expand Saved result 1']);
+    assert.deepEqual(buttons.map(button => button.title), ['Expand Saved result 0', 'Expand Saved result 1']);
+    const second = buttons[1]; await act(async () => { second.focus(); second.click(); });
+    await until(() => f.stats().full === 1);
+    assert.equal(document.querySelector('dialog [data-supplier]').textContent, 'Referent 1');
+    await act(async () => document.querySelector('dialog').dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })));
+    await until(() => !document.querySelector('dialog')); assert.equal(document.activeElement, second);
+    assert.equal(second, document.querySelector('[data-result-key="row-1"] .tr-expand-icon'));
+    assert.ok(f.stats().peak <= 4); assert.equal(f.stats().rpc, 0);
+  } finally { await f.dispose(); }
+});
+
+test('cold three retained claims survive delayed public registration with useful focusable card-aligned fallback', async () => {
+  const f = await fixture(1, true, { sameTurnClaims: 3, deferPresentation: true });
+  try {
+    await until(() => document.querySelectorAll('[data-result-key]').length === 3);
+    const cards = [...document.querySelectorAll('[data-result-key]')], shell = document.querySelector('[data-turn-results-gallery]');
+    const fallback = cards[0].querySelector('.tr-fallback .tr-data-action');
+    const text = fallback.textContent, opener = cards[0].querySelector('.tr-expand-icon');
+    const style = document.createElement('style'); style.textContent = readFileSync(new URL('../app.css', import.meta.url), 'utf8'); document.head.append(style);
+    assert.equal(window.getComputedStyle(fallback).backgroundColor, 'rgba(0, 0, 0, 0)');
+    assert.match(text, /Saved result/); assert.match(fallback.getAttribute('aria-label'), /https:\/\/fixture.invalid\/0/);
+    await act(async () => fallback.focus()); const reads = f.nativeCalls.length, lists = f.stats().listCalls;
+    await act(async () => f.register()); await until(() => f.stats().live === 3);
+    assert.equal(document.activeElement, fallback); assert.equal(window.getComputedStyle(cards[0].querySelector('.tr-fallback')).visibility, 'visible');
+    assert.equal(fallback.textContent, text); assert.equal(document.querySelector('[data-turn-results-gallery]'), shell);
+    for (const [i, card] of [...document.querySelectorAll('[data-result-key]')].entries()) assert.equal(card, cards[i]);
+    await act(async () => opener.focus()); await until(() => window.getComputedStyle(cards[0].querySelector('.tr-hosted')).visibility === 'visible');
+    assert.equal(f.nativeCalls.length, reads); assert.equal(f.stats().listCalls, lists); assert.equal(f.stats().peak, 3); style.remove();
+  } finally { await f.dispose(); }
+});
+
+test('five custom claims share at most four canvases while queued fallback remains useful and guarded', async () => {
+  const f = await fixture(5, true, { deferPresentation: true });
+  try {
+    await until(() => document.querySelectorAll('[data-result-key]').length === 5);
+    const last = document.querySelector('[data-result-key="row-4"]'), fallback = last.querySelector('.tr-fallback .tr-data-action');
+    assert.match(fallback.textContent, /Saved result 4/); await act(async () => fallback.focus());
+    await act(async () => f.register()); await until(() => f.stats().live === 4);
+    assert.equal(document.activeElement, fallback); assert.equal(window.getComputedStyle(last.querySelector('.tr-fallback')).visibility, 'visible');
+    await act(async () => fallback.click()); assert.deepEqual(f.navigation, ['https://fixture.invalid/4']);
+    const old = f.captured.at(-1); await f.hidden(true); await until(() => f.stats().live === 0);
+    old.navigate.openUrl('https://fixture.invalid/stale'); assert.equal(f.navigation.length, 1);
+    assert.ok(f.stats().peak <= 4); assert.equal(f.stats().rpc, 0);
+  } finally { await f.dispose(); }
 });

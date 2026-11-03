@@ -224,7 +224,7 @@ export function ResultCard({ row, runtime, sdk, navigate, current, lifetime, pre
     <PresentationCanvas row={row} runtime={runtime} sdk={sdk} navigate={navigate} current={current} lifetime={lifetime}
       presentationRoot={presentationRoot} mode={mode} enabled={customEnabled} site={site} fallback={fallback} />
     <div className="tr-caption"><span>{value?.fallback.kind !== 'image' && title === caption ? null : caption}</span><div>
-      {mode === 'docked' && value?.presentation && <button ref={expandButton} onClick={full} className="tr-expand-icon" aria-label="Expand result" title="Expand result">
+      {mode === 'docked' && value?.presentation && <button ref={expandButton} onClick={full} className="tr-expand-icon" aria-label={`Expand ${title || caption}`} title={`Expand ${title || caption}`}>
         <svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true" focusable="false"><path d="M6 2H2v4M10 2h4v4M14 10v4h-4M6 14H2v-4" /></svg>
       </button>}
       {destination && (value?.presentation || value?.fallback.kind === 'image') && <button onClick={open} className={mode === 'docked' ? 'tr-open-icon' : undefined} aria-label={openName} title="Open result">

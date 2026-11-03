@@ -30,7 +30,7 @@ export interface GalleryPresentationRoot {
 interface TurnEntry {
   key: string; threadId: string; anchor: GalleryAnchor; after: { seq: number; key: string } | undefined; store: Store<TurnSnapshot>; refs: number; visible: number;
   dirty: boolean; controller: AbortController | null; afterOwner: string | null;
-  debts: Set<string>; debtBudget: number; bytes: number; cursorCharge: number;
+  debts: Set<string>; enumerateRetries: Set<string>; debtBudget: number; bytes: number; cursorCharge: number;
 }
 interface HistoryRead { threadId: string; live(): boolean; start(): void; cancel(): void }
 type Work = TurnEntry | HistoryRead;
@@ -358,11 +358,14 @@ export function createGalleryRuntime(sdk: Sdk) {
         // Finish a finite first visit to every listed owner before revisiting
         // productive owner debt. Failures park only that owner, never this pass.
         let source = available.find(source => entry.afterOwner === null || source.pluginId > entry.afterOwner);
-        let revisiting = false;
+        let revisiting = false, retryEnumerate = false;
         if (!source && !discoveryCursor && entry.debtBudget > 0) {
           const owner = entry.debts.values().next().value;
           source = available.find(source => source.pluginId === owner);
-          if (source) { revisiting = true; entry.debtBudget--; entry.debts.delete(source.pluginId); }
+          if (source) {
+            revisiting = true; entry.debtBudget--; entry.debts.delete(source.pluginId);
+            retryEnumerate = entry.enumerateRetries.delete(source.pluginId);
+          }
         }
         let failure: string | null = null;
         if (source) {
@@ -370,13 +373,36 @@ export function createGalleryRuntime(sdk: Sdk) {
           // stage/claim progress still belongs to the existing atomic backend.
           if (!revisiting) entry.afterOwner = source.pluginId;
           try {
-            const result = await consumeTurnSource(backend, sdk.threads.events, source, anchor, signal);
+            let admitted = true;
+            if (retryEnumerate) {
+              // Recheck bounded public membership without re-describing healthy
+              // owners or restoring any readiness. This stays in the charged
+              // retry lane; its owner never supersedes shared discovery.
+              const owner = createResultsDiscoveryOwner();
+              try {
+                const listed = await discoverResultsParticipants({ sdk, owner, exclude: ['turn-results'],
+                  budgets: { processingSlots: 0 }, signal });
+                signal.throwIfAborted();
+                admitted = listed.state !== 'failed' && listed.rows.some(row => row.pluginId === source!.pluginId && row.state === 'queued')
+                  && (sources?.includes(source) ?? false);
+              } finally { owner.dispose(); }
+            }
+            const result: Awaited<ReturnType<typeof consumeTurnSource>> = admitted ? await consumeTurnSource(backend, sdk.threads.events, source, anchor, signal)
+              : { continued: false, reason: `${source.pluginId}: retry source is not currently admitted` };
             signal.throwIfAborted();
-            if (result.continued) entry.debts.add(source.pluginId); else entry.debts.delete(source.pluginId);
+            if (result.transientEnumerate) {
+              // One failed first visit gets one revisit after healthy owners.
+              // A failed revisit parks until genuine demand resets the pass.
+              if (!revisiting) { entry.debts.add(source.pluginId); entry.enumerateRetries.add(source.pluginId); }
+              else entry.debts.delete(source.pluginId);
+              await backend.apply({ owner: source.pluginId, threadId: anchor.threadId, changes: [],
+                supplier: { revision: source.capabilities.revision, connection: 'disconnected', freshUntil: null } }, signal);
+            } else if (result.continued) entry.debts.add(source.pluginId); else entry.debts.delete(source.pluginId);
             failure = result.reason;
           } catch (error) {
             if (signal.aborted) throw error;
             entry.debts.delete(source.pluginId);
+            entry.enumerateRetries.delete(source.pluginId);
             const reason = classifyResultsError(error);
             await backend.apply({ owner: source.pluginId, threadId: anchor.threadId, changes: [],
               supplier: { revision: source.capabilities.revision, connection: reason === 'incompatible' ? 'unsupported' : 'disconnected', freshUntil: null } }, signal);
@@ -429,7 +455,7 @@ export function createGalleryRuntime(sdk: Sdk) {
       const pending = queue.get(threadId) ?? new Set<Work>(); pending.add(work); queue.set(threadId, pending); schedule();
     });
   }
-  function reset(entry: TurnEntry) { entry.dirty = true; entry.afterOwner = null; entry.debts.clear(); entry.debtBudget = GALLERY_RUNTIME_LIMITS.automaticDebtUnits; }
+  function reset(entry: TurnEntry) { entry.dirty = true; entry.afterOwner = null; entry.debts.clear(); entry.enumerateRetries.clear(); entry.debtBudget = GALLERY_RUNTIME_LIMITS.automaticDebtUnits; }
   function stopUnusedDiscovery() {
     if (!visibleDiscoveryDemands && ![...turns.values()].some(entry => entry.refs && entry.visible)) discoveryController?.abort();
   }
@@ -510,7 +536,7 @@ export function createGalleryRuntime(sdk: Sdk) {
           visible(_next: boolean) {}, more() {}, dispose() {},
         };
         entry = { key, threadId: anchor.threadId, anchor: { ...anchor }, after, store: new Store(initial), refs: 0, visible: 0, dirty: true,
-          controller: null, afterOwner: null, debts: new Set(), debtBudget: GALLERY_RUNTIME_LIMITS.automaticDebtUnits, bytes: initialBytes, cursorCharge };
+          controller: null, afterOwner: null, debts: new Set(), enumerateRetries: new Set(), debtBudget: GALLERY_RUNTIME_LIMITS.automaticDebtUnits, bytes: initialBytes, cursorCharge };
         turns.set(key, entry); bytes += entry.bytes;
       }
       const owned = entry;

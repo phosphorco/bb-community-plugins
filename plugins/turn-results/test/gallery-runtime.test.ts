@@ -2,7 +2,7 @@ import { test, mock } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 import { buildResolveOutput, METHODS } from '@phosphorco/bb-turn-results';
-import { registerTurnResultsParticipant } from '@phosphorco/bb-turn-results/bb';
+import { registerTurnResultsParticipant, ResultsCallError } from '@phosphorco/bb-turn-results/bb';
 import type { RegistrationPort } from '@phosphorco/bb-turn-results/bb';
 import { createGalleryRuntime, GALLERY_RUNTIME_LIMITS } from '../gallery/runtime.ts';
 import { GALLERY_METHODS } from '../gallery/rpc.ts';
@@ -97,7 +97,9 @@ test('proof suspension retains finite discovery lane; same-thread history waits 
     release(); await Promise.all([same, other]); await until(() => h.runtime.stats().running === 0);
     assert.equal(descriptions.length, 32); assert.equal(h.sourceCalls.length, 0, 'suspended proof cannot consume');
     lease.visible(true);
-    await until(() => h.runtime.isReadyOwner('source-032') && h.sourceCalls.length === 33 && h.runtime.stats().running === 0);
+    await until(() => h.runtime.isReadyOwner('source-032') && h.sourceCalls.length === 34 && h.runtime.stats().running === 0);
+    assert.equal(h.sourceCalls.filter(id => id === 'source-000').length, 2, 'one bounded transient feed retry');
+    assert.equal(new Set(h.sourceCalls).size, 33, 'every healthy first-pass owner still progresses');
     assert.equal(descriptions.length, 33, 'continuation retains its finite cursor instead of restarting owner1');
     assert.equal(new Set(descriptions).size, 33); assert.deepEqual(history, ['other', 'same']);
     const reads = h.reads.length; await tick(); await tick(); assert.equal(h.reads.length, reads);
@@ -130,7 +132,7 @@ test('source33 progresses after first owner fails; bounded productive debt parks
   try {
     await until(() => h.sourceCalls.length === 37 && !lease.store.state.busy && h.runtime.stats().running === 0);
     assert.deepEqual(h.sourceCalls.slice(0, 33), Array.from({ length: 33 }, (_, i) => `source-${String(i).padStart(3, '0')}`));
-    assert.equal(h.sourceCalls.filter(id => id === 'source-000').length, 1);
+    assert.equal(h.sourceCalls.filter(id => id === 'source-000').length, 2, 'one transient feed revisit spends one of the same four debt credits');
     assert.equal(lease.store.state.continued, true);
     await tick(); assert.equal(h.sourceCalls.length, 37);
     lease.more(); await until(() => h.sourceCalls.length === 74 && h.runtime.stats().running === 0);
@@ -398,4 +400,126 @@ test('optional retry list failure parks without revoking a healthy owner, then n
     await until(() => h.runtime.isReadyOwner('source-000') && h.runtime.stats().running === 0);
     assert.equal(descriptions, 2); assert.equal(lists, 3);
   } finally { lease.dispose(); h.dispose(); }
+});
+
+test('one transient Enumerate retry yields behind healthy owners and shared roots stay quiet after recovery', async () => {
+  for (const kind of ['source-error', 'transport-error', 'timeout'] as const) {
+    const h = setup(2), rpc = h.sdk.plugins.callRpc, list = h.sdk.plugins.list;
+    const calls: string[] = [], descriptions: string[] = []; let lists = 0;
+    h.sdk.plugins.list = async args => { lists++; return list(args); };
+    h.sdk.plugins.callRpc = async args => {
+      if (args.method === METHODS.describe) descriptions.push(args.pluginId);
+      if (args.method === METHODS.enumerate) {
+        calls.push(args.pluginId);
+        if (calls.length === 1) throw new ResultsCallError(kind);
+      }
+      return rpc(args);
+    };
+    const first = h.runtime.retain(anchor('thread')), duplicate = h.runtime.retain(anchor('thread'));
+    try {
+      await until(() => calls.length === 3 && !first.store.state.busy && h.runtime.stats().running === 0);
+      assert.deepEqual(calls, ['source-000', 'source-001', 'source-000'], kind);
+      assert.deepEqual(descriptions, ['source-000', 'source-001'], 'healthy descriptors are not restarted');
+      assert.equal(lists, 2, 'one bounded fresh membership admission for the retry');
+      assert.equal(first.store, duplicate.store); assert.equal(first.store.state.error, null);
+      assert.equal(h.runtime.isReadyOwner('source-001'), true);
+      const quiet = h.reads.length; await tick(); await tick(); assert.equal(h.reads.length, quiet);
+    } finally { first.dispose(); duplicate.dispose(); h.dispose(); }
+  }
+});
+
+test('persistent transient Enumerate parks after one retry then a genuine new demand can recover', async () => {
+  const h = setup(2), rpc = h.sdk.plugins.callRpc;
+  let failed = true; const calls: string[] = [];
+  h.sdk.plugins.callRpc = async args => {
+    if (args.method === METHODS.enumerate) {
+      calls.push(args.pluginId);
+      if (failed && args.pluginId === 'source-000') throw new ResultsCallError('source-error');
+    }
+    return rpc(args);
+  };
+  const lease = h.runtime.retain(anchor('thread'));
+  try {
+    await until(() => calls.length === 3 && h.runtime.stats().running === 0);
+    assert.deepEqual(calls, ['source-000', 'source-001', 'source-000']);
+    const quiet = h.reads.length; await tick(); await tick(); assert.equal(h.reads.length, quiet);
+    failed = false; h.runtime.invalidate('thread');
+    await until(() => calls.length === 5 && h.runtime.stats().running === 0);
+    assert.deepEqual(calls.slice(3), ['source-000', 'source-001']);
+    assert.equal(lease.store.state.error, null); assert.equal(h.runtime.stats().queued, 0);
+  } finally { lease.dispose(); h.dispose(); }
+});
+
+test('failed-feed revisit refuses removed disabled and malformed public membership without a second call', async () => {
+  for (const state of ['removed', 'disabled', 'malformed'] as const) {
+    const h = setup(2), rpc = h.sdk.plugins.callRpc, list = h.sdk.plugins.list;
+    let lists = 0; const calls: string[] = [];
+    h.sdk.plugins.list = async args => {
+      const result = await list(args); if (++lists === 1) return result;
+      if (state === 'malformed') return { plugins: [...result.plugins, result.plugins[0]!] };
+      return { plugins: result.plugins.flatMap(row => row.id !== 'source-000' ? [row]
+        : state === 'removed' ? [] : [{ ...row, enabled: false }]) };
+    };
+    h.sdk.plugins.callRpc = async args => {
+      if (args.method === METHODS.enumerate) {
+        calls.push(args.pluginId); if (args.pluginId === 'source-000') throw new ResultsCallError('source-error');
+      }
+      return rpc(args);
+    };
+    const lease = h.runtime.retain(anchor('thread'));
+    try {
+      await until(() => lists === 2 && h.runtime.stats().running === 0);
+      assert.deepEqual(calls, ['source-000', 'source-001'], state);
+      const quiet = h.reads.length; await tick(); await tick(); assert.equal(h.reads.length, quiet);
+    } finally { lease.dispose(); h.dispose(); }
+  }
+});
+
+test('nontransient feed errors and backend Apply failure gain no Enumerate retry authority', async () => {
+  for (const kind of ['incompatible', 'unauthorized', 'aborted', 'disabled', 'unknown-plugin', 'backend'] as const) {
+    const h = setup(2), rpc = h.sdk.plugins.callRpc, list = h.sdk.plugins.list;
+    let lists = 0; const calls: string[] = [];
+    h.sdk.plugins.list = async args => { lists++; return list(args); };
+    h.sdk.plugins.callRpc = async args => {
+      if (args.method === METHODS.enumerate) {
+        calls.push(args.pluginId);
+        if (args.pluginId === 'source-000' && kind !== 'backend') throw new ResultsCallError(kind);
+      }
+      if (kind === 'backend' && args.method === GALLERY_METHODS.apply) {
+        const input = args.input as { owner?: string; stage?: unknown };
+        if (input.owner === 'source-000' && input.stage) throw new ResultsCallError('source-error');
+      }
+      return rpc(args);
+    };
+    const lease = h.runtime.retain(anchor('thread'));
+    try {
+      await until(() => calls.length === 2 && h.runtime.stats().running === 0);
+      assert.deepEqual(calls, ['source-000', 'source-001'], kind); assert.equal(lists, 1);
+    } finally { lease.dispose(); h.dispose(); }
+  }
+});
+
+test('hidden or retired failed-feed membership read fences ignored late results and cannot Enumerate again', async () => {
+  for (const retirement of ['hidden', 'dispose'] as const) {
+    const h = setup(2), rpc = h.sdk.plugins.callRpc, list = h.sdk.plugins.list;
+    let lists = 0, release!: () => void, held!: AbortSignal; const calls: string[] = [];
+    h.sdk.plugins.list = async args => {
+      if (++lists === 2) { held = args?.signal!; await new Promise<void>(resolve => { release = resolve; }); }
+      return list(args);
+    };
+    h.sdk.plugins.callRpc = async args => {
+      if (args.method === METHODS.enumerate) {
+        calls.push(args.pluginId); if (args.pluginId === 'source-000') throw new ResultsCallError('source-error');
+      }
+      return rpc(args);
+    };
+    const lease = h.runtime.retain(anchor('thread'));
+    try {
+      await until(() => Boolean(release));
+      if (retirement === 'hidden') h.hidden(true); else h.runtime.dispose();
+      assert.equal(held.aborted, true); await until(() => h.runtime.stats().running === 0);
+      release(); await tick(); await tick();
+      assert.deepEqual(calls, ['source-000', 'source-001']); assert.equal(h.runtime.stats().queued, 0);
+    } finally { release?.(); lease.dispose(); h.dispose(); }
+  }
 });

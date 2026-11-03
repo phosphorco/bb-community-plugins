@@ -36,7 +36,7 @@ function pendingKeyOrder(left: string, right: string): number {
  * together; old identities stay in the index when native output is pruned.
  * No scan is scheduled for threads without a mounted/explicit consumer. */
 export async function consumeTurnSource(backend: GalleryBackend, native: NativeReader, source: ConsumerSource,
-  anchor: GalleryAnchor, signal: AbortSignal): Promise<{ continued: boolean; reason: string | null }> {
+  anchor: GalleryAnchor, signal: AbortSignal): Promise<{ continued: boolean; reason: string | null; transientEnumerate?: true }> {
   const supplier = source.capabilities.supplier;
   if (!supplier) return { continued: false, reason: null };
   if (!backend.pending) throw Error('Pending gallery adapter is required.');
@@ -56,8 +56,19 @@ export async function consumeTurnSource(backend: GalleryBackend, native: NativeR
   if (supplier.enumerate) {
     const feedId = `feed:${anchor.turnId}`, feedStage = await backend.stage(anchor.threadId, source.pluginId, feedId, signal);
     signal.throwIfAborted();
-    const output = await source.client.enumerate({ version: 1, threadId: anchor.threadId,
-      range: { fromSeq: anchor.turnSeqStart, throughSeq: anchor.turnSeqEnd }, cursor: scopeMatches(feedStage, anchor) ? feedStage!.value.cursor : null, limit: 8 }, signal);
+    let output;
+    try {
+      output = await source.client.enumerate({ version: 1, threadId: anchor.threadId,
+        range: { fromSeq: anchor.turnSeqStart, throughSeq: anchor.turnSeqEnd }, cursor: scopeMatches(feedStage, anchor) ? feedStage!.value.cursor : null, limit: 8 }, signal);
+    } catch (error) {
+      signal.throwIfAborted();
+      const reason = classifyResultsError(error);
+      // No feed Apply has happened. Only this read boundary can request a
+      // yielded retry; backend/contract failures keep their existing handling.
+      if (['source-error', 'transport-error', 'timeout'].includes(reason))
+        return { continued: false, reason: `${source.pluginId}: ${reason}`, transientEnumerate: true };
+      throw error;
+    }
     signal.throwIfAborted();
     await backend.apply({ threadId: anchor.threadId, owner: source.pluginId,
       changes: output.state === 'page' ? output.rows : [],
