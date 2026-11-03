@@ -1,4 +1,4 @@
-import { BriefNavigationSurface, BriefMentionRow, briefStatusMessage, useBriefProducerState } from './brief-producer.tsx';
+import { BriefNavigationSurface, BriefMentionRow, briefWarning, useBriefProducerState } from './brief-producer.tsx';
 import { createPortal } from "react-dom";
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, useMemo } from "react";
 import {
@@ -317,7 +317,10 @@ function ResourceLink({
   const navigate = useBbNavigate();
   const recency = referenceRecency(lastSeenAt);
   const showStatus = checking !== undefined && checkError !== undefined && resource.presentation.url !== undefined;
-  const status = showStatus ? linkStatusPresentation(check, checking, checkError) : null;
+  const presented = showStatus ? linkStatusPresentation(check, checking, checkError) : null;
+  // Only actual link problems earn a visible badge; healthy, unchecked and in-progress states stay quiet.
+  const visibleStatus = presented !== null && (presented.tone === "warning" || presented.tone === "destructive");
+  const status = visibleStatus ? presented : null;
   const label = displayLabel(resource.presentation.label, resource.presentation.url);
   // Generic text with no path is dropped when the host line can carry the row alone.
   const primary = label.text ?? (resource.presentation.detail == null ? resource.presentation.label : null);
@@ -329,6 +332,7 @@ function ResourceLink({
       {recency !== null && <time className="cross-references__recency" dateTime={recency.iso} title={recency.title} aria-label={recency.title}>{recency.text}</time>}
       {status !== null && <span className={`cross-references__link-status cross-references__link-status-${status.tone}`} title={status.title} aria-label={status.title}>{status.label}</span>}
     </span>}
+    {presented !== null && !visibleStatus && <span className="cross-references__visually-hidden" aria-label={presented.title}>{presented.label}</span>}
   </>;
   return resource.presentation.url != null
     ? <a href={resource.presentation.url} className="cross-references__source-link" title={label.title} data-cross-reference-first={first || undefined} onClick={(event) => {
@@ -338,9 +342,10 @@ function ResourceLink({
     : <span className="cross-references__source-link">{content}</span>;
 }
 
-function ReferenceSection({ heading, rows, total, nextCursor, loadingMore, onLoadMore, direction, checks, checking, checkError, target }: {
+function ReferenceSection({ heading, rows, total, nextCursor, loadingMore, onLoadMore, direction, checks, checking, checkError, target, loading = false }: {
   target: { provider: string; keys: Record<string, string> };
   heading: string;
+  loading?: boolean;
   rows: readonly (ForwardReferenceRow | BacklinkRow)[];
   total: number;
   nextCursor: string | null;
@@ -354,13 +359,13 @@ function ReferenceSection({ heading, rows, total, nextCursor, loadingMore, onLoa
   const checksByUrl = new Map(checks.map((check) => [check.url, check]));
   const navigate = useBbNavigate();
   const [expanded, setExpanded] = useState<string | null>(null);
-  return <section className="cross-references__section" aria-label={heading}>
+  return <section className="cross-references__section" aria-label={heading} aria-busy={loading && rows.length === 0}>
     <header><strong>{heading}</strong><span>{total}</span></header>
-    {rows.length === 0 && <p className="cross-references__message">No {direction === "forward" ? "forward references" : "backlinks"}.</p>}
+    {rows.length === 0 && !loading && <p className="cross-references__message">No {direction === "forward" ? "forward references" : "backlinks"}.</p>}
     {rows.length > 0 && <ul>{rows.map((row, index) => {
       const resource = direction === "forward" ? (row as ForwardReferenceRow).target : (row as BacklinkRow).source;
       const url = resource.presentation.url;
-      return <li key={referenceIdentityKey(resource)}><ResourceLink
+      return <li key={referenceIdentityKey(resource)} className="cross-references__row"><ResourceLink
         resource={resource}
         lastSeenAt={row.lastSeenAt}
         first={index === 0}
@@ -369,8 +374,8 @@ function ReferenceSection({ heading, rows, total, nextCursor, loadingMore, onLoa
         checkError={direction === "forward" && url !== undefined ? checkError : undefined}
       />
         {direction === "forward"
-          ? <button type="button" className="cross-references__close" onClick={() => navigate.toPluginPanel("mentions", { subPath: mentionsSubPath({ v: 1, kind: "query", input: { version: 2, query: { kind: "resource", target: { provider: resource.provider, keys: resource.keys }, relation: "self" } } }) })}>Mentions of this resource</button>
-          : <><button type="button" className="cross-references__close" aria-expanded={expanded === referenceIdentityKey(resource)} onClick={() => setExpanded(current => current === referenceIdentityKey(resource) ? null : referenceIdentityKey(resource))}>Show context</button>
+          ? <button type="button" className="cross-references__icon" aria-label="Mentions of this resource" title="Mentions of this resource" onClick={() => navigate.toPluginPanel("mentions", { subPath: mentionsSubPath({ v: 1, kind: "query", input: { version: 2, query: { kind: "resource", target: { provider: resource.provider, keys: resource.keys }, relation: "self" } } }) })}><SearchGlyph /></button>
+          : <><button type="button" className="cross-references__icon" aria-label="Show context" title="Show context" aria-expanded={expanded === referenceIdentityKey(resource)} onClick={() => setExpanded(current => current === referenceIdentityKey(resource) ? null : referenceIdentityKey(resource))}><span aria-hidden="true">{expanded === referenceIdentityKey(resource) ? "▴" : "▾"}</span></button>
             {expanded === referenceIdentityKey(resource) && <MentionResults key={JSON.stringify([target, referenceIdentityKey(resource), row.producerPluginId])} selection={{ version: 2, query: { kind: "resource", target, relation: "self" }, source: { provider: resource.provider, keys: resource.keys }, producerPluginId: row.producerPluginId }} />}</>}
       </li>;
     })}</ul>}
@@ -379,6 +384,27 @@ function ReferenceSection({ heading, rows, total, nextCursor, loadingMore, onLoa
 }
 
 const COVERAGE_HELP = "Coverage is limited to known sources and at most 50 timeline pages per scan. Supplier failures and scan budgets can leave retained, unconfirmed locations. Legacy Thread Links claims remain until source deletion. Up to 256 targets per source and the newest 100 locations per producer edge are retained; counts show distinct resources, not all mentions.";
+
+function SearchGlyph() {
+  return <svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><circle cx="7" cy="7" r="4.5" fill="none" stroke="currentColor" strokeWidth="1.5" /><path d="M10.5 10.5 14 14" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" /></svg>;
+}
+
+/** One small control holds every explanation, so the popup body stays links only. */
+function ReferencesInfo({ notes, open, onOpenChange }: { notes: readonly string[]; open: boolean; onOpenChange: (open: boolean) => void }) {
+  const descriptionId = useId();
+  const warn = notes.length > 0;
+  return <span className="cross-references__info-wrap" onMouseEnter={() => onOpenChange(true)} onMouseLeave={() => onOpenChange(false)}>
+    <button type="button" className={warn ? "cross-references__info cross-references__info--warn" : "cross-references__info"}
+      aria-label={warn ? "Reference warning" : "References information"} aria-describedby={descriptionId} aria-expanded={open}
+      onFocus={() => onOpenChange(true)} onBlur={() => onOpenChange(false)} onClick={() => onOpenChange(!open)}>
+      <span aria-hidden="true">{warn ? "!" : "i"}</span>
+    </button>
+    <span id={descriptionId} role="tooltip" className={open ? "cross-references__info-bubble" : "cross-references__info-bubble cross-references__visually-hidden"}>
+      {notes.map((note) => <span key={note} className="cross-references__info-note">{note}</span>)}
+      <span>{COVERAGE_HELP}</span>
+    </span>
+  </span>;
+}
 
 function ReferencesDetail({ target, pages, loading, error, stale, loadingMore, checks, checking, checkError, trigger, popoverId, onClose, onLoadMore, briefMessage }: {
   target: { provider: string; keys: Record<string, string> };
@@ -399,6 +425,9 @@ function ReferencesDetail({ target, pages, loading, error, stale, loadingMore, c
   const navigate = useBbNavigate();
   const contentRef = useRef<HTMLDivElement | null>(null);
   const [position, setPosition] = useState<PopoverPosition>({ top: 8, left: 8 });
+  const [infoOpen, setInfoOpen] = useState(false);
+  const infoOpenRef = useRef(false);
+  infoOpenRef.current = infoOpen;
   const updatePosition = useCallback(() => {
     const bounds = trigger.getBoundingClientRect();
     const width = Math.min(360, Math.max(240, window.innerWidth - 16));
@@ -422,7 +451,12 @@ function ReferencesDetail({ target, pages, loading, error, stale, loadingMore, c
       const target = event.target;
       if (!(target instanceof Node) || (!contentRef.current?.contains(target) && !trigger.contains(target))) onClose();
     };
-    const onKeyDown = (event: KeyboardEvent) => { if (event.key === "Escape") { event.preventDefault(); onClose(); } };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      if (infoOpenRef.current) { setInfoOpen(false); return; }
+      onClose();
+    };
     document.addEventListener("pointerdown", onPointerDown, true);
     document.addEventListener("keydown", onKeyDown, true);
     return () => { document.removeEventListener("pointerdown", onPointerDown, true); document.removeEventListener("keydown", onKeyDown, true); };
@@ -432,17 +466,21 @@ function ReferencesDetail({ target, pages, loading, error, stale, loadingMore, c
       <header>
         <strong>References</strong>
         <span className="cross-references__actions">
-          <span className={briefMessage || stale ? "cross-references__info cross-references__info--warn" : "cross-references__info"} tabIndex={0} role="img" aria-label={COVERAGE_HELP} title={[stale ? "Reconnecting; these links may be briefly out of date." : null, briefMessage ?? null, COVERAGE_HELP].filter(Boolean).join("\n\n")}>i</span>
+          <ReferencesInfo open={infoOpen} onOpenChange={setInfoOpen} notes={[
+            stale ? "Reconnecting; these links may be briefly out of date." : null,
+            error,
+            briefMessage ?? null,
+          ].filter((note): note is string => note != null)} />
           <button type="button" className="cross-references__icon" title="View mentions" aria-label="View mentions" onClick={() => { onClose(); navigate.toPluginPanel("mentions", { subPath: mentionsSubPath({ v: 1, kind: "query", input: { version: 2, query: { kind: "resource", target, relation: "self" } } }) }); }}>
-            <svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><circle cx="7" cy="7" r="4.5" fill="none" stroke="currentColor" strokeWidth="1.5"/><path d="M10.5 10.5 14 14" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>
+            <SearchGlyph />
           </button>
           <button type="button" className="cross-references__icon" onClick={onClose} aria-label="Close references" title="Close">×</button>
         </span>
       </header>
-      {loading && pages.forward.rows.length === 0 && pages.backlink.rows.length === 0 && <p className="cross-references__message" role="status">Checking references…</p>}
-      {error != null && <p className="cross-references__error" role="alert">{error}</p>}
-      <ReferenceSection target={target} heading="Forward references" rows={pages.forward.rows} total={pages.forward.total} nextCursor={pages.forward.nextCursor} loadingMore={loadingMore.forward} onLoadMore={() => onLoadMore("forward")} direction="forward" checks={checks} checking={checking} checkError={checkError} />
-      <ReferenceSection target={target} heading="Backlinks" rows={pages.backlink.rows} total={pages.backlink.total} nextCursor={pages.backlink.nextCursor} loadingMore={loadingMore.backlink} onLoadMore={() => onLoadMore("backlink")} direction="backlink" checks={[]} checking={false} checkError={false} />
+      <p className="cross-references__visually-hidden" role="status">{loading ? "Checking references…" : ""}</p>
+      <p className="cross-references__visually-hidden" role="alert">{error ?? ""}</p>
+      <ReferenceSection target={target} heading="Forward references" loading={loading} rows={pages.forward.rows} total={pages.forward.total} nextCursor={pages.forward.nextCursor} loadingMore={loadingMore.forward} onLoadMore={() => onLoadMore("forward")} direction="forward" checks={checks} checking={checking} checkError={checkError} />
+      <ReferenceSection target={target} heading="Backlinks" loading={loading} rows={pages.backlink.rows} total={pages.backlink.total} nextCursor={pages.backlink.nextCursor} loadingMore={loadingMore.backlink} onLoadMore={() => onLoadMore("backlink")} direction="backlink" checks={[]} checking={false} checkError={false} />
     </div>,
     document.body,
   );
@@ -473,7 +511,7 @@ function ThreadHeaderAction({ threadId, projectId }: { threadId: string; project
       {forwardCount > 0 && <span className="cross-references__metric" aria-hidden="true"><LinkGlyph /><span className="cross-references__count">{forwardCount}</span></span>}
       {backlinkCount > 0 && <span className="cross-references__metric" aria-hidden="true"><BacklinkGlyph /><span className="cross-references__count">{backlinkCount}</span></span>}
     </button>
-    {open && triggerRef.current != null && <ReferencesDetail target={{ provider: "bb", keys: { project: projectId, thread: threadId } }} pages={pages} loading={loading} loadingMore={loadingMore} error={error} stale={stale} checks={checks} checking={checking} checkError={checkError} trigger={triggerRef.current} popoverId={popoverId} onClose={close} onLoadMore={loadMore} briefMessage={briefStatusMessage(brief.state)} />}
+    {open && triggerRef.current != null && <ReferencesDetail target={{ provider: "bb", keys: { project: projectId, thread: threadId } }} pages={pages} loading={loading} loadingMore={loadingMore} error={error} stale={stale} checks={checks} checking={checking} checkError={checkError} trigger={triggerRef.current} popoverId={popoverId} onClose={close} onLoadMore={loadMore} briefMessage={briefWarning(brief)} />}
   </>;
 }
 

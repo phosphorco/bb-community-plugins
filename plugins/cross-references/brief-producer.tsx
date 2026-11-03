@@ -11,6 +11,14 @@ export const BRIEF_IDENTITY_UNREPRESENTABLE='brief references not updated: ident
 export function briefStatusMessage(state:ProducerState|null):string|null {
  const s=state?.status;if(!s||s.applicability!=='current')return null;return s.state==='over-limit'?BRIEF_OVER_LIMIT:BRIEF_IDENTITY_UNREPRESENTABLE;
 }
+/** Everything the References popup must disclose about the Brief producer, or null when it is current. */
+export function briefWarning(view:{state:ProducerState|null;error:string|null;stale:boolean}):string|null {
+ const s=view.state?.status,message=briefStatusMessage(view.state);
+ if(message){const codes=[...(s?.limits??[]),...(s?.state==='identity-unrepresentable'?s.identityReasons:[])];return codes.length?`${message} (${codes.join(', ')})`:message;}
+ if(s?.applicability==='superseded-by-graph')return 'An earlier blocked Brief update was superseded; current Brief evidence may be unconfirmed.';
+ if(view.error||view.stale)return 'Brief status unavailable; showing the last available Brief state.';
+ return null;
+}
 /** One fixed source read owner at the thread header, reused by its open detail. */
 export function useBriefProducerState(threadId:string){
  const sdk=useSdk(),client=useMemo(()=>createCrossReferencesProducerClient(sdk),[sdk]);

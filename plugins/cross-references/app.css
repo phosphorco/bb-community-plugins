@@ -8,7 +8,7 @@
 .cross-references__popover { position: fixed; z-index: 60; display: grid; gap: 8px; width: min(360px, calc(100vw - 16px)); max-height: min(360px, 60vh); overflow-y: auto; padding: 12px; border: 1px solid var(--border); border-radius: 9px; color: var(--popover-foreground); background: var(--popover); box-shadow: 0 10px 30px color-mix(in srgb, var(--foreground) 18%, transparent); outline: none; }
 .cross-references__popover > header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .cross-references__popover > header strong { font-size: 12px; }
-.cross-references__popover > header span { min-width: 1.5rem; color: var(--muted-foreground); font-size: 10px; font-variant-numeric: tabular-nums; text-align: right; }
+.cross-references__popover > header > span:not(.cross-references__actions) { min-width: 1.5rem; color: var(--muted-foreground); font-size: 10px; font-variant-numeric: tabular-nums; text-align: right; }
 .cross-references__close { min-height: 26px; padding: 3px 7px; border: 1px solid var(--border); border-radius: 6px; color: var(--foreground); background: var(--background); font: inherit; font-size: 10px; cursor: pointer; }
 .cross-references__close:hover { background: var(--accent); color: var(--accent-foreground); }
 .cross-references__close:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
@@ -16,8 +16,15 @@
 .cross-references__icon { display: inline-grid; place-items: center; width: 22px; height: 22px; padding: 0; border: 0; border-radius: 5px; color: var(--muted-foreground); background: transparent; font: inherit; font-size: 14px; line-height: 1; cursor: pointer; }
 .cross-references__icon:hover { color: var(--foreground); background: var(--accent); }
 .cross-references__icon:focus-visible, .cross-references__info:focus-visible { outline: 2px solid var(--ring); outline-offset: 1px; }
-.cross-references__info { display: inline-grid; place-items: center; width: 14px; height: 14px; border: 1px solid var(--border); border-radius: 50%; color: var(--muted-foreground); font-size: 9px; font-style: italic; font-weight: 600; line-height: 1; cursor: help; user-select: none; }
-.cross-references__info--warn { border-color: var(--muted-foreground); color: var(--foreground); }
+.cross-references__info-wrap { position: relative; display: inline-flex; }
+.cross-references__info { display: inline-grid; place-items: center; width: 22px; height: 22px; padding: 0; border: 0; border-radius: 5px; color: var(--muted-foreground); background: transparent; font: inherit; cursor: help; }
+.cross-references__info > span { display: inline-grid; place-items: center; width: 14px; height: 14px; border: 1px solid var(--border); border-radius: 50%; font-size: 9px; font-style: italic; font-weight: 600; line-height: 1; }
+.cross-references__info:hover { color: var(--foreground); background: var(--accent); }
+.cross-references__info--warn > span { border-color: color-mix(in oklab, var(--warning) 60%, transparent); background: color-mix(in oklab, var(--warning) 14%, transparent); color: var(--warning-text); font-style: normal; }
+.cross-references__info-bubble { position: absolute; top: calc(100% + 6px); right: 0; z-index: 1; display: grid; gap: 6px; width: min(280px, calc(100vw - 32px)); padding: 8px 10px; border: 1px solid var(--border); border-radius: 7px; color: var(--popover-foreground); background: var(--popover); box-shadow: 0 6px 18px color-mix(in srgb, var(--foreground) 16%, transparent); font-size: 10px; line-height: 1.4; }
+.cross-references__info-note { color: var(--warning-text); font-weight: 600; }
+.cross-references__row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: start; gap: 2px; }
+.cross-references__row > :not(.cross-references__source-link):not(.cross-references__icon) { grid-column: 1 / -1; }
 .cross-references__section { display: grid; gap: 6px; min-width: 0; padding-top: 8px; border-top: 1px solid var(--border); }
 .cross-references__section > header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .cross-references__section > header strong { font-size: 11px; }

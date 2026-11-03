@@ -3,7 +3,7 @@ import {act,cleanup,fireEvent,waitFor} from '@testing-library/react';
 import {afterEach,expect,test,vi} from 'vitest';
 import {renderSlot} from '@get-bb/plugin-sdk/testing/app';
 import {z} from 'zod';
-import {activateBriefReaderAnchor,useBriefReaderLink,BriefNavigationSurface,BriefMentionRow,BriefProducerStatus,createBriefIntentOwner,briefStatusMessage,type BriefMention} from '../brief-producer.tsx';
+import {activateBriefReaderAnchor,useBriefReaderLink,BriefNavigationSurface,BriefMentionRow,BriefProducerStatus,createBriefIntentOwner,briefStatusMessage,briefWarning,type BriefMention} from '../brief-producer.tsx';
 import {type BriefNavigationInput,type BriefNavigationOutput,type ProducerState} from '@phosphorco/bb-cross-references';
 afterEach(cleanup);
 const hash='a'.repeat(64),file={kind:'thread-storage' as const,threadId:'thr_brief_ui',path:'BRIEF.md' as const};
@@ -99,4 +99,12 @@ test('an unmounted public-link owner refuses a retained opener without updating 
  let retained!:(path:string,signal:AbortSignal)=>Promise<boolean>;
  function Control(){const link=useBriefReaderLink();retained=link.openReader;return link.link;}
  const slot=renderSlot({component:Control},{});slot.lifecycle.unmount();expect(await retained('/plugins/thread-brief/reveal/v1/thr_23456789ab/00000000-0000-4000-8000-000000000001',new AbortController().signal)).toBe(false);
+});
+
+test('briefWarning never lets a failed or stale Brief read look current',()=>{
+ expect(briefWarning({state:null,error:null,stale:false})).toBeNull();
+ expect(briefWarning({state:null,error:'Brief reference state is unavailable.',stale:false})).toBe('Brief status unavailable; showing the last available Brief state.');
+ expect(briefWarning({state:{projection:null,evidence:null,status:null} as any,error:null,stale:true})).toBe('Brief status unavailable; showing the last available Brief state.');
+ expect(briefWarning({state:{status:{state:'over-limit',applicability:'current',limits:['target-count']}} as any,error:null,stale:false})).toBe('brief references not updated: over limit (target-count)');
+ expect(briefWarning({state:{status:{state:'over-limit',applicability:'superseded-by-graph',limits:[]}} as any,error:null,stale:false})).toContain('superseded');
 });
