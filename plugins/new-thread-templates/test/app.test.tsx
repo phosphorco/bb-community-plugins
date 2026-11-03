@@ -1,7 +1,7 @@
 import { afterAll, expect, test } from "bun:test";
 import { JSDOM } from "jsdom";
 import { indexedDB, IDBKeyRange } from "fake-indexeddb";
-import { appFixture, controlledGalleryIO } from "./app-fixture.ts";
+import { appFixture } from "./app-fixture.ts";
 import { createRenderContext, type InvocationSample } from "../model.ts";
 import {
   TEMPLATES_CATALOG_CHANGED,
@@ -6249,58 +6249,55 @@ test("known native config invalidation keeps last target visible and blocks held
   }
 });
 
-test("pending optional cache opens cannot block a fresh usable gallery and late handles close without writing", async () => {
-  const descriptor = Object.getOwnPropertyDescriptor(globalThis, "indexedDB")!,
-    io = controlledGalleryIO(indexedDB);
-  io.holdAllOpens();
-  Object.defineProperty(globalThis, "indexedDB", {
-    configurable: true,
-    value: io.factory,
-  });
-  let t: Awaited<ReturnType<typeof setup>> | null = null;
-  try {
-    t = await setup();
-    const card = await t.slot.findByRole("button", { name: /PR Review/ });
-    await waitFor(() =>
-      expect((card as HTMLButtonElement).disabled).toBe(false),
-    );
-    expect(
-      t.fixture.calls.filter((call) => call.method === "publishedCatalog"),
-    ).toHaveLength(1);
-    expect(io.pending.length).toBeGreaterThanOrEqual(2);
-    io.releaseAll();
-    expect(io.stats().closed).toBe(io.stats().opened);
-    expect(t.fixture.flags.launchCount).toBe(0);
-  } finally {
-    io.releaseAll();
-    if (t) await t.close();
-    Object.defineProperty(globalThis, "indexedDB", descriptor);
-  }
-});
-
-test("unavailable optional cache hashing still shows a fresh verified gallery", async () => {
+test("memory gallery current authority ignores unavailable storage and hashing and fences a held removed publication", async () => {
   const { spyOn } = await import("bun:test");
-  const spy = spyOn(crypto.subtle, "digest").mockRejectedValue(
-    new Error("Optional hashing unavailable"),
+  const storage = spyOn(indexedDB, "open").mockImplementation(() => {
+    throw new Error("Storage unavailable");
+  });
+  const hash = spyOn(crypto.subtle, "digest").mockRejectedValue(
+    new Error("Hash unavailable"),
   );
-  let t: Awaited<ReturnType<typeof setup>> | null = null;
+  let t: Awaited<ReturnType<typeof setup>> | null = null,
+    release = () => {};
   try {
     t = await setup();
     const card = await t.slot.findByRole("button", { name: /PR Review/ });
     await waitFor(() =>
       expect((card as HTMLButtonElement).disabled).toBe(false),
     );
+    expect(storage).not.toHaveBeenCalled();
+    expect(hash).not.toHaveBeenCalled();
+    expect(t.fixture.wire.saveInputs).toHaveLength(0);
+    const calls = () =>
+      t!.fixture.calls.filter((c) => c.method === "publishedCatalog").length;
+    const before = calls();
+    release = t.fixture.holdResponse("publishedCatalog");
+    await t.slot.behavior.emitRealtime(TEMPLATES_CATALOG_CHANGED, {});
+    await waitFor(() => expect(calls()).toBe(before + 1));
+    for (const entry of t.fixture.entries) entry.published = null;
+    await t.slot.behavior.emitRealtime(TEMPLATES_CATALOG_CHANGED, {});
+    expect((card as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(card);
+    expect(t.slot.queryAllByLabelText(/Pull request URL/)).toHaveLength(0);
+    await act(async () => release());
+    await t.slot.findByText("No published templates yet.");
+    expect(t.slot.queryAllByRole("button", { name: /PR Review/ })).toHaveLength(
+      0,
+    );
+    expect(calls()).toBe(before + 2);
+    expect(t.fixture.flags.launchCount).toBe(0);
     expect(t.slot.queryAllByText(/Templates could not refresh/)).toHaveLength(
       0,
     );
-    expect(t.fixture.flags.launchCount).toBe(0);
   } finally {
+    release();
     if (t) await t.close();
-    spy.mockRestore();
+    storage.mockRestore();
+    hash.mockRestore();
   }
 });
 
-test("oversized gallery same-version hash outage preserves publication and matching recovery clears its error", async () => {
+test("oversized uncached gallery same-version server recovery stays usable without hashing", async () => {
   const { spyOn } = await import("bun:test");
   const t = await setup(false, (fixture) => {
     const base = structuredClone(fixture.entries[0]!);
@@ -6315,22 +6312,19 @@ test("oversized gallery same-version hash outage preserves publication and match
       fixture.entries.push(entry);
     }
   });
-  let spy: ReturnType<typeof spyOn> | null = null;
+  const hash = spyOn(crypto.subtle, "digest").mockRejectedValue(
+    new Error("Hash unavailable"),
+  );
   try {
     const card = await t.slot.findByRole("button", { name: /PR Review/ });
     await waitFor(() =>
       expect((card as HTMLButtonElement).disabled).toBe(false),
     );
-    spy = spyOn(crypto.subtle, "digest").mockRejectedValue(
-      new Error("Optional hash outage"),
-    );
+    t.fixture.flags.catalogError = true;
     await t.slot.behavior.emitRealtime(TEMPLATES_CATALOG_CHANGED, {});
-    await t.slot.findByText(
-      /publication cannot be verified while hashing is unavailable/,
-    );
+    await t.slot.findByText(/Templates could not refresh/);
     expect((card as HTMLButtonElement).disabled).toBe(true);
-    spy.mockRestore();
-    spy = null;
+    t.fixture.flags.catalogError = false;
     await t.slot.behavior.emitRealtime(TEMPLATES_CATALOG_CHANGED, {});
     await waitFor(() =>
       expect((card as HTMLButtonElement).disabled).toBe(false),
@@ -6339,9 +6333,10 @@ test("oversized gallery same-version hash outage preserves publication and match
       0,
     );
     expect(t.slot.container.querySelectorAll(".ntt-card").length).toBe(102);
+    expect(hash).not.toHaveBeenCalled();
     expect(t.fixture.flags.launchCount).toBe(0);
   } finally {
-    spy?.mockRestore();
+    hash.mockRestore();
     await t.close();
   }
 });
@@ -6566,5 +6561,361 @@ test("lazy contextual editor failure keeps captured return and Settings retry ad
     settings?.lifecycle.unmount();
     await act(async () => {});
     await fixture.dispose();
+  }
+});
+
+test("checkpoint discard keeps recovery accessible on storage failure and newer external work until matching success", async () => {
+  const { spyOn } = await import("bun:test");
+  const { writeEditorCheckpoint, definitionFingerprint } =
+    await import("../ui/editor-checkpoint.ts");
+  localStorage.clear();
+  const t = await setup(true);
+  let removal: ReturnType<typeof spyOn> | null = null;
+  try {
+    await managementReady(t.slot);
+    const draft = t.fixture.entries[0]!.draft!;
+    const saved = { ...draft.definition, name: "Checkpoint work to retain" };
+    const owner = `${t.fixture.personalAddress().instanceId}:${t.fixture.wire.actor!.identity.key}`;
+    expect(
+      writeEditorCheckpoint(
+        owner,
+        saved,
+        definitionFingerprint(draft.definition),
+        draft.generation,
+      ),
+    ).toBeNull();
+    const storageKey = Object.keys(localStorage).find((key) =>
+      key.startsWith("new-thread-templates:editor:v1:"),
+    )!;
+    const raw = localStorage.getItem(storageKey)!;
+    await act(async () =>
+      t.slot.getAllByRole("button", { name: "Edit" })[0]!.click(),
+    );
+    await t.slot.findByRole("button", { name: "Restore unfinished edits" });
+    const original = dom.window.Storage.prototype.removeItem;
+    removal = spyOn(
+      dom.window.Storage.prototype,
+      "removeItem",
+    ).mockImplementation(function (this: Storage, key: string) {
+      if (key === storageKey) throw new Error("Storage removal denied");
+      return original.call(this, key);
+    });
+    await act(async () =>
+      t.slot.getByRole("button", { name: "Discard unfinished edits" }).click(),
+    );
+    await t.slot.findByText("Cannot remove the local editor checkpoint.");
+    expect(
+      t.slot.getByRole("button", { name: "Restore unfinished edits" }),
+    ).toBeTruthy();
+    expect(localStorage.getItem(storageKey)).toBe(raw);
+    removal.mockRestore();
+    removal = null;
+    const newer = {
+      ...JSON.parse(raw),
+      definition: { ...saved, name: "Newer external checkpoint" },
+    };
+    localStorage.setItem(storageKey, JSON.stringify(newer));
+    await act(async () =>
+      t.slot.getByRole("button", { name: "Discard unfinished edits" }).click(),
+    );
+    await t.slot.findByText("A newer local editor checkpoint was retained.");
+    expect(
+      t.slot.getByRole("button", { name: "Restore unfinished edits" }),
+    ).toBeTruthy();
+    expect(JSON.parse(localStorage.getItem(storageKey)!).definition.name).toBe(
+      newer.definition.name,
+    );
+    // Reopening observes the actual newer checkpoint, which the user can then deliberately discard.
+    await act(async () =>
+      t.slot.getByRole("button", { name: "‹ All templates" }).click(),
+    );
+    await managementReady(t.slot);
+    await act(async () =>
+      t.slot.getAllByRole("button", { name: "Edit" })[0]!.click(),
+    );
+    await t.slot.findByRole("button", { name: "Discard unfinished edits" });
+    await act(async () =>
+      t.slot.getByRole("button", { name: "Discard unfinished edits" }).click(),
+    );
+    expect(
+      t.slot.queryByRole("button", { name: "Restore unfinished edits" }),
+    ).toBeNull();
+    expect(localStorage.getItem(storageKey)).toBeNull();
+    expect(
+      t.fixture.calls.filter((c) =>
+        ["saveDraft", "publish", "remove", "launch"].includes(c.method),
+      ),
+    ).toHaveLength(0);
+  } finally {
+    removal?.mockRestore();
+    await t.close();
+  }
+});
+
+test("checkpoint discard cannot leave its dialog on removal failure or a newer checkpoint; matching success leaves", async () => {
+  const { spyOn } = await import("bun:test");
+  for (const reason of ["storage", "newer"] as const) {
+    localStorage.clear();
+    const t = await setup(true);
+    let removal: ReturnType<typeof spyOn> | null = null;
+    try {
+      await managementReady(t.slot);
+      await act(async () =>
+        t.slot.getByRole("button", { name: "+ New template" }).click(),
+      );
+      const name = await t.slot.findByLabelText("Name");
+      fireEvent.change(name, {
+        target: { value: `Unfinished ${reason} work` },
+      });
+      const storageKey = Object.keys(localStorage).find((key) =>
+        key.startsWith("new-thread-templates:editor:v1:"),
+      )!;
+      const raw = localStorage.getItem(storageKey)!;
+      await act(async () =>
+        t.slot.getByRole("button", { name: "‹ All templates" }).click(),
+      );
+      await t.slot.findByRole("dialog", { name: "Unsaved template changes" });
+      if (reason === "storage") {
+        const original = dom.window.Storage.prototype.removeItem;
+        removal = spyOn(
+          dom.window.Storage.prototype,
+          "removeItem",
+        ).mockImplementation(function (this: Storage, key: string) {
+          if (key === storageKey) throw new Error("Storage removal denied");
+          return original.call(this, key);
+        });
+      } else {
+        localStorage.setItem(
+          storageKey,
+          JSON.stringify({
+            ...JSON.parse(raw),
+            definition: {
+              ...JSON.parse(raw).definition,
+              name: "Other window newer",
+            },
+          }),
+        );
+      }
+      const retained = localStorage.getItem(storageKey);
+      await act(async () =>
+        t.slot.getByRole("button", { name: "Discard changes" }).click(),
+      );
+      const dialog = t.slot.getByRole("dialog", {
+        name: "Unsaved template changes",
+      });
+      expect(dialog.textContent).toContain(
+        reason === "storage"
+          ? "Cannot remove the local editor checkpoint."
+          : "A newer local editor checkpoint was retained.",
+      );
+      expect(localStorage.getItem(storageKey)).toBe(retained);
+      expect((t.slot.getByLabelText("Name") as HTMLInputElement).value).toBe(
+        `Unfinished ${reason} work`,
+      );
+      if (reason === "storage") {
+        removal!.mockRestore();
+        removal = null;
+        await act(async () =>
+          t.slot.getByRole("button", { name: "Discard changes" }).click(),
+        );
+        await managementReady(t.slot);
+        expect(t.slot.queryByRole("dialog")).toBeNull();
+        expect(localStorage.getItem(storageKey)).toBeNull();
+      } else {
+        await act(async () =>
+          t.slot.getByRole("button", { name: "Stay" }).click(),
+        );
+        expect(t.slot.queryByRole("dialog")).toBeNull();
+        expect(localStorage.getItem(storageKey)).toBe(retained);
+      }
+      expect(
+        t.fixture.calls.filter((c) =>
+          ["saveDraft", "publish", "remove", "launch"].includes(c.method),
+        ),
+      ).toHaveLength(0);
+    } finally {
+      removal?.mockRestore();
+      await t.close();
+    }
+  }
+});
+
+test("assignment null thread keeps same confirmed unavailable message and promotes pending then found receipt", async () => {
+  const id = crypto.randomUUID();
+  const t = await setup(true, (f) => {
+    f.useVerifiedAssignmentActor();
+    seedSucceeded(f, id);
+    f.launches.get(id)!.assignment = assignmentFor(f, id, { threadId: null });
+  });
+  try {
+    await openAssignmentHistory(t.slot);
+    const stored = t.fixture.launches.get(id)!;
+    stored.assignment = assignmentFor(t.fixture, id, {
+      threadId: null,
+      state: "unavailable",
+      message: "Inbox unavailable; creation is confirmed.",
+    });
+    await act(async () =>
+      t.slot.getByRole("button", { name: "Check assignment" }).click(),
+    );
+    await t.slot.findByText("Inbox unavailable; creation is confirmed.");
+    expect(
+      t.slot.queryByText("No matching assignment receipt is available yet."),
+    ).toBeNull();
+    expect(t.slot.getByRole("button", { name: "Open thread" })).toBeTruthy();
+    stored.assignment = assignmentFor(t.fixture, id, {
+      state: "pending",
+      message: null,
+    });
+    await act(async () =>
+      t.slot.getByRole("button", { name: "Check assignment" }).click(),
+    );
+    await t.slot.findByText("Inbox assignment pending.");
+    stored.assignment = assignmentFor(t.fixture, id, {
+      state: "claimed",
+      message: null,
+      receipt: {
+        operationId: id,
+        threadId: stored.threadId!,
+        actorKey: stored.actor.key,
+        outcome: "claimed",
+        reason: "claimed-untouched",
+        decidedAt: 3,
+        ownerRevision: 1,
+      },
+      current: {
+        threadId: stored.threadId!,
+        revision: 1,
+        ownerKeys: [stored.actor.key],
+        truncated: false,
+        explicitlyUnassigned: false,
+      },
+    });
+    await act(async () =>
+      t.slot.getByRole("button", { name: "Check assignment" }).click(),
+    );
+    await t.slot.findByText(`Inbox: assigned to ${stored.actor.name}.`);
+    expect(t.fixture.flags.launchCount).toBe(0);
+    expect(
+      t.fixture.calls.filter((c) => c.method === "retryAssignment"),
+    ).toHaveLength(0);
+  } finally {
+    await t.close();
+  }
+});
+
+test("assignment mismatches reject actor both operation IDs and null or explicit wrong threads; same-op Retry recovers", async () => {
+  const id = crypto.randomUUID();
+  let mismatch:
+    | "actor"
+    | "operation"
+    | "assignment-operation"
+    | "outer-thread"
+    | "assignment-thread"
+    | null = "actor";
+  const t = await setup(true, (f) => {
+    f.useVerifiedAssignmentActor();
+    seedSucceeded(f, id);
+    f.launches.get(id)!.assignment = assignmentFor(f, id, {
+      threadId: null,
+      retryable: true,
+    });
+    for (const method of ["launchStatus", "retryAssignment"]) {
+      const original = f.handlers[method]!;
+      f.handlers[method] = async (input) => {
+        const next = structuredClone(
+          await original(input),
+        ) as import("../rpc-contract.ts").LaunchStatus;
+        if (mismatch === "actor")
+          next.assignment!.actorKey = f.wire.personKey("bea");
+        if (mismatch === "operation") next.operationId = crypto.randomUUID();
+        if (mismatch === "assignment-operation")
+          next.assignment!.operationId = crypto.randomUUID();
+        if (mismatch === "outer-thread")
+          next.threadId = "different-confirmed-thread";
+        if (mismatch === "assignment-thread")
+          next.assignment!.threadId = "different-assignment-thread";
+        return next;
+      };
+    }
+  });
+  try {
+    await openAssignmentHistory(t.slot);
+    for (const kind of [
+      "actor",
+      "operation",
+      "assignment-operation",
+      "outer-thread",
+      "assignment-thread",
+    ] as const) {
+      mismatch = kind;
+      await act(async () =>
+        t.slot
+          .getByRole("button", {
+            name:
+              kind === "assignment-thread"
+                ? "Retry assignment"
+                : "Check assignment",
+          })
+          .click(),
+      );
+      await t.slot.findByText(
+        "No matching assignment receipt is available yet.",
+      );
+      expect(
+        t.slot.getByText("Inbox assignment outcome unknown."),
+      ).toBeTruthy();
+      await waitFor(() =>
+        expect(
+          (
+            t.slot.getByRole("button", {
+              name: "Check assignment",
+            }) as HTMLButtonElement
+          ).disabled,
+        ).toBe(false),
+      );
+    }
+    mismatch = null;
+    const stored = t.fixture.launches.get(id)!;
+    t.fixture.flags.assignmentRetryResult = assignmentFor(t.fixture, id, {
+      state: "claimed",
+      retryable: false,
+      message: null,
+      receipt: {
+        operationId: id,
+        threadId: stored.threadId!,
+        actorKey: stored.actor.key,
+        outcome: "claimed",
+        reason: "claimed-untouched",
+        decidedAt: 3,
+        ownerRevision: 1,
+      },
+      current: {
+        threadId: stored.threadId!,
+        revision: 1,
+        ownerKeys: [stored.actor.key],
+        truncated: false,
+        explicitlyUnassigned: false,
+      },
+    });
+    await act(async () =>
+      t.slot.getByRole("button", { name: "Retry assignment" }).click(),
+    );
+    await t.slot.findByText(`Inbox: assigned to ${stored.actor.name}.`);
+    expect(
+      t.slot.queryByText("No matching assignment receipt is available yet."),
+    ).toBeNull();
+    const attempts = t.fixture.calls.filter(
+      (c) => c.method === "retryAssignment",
+    );
+    expect(attempts).toHaveLength(2);
+    for (const attempt of attempts)
+      expect(attempt.input).toMatchObject({
+        operationId: id,
+        expectedActor: stored.actor.key,
+      });
+    expect(t.fixture.flags.launchCount).toBe(0);
+  } finally {
+    await t.close();
   }
 });

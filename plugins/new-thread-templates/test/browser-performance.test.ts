@@ -118,15 +118,6 @@ test("controlled product preview and chooser latency DOM RPC and focus witness",
             await page.evaluate(async () => {
               localStorage.clear();
               sessionStorage.clear();
-              await new Promise<void>((resolve, reject) => {
-                const request = indexedDB.deleteDatabase(
-                  "new-thread-templates-published-gallery-v1",
-                );
-                request.onsuccess = () => resolve();
-                request.onerror = () => reject(request.error);
-                request.onblocked = () =>
-                  reject(new Error("fixture published cache still open"));
-              });
             });
             await page.reload();
           } else await page.goto(`http://127.0.0.1:${server.port}`);

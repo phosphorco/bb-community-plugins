@@ -137,6 +137,14 @@ export function TemplateEditor({
     pendingCancel.current = cancel ?? null;
     setLeave(true);
   };
+  const discardCheckpoint = (
+    saved: TemplateDefinition,
+    numbers: NumericText = {},
+  ) => {
+    const problem = removeEditorCheckpoint(checkpointOwner, saved, numbers);
+    setCheckpointError(problem);
+    return problem === null;
+  };
   useEffect(() => {
     if (navigationRequest)
       requestLeave(navigationRequest.go, navigationRequest.cancel);
@@ -383,7 +391,7 @@ export function TemplateEditor({
           onChange={(description) => change({ ...definition, description })}
         />
       </div>
-      {checkpointError && (
+      {checkpointError && !leave && (
         <div className="ntt-alert" role="alert">
           {checkpointError}
         </div>
@@ -420,14 +428,13 @@ export function TemplateEditor({
               type="button"
               className="ntt-button"
               onClick={() => {
-                setCheckpointError(
-                  removeEditorCheckpoint(
-                    checkpointOwner,
+                if (
+                  discardCheckpoint(
                     checkpoint.value!.definition,
                     checkpoint.value!.numericText,
-                  ),
-                );
-                setCheckpoint({ value: null, error: null });
+                  )
+                )
+                  setCheckpoint({ value: null, error: null });
               }}
               disabled={saving}
             >
@@ -650,6 +657,11 @@ export function TemplateEditor({
           >
             <h3 id="ntt-leave-title">Unsaved template changes</h3>
             <p>Save this shared draft before leaving?</p>
+            {checkpointError && (
+              <p className="ntt-alert" role="alert">
+                {checkpointError}
+              </p>
+            )}
             <div className="ntt-row">
               <button
                 type="button"
@@ -667,13 +679,7 @@ export function TemplateEditor({
                 className="ntt-button"
                 disabled={saving}
                 onClick={() => {
-                  setCheckpointError(
-                    removeEditorCheckpoint(
-                      checkpointOwner,
-                      definition,
-                      numericText,
-                    ),
-                  );
+                  if (!discardCheckpoint(definition, numericText)) return;
                   setLeave(false);
                   pendingNavigation.current?.();
                 }}

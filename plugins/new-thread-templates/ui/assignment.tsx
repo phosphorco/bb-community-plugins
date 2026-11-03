@@ -136,7 +136,8 @@ export function AssignmentResult({ status }: { status: LaunchStatus }) {
         next.operationId !== status.operationId ||
         next.assignment.operationId !== assignment.operationId ||
         next.assignment.actorKey !== assignment.actorKey ||
-        next.assignment.threadId !== assignment.threadId
+        (next.assignment.threadId ?? next.threadId) !==
+          (assignment.threadId ?? status.threadId)
       )
         throw new Error("No matching assignment receipt is available yet.");
       accept(next.assignment);

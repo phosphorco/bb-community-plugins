@@ -95,7 +95,6 @@ export function TemplateRun({
   );
   const chosen = personal?.projectId ?? projectId ?? "";
   const [nativeMode, setNativeMode] = useState(false),
-    [nativeVisited, setNativeVisited] = useState(false),
     [openingEditor, setOpeningEditor] = useState(false);
   const [activeNativeOrigin, setActiveNativeOrigin] =
     useState<NativeEditorOrigin | null>(null);
@@ -119,8 +118,7 @@ export function TemplateRun({
     [issues, setIssues] = useState<ValidationIssue[]>([]),
     [writeError, setWriteError] = useState<string | null>(null),
     [sending, setSending] = useState(false);
-  const [operation, setOperation] = useState<LaunchStatus | null>(null),
-    [checking, setChecking] = useState(false);
+  const [operation, setOperation] = useState<LaunchStatus | null>(null);
   const [recovery, setRecovery] = useState<Awaited<
     ReturnType<NonNullable<typeof binding>["recoveryCandidates"]>
   > | null>(null);
@@ -153,7 +151,6 @@ export function TemplateRun({
     setIssues([]);
     setNativeMode(false);
     setActiveNativeOrigin(null);
-    setNativeVisited(false);
     setOpeningEditor(false);
   }, [ownerSession]);
   const readonly = view.status === "ready" && view.overriding;
@@ -585,6 +582,7 @@ export function TemplateRun({
       ? snapshot.acknowledged.envelope.value.nativeEditor
       : undefined;
   const nativeOrigin = activeNativeOrigin ?? acknowledgedNativeOrigin;
+  const nativeVisited = activeNativeOrigin !== null;
   useEffect(() => {
     const live = client.currentSession();
     if (
@@ -658,7 +656,6 @@ export function TemplateRun({
       return;
     if (ownsNative && nativeOrigin?.renderContext && !reset) {
       setActiveNativeOrigin(nativeOrigin!);
-      setNativeVisited(true);
       setNativeMode(true);
       return;
     }
@@ -740,7 +737,6 @@ export function TemplateRun({
       )
         return;
       setActiveNativeOrigin(origin);
-      setNativeVisited(true);
       setNativeMode(true);
       setWriteError(null);
     } catch (error) {
@@ -1132,11 +1128,6 @@ export function TemplateRun({
       if (mounted.current) setSending(false);
       journal.refresh();
     }
-  };
-  const check = async () => {
-    setChecking(true);
-    journal.refresh();
-    setChecking(false);
   };
   const resumeSaved = async () => {
     if (
@@ -1595,8 +1586,7 @@ export function TemplateRun({
               <button
                 type="button"
                 className="ntt-button"
-                disabled={checking}
-                onClick={() => void check()}
+                onClick={journal.refresh}
               >
                 Check launch status
               </button>

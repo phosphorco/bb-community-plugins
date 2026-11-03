@@ -144,3 +144,54 @@ test("disconnected live owned browser retirement fails cleanup after exact child
   expect(calls).toEqual(["server", "fixture", "scratch"]);
   expect(phases).toContain("browser-close:error");
 });
+
+test("pre-browser acquisition failure retains its body error and cleans every acquired resource", async () => {
+  const scratch = await mkdtemp(join(tmpdir(), "browser-partial-acquisition-")),
+    original = new Error("Browser was not acquired"),
+    disposal = new Error("Acquired fixture disposal failed"),
+    calls: string[] = [],
+    phases: string[] = [];
+  let failure: unknown;
+  try {
+    await cleanupPromptFixture({
+      bodyFailure: { failed: true, error: original },
+      phase: (name) => {
+        phases.push(name);
+      },
+      steps: [
+        {
+          name: "fixture-dispose",
+          run: () => {
+            calls.push("fixture");
+            throw disposal;
+          },
+        },
+        {
+          name: "scratch-remove",
+          run: async () => {
+            calls.push("scratch");
+            await rm(scratch, { recursive: true, force: true });
+          },
+        },
+      ],
+    });
+  } catch (error) {
+    failure = error;
+  } finally {
+    await rm(scratch, { recursive: true, force: true });
+  }
+  expect(failure).toBeInstanceOf(AggregateError);
+  expect((failure as AggregateError).errors).toEqual([original, disposal]);
+  expect((failure as AggregateError).cause).toBe(original);
+  expect(calls).toEqual(["fixture", "scratch"]);
+  expect(phases).not.toContain("browser-close:start");
+  expect(phases).toContain("scratch-remove:done");
+  await expect(access(scratch)).rejects.toThrow();
+  await expect(
+    cleanupPromptFixture({
+      bodyFailure: { failed: true, error: original },
+      steps: [],
+      phase: () => {},
+    }),
+  ).rejects.toBe(original);
+});

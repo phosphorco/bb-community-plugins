@@ -1,6 +1,6 @@
 /** Browser reload cut after real personal save, before synthetic server launch dispatch. */
 import { expect } from "bun:test";
-import { chromium, expect as browserExpect } from "@playwright/test";
+import { expect as browserExpect } from "@playwright/test";
 import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { appendFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -8,16 +8,22 @@ import { basename, join } from "node:path";
 import { appFixture } from "./app-fixture.ts";
 import { launchRequestSchema, type LaunchRequest } from "../rpc-contract.ts";
 
+import { acquireOwnedBrowser } from "./browser-owned.ts";
+import { cleanupPromptFixture } from "./browser-prompt-cleanup.ts";
+
 export async function browserSavedRequestRecovery() {
-  const fixture = await appFixture(`browser-recovery-${crypto.randomUUID()}`),
-    scratch = await mkdtemp(join(tmpdir(), "templates-recovery-")),
-    artifacts = join(
-      process.env.BB_THREAD_STORAGE ?? "/tmp/templates-browser-evidence",
-      "templates-recovery",
-    );
-  await mkdir(artifacts, { recursive: true });
+  const artifacts = join(
+    process.env.BB_THREAD_STORAGE ?? "/tmp/templates-browser-evidence",
+    "templates-recovery",
+  );
+  let phaseReady = false;
+  const steps: { name: string; run(): Promise<unknown> | unknown }[] = [];
+  let owned: ReturnType<typeof acquireOwnedBrowser> | undefined;
+  const bodyFailure: { failed: boolean; error?: unknown } = { failed: false };
+  const held = new Set<() => void>();
   const started = performance.now();
   const phase = (name: string, detail: Record<string, unknown> = {}) =>
+    phaseReady &&
     appendFileSync(
       join(artifacts, "phases.jsonl"),
       JSON.stringify({
@@ -39,88 +45,106 @@ export async function browserSavedRequestRecovery() {
       throw error;
     }
   };
-  phase("build:start");
-  const built = Bun.spawnSync(
-    [
-      process.execPath,
-      join(import.meta.dir, "browser-mobile-build.ts"),
-      scratch,
-      "product",
-    ],
-    { cwd: join(import.meta.dir, ".."), stdout: "pipe", stderr: "pipe" },
-  );
-  if (built.exitCode !== 0)
-    throw new Error(new TextDecoder().decode(built.stderr));
-  const bundle = JSON.parse(new TextDecoder().decode(built.stdout)) as {
-    script: string;
-    css: string | null;
-  };
-  phase("build:done");
-  let cut = false,
-    captured: LaunchRequest | null = null;
-  const held = new Set<() => void>();
-  const server = Bun.serve({
-    hostname: "127.0.0.1",
-    port: 0,
-    async fetch(request) {
-      const url = new URL(request.url);
-      if (url.pathname.startsWith("/rpc/")) {
-        try {
-          const method = decodeURIComponent(url.pathname.slice(5)),
-            input = await request.json();
-          phase("rpc", { method });
-          if (method === "launch" && cut) {
-            captured = launchRequestSchema.parse(input);
-            return await new Promise<Response>((resolve) => {
-              const release = () => {
-                held.delete(release);
-                resolve(
-                  Response.json(
-                    { error: "Fixture request cut before launch handler" },
-                    { status: 503 },
-                  ),
-                );
-              };
-              held.add(release);
-            });
-          }
-          const handler = fixture.handlers[method];
-          if (!handler) throw new Error(`Unknown ${method}`);
-          return Response.json(await handler(input));
-        } catch (error) {
-          return Response.json(
-            { error: error instanceof Error ? error.message : String(error) },
-            { status: 500 },
-          );
-        }
-      }
-      if (url.pathname === "/" + basename(bundle.script))
-        return new Response(await readFile(bundle.script), {
-          headers: { "content-type": "text/javascript" },
-        });
-      if (bundle.css && url.pathname === "/" + basename(bundle.css))
-        return new Response(await readFile(bundle.css), {
-          headers: { "content-type": "text/css" },
-        });
-      return new Response(
-        `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1">${bundle.css ? `<link rel="stylesheet" href="/${basename(bundle.css)}">` : ""}<style>:root{--background:#171922;--foreground:#d4d5e2;--muted-foreground:#a1a4bb;--border:#373a4c;--primary:#b7a3ed;--primary-foreground:#191529}body{font:14px system-ui;margin:24px;max-width:900px;background:var(--background);color:var(--foreground)}</style></head><body><script type="module" src="/${basename(bundle.script)}"></script></body></html>`,
-        { headers: { "content-type": "text/html" } },
-      );
-    },
-  });
-  const browser = await step("browser-launch", () =>
-      chromium.launch({ headless: true }),
-    ),
-    page = await step("page", () =>
-      browser.newPage({ viewport: { width: 1100, height: 900 } }),
-    ),
-    errors: string[] = [],
-    evidence: unknown[] = [];
-  page.on("pageerror", (error) => errors.push(error.message));
-  page.on("close", () => phase("page:close"));
-  page.on("crash", () => phase("page:crash"));
-  browser.on("disconnected", () => phase("browser:disconnected"));
   try {
+    await mkdir(artifacts, { recursive: true });
+    phaseReady = true;
+    const fixture = await appFixture(`browser-recovery-${crypto.randomUUID()}`);
+    steps.push({ name: "fixture-dispose", run: () => fixture.dispose() });
+    const scratch = await mkdtemp(join(tmpdir(), "templates-recovery-"));
+    steps.push({
+      name: "scratch-remove",
+      run: () => rm(scratch, { recursive: true, force: true }),
+    });
+    phase("build:start");
+    const built = Bun.spawnSync(
+      [
+        process.execPath,
+        join(import.meta.dir, "browser-mobile-build.ts"),
+        scratch,
+        "product",
+      ],
+      { cwd: join(import.meta.dir, ".."), stdout: "pipe", stderr: "pipe" },
+    );
+    if (built.exitCode !== 0)
+      throw new Error(new TextDecoder().decode(built.stderr));
+    const bundle = JSON.parse(new TextDecoder().decode(built.stdout)) as {
+      script: string;
+      css: string | null;
+    };
+    phase("build:done");
+    let cut = false,
+      captured: LaunchRequest | null = null;
+    const server = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      async fetch(request) {
+        const url = new URL(request.url);
+        if (url.pathname.startsWith("/rpc/")) {
+          try {
+            const method = decodeURIComponent(url.pathname.slice(5)),
+              input = await request.json();
+            phase("rpc", { method });
+            if (method === "launch" && cut) {
+              captured = launchRequestSchema.parse(input);
+              return await new Promise<Response>((resolve) => {
+                const release = () => {
+                  held.delete(release);
+                  resolve(
+                    Response.json(
+                      { error: "Fixture request cut before launch handler" },
+                      { status: 503 },
+                    ),
+                  );
+                };
+                held.add(release);
+              });
+            }
+            const handler = fixture.handlers[method];
+            if (!handler) throw new Error(`Unknown ${method}`);
+            return Response.json(await handler(input));
+          } catch (error) {
+            return Response.json(
+              { error: error instanceof Error ? error.message : String(error) },
+              { status: 500 },
+            );
+          }
+        }
+        if (url.pathname === "/" + basename(bundle.script))
+          return new Response(await readFile(bundle.script), {
+            headers: { "content-type": "text/javascript" },
+          });
+        if (bundle.css && url.pathname === "/" + basename(bundle.css))
+          return new Response(await readFile(bundle.css), {
+            headers: { "content-type": "text/css" },
+          });
+        return new Response(
+          `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1">${bundle.css ? `<link rel="stylesheet" href="/${basename(bundle.css)}">` : ""}<style>:root{--background:#171922;--foreground:#d4d5e2;--muted-foreground:#a1a4bb;--border:#373a4c;--primary:#b7a3ed;--primary-foreground:#191529}body{font:14px system-ui;margin:24px;max-width:900px;background:var(--background);color:var(--foreground)}</style></head><body><script type="module" src="/${basename(bundle.script)}"></script></body></html>`,
+          { headers: { "content-type": "text/html" } },
+        );
+      },
+    });
+    steps.unshift({
+      name: "server-stop",
+      run: () => {
+        server.stop(true);
+      },
+    });
+    owned = acquireOwnedBrowser({
+      scratch,
+      artifacts,
+      serverURL: server.url.toString(),
+      phase,
+    });
+    const browser = await step("browser-launch", () => owned!.connect()),
+      page = await step("page", () =>
+        browser.newPage({ viewport: { width: 1100, height: 900 } }),
+      ),
+      errors: string[] = [],
+      evidence: unknown[] = [];
+    page.on("pageerror", (error) => errors.push(error.message));
+    page.on("close", () => phase("page:close"));
+    page.on("crash", () => phase("page:crash"));
+    browser.on("disconnected", () => phase("browser:disconnected"));
     await step("goto", () => page.goto(`http://127.0.0.1:${server.port}`));
     for (const native of [false, true]) {
       phase("mode", { native });
@@ -243,12 +267,15 @@ export async function browserSavedRequestRecovery() {
       error: error instanceof Error ? error.stack : String(error),
     });
     console.error("Saved-request browser body failed before cleanup:", error);
-    throw error;
+    bodyFailure.failed = true;
+    bodyFailure.error = error;
   } finally {
     for (const release of [...held]) release();
-    await step("browser-close", () => browser.close());
-    server.stop(true);
-    await fixture.dispose();
-    await rm(scratch, { recursive: true, force: true });
+    await cleanupPromptFixture({
+      browser: owned?.owner,
+      bodyFailure,
+      steps,
+      phase,
+    });
   }
 }

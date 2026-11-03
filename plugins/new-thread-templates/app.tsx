@@ -48,7 +48,7 @@ function TemplateGallery({
   const load = useCallback(
     async (read: MountedReadContext) => {
       // Metadata ticket precedes dispatch, even before the first public instance fact.
-      const ticket = await galleryCache.beginRequest(origin);
+      const ticket = galleryCache.beginRequest(origin);
       if (!read.isCurrent()) throw new Error("Templates read was superseded.");
       const value = await rpc.call("publishedCatalog", {});
       const live = liveSession.current;
@@ -83,15 +83,7 @@ function TemplateGallery({
   }, [instanceId, catalog.value, catalog.refresh]);
   useLayoutEffect(() => {
     if (!instanceId) return;
-    let current = true;
-    const scope = { origin, instanceId };
-    catalog.seed(galleryCache.readMemory(scope));
-    void galleryCache.read(scope).then((value) => {
-      if (current) catalog.seed(value);
-    });
-    return () => {
-      current = false;
-    };
+    catalog.seed(galleryCache.readMemory({ origin, instanceId }));
   }, [instanceId, origin, catalog.seed]);
   const currentCatalog =
     instanceId && catalog.value?.instanceId === instanceId
