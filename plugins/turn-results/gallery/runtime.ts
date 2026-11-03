@@ -185,8 +185,16 @@ export function createGalleryRuntime(sdk: Sdk) {
         for (const source of found) if (merged.has(source.pluginId) || merged.size < 256) merged.set(source.pluginId, source);
         discoveryCursor = result.cursor; discoveryCapacity = !result.capacity.complete;
         sources = [...merged.values()].sort((a, b) => a.pluginId < b.pluginId ? -1 : a.pluginId > b.pluginId ? 1 : 0);
-        const labels = new Map<string, { neutral: string; confirmed: string }>();
-        for (const source of sources) for (const kind of source.capabilities.supplier?.kinds ?? [])
+        // A finite rediscovery slice can omit a still-listed owner that has
+        // already supplied a valid label. Keep that display metadata without
+        // granting readiness; fresh descriptors replace their own kind set.
+        const listed = new Set(result.rows.filter(row => !['disabled', 'not-running', 'incompatible'].includes(row.state)).map(row => row.pluginId));
+        const refreshed = new Set(found.map(source => source.pluginId));
+        const labels = new Map([...captionLabels.state].filter(([key]) => {
+          const [owner] = JSON.parse(key) as [string, string];
+          return listed.has(owner) && !refreshed.has(owner);
+        }));
+        for (const source of sources) if (listed.has(source.pluginId)) for (const kind of source.capabilities.supplier?.kinds ?? [])
           labels.set(canonicalJson([source.pluginId, kind.kind]), { neutral: kind.neutralLabel, confirmed: kind.confirmedLabel });
         if (labels.size !== captionLabels.state.size || [...labels].some(([key, value]) => {
           const previous = captionLabels.state.get(key); return previous?.neutral !== value.neutral || previous.confirmed !== value.confirmed;

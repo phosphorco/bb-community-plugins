@@ -306,7 +306,7 @@ function PresentationCanvas({ row, runtime, sdk, navigate, current, lifetime, pr
     && !snapshot.signal?.aborted && readyPlugins.has(row.owner) && (mode === 'full' || dialogs.active !== site.current?.key && dialogs.pending !== site.current?.key);
   return <div ref={container} className={`tr-upper${mode === 'full' ? ' tr-upper-full' : ''}`}>
     <div className="tr-fallback" style={{ visibility: shown ? 'hidden' : 'visible' }} aria-hidden={shown || undefined}>{fallback}</div>
-    {presentation && scope && snapshot?.state !== 'capacity' && snapshot?.state !== 'released' && <div className="tr-hosted" inert={!shown} aria-hidden={!shown || undefined} style={{ pointerEvents: shown ? 'auto' : 'none' }}>
+    {presentation && scope && snapshot?.state !== 'capacity' && snapshot?.state !== 'released' && <div className="tr-hosted" inert={!shown} aria-hidden={!shown || undefined} style={{ pointerEvents: shown ? 'auto' : 'none', visibility: shown ? 'visible' : 'hidden' }}>
       <HostedCanvas lifetime={scope} identity={row.identity.artifact} stamp={{ ...presentation, pluginId: row.owner }} revision={revision}
         sdk={sdk} readyPlugins={enabled && committedAuthority === authorityKey ? readyPlugins : new Set()} mode={mode} size={size} consumer={{ pluginId: 'turn-results', surface: mode === 'full' ? 'dialog' : 'gallery' }}
         navigate={{ toThread: id => navigate.toThread(id), openUrl: url => { navigate.openUrl(url); }, openFile: () => false }}

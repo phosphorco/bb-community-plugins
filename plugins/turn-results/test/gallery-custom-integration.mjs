@@ -1723,3 +1723,58 @@ test('generic descriptor labels react for retained cards without row or readines
 
  }finally{unsub.unsubscribe();await act(async()=>root.unmount());controller.abort();runtime.dispose();await f.dispose()}
 });
+
+
+test('admitted event labels survive an incomplete rediscovery slice without granting readiness', async () => {
+ const f=await fixture(1,false), runtime=createGalleryRuntime(f.sdk), controller=new AbortController(), row=f.rows()[0];
+ const originalList=f.sdk.plugins.list, originalRpc=f.sdk.plugins.callRpc;let prefixCalls=0;
+ try {
+  await runtime.readScope('thread',controller.signal,signal=>runtime.discoverReady(signal));
+  assert.equal(runtime.caption(row),'Created');assert.equal(runtime.isReadyOwner(owner),true);
+  const prefixes=Array.from({length:32},(_,i)=>({id:`aaa-prefix-${String(i).padStart(2,'0')}`,enabled:true,status:'running'}));
+  f.sdk.plugins.list=async()=>({plugins:[...prefixes,...(await originalList()).plugins]});
+  f.sdk.plugins.callRpc=async args=>{if(args.method===METHODS.describe&&args.pluginId.startsWith('aaa-prefix-')){prefixCalls++;return args.outputSchema.parse({protocol:'bb-turn-results',versions:[]})}return originalRpc(args)};
+  runtime.invalidateReadiness();assert.equal(runtime.isReadyOwner(owner),false);
+  const first=await runtime.readScope('thread',controller.signal,signal=>runtime.discoverReady(signal));
+  assert.equal(first.state,'ready');assert.equal(first.value.continued,true);assert.equal(prefixCalls,32);
+  assert.equal(runtime.isReadyOwner(owner),false,'retained display metadata cannot restore current presentation readiness');
+  assert.equal(runtime.caption(row),'Created','a partial pass must not erase an already admitted descriptor label for a still-listed owner');
+  const second=await runtime.readScope('thread',controller.signal,signal=>runtime.discoverReady(signal));
+  assert.equal(second.value.continued,false);assert.equal(runtime.caption(row),'Created');assert.equal(runtime.isReadyOwner(owner),true);
+  const quiet=f.stats();await settle(25);assert.deepEqual(f.stats(),quiet);
+  f.sdk.plugins.list=async()=>({plugins:[]});runtime.invalidateReadiness();await runtime.readScope('thread',controller.signal,signal=>runtime.discoverReady(signal));
+  assert.equal(runtime.caption(row),'Result recorded','no descriptor identity is invented after the owner disappears from discovery');
+ } finally {controller.abort();runtime.dispose();await f.dispose()}
+});
+
+test('inactive public lazy host diagnostic stays visually hidden behind the usable fallback', async () => {
+  const f = await fixture(1); let loads = 0;
+  try {
+    await until(() => f.stats().live === 1);
+    const card = document.querySelector('[data-result-key="row-0"]');
+    const opener = card.querySelector('[aria-label="Expand result"]');
+    await act(async () => { f.register(async () => { loads++; throw Error('intentional unavailable presentation chunk'); }); });
+    await until(() => loads === 1 && card.querySelector('[data-bb-presentation-failed]') && f.stats().live === 0);
+    const marker = card.querySelector('[data-bb-presentation-failed]');
+    const hosted = marker.closest('.tr-hosted'), fallback = card.querySelector('.tr-fallback');
+    const visibility = element => f.dom.window.getComputedStyle(element).visibility;
+    console.log('FALLBACK_DIAGNOSTIC_VISIBILITY', JSON.stringify({ marker: marker.textContent,
+      markerVisibility: visibility(marker), hostedVisibility: visibility(hosted), fallbackVisibility: visibility(fallback),
+      inert: hosted.hasAttribute('inert'), ariaHidden: hosted.getAttribute('aria-hidden'), loads }));
+    assert.equal(visibility(marker), 'hidden', 'an inactive public error marker must not paint over the visible fallback');
+    assert.equal(visibility(hosted), 'hidden'); assert.equal(visibility(fallback), 'visible');
+    assert.equal(hosted.hasAttribute('inert'), true); assert.equal(hosted.getAttribute('aria-hidden'), 'true');
+    const primary = fallback.querySelector('.tr-data-action');
+    await act(async () => { primary.focus(); primary.click(); });
+    assert.equal(document.activeElement, primary); assert.deepEqual(f.navigation, ['https://fixture.invalid/0']);
+    const reads = f.nativeCalls.length, lists = f.stats().listCalls;
+    await settle(50); assert.equal(loads, 1); assert.equal(f.nativeCalls.length, reads); assert.equal(f.stats().listCalls, lists);
+    await act(async () => { f.register(); }); await until(() => f.stats().live === 1);
+    assert.equal(document.activeElement, primary, 'ready replacement must not conceal its focused fallback');
+    assert.equal(visibility(fallback), 'visible'); assert.equal(visibility(hosted), 'hidden');
+    assert.equal(card.querySelector('[aria-label="Expand result"]'), opener);
+    await act(async () => opener.focus()); await until(() => visibility(fallback) === 'hidden');
+    assert.equal(visibility(card.querySelector('.tr-hosted')), 'visible'); assert.equal(document.activeElement, opener);
+    assert.equal(card.querySelector('[data-bb-presentation-failed]'), null); assert.equal(f.stats().rpc, 0); assert.equal(f.stats().peak, 1);
+  } finally { await f.dispose(); }
+});
