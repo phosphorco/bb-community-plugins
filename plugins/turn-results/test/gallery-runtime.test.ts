@@ -139,8 +139,8 @@ test('source33 progresses after first owner fails; bounded productive debt parks
   } finally { lease.dispose(); h.dispose(); }
 });
 test('same-scope split shares snapshot; narrower proof cannot abort/widen other pane; one lane per thread', async () => {
-  const h = setup(); let release!: () => void, heldSignal!: AbortSignal;
-  h.setHold((_thread, signal) => { heldSignal = signal; return new Promise(resolve => { release = resolve; }); });
+  const h = setup(); let heldSignal!: AbortSignal; const releases: (() => void)[] = [];
+  h.setHold((_thread, signal) => { heldSignal = signal; return new Promise(resolve => { releases.push(resolve); }); });
   const wide = h.runtime.retain(anchor('same')), duplicate = h.runtime.retain(anchor('same'));
   const narrow = h.runtime.retain(anchor('same', 'turn', 50)), other = h.runtime.retain(anchor('other'));
   try {
@@ -148,10 +148,10 @@ test('same-scope split shares snapshot; narrower proof cannot abort/widen other 
     assert.equal(wide.store, duplicate.store); assert.notEqual(wide.store, narrow.store);
     assert.equal(h.runtime.stats().running, 2); assert.equal(h.reads.filter(id => id === 'same').length, 1);
     assert.equal(heldSignal.aborted, false);
-    h.setHold(null); wide.dispose(); duplicate.dispose(); other.dispose(); release();
+    h.setHold(null); wide.dispose(); duplicate.dispose(); other.dispose(); for (const release of releases) release();
     await until(() => h.runtime.stats().running === 0 && h.reads.filter(id => id === 'same').length === 2);
     assert.equal(narrow.store.state.error, null);
-  } finally { wide.dispose(); duplicate.dispose(); narrow.dispose(); other.dispose(); h.dispose(); }
+  } finally { for (const release of releases) release(); wide.dispose(); duplicate.dispose(); narrow.dispose(); other.dispose(); h.dispose(); }
 });
 test('hidden/abort-ignoring transport retires lanes; no follow-on source calls or stale publications', async () => {
   const h = setup(1); const releases: (() => void)[] = [];
@@ -159,8 +159,8 @@ test('hidden/abort-ignoring transport retires lanes; no follow-on source calls o
   const lease = h.runtime.retain(anchor('held'));
   try {
     await until(() => releases.length === 1); h.hidden(true);
-    await until(() => h.runtime.stats().running === 0); assert.equal(h.sourceCalls.length, 0);
-    releases[0]!(); await tick(); assert.equal(h.sourceCalls.length, 0); assert.equal(lease.store.state.rows.length, 0);
+    await tick(); assert.equal(h.runtime.stats().running, 1, 'ignored abort retains actual occupancy'); assert.equal(h.sourceCalls.length, 0);
+    releases[0]!(); await until(() => h.runtime.stats().running === 0); assert.equal(h.sourceCalls.length, 0); assert.equal(lease.store.state.rows.length, 0);
     h.setHold(null); h.hidden(false); await until(() => h.sourceCalls.length === 1 && h.runtime.stats().running === 0);
     assert.equal(lease.store.state.error, null);
   } finally { lease.dispose(); h.dispose(); }
@@ -210,9 +210,10 @@ test('history saturation returns capacity without cursor/debt loss; queued cance
     assert.deepEqual(capacity, { state: 'capacity' }); assert.equal(h.runtime.stats().historyReads, 128);
     await until(() => started.length === 2); controllers[64]!.abort();
     assert.equal(h.runtime.stats().historyReads, 127); assert.equal(started.includes('history-64'), false);
-    h.hidden(true); await settled; await until(() => h.runtime.stats().running === 0);
-    assert.equal(h.runtime.stats().historyReads, 0); assert.equal(h.runtime.stats().queued, 0);
-    for (const release of releases) release(); await tick(); assert.equal(started.length, 2, 'ignored late reads cannot admit continuation');
+    h.hidden(true); await settled;
+    assert.equal(h.runtime.stats().running, 2); assert.equal(h.runtime.stats().historyReads, 2); assert.equal(h.runtime.stats().queued, 0);
+    for (const release of releases) release(); await until(() => h.runtime.stats().running === 0);
+    assert.equal(h.runtime.stats().historyReads, 0); assert.equal(started.length, 2, 'ignored late reads cannot admit continuation');
     h.hidden(false);
     const recovered = await h.runtime.readScope('capacity', new AbortController().signal, async () => 'same requested page');
     assert.deepEqual(recovered, { state: 'ready', value: 'same requested page' });
@@ -522,4 +523,61 @@ test('hidden or retired failed-feed membership read fences ignored late results 
       assert.deepEqual(calls, ['source-000', 'source-001']); assert.equal(h.runtime.stats().queued, 0);
     } finally { release?.(); lease.dispose(); h.dispose(); }
   }
+});
+
+test('explicit action read yields retained collection, precedes passive history and resumes finite supplier work', async () => {
+  const h = setup(2, '', true), lease = h.runtime.retain(anchor('same')); let held!: AbortSignal, once = true;
+  const order: string[] = [];
+  try {
+    await until(() => h.runtime.stats().running === 0 && h.sourceCalls.length === 6);
+    const firstPass = [...h.sourceCalls];
+    h.setHold(async (_thread, signal) => {
+      if (!once) { order.push('resumed'); return; }
+      once = false; held = signal; order.push('held');
+      await new Promise<void>((_resolve, reject) => signal.addEventListener('abort', () => reject(signal.reason), { once: true }));
+    });
+    lease.more(); await until(() => !!held);
+    const passive = h.runtime.readScope('same', new AbortController().signal, async () => { order.push('passive'); return 'passive'; });
+    const action = h.runtime.readScope('same', new AbortController().signal, async () => { order.push('action'); return 'verified'; }, true);
+    assert.deepEqual(await action, { state: 'ready', value: 'verified' }); await passive;
+    await until(() => h.runtime.stats().running === 0 && h.runtime.stats().queued === 0);
+    assert.equal(held.aborted, true); assert.ok(order.indexOf('action') < order.indexOf('passive'));
+    assert.ok(order.indexOf('action') < order.indexOf('resumed')); assert.deepEqual(h.sourceCalls.slice(0, firstPass.length), firstPass);
+    assert.equal(h.sourceCalls.length, 12); assert.equal(lease.store.state.error, null); assert.equal(lease.store.state.continued, true);
+    const quiet = h.reads.length; await tick(); assert.equal(h.reads.length, quiet); assert.equal(h.runtime.stats().historyReads, 0);
+  } finally { lease.dispose(); h.dispose(); }
+});
+
+test('uncancellable retained read holds occupancy, aborted priority cannot run late, and another thread retains its lane', async () => {
+  const h = setup(1); let release!: () => void, held!: AbortSignal, actionCalls = 0;
+  h.setHold(async (thread, signal) => { if (thread !== 'same') return; held = signal; await new Promise<void>(resolve => { release = resolve; }); });
+  const lease = h.runtime.retain(anchor('same')), controller = new AbortController();
+  try {
+    await until(() => !!held);
+    const action = h.runtime.readScope('same', controller.signal, async () => { actionCalls++; }, true);
+    const rejected = assert.rejects(action); assert.equal(held.aborted, true); await tick();
+    assert.equal(h.runtime.stats().running, 1); assert.equal(actionCalls, 0);
+    const other = await h.runtime.readScope('other', new AbortController().signal, async () => 'healthy');
+    assert.deepEqual(other, { state: 'ready', value: 'healthy' }); assert.ok(h.runtime.stats().running <= 2);
+    controller.abort('superseded'); await rejected; assert.equal(actionCalls, 0);
+    h.setHold(null); release(); await until(() => h.sourceCalls.length === 1 && h.runtime.stats().running === 0);
+    assert.equal(actionCalls, 0); assert.equal(lease.store.state.error, null); assert.equal(h.runtime.stats().historyReads, 0);
+    // The final action read wraps backend.read -> rpc -> untilAborted(raw).
+    // Its outer callback can reject while the real SDK promise remains held.
+    let finalStarted = false;
+    h.setHold(async (_thread, signal) => { held = signal; finalStarted = true; await new Promise<void>(resolve => { release = resolve; }); });
+    const finalController = new AbortController();
+    const final = h.runtime.readScope('same', finalController.signal, signal => h.runtime.backend.read('same', 'turn', signal), true);
+    const finalRejected = assert.rejects(final);
+    await until(() => finalStarted); finalController.abort('retired'); await finalRejected; await tick();
+    assert.equal(held.aborted, true); assert.equal(h.runtime.stats().running, 1);
+    assert.equal(h.runtime.stats().historyReads, 1, 'raw final-read occupancy outlives its rejected abort wrapper');
+    const healthy = await h.runtime.readScope('other', new AbortController().signal, async () => 'still healthy');
+    assert.deepEqual(healthy, { state: 'ready', value: 'still healthy' });
+    h.runtime.dispose(); let drained = false;
+    const drainage = h.runtime.whenDrained().then(() => { drained = true; });
+    await tick(); assert.equal(drained, false, 'replacement cannot bypass the old raw-call occupancy');
+    h.setHold(null); release(); await drainage; await until(() => h.runtime.stats().running === 0);
+    assert.equal(h.runtime.stats().historyReads, 0); assert.equal(actionCalls, 0);
+  } finally { release?.(); controller.abort(); lease.dispose(); h.dispose(); }
 });

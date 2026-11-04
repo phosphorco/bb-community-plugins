@@ -182,7 +182,7 @@ export default definePluginApp(app => {
               check();
               if (!timelineRemaining) throw Error('Timeline action budget reached.');
               timelineRemaining--; return sdk.threads.timeline({ ...nativeInput, signal });
-            });
+            }, true);
             check(); return read.state === 'ready' ? read.value : { state: 'capacity' };
           } }, threadId);
           if (!timelineRemaining) return decline('This result could not be checked within its history limit.');
@@ -199,7 +199,7 @@ export default definePluginApp(app => {
           if (!anchor || !sameBoundary(anchor, input.scope.boundary)) return decline('This result needs a complete current turn boundary before it can open.');
           const read = await owner.readScope(threadId, controller.signal, signal => {
             check(); return owner.backend.read(threadId, input.scope.boundary.turnId, signal, input.after);
-          });
+          }, true);
           check();
           if (read.state === 'capacity') return decline('Results read capacity reached. Try Open after another view settles.');
           const row = read.value.page.rows.find(value => value.key === input.expected.key && value.owner === input.expected.owner);

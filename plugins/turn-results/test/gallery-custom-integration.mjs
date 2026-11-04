@@ -14,7 +14,7 @@ import { registerPresentation } from '@phosphorco/bb-context-recognition/present
 import { registerTurnResultsParticipant } from '@phosphorco/bb-turn-results/bb';
 import { buildResolveOutput, METHODS, sha256Canonical } from '@phosphorco/bb-turn-results';
 import { GALLERY_METHODS } from '../gallery/rpc.ts';
-import { createGalleryRuntime } from '../gallery/runtime.ts';
+import { createGalleryRuntime, GALLERY_RUNTIME_LIMITS as queueLimits } from '../gallery/runtime.ts';
 import { mountGalleryPane } from '../gallery/pane.ts';
 const navigationVariantUrl = new URL('../app.tsx?public-navigation-reference-fixture', import.meta.url).href;
 const runtimeVariantUrl = new URL('../app.tsx?public-runtime-constructor-fixture', import.meta.url).href;
@@ -2018,4 +2018,79 @@ test('optional presenter expansion hint keeps one visible guarded Open and updat
     assert.ok(card.querySelector('.tr-open-icon')); assert.equal(card.querySelector('.tr-open-primary'), null);
     assert.ok(f.stats().peak <= 4); assert.equal(f.stats().rpc, 0); style.remove();
   } finally { dispose(); controller.abort(); await f.dispose(); }
+});
+
+test('priority Open verification yields ordinary collection without changing5s or lane limits', async () => {
+ const result={classification:'running',limits:queueLimits,history:[],rpc:[],phases:[],cleanup:null};
+ const save=()=>{};
+ const f=await fixture(2,true,{captureRuntime:true,deferPresentation:true,nativeItems:true});
+ const runtime=f.runtime(),originalRpc=f.sdk.plugins.callRpc,originalHistory=f.sdk.threads.timeline;
+ let arm=false,heldCall=null,release=()=>{},released=false,live=0,peak=0;
+ const gate=new Promise(done=>{release=()=>{if(!released){released=true;result.releasedAt=performance.now();done();}};});
+ let facts,card,shell,native,initialCalls,clickAt,blocked;
+ const phase=label=>{const v={label,at:performance.now(),status:card?.querySelector('[data-turn-result-open-status]')?.textContent??null,navigation:[...f.navigation],runtime:runtime.stats(),canvases:runtime.canvases.counts()};result.phases.push(v);return v;};
+ try {
+  await until(()=>document.querySelectorAll('[data-result-key]').length===2&&runtime.stats().running===0&&runtime.stats().queued===0);
+  await settle(30);
+  native=document.querySelector('[data-timeline-row-id="opaque-0"]');card=native.querySelector('[data-result-key="row-0"]');shell=native.querySelector('[data-turn-results-gallery]');
+  assert.ok(card&&shell&&card.isConnected);facts=JSON.stringify(f.rows());initialCalls=f.nativeCalls.length;
+  f.sdk.plugins.callRpc=async args=>{
+   const call={method:args.method,turnId:args.input?.turnId??null,threadId:args.input?.threadId??null,startedAt:performance.now(),finished:false,aborted:false};result.rpc.push(call);live++;peak=Math.max(peak,live);
+   const hold=arm&&args.method===GALLERY_METHODS.read&&args.input.turnId==='turn-1';
+   if(hold){arm=false;heldCall=call;call.held=true;call.signal=args.signal?undefined:'missing';}
+   let abort;
+   try{
+    if(hold)await Promise.race([gate,new Promise((_,reject)=>{abort=()=>reject(args.signal.reason??Error('aborted'));args.signal.addEventListener('abort',abort,{once:true});if(args.signal.aborted)abort();})]);
+    args.signal?.throwIfAborted();const value=await originalRpc(args);call.finished=true;return value;
+   }catch(error){call.aborted=!!args.signal?.aborted;call.error=String(error?.message??error);throw error;}
+   finally{if(abort)args.signal.removeEventListener('abort',abort);call.endedAt=performance.now();live--;}
+  };
+  f.sdk.threads.timeline=async input=>{const call={startedAt:performance.now(),threadId:input.threadId,beforeAnchorId:input.beforeAnchorId??null,finished:false};result.history.push(call);live++;peak=Math.max(peak,live);try{const value=await originalHistory(input);call.finished=true;call.snapshot=value.timelinePage.historySnapshot;call.rows=value.rows.map(row=>({id:row.id,turnId:row.turnId,start:row.sourceSeqStart,end:row.sourceSeqEnd}));return value;}finally{call.endedAt=performance.now();live--;}};
+  phase('initial-visible-confirmed');arm=true;
+  // Genuine native change in OTHER turn -> unchanged public boundary -> ordinary
+  // retained read of that other turn. No private invalidation or demand call.
+  await act(async()=>{document.querySelector('[data-timeline-row-id="opaque-1"] > button').firstChild.data='Other turn native update';await tick();});
+  await until(()=>heldCall!==null);
+  assert.equal(heldCall.aborted,false);assert.equal(runtime.stats().running,1);
+  phase('other-turn-ordinary-read-held');
+  // The target itself now needs genuine fresh history; its physical final row,
+  // card, route and immutable source facts remain identical.
+  await act(async()=>{native.querySelector(':scope > button').firstChild.data='Target native proof changed';await tick();});
+  await settle(175);
+  const button=card.querySelector('button.tr-data-action');assert.ok(button&&button.isConnected);
+  clickAt=performance.now();result.clickAt=clickAt;
+  await act(async()=>{button.dispatchEvent(new f.dom.window.MouseEvent('click',{bubbles:true,detail:1}));await tick();});
+  assert.ok(f.navigation.length===1||/Checking/.test(card.querySelector('[data-turn-result-open-status]')?.textContent??''));
+  phase('one-explicit-open-checking');
+  await until(()=>f.navigation.length===1);
+  blocked=phase('priority-verified-before-original-gate-release');result.blocked=blocked;
+  result.historyDispatchedDuringAction=result.history.filter(call=>call.startedAt>=clickAt).length;
+  result.retainedReadsDispatchedDuringAction=result.rpc.filter(call=>call.startedAt>=clickAt&&call.method===GALLERY_METHODS.read&&call.turnId==='turn-0').length;
+  result.ordinaryHeldMs=blocked.at-heldCall.startedAt;
+  assert.equal(blocked.status,null);assert.ok(blocked.at-clickAt<5000);
+  assert.deepEqual(f.navigation,['https://fixture.invalid/0']);assert.ok(result.historyDispatchedDuringAction>=1);assert.ok(result.retainedReadsDispatchedDuringAction>=1);
+  assert.equal(heldCall.aborted,true,'ordinary public read acknowledges cancellation before the action owns its lane');
+  assert.ok(result.ordinaryHeldMs<queueLimits.sliceMs,'capture must occur before the ordinary slice deadline');
+  assert.equal(card,native.querySelector('[data-result-key="row-0"]'));assert.equal(shell,native.querySelector('[data-turn-results-gallery]'));assert.equal(JSON.stringify(f.rows()),facts);
+  await act(async()=>{release();await tick();});
+  await until(()=>runtime.stats().running===0&&runtime.stats().queued===0);
+  assert.equal(f.navigation.length,1,'lane resumption never replays an already consumed action');
+  // Later positive control in this SAME case: ordinary native demand obtains
+  // fresh unchanged public history; a new explicit Open uses that authority.
+  const historyBefore=result.history.length;
+  await act(async()=>{native.querySelector(':scope > button').firstChild.data='Later ordinary target verification';await tick();});
+  await until(()=>result.history.length>historyBefore&&runtime.stats().running===0&&runtime.stats().queued===0);
+  assert.equal(card,native.querySelector('[data-result-key="row-0"]'));assert.equal(JSON.stringify(f.rows()),facts);
+  await act(async()=>{card.querySelector('button.tr-data-action').click();await tick();});
+  assert.deepEqual(f.navigation,['https://fixture.invalid/0','https://fixture.invalid/0']);assert.equal(card.querySelector('[data-turn-result-open-status]'),null);
+  phase('same-target-fresh-authority-opens');assert.equal(peak,1);assert.ok(f.stats().peak<=4);assert.equal(f.stats().rpc,0);
+  result.peakPublicReads=peak;result.samePhysicalTarget=true;result.factsUnchanged=true;result.initialNativeCalls=initialCalls;
+  const idle={history:result.history.length,rpc:result.rpc.length};await settle(50);assert.deepEqual({history:result.history.length,rpc:result.rpc.length},idle);
+  result.classification='priority-action-verified-and-ordinary-resumed-not-native-proof';result.firstOpenMs=blocked.at-clickAt;assert.ok(result.rpc.filter(call=>call.method===GALLERY_METHODS.read&&call.turnId==='turn-1').length>=2);save();
+ }catch(error){result.error={message:error.message,stack:error.stack};save();throw error;}
+ finally{
+  release();f.sdk.plugins.callRpc=originalRpc;f.sdk.threads.timeline=originalHistory;
+  await f.dispose();await runtime.whenDrained();result.cleanup={runtime:runtime.stats(),canvases:runtime.canvases.counts(),publicReadsLive:live,fixture:f.stats()};save();
+  assert.equal(live,0);assert.equal(result.cleanup.runtime.running,0);assert.equal(result.cleanup.runtime.queued,0);assert.equal(result.cleanup.runtime.historyReads,0);assert.equal(result.cleanup.runtime.leases,0);assert.equal(result.cleanup.canvases.occupied,0);
+ }
 });

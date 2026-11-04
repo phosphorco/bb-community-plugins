@@ -32,7 +32,7 @@ interface TurnEntry {
   dirty: boolean; controller: AbortController | null; afterOwner: string | null;
   debts: Set<string>; enumerateRetries: Set<string>; debtBudget: number; bytes: number; cursorCharge: number;
 }
-interface HistoryRead { threadId: string; live(): boolean; start(): void; cancel(): void }
+interface HistoryRead { threadId: string; priority: boolean; live(): boolean; start(): void; cancel(): void }
 type Work = TurnEntry | HistoryRead;
 export const GALLERY_RUNTIME_LIMITS = Object.freeze({ leases: 128, cached: 64, lanes: 2,
   historyQueue: 128, cursorBytes: 4096, cursorHistory: 64, collectionRows: 64, collectionPages: 8,
@@ -56,8 +56,14 @@ export function createGalleryRuntime(sdk: Sdk) {
   let sources: ConsumerSource[] | null = null, discovering: Promise<ConsumerSource[]> | null = null;
   let discoveryCursor: ResultsDiscoveryCursor | null = null;
   let active = true, visible = !document.hidden, running = 0, scheduled = false, leases = 0, bytes = 0;
-  // FIFO threads, then FIFO turns. A busy thread never occupies both lanes.
-  const queue = new Map<string, Set<Work>>(), runningThreads = new Set<string>();
+  // Open checks precede queued optional work; otherwise FIFO threads/turns.
+  // A busy thread never occupies both lanes.
+  const queue = new Map<string, Set<Work>>(), runningThreads = new Map<string, () => boolean>();
+  // A yielded retained read still owns its lane until the actual public call
+  // settles. An abort-aware wrapper alone is not a cancellation receipt.
+  const retainedCalls = new WeakMap<AbortSignal, Set<Promise<unknown>>>();
+  let workDrain: Promise<void> | null = null, finishWorkDrain: (() => void) | null = null;
+  const drainedWork = () => { if (!running && finishWorkDrain) { const done = finishWorkDrain; finishWorkDrain = null; workDrain = null; done(); } };
   const historyReads = new Set<HistoryRead>();
   let discoveryController: AbortController | null = null, discoveryGeneration = 0;
   let discoveryCapacity = false;
@@ -161,8 +167,12 @@ export function createGalleryRuntime(sdk: Sdk) {
   media.visible(visible); canvases.setHidden(!visible);
   async function rpc(method: string, input: unknown, signal: AbortSignal) {
     canonicalByteLength(input, 262144);
-    const raw = await untilAborted(sdk.plugins.callRpc({ pluginId: 'turn-results', method,
-      input: JSON.parse(canonicalJson(input)), outputSchema: GalleryRawSchema, signal }), signal);
+    const call = Promise.resolve(sdk.plugins.callRpc({ pluginId: 'turn-results', method,
+      input: JSON.parse(canonicalJson(input)), outputSchema: GalleryRawSchema, signal }));
+    const pending = retainedCalls.get(signal) ?? new Set<Promise<unknown>>();
+    pending.add(call); retainedCalls.set(signal, pending);
+    void call.finally(() => { pending.delete(call); }).catch(() => {});
+    const raw = await untilAborted(call, signal);
     signal.throwIfAborted(); return raw;
   }
   const backend: GalleryBackend = {
@@ -325,11 +335,14 @@ export function createGalleryRuntime(sdk: Sdk) {
     if (!pending?.size) queue.delete(entry.threadId);
   }
   function dequeue(): Work | null {
-    for (const [threadId, entries] of queue) {
+    const threads = [...queue];
+    const urgent = ([, entries]: typeof threads[number]) => [...entries].some(entry => 'start' in entry && entry.priority && entry.live());
+    for (const [threadId, entries] of [...threads.filter(urgent), ...threads.filter(entry => !urgent(entry))]) {
       if (runningThreads.has(threadId)) continue;
       queue.delete(threadId);
       let next: Work | null = null;
-      for (const entry of entries) {
+      const priority = [...entries].find(entry => 'start' in entry && entry.priority && entry.live());
+      for (const entry of priority ? [priority, ...[...entries].filter(entry => entry !== priority)] : entries) {
         entries.delete(entry);
         if ('start' in entry ? entry.live() : entry.refs && entry.visible && entry.dirty && !entry.controller) { next = entry; break; }
       }
@@ -346,14 +359,23 @@ export function createGalleryRuntime(sdk: Sdk) {
     if (!active || !visible) return;
     while (running < GALLERY_RUNTIME_LIMITS.lanes) {
       const entry = dequeue(); if (!entry) break;
-      if ('start' in entry) { running++; runningThreads.add(entry.threadId); entry.start(); continue; }
+      if ('start' in entry) { running++; runningThreads.set(entry.threadId, () => false); entry.start(); continue; }
       entry.dirty = false;
-      const controller = new AbortController(); entry.controller = controller; running++; runningThreads.add(entry.anchor.threadId);
+      const controller = new AbortController(); entry.controller = controller; running++;
+      let collecting = true, yielded = false;
+      runningThreads.set(entry.anchor.threadId, () => {
+        // Source operations may have their own nested transport lifetimes.
+        // Yield only the tracked retained-read phase; other work finishes its
+        // existing bounded unit before priority selection, never overlaps it.
+        if (!collecting || controller.signal.aborted) return false;
+        yielded = true; controller.abort('open-priority'); return true;
+      });
       const anchor = entry.anchor;
       const signal = controller.signal, timer = setTimeout(() => controller.abort('deadline'), GALLERY_RUNTIME_LIMITS.sliceMs);
       publish(entry, { ...entry.store.state, busy: true });
       void (async () => {
         const cached = await readTurn(anchor, signal, entry.after); signal.throwIfAborted();
+        collecting = false;
         publish(entry, { ...entry.store.state, ...cached, loaded: true, next: null, continued: cached.limited, error: null }, true);
         const available = await discover(signal, () => { if (!entry.debtBudget) return false; entry.debtBudget--; return true; }); signal.throwIfAborted();
         // Finish a finite first visit to every listed owner before revisiting
@@ -419,20 +441,23 @@ export function createGalleryRuntime(sdk: Sdk) {
         // its committed facts; there is no second page walk inside this unit.
         if (productive || source) entry.dirty = true;
       })().catch(error => {
+        if (yielded) { if (active && visible && entry.refs && entry.visible) entry.dirty = true; return; }
         if (signal.aborted && signal.reason === 'deadline' && entry.afterOwner !== null
           && (sources?.some(source => source.pluginId > entry.afterOwner!) || discoveryCursor !== null)) entry.dirty = true;
         if (active && entry.controller === controller) publish(entry, { ...entry.store.state, busy: false, continued: true,
           error: signal.aborted ? signal.reason === 'deadline' ? 'Results read reached its deadline. Continue results.' : entry.store.state.error
             : error instanceof Error ? error.message.slice(0, 160) : 'Results are temporarily unavailable.' });
-      }).finally(() => {
+      }).finally(async () => {
+        await Promise.allSettled([...(retainedCalls.get(signal) ?? [])]);
         clearTimeout(timer); if (entry.controller === controller) entry.controller = null;
         running--; runningThreads.delete(anchor.threadId);
+        drainedWork();
         if (active && entry.store.state.busy) publish(entry, { ...entry.store.state, busy: false });
         collect(); if (entry.dirty) enqueue(entry); schedule();
       });
     }
   }
-  function readScope<T>(threadId: string, signal: AbortSignal, read: (signal: AbortSignal) => Promise<T>): Promise<{ state: 'ready'; value: T } | { state: 'capacity' }> {
+  function readScope<T>(threadId: string, signal: AbortSignal, read: (signal: AbortSignal) => Promise<T>, priority = false): Promise<{ state: 'ready'; value: T } | { state: 'capacity' }> {
     signal.throwIfAborted();
     if (!active || !visible) return Promise.reject(Error('Gallery read retired.'));
     if (historyReads.size >= GALLERY_RUNTIME_LIMITS.historyQueue) return Promise.resolve({ state: 'capacity' });
@@ -440,12 +465,17 @@ export function createGalleryRuntime(sdk: Sdk) {
       const controller = new AbortController(); let started = false;
       const cleanup = () => { signal.removeEventListener('abort', callerAbort); controller.signal.removeEventListener('abort', cancelled); };
       const callerAbort = () => controller.abort(signal.reason);
-      const work: HistoryRead = { threadId, live: () => !controller.signal.aborted,
+      const work: HistoryRead = { threadId, priority, live: () => !controller.signal.aborted,
         cancel: () => controller.abort(), start() {
           started = true;
-          void untilAborted(Promise.resolve().then(() => { controller.signal.throwIfAborted(); return read(controller.signal); }), controller.signal)
-            .then(value => resolve({ state: 'ready', value }), reject).finally(() => {
-              cleanup(); historyReads.delete(work); running--; runningThreads.delete(threadId); schedule();
+          const call = Promise.resolve().then(() => { controller.signal.throwIfAborted(); return read(controller.signal); });
+          void untilAborted(call, controller.signal)
+            .then(value => resolve({ state: 'ready', value }), reject).finally(async () => {
+              await call.catch(() => {});
+              // backend.read may reject its abort-aware wrapper before the
+              // underlying SDK promise acknowledges cancellation.
+              await Promise.allSettled([...(retainedCalls.get(controller.signal) ?? [])]);
+              cleanup(); historyReads.delete(work); running--; runningThreads.delete(threadId); drainedWork(); schedule();
             });
         } };
       const cancelled = () => {
@@ -454,6 +484,13 @@ export function createGalleryRuntime(sdk: Sdk) {
       signal.addEventListener('abort', callerAbort, { once: true }); controller.signal.addEventListener('abort', cancelled, { once: true });
       historyReads.add(work);
       const pending = queue.get(threadId) ?? new Set<Work>(); pending.add(work); queue.set(threadId, pending); schedule();
+      if (priority) {
+        const sameThread = runningThreads.get(threadId);
+        if (sameThread) sameThread();
+        else if (running >= GALLERY_RUNTIME_LIMITS.lanes) {
+          for (const yieldRead of runningThreads.values()) if (yieldRead()) break;
+        }
+      }
     });
   }
   function reset(entry: TurnEntry) { entry.dirty = true; entry.afterOwner = null; entry.debts.clear(); entry.enumerateRetries.clear(); entry.debtBudget = GALLERY_RUNTIME_LIMITS.automaticDebtUnits; }
@@ -568,7 +605,12 @@ export function createGalleryRuntime(sdk: Sdk) {
       pendingDialog = null; publishReady(new Set()); dialogDrain = dialog?.dispose() ?? Promise.resolve();
       for (const read of historyReads) read.cancel(); for (const entry of turns.values()) entry.controller?.abort(); turns.clear(); queue.clear(); bytes = 0; leases = 0; discoveryDemands = 0; visibleDiscoveryDemands = 0; discoveryOwner.dispose(); media.dispose(); canvases.dispose();
     },
-    async whenDrained() { await dialogDrain; await canvases.whenDrained(); },
+    async whenDrained() {
+      await dialogDrain; await canvases.whenDrained();
+      // Replacement generations cannot buy new lanes while an old ignored
+      // transport still occupies this owner's lane after disposal.
+      if (running) await (workDrain ??= new Promise<void>(resolve => { finishWorkDrain = resolve; }));
+    },
   };
   return api;
 }
