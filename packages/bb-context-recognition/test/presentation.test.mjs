@@ -63,3 +63,21 @@ test('no-RPC registration admits empty methods while preserving token and genera
   const dispose=registry.registerPresentation(ctx(2),{...registration,methods:[]});old();assert.equal(registry.lookupPresentation('plan-graph',ref.schema).generation,2);dispose();assert.equal(registry.lookupPresentation('plan-graph',ref.schema),undefined);
  }finally{realm.restore();}
 });
+
+
+test('optional expansion metadata preserves legacy defaults, strict booleans and token fencing',()=>{
+ const realm=createIsolatedPresentationRealm();try{
+  const old=registry.registerPresentation(ctx(1),registration);
+  assert.equal(registry.lookupPresentation('plan-graph',ref.schema).supportsExpansion,undefined);
+  const remove=registry.registerPresentation(ctx(2),{...registration,methods:[],supportsExpansion:false});
+  const compact=registry.lookupPresentation('plan-graph',ref.schema);
+  assert.equal(compact.supportsExpansion,false);assert.ok(Object.isFrozen(compact));
+  old();assert.equal(registry.lookupPresentation('plan-graph',ref.schema),compact);
+  const revision=registry.getPresentationRevision();
+  for(const value of ['false',0,null,{}])assert.throws(()=>registry.registerPresentation(ctx(3),{...registration,supportsExpansion:value}),registry.PresentationRegistrationError);
+  assert.equal(registry.getPresentationRevision(),revision);
+  const full=registry.registerPresentation(ctx(3),{...registration,supportsExpansion:true});
+  remove();assert.equal(registry.lookupPresentation('plan-graph',ref.schema).supportsExpansion,true);
+  full();assert.equal(registry.lookupPresentation('plan-graph',ref.schema),undefined);
+ }finally{realm.restore();}
+});

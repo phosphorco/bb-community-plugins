@@ -108,3 +108,6 @@ respects explicit exclusions and has no SDK or DOM runtime dependency. Consumers
 own Markdown grammar, target verification, scheduling and durable evidence.
 
 Hosted presentation registrations accept zero through sixteen owner RPC method names. An empty list makes every owner RPC unavailable; failed views retain the data fallback and use the registration label (or “Hosted”) in the failure message.
+
+
+Hosted registrations may declare `supportsExpansion: false` when a separate expanded card adds no content. Consumers may omit their per-card Expand control in that case; omitted metadata preserves the existing expansion behavior. This is a presentation affordance hint, not readiness or action authority. It does not prevent hosting the same component with `mode: 'full'` when the surrounding surface itself is full size. Older compatible v1 registry copies can read the immutable entry, and older consumers may ignore this additive metadata.

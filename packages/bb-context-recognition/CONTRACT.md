@@ -842,3 +842,6 @@ The consumer supplies Markdown admission, link-destination windows and arbitrati
 This helper does not own contextual PR grammar or introduce a new wire method.
 Existing entry exports/peer ranges stay stable. Organization adoption is deferred;
 emitted-entry fixtures establish source behavior, not a live host composition.
+
+
+Hosted registrations may declare `supportsExpansion: false` when a separate expanded card adds no content. Consumers may omit their per-card Expand control in that case; omitted metadata preserves the existing expansion behavior. This is a presentation affordance hint, not readiness or action authority. It does not prevent hosting the same component with `mode: 'full'` when the surrounding surface itself is full size. Older compatible v1 registry copies can read the immutable entry, and older consumers may ignore this additive metadata.
