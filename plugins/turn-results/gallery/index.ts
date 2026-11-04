@@ -105,6 +105,14 @@ interface ClaimRecord {
 interface Mutation { before: Row | undefined; after: Row | undefined }
 const MAX_ROW = 8192, MAX_STAGE = 49152, MAX_THREAD = 32768, MAX_SUPPLIER = 1024;
 const MAX_INTERVALS = 128, MAX_CORRECTIONS = 32, META_CHARGE = 1024;
+// Completed checkpoints can be replayed from retained facts. Parked/unknown
+// debt and source invalidation carry authority that automatic retention cannot
+// discard. Keep this predicate identical in the derived index and selection.
+const completedWork = `kind='stage' AND json_extract(payload_json,'$.value.status')='complete'
+  AND json_extract(payload_json,'$.value.stage') IN ('feed','recognize','resolve')
+  AND json_extract(record_key,'$[2]')<>'source-invalidation'
+  AND COALESCE(json_type(payload_json,'$.value.debt.quarantine'),'false')='false'
+  AND COALESCE(json_type(payload_json,'$.value.debt.parked'),'false')='false'`;
 const integer = (v: unknown): v is number => typeof v === 'number' && Number.isSafeInteger(v) && v >= 0;
 const same = (a: unknown, b: unknown) => canonicalJson(a) === canonicalJson(b);
 function ensure(v: unknown, message: string): asserts v { if (!v) throw new Refusal('conflict', message); }
@@ -232,7 +240,11 @@ export function createGalleryIndex(db: Database.Database, options: GalleryIndexO
   try { db.transaction(() => db.exec(`CREATE INDEX IF NOT EXISTS gallery_pending_read
     ON gallery_records(thread_id,owner,turn_id,seq,record_key)
     WHERE kind='claim' AND json_extract(payload_json,'$.unresolved')=1
-      AND json_type(payload_json,'$.retracted')='null'`)).immediate(); }
+      AND json_type(payload_json,'$.retracted')='null';
+    CREATE INDEX IF NOT EXISTS gallery_completed_work ON gallery_records(first_order,record_key)
+      WHERE ${completedWork};
+    CREATE INDEX IF NOT EXISTS gallery_thread_completed_work ON gallery_records(thread_id,first_order,record_key)
+      WHERE ${completedWork}`)).immediate(); }
   catch (error) {
     if (error && typeof error === 'object' && 'code' in error && error.code === 'SQLITE_FULL')
       throw new GalleryIndexError('physical-capacity', 'Pending index initialization rolled back.');
@@ -290,6 +302,47 @@ export function createGalleryIndex(db: Database.Database, options: GalleryIndexO
     const row = find('thread', threadId);
     return { row, value: row ? decode<ThreadRecord>(row) : { deleted: false, retiring: false, intervals: [] } };
   }
+  /** One demand-time selection, never a table scan/retry loop or implicit fact
+   * eviction. Deletions join the incoming transaction only if enough safe
+   * metadata fits the same mutation/byte budget to relieve the pressure. */
+  function reclaimCompleted(mutations: Mutation[], m: Meta, incoming: NonNullable<GalleryPage['stage']>, threadId: string, owner: string) {
+    if (incoming.id === 'source-invalidation' || !['feed','recognize','resolve'].includes(incoming.value.stage)) return;
+    const changed = mutations.filter(v => v.before?.payload_json !== v.after?.payload_json || !!v.before !== !!v.after);
+    let stages = m.stages, metadata = m.metadata_bytes;
+    let threadStages = (count.get('stage', threadId) as { n: number }).n;
+    for (const change of changed) {
+      const row = change.after ?? change.before!;
+      if (row.kind === 'stage') {
+        const delta = Number(!!change.after) - Number(!!change.before);
+        stages += delta;
+        if (row.thread_id === threadId) threadStages += delta;
+      }
+      if (row.kind !== 'claim') metadata += (change.after?.charge ?? 0) - (change.before?.charge ?? 0);
+    }
+    const pressuredThread = threadStages > limits.maxStagesPerThread;
+    if (!pressuredThread && stages <= limits.maxStages && metadata <= limits.maxMetadataBytes) return;
+    let charged = changed.reduce((sum, change) => sum + (change.after?.charge ?? change.before?.charge ?? 0), META_CHARGE);
+    if (changed.length + 1 >= 40 || charged >= 1048576) return;
+    // When the local limit binds, foreign retirement cannot buy a local slot.
+    // Both paths use ordered partial indexes with one 16-row selection.
+    const victims = db.prepare(`SELECT * FROM gallery_records INDEXED BY ${pressuredThread ? 'gallery_thread_completed_work' : 'gallery_completed_work'}
+      WHERE ${completedWork} ${pressuredThread ? 'AND thread_id=?' : ''} AND record_key<>? ORDER BY first_order,record_key LIMIT 16`)
+      .all(...(pressuredThread ? [threadId] : []), key(threadId,owner,incoming.id)) as Row[];
+    const retired: Mutation[] = [];
+    for (const before of victims) {
+      // Charges include retired rows too; an overlarge victim cannot displace
+      // the accepted incoming page or buy an uncharged transaction.
+      if (changed.length + retired.length + 2 > 40 || charged + before.charge > 1048576) continue;
+      decode<StageRecord>(before);
+      retired.push({ before, after: undefined }); charged += before.charge; stages--; metadata -= before.charge;
+      if (before.thread_id === threadId) threadStages--;
+      if (threadStages <= limits.maxStagesPerThread && stages <= limits.maxStages && metadata <= limits.maxMetadataBytes) {
+        mutations.push(...retired); return;
+      }
+    }
+    // Insufficient eligible work: flush truthfully refuses without retiring
+    // even the partial prefix. Active debt/claims/cursors remain untouched.
+  }
   function flush(mutations: Mutation[], m: Meta, evicted = 0, stageVersion: number | null = null): IndexCommit {
     const changed = mutations.filter(v => v.before?.payload_json !== v.after?.payload_json || !!v.before !== !!v.after);
     if (!changed.length) return { state: 'unchanged', mutations: 0, changedBytes: 0, stageVersion };
@@ -318,8 +371,8 @@ export function createGalleryIndex(db: Database.Database, options: GalleryIndexO
       const max = row.kind === 'claim' ? limits.maxObservationsPerThread : row.kind === 'stage' ? limits.maxStagesPerThread : limits.maxSuppliersPerThread;
       if (n > max) throw new Refusal('capacity', 'thread-capacity');
     }
-    // All planning/validation/charging precedes the first mutation. No eviction
-    // is hidden inside an application transaction. SQLite errors roll all back.
+    // All planning/validation/charging precedes the first mutation. Completed
+    // bookkeeping retirement never evicts facts; SQLite errors roll all back.
     for (const v of changed) { if (v.after) put.run(v.after); else remove.run(v.before!.kind, v.before!.record_key); }
     db.prepare(`UPDATE gallery_meta SET observations=@observations,threads=@threads,stages=@stages,suppliers=@suppliers,
       logical_bytes=@logical_bytes,metadata_bytes=@metadata_bytes,order_head=@order_head,evicted=@evicted WHERE singleton=1`).run(next);
@@ -434,6 +487,7 @@ export function createGalleryIndex(db: Database.Database, options: GalleryIndexO
     }
     t.value.intervals = intervals(t.value.intervals, gaps);
     mutations.push({ before: t.row, after: make('thread', p.threadId, p.threadId, '', t.value, m, t.row) });
+    if (p.stage) reclaimCompleted(mutations, m, p.stage, p.threadId, p.owner);
     return flush(mutations, m, 0, stageVersion);
   }
   function read(threadId: string, turnId: string | null, options: ReadPageOptions): ObservationPage {

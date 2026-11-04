@@ -431,4 +431,130 @@ if (process.versions.bun) {
     assert.equal(index.stats().logicalBytes, charges.total + 1024); assert.equal(index.stats().metadataBytes, charges.metadata + 1024);
     t.diagnostic(`256 observations / 224 evictions: main peak ${largestMain}; DELETE journal peak ${largestJournal}; current charged ${index.stats().logicalBytes}; physical ${index.stats().physicalBytes}`);
   });
+
+  test('demanded claim and stage reclaim completed old work at stage cap without dropping facts or active debt', t => {
+    const { db, index } = fixture(t, { maxStages: 6 });
+    ok(index.applyPage(page([result(1)])));
+    const complete = { stage: 'feed' as const, cursor: 'issued-old-cursor', status: 'complete' as const, debt: {} };
+    for (const id of ['feed:old-a', 'feed:old-b']) ok(index.applyPage(page([], { stage: { id, expectedVersion: null, value: complete } })));
+    const protectedStages = [
+      { id: 'feed:active', value: stage('in-flight') },
+      { id: 'resolve:parked', value: { stage: 'resolve' as const, cursor: null, status: 'parked' as const, debt: { parked: true } } },
+      { id: 'resolve:quarantine', value: { stage: 'resolve' as const, cursor: null, status: 'complete' as const, debt: { quarantine: true } } },
+      { id: 'source-invalidation', value: complete },
+    ];
+    for (const item of protectedStages) ok(index.applyPage(page([], { stage: { ...item, expectedVersion: null } })));
+    assert.equal(index.stats().stages, 6);
+    const before = sqlSnapshot(db), oldFact = read(index)[0], protectedBefore = protectedStages.map(item => index.readStage('thread-a', owner, item.id));
+    const admitted = index.applyPage(page([result(2)], { stage: { id: 'feed:new-demand', expectedVersion: null, value: stage('new-issued-cursor') } }));
+    t.diagnostic(JSON.stringify({ beforeStages: 6, admission: admitted, afterStages: index.stats().stages, observations: index.stats().observations }));
+    if (admitted.state !== 'committed') assert.equal(sqlSnapshot(db), before, 'failed admission must not mutate facts or cursors');
+    assert.equal(admitted.state, 'committed', 'completed old work must yield one bounded stage slot to the real demanded claim');
+    ok(admitted); assert.equal(index.stats().stages, 6); assert.equal(index.stats().observations, 2); assert.equal(index.stats().evicted, 0);
+    assert.deepEqual(read(index)[0], oldFact); assert.equal(index.readStage('thread-a', owner, 'feed:old-a'), null);
+    assert.deepEqual(protectedStages.map(item => index.readStage('thread-a', owner, item.id)), protectedBefore);
+    assert.equal(index.readStage('thread-a', owner, 'feed:new-demand')!.value.cursor, 'new-issued-cursor');
+  });
+
+  test('per-thread stage pressure reclaims only completed work in the incoming thread', t => {
+    const { db, index } = fixture(t, { maxStagesPerThread: 2 });
+    const complete: StageValue = { stage: 'feed', cursor: 'old-issued', status: 'complete', debt: {} };
+    ok(index.applyPage(page([], { threadId: 'older-thread', stage: { id: 'feed:foreign', expectedVersion: null, value: complete } })));
+    ok(index.applyPage(page([result(1)], { stage: { id: 'feed:old', expectedVersion: null, value: complete } })));
+    ok(index.applyPage(page([], { stage: { id: 'feed:active', expectedVersion: null, value: stage('active') } })));
+    const foreign = index.readStage('older-thread', owner, 'feed:foreign'), active = index.readStage('thread-a', owner, 'feed:active'), oldFact = read(index)[0];
+    const before = sqlSnapshot(db), admission = index.applyPage(page([result(2)], { stage: { id: 'feed:new', expectedVersion: null, value: stage('next-issued') } }));
+    t.diagnostic(JSON.stringify({ admission, globalStages: index.stats().stages }));
+    if (admission.state !== 'committed') assert.equal(sqlSnapshot(db), before);
+    assert.equal(admission.state, 'committed', 'global spare capacity must not hide saturated thread capacity');
+    ok(admission); assert.equal(index.stats().stages, 3); assert.equal(index.stats().observations, 2);
+    assert.equal(index.readStage('thread-a', owner, 'feed:old'), null);
+    assert.deepEqual(index.readStage('older-thread', owner, 'feed:foreign'), foreign);
+    assert.deepEqual(index.readStage('thread-a', owner, 'feed:active'), active); assert.deepEqual(read(index)[0], oldFact);
+  });
+
+  test('unreclaimable global and local stage pressure preserves protected work and the complete transaction', t => {
+    const complete: StageValue = { stage: 'feed', cursor: null, status: 'complete', debt: {} };
+    for (const local of [false, true]) {
+      const { db, index } = fixture(t, local ? { maxStagesPerThread: 6 } : { maxStages: 6 });
+      if (local) ok(index.applyPage(page([], { threadId: 'foreign-thread', stage: { id: 'feed:eligible', expectedVersion: null, value: complete } })));
+      const protectedWork: { id: string; value: StageValue }[] = [
+        { id: 'feed:ready', value: stage() },
+        { id: 'feed:parked', value: { ...complete, status: 'parked' } },
+        { id: 'feed:quarantine', value: { ...complete, debt: { quarantine: true } } },
+        { id: 'feed:parked-debt', value: { ...complete, debt: { parked: true } } },
+        { id: 'source-invalidation', value: complete },
+        { id: 'native:complete', value: { ...complete, stage: 'native' } },
+      ];
+      for (const item of protectedWork) ok(index.applyPage(page([], { stage: { ...item, expectedVersion: null } })));
+      const before = sqlSnapshot(db);
+      assert.equal(index.applyPage(page([result(2)], { stage: { id: 'feed:incoming', expectedVersion: null, value: stage() } })).state, 'capacity');
+      assert.equal(sqlSnapshot(db), before, local ? 'foreign completed work cannot relieve the local cap' : 'no protected checkpoint is disposable');
+    }
+  });
+
+  test('automatic retirement rolls back after incoming writes and recreated stages reject stale CAS', t => {
+    const { db, index, open } = fixture(t, { maxStages: 1 });
+    const complete: StageValue = { stage: 'feed', cursor: 'old', status: 'complete', debt: {} };
+    const old = ok(index.applyPage(page([result(1)], { stage: { id: 'feed:old', expectedVersion: null, value: complete } })));
+    const incoming = page([result(2)], { stage: { id: 'feed:new', expectedVersion: null, value: stage('new') } });
+    const before = sqlSnapshot(db);
+    db.exec(`CREATE TRIGGER retirement_fault BEFORE DELETE ON gallery_records WHEN OLD.kind='stage' BEGIN
+      SELECT CASE WHEN (SELECT count(*) FROM gallery_records WHERE kind='claim')=2
+        THEN RAISE(ABORT,'retirement fault after admission') ELSE RAISE(ABORT,'fault before admission') END; END`);
+    assert.throws(() => index.applyPage(incoming), /retirement fault after admission/u);
+    assert.equal(sqlSnapshot(db), before, 'claim, stage, head and counters roll back together');
+    db.exec('DROP TRIGGER retirement_fault'); db.close();
+    const reopenedDb = open(), reopened = createGalleryIndex(reopenedDb, { maxStages: 1 });
+    const admitted = ok(reopened.applyPage(incoming));
+    assert.equal(reopened.readStage('thread-a', owner, 'feed:old'), null);
+    assert.equal(reopened.applyPage(incoming).state, 'conflict');
+    ok(reopened.applyPage(page([], { stage: { id: 'feed:new', expectedVersion: admitted.stageVersion!, value: complete } })));
+    const recreated = ok(reopened.applyPage(page([], { stage: { id: 'feed:old', expectedVersion: null, value: stage('recreated') } })));
+    assert.ok(recreated.stageVersion! > old.stageVersion!);
+    const stable = sqlSnapshot(reopenedDb);
+    assert.equal(reopened.applyPage(page([], { stage: { id: 'feed:old', expectedVersion: old.stageVersion!, value: complete } })).state, 'conflict');
+    assert.equal(reopened.retireStage('thread-a', owner, 'feed:old', old.stageVersion!).state, 'conflict');
+    assert.equal(sqlSnapshot(reopenedDb), stable); assert.equal(reopened.stats().observations, 2);
+  });
+
+  test('metadata pressure excludes the incoming checkpoint and unrelated observation capacity remains truthful', t => {
+    const { db, index } = fixture(t);
+    const complete: StageValue = { stage: 'feed', cursor: 'old', status: 'complete', debt: {} };
+    const own = ok(index.applyPage(page([result(1)], { stage: { id: 'feed:incoming', expectedVersion: null, value: complete } })));
+    ok(index.applyPage(page([], { stage: { id: 'feed:victim', expectedVersion: null, value: complete } })));
+    const bounded = createGalleryIndex(db, { maxMetadataBytes: index.stats().metadataBytes });
+    ok(bounded.applyPage(page([], { stage: { id: 'feed:incoming', expectedVersion: own.stageVersion!, value: { ...complete, cursor: 'x'.repeat(256) } } })));
+    assert.equal(bounded.readStage('thread-a', owner, 'feed:victim'), null);
+    assert.equal(bounded.readStage('thread-a', owner, 'feed:incoming')!.value.cursor, 'x'.repeat(256));
+    const capped = fixture(t, { maxStages: 1, maxObservations: 1 });
+    ok(capped.index.applyPage(page([result(1)], { stage: { id: 'feed:old', expectedVersion: null, value: complete } })));
+    const before = sqlSnapshot(capped.db);
+    assert.equal(capped.index.applyPage(page([result(2)], { stage: { id: 'feed:new', expectedVersion: null, value: stage() } })).state, 'capacity');
+    assert.equal(sqlSnapshot(capped.db), before, 'a different cap cannot partially retire work');
+  });
+
+  test('completed-work selection uses ordered scope indexes and insufficient bounded victims retire nothing', t => {
+    const { db, index } = fixture(t);
+    const complete: StageValue = { stage: 'feed', cursor: null, status: 'complete', debt: {} };
+    const incoming = ok(index.applyPage(page([], { stage: { id: 'feed:incoming', expectedVersion: null, value: complete } })));
+    for (let n = 0; n < 18; n++) ok(index.applyPage(page([], { stage: { id: `feed:old-${n}`, expectedVersion: null, value: complete } })));
+    for (const local of [false, true]) {
+      const name = local ? 'gallery_thread_completed_work' : 'gallery_completed_work';
+      const sql = (db.prepare("SELECT sql FROM sqlite_master WHERE type='index' AND name=?").get(name) as { sql: string }).sql;
+      const predicate = sql.slice(sql.indexOf('WHERE ') + 6);
+      const plan = db.prepare(`EXPLAIN QUERY PLAN SELECT * FROM gallery_records INDEXED BY ${name}
+        WHERE ${predicate} ${local ? 'AND thread_id=?' : ''} AND record_key<>? ORDER BY first_order,record_key LIMIT 16`)
+        .all(...(local ? ['thread-a'] : []), canonicalJson(['thread-a', owner, 'feed:incoming'])) as { detail: string }[];
+      assert.ok(plan.some(row => row.detail.includes(name))); assert.ok(plan.every(row => !row.detail.includes('TEMP B-TREE')));
+      if (local) assert.ok(plan.some(row => row.detail.includes('thread_id=?')));
+      t.diagnostic(plan.map(row => row.detail).join('; '));
+    }
+    const charges = db.prepare("SELECT charge FROM gallery_records WHERE kind='stage' ORDER BY first_order").all() as { charge: number }[];
+    const required = charges.slice(1, 18).reduce((sum, row) => sum + row.charge, 128);
+    const bounded = createGalleryIndex(db, { maxMetadataBytes: index.stats().metadataBytes });
+    const before = sqlSnapshot(db);
+    assert.equal(bounded.applyPage(page([], { stage: { id: 'feed:incoming', expectedVersion: incoming.stageVersion!, value: { ...complete, debt: { content: 'x'.repeat(required) } } } })).state, 'capacity');
+    assert.equal(sqlSnapshot(db), before, 'more than sixteen small victims cannot trigger another selection or partial retirement');
+  });
 }

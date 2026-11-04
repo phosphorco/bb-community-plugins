@@ -10,7 +10,7 @@ import type { GalleryActionScope, GalleryActionCapture } from './pane.ts';
 import type { GalleryRuntime, GalleryPresentationRoot } from './runtime.ts';
 import type { PresentationLifetime } from './presentation-lifetime.ts';
 import { HostedCanvas } from './presentation.ts';
-import { lookupPresentation } from '@phosphorco/bb-context-recognition/presentation';
+import { lookupPresentation, subscribePresentations } from '@phosphorco/bb-context-recognition/presentation';
 import { paneColumns, packResults } from './packing.ts';
 import { projectResults } from './projection.ts';
 
@@ -196,8 +196,14 @@ export function ResultCard({ row, runtime, sdk, navigate, current, lifetime, pre
       }
     });
   };
+  const expansionAllowed = () => {
+    const entry = value?.presentation && lookupPresentation(row.owner, value.presentation.schema);
+    // Old registrations omit this additive metadata and keep their full view.
+    return !entry || !('supportsExpansion' in entry) || entry.supportsExpansion !== false;
+  };
+  const supportsExpansion = useSyncExternalStore(subscribePresentations, expansionAllowed, () => true);
   const full = () => {
-    if (!current() || !value || !site.current || !runtime.isActive()) return;
+    if (!current() || !value || !site.current || !runtime.isActive() || !expansionAllowed()) return;
     // Contributor controls retire with the dock. The consumer action survives
     // that handoff; dialog close still checks its exact native/revision scope.
     runtime.openDialog({ row, sdk, navigate, siteKey: site.current.key, retireDock: site.current.retire,
@@ -227,11 +233,11 @@ export function ResultCard({ row, runtime, sdk, navigate, current, lifetime, pre
         && !latest.unresolved && fact && openFingerprint(latest) === fact); }} lifetime={lifetime}
       presentationRoot={presentationRoot} mode={mode} enabled={customEnabled} site={site} fallback={fallback} />
     <div className="tr-caption"><span>{value?.fallback.kind !== 'image' && title === caption ? null : caption}</span><div>
-      {mode === 'docked' && value?.presentation && <button ref={expandButton} onClick={full} className="tr-expand-icon" aria-label={`Expand ${title || caption}`} title={`Expand ${title || caption}`}>
+      {mode === 'docked' && value?.presentation && supportsExpansion && <button ref={expandButton} onClick={full} className="tr-expand-icon" aria-label={`Expand ${title || caption}`} title={`Expand ${title || caption}`}>
         <svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true" focusable="false"><path d="M6 2H2v4M10 2h4v4M14 10v4h-4M6 14H2v-4" /></svg>
       </button>}
-      {destination && (value?.presentation || value?.fallback.kind === 'image') && <button onClick={open} className={mode === 'docked' ? 'tr-open-icon' : undefined} aria-label={openName} title="Open result">
-        {mode === 'docked' ? <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true" focusable="false"><path d="M6 3H3v10h10v-3M9 3h4v4M7 9l6-6" /></svg> : 'Open'}
+      {destination && (value?.presentation || value?.fallback.kind === 'image') && <button onClick={open} className={mode === 'docked' ? supportsExpansion ? 'tr-open-icon' : 'tr-open-primary' : undefined} aria-label={openName} title="Open result">
+        {mode === 'docked' && supportsExpansion ? <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true" focusable="false"><path d="M6 3H3v10h10v-3M9 3h4v4M7 9l6-6" /></svg> : 'Open'}
       </button>}
     </div></div>
     {openStatus && <small className="tr-freshness" role="status" data-turn-result-open-status="">{openStatus}</small>}
@@ -384,7 +390,8 @@ function GalleryContents({ resource, runtime, sdk, navigate, current, displayCur
         : { width: value.fallback.kind === 'card' && Array.from(value.fallback.title).length > 80 ? Math.min(2, value.spans.width) : 1, height: 1 }) });
     return { key: result.key, ...memory.spans.get(result.key)! };
   }), columns);
-  if (!hasContent) return null;
+  if (!hasContent) return state.error && state.rows.length === 0
+    ? <p className="tr-error" role="status">Saved results could not be loaded.</p> : null;
   return <section ref={container} className="tr-gallery" aria-label="Turn results">
     <div className="tr-grid" style={{ gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))` }}>
       {rows.map((result, index) => { const place = packing.placements[index]!;

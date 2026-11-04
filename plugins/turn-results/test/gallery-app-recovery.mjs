@@ -135,7 +135,7 @@ test('same-ID changed range keeps root; unchanged failure recovers; pending/fore
     const failedAt = f.calls.length; f.fail(true); await f.notify(); await until(() => f.calls.length === failedAt + 1 && f.calls.every(call => call.finished));
     assert.equal(f.roots()[0], host, 'network failure retains last-good visual/layout');
     const failures = f.calls.length; await settle(200); assert.equal(f.calls.length, failures, 'unchanged failure does not retry itself');
-    const before = f.navigation.length; await act(async () => host.querySelector('.tr-caption button').click()); assert.equal(f.navigation.length, before, 'unvalidated boundary has no input authority');
+    const before = f.navigation.length; await act(async () => host.querySelector('button.tr-data-action').click()); assert.equal(f.navigation.length, before, 'unvalidated boundary has no input authority');
     const recoveredAt = f.calls.length; f.fail(false); await f.notify(); await until(() => f.calls.length === recoveredAt + 1 && f.calls.every(call => call.finished));
     assert.equal(f.roots()[0], host);
     f.set([publicRow('pending', 15)]); await f.notify(); await until(() => f.roots().length === 0);
@@ -143,7 +143,7 @@ test('same-ID changed range keeps root; unchanged failure recovers; pending/fore
     f.set([publicRow('completed', 20, 'other-turn')]); await f.notify(); await until(() => f.roots().length === 1 && f.roots()[0].dataset.sourceTurn === 'other-turn');
     assert.equal(document.querySelectorAll('.tr-gallery').length, 1); assert.equal(document.querySelector('[data-result-key]').dataset.resultKey, 'retained-other-turn');
     f.set([publicRow('completed', 20, 'foreign', 'foreign-thread')]); await f.notify(); await until(() => f.roots().length === 0);
-    assert.equal(document.querySelector('.tr-caption button'), null);
+    assert.equal(document.querySelector('button.tr-data-action'), null);
   } finally { await f.dispose(); }
 });
 
@@ -263,7 +263,7 @@ test('failed refresh retains last-good host without global status; bounded Open 
     await until(() => f.calls.length === failedAt + 1 && f.calls.every(call => call.finished));
     assert.equal(f.roots()[0], host); assert.equal(f.native.querySelector('[data-turn-results-notice]'), null);
     const navigation = f.navigation.length;
-    await act(async () => host.querySelector('.tr-caption button').click());
+    await act(async () => host.querySelector('button.tr-data-action').click());
     await until(() => !host.textContent.includes('Checking')); assert.equal(f.navigation.length, navigation);
     const failedCalls = f.calls.length; await settle(200); assert.equal(f.calls.length, failedCalls);
     f.fail(false); f.depth(900); f.set([publicRow('completed', 15)], 'B'); await f.notify();
@@ -271,7 +271,7 @@ test('failed refresh retains last-good host without global status; bounded Open 
     assert.equal(f.roots()[0], host);
     const paneCursor = structuredClone(f.responses.at(-1).timelinePage.olderCursor); assert.ok(paneCursor);
     const beforeIntent = f.calls.length;
-    await act(async () => host.querySelector('.tr-caption button').click()); assert.equal(f.navigation.length, navigation);
+    await act(async () => host.querySelector('button.tr-data-action').click()); assert.equal(f.navigation.length, navigation);
     await until(() => f.calls.length === beforeIntent + 8 && f.calls.every(call => call.finished)
       && !host.textContent.includes('Checking') && host.textContent.includes('Results read capacity reached'));
     assert.equal(f.navigation.length, navigation); assert.equal(f.calls[beforeIntent].beforeAnchorId, undefined);
@@ -287,7 +287,7 @@ test('failed refresh retains last-good host without global status; bounded Open 
     await until(() => f.calls.length === afterIntent + 2 && f.calls.every(call => call.finished));
     assert.equal(f.calls[afterIntent].beforeAnchorId, undefined, 'new public demand begins a genuine fresh chain');
     assert.equal(f.roots()[0], host);
-    await act(async () => host.querySelector('.tr-caption button').click()); assert.equal(f.navigation.length, navigation + 1);
+    await act(async () => host.querySelector('button.tr-data-action').click()); assert.equal(f.navigation.length, navigation + 1);
     f.set([publicRow('pending', 10)], 'A-late'); f.hold(true, true); await f.notify(); await until(() => f.held.length === 1);
     assert.ok(f.calls.at(-1).beforeAnchorId, 'held A reply is an actual older snapshot-pinned continuation');
     await f.hidden(true); f.set([publicRow('completed', 30)], 'C-new'); f.hold(false); await f.hidden(false);
@@ -308,7 +308,7 @@ test('old visible target single Open obtains a NEW seven-page chain within the o
  const f=await fixture('completed',650);
  try{await until(()=>f.roots().length===1);const host=f.roots()[0];const initial=f.calls.length;assert.equal(initial,7);
  f.fail(true);await f.notify();await until(()=>f.calls.length===initial+1&&f.calls.at(-1).finished);f.fail(false);
- const mark=f.calls.length;await act(async()=>host.querySelector('.tr-open-icon').click());await until(()=>f.navigation.length===1);
+ const mark=f.calls.length;await act(async()=>host.querySelector('button.tr-data-action').click());await until(()=>f.navigation.length===1);
  assert.equal(f.calls.length-mark,7);assert.equal(f.calls[mark].beforeAnchorId,undefined);for(let i=mark+1;i<f.calls.length;i++)assert.equal(f.calls[i].beforeAnchorId,f.responses[i-1].timelinePage.olderCursor.anchorId);
  assert.equal(f.roots()[0],host);assert.equal(f.maxOwned(),1);await settle(200);assert.equal(f.calls.length,mark+7);assert.equal(f.navigation.length,1);
  }finally{await f.dispose();}

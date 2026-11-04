@@ -122,6 +122,28 @@ function collectionRows(base, count) {
   return Array.from({ length: count }, (_, i) => { const row = structuredClone(base); row.key = `collected-${i}`; row.firstObservedOrder = i;
     row.identity.ref.member = `image:${i}`; row.identity.artifact.id = `artifact-${i}`; row.resolution.identity = row.identity; return row; });
 }
+test('an empty failed results read is visible and a successful empty read clears it without idle retries', async () => {
+  const f = setup(); let failed = true, reads = 0;
+  f.runtime.backend.read = async () => {
+    reads++;
+    if (failed) throw Error('History capacity: index-capacity');
+    return { page: { rows: [], next: null }, coverage: { state: 'partial', intervals: [] } };
+  };
+  const rendered = renderSlot({ component: TurnGallery }, { ...f.props, visible: true });
+  try {
+    await until(() => f.runtime.stats().running === 0 && reads > 0);
+    const status = rendered.container.querySelector('[role="status"]');
+    assert.ok(status, 'a rejected results read must not silently look like a turn without results');
+    assert.equal(status.textContent, 'Saved results could not be loaded.');
+    assert.equal(rendered.container.querySelector('.tr-card'), null, 'the notice cannot invent a result');
+    const count = reads; await act(async () => { await tick(); await tick(); });
+    assert.equal(reads, count, 'the notice starts no retry or background work');
+    failed = false; await act(async () => f.runtime.invalidate());
+    await until(() => reads > count && f.runtime.stats().running === 0);
+    assert.equal(rendered.container.querySelector('[role="status"]'), null, 'successful empty content clears the same failure');
+    assert.equal(rendered.container.querySelector('.tr-card'), null);
+  } finally { rendered.unmount(); f.restore(); }
+});
 test('turn collection follows issued cursors internally, retains last-good media on failure, and clears successful empty geometry', async () => {
   const f = setup(), reads = []; let rows = collectionRows(f.row, 18), fail = false;
   f.runtime.backend.read = async (_thread, _turn, _signal, after) => {

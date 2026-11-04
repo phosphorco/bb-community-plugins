@@ -1978,3 +1978,44 @@ test('retained frame loses continuity for published source expiry before props c
     } finally { release(); f.sdk.threads.timeline = history; lease?.dispose(); await f.dispose(); }
   });
 });
+
+
+test('optional presenter expansion hint keeps one visible guarded Open and updates without unrelated registry work', async () => {
+  const f = await fixture(1, true, { deferPresentation: true });
+  const controller = new AbortController(); let dispose = () => {};
+  const register = (hint, generation) => {
+    dispose(); dispose = registerPresentation({ pluginId: owner, generation, signal: controller.signal }, {
+      schema, methods: [], decode: value => value, load: async () => f.renderer,
+      ...(hint === undefined ? {} : { supportsExpansion: hint }),
+    });
+  };
+  try {
+    await until(() => document.querySelector('[data-result-key="row-0"]'));
+    const card = document.querySelector('[data-result-key="row-0"]');
+    assert.ok(card.querySelector('.tr-expand-icon'), 'unavailable legacy metadata retains existing affordance');
+    await act(async () => register(false, 100)); await until(() => f.stats().live === 1);
+    assert.equal(Boolean(card.querySelector('.tr-expand-icon')), false, 'no separate full view for bounded-excerpt-only presenter');
+    const open = card.querySelector('.tr-open-primary');
+    assert.ok(open); assert.equal(open.textContent, 'Open'); assert.equal(open.tagName, 'BUTTON');
+    assert.match(open.getAttribute('aria-label'), /Saved result 0.*https:\/\/fixture.invalid\/0/);
+    const style = document.createElement('style'); style.textContent = readFileSync(new URL('../app.css', import.meta.url), 'utf8'); document.head.append(style);
+    assert.equal(window.getComputedStyle(open).opacity, '1', 'ordinary action is visible without hover/focus');
+    await act(async () => { open.focus(); open.click(); });
+    assert.deepEqual(f.navigation, ['https://fixture.invalid/0']); assert.equal(document.activeElement, open);
+    assert.equal(document.querySelector('dialog'), null); assert.equal(f.captured.at(-1).requestFull, undefined);
+    const calls = f.nativeCalls.length, rpc = f.stats().rpc;
+    const unrelated = new AbortController();
+    await act(async () => { const d = registerPresentation({ pluginId: 'unrelated-owner', generation: 1, signal: unrelated.signal }, { schema: 'unrelated-owner/card@1', methods: [], decode: value => value, load: async () => f.renderer, supportsExpansion: false }); d(); });
+    assert.equal(card.querySelector('.tr-open-primary'), open); assert.equal(document.activeElement, open);
+    await settle(60); assert.equal(f.nativeCalls.length, calls); assert.equal(f.stats().rpc, rpc);
+    await act(async () => register(true, 101)); await until(() => card.querySelector('.tr-expand-icon') && f.stats().live === 1);
+    const expand = card.querySelector('.tr-expand-icon');
+    // The synchronous registration event may precede React's next commit.
+    await act(async () => { register(false, 102); expand.click(); });
+    await until(() => f.stats().live === 1); assert.equal(document.querySelector('dialog'), null);
+    assert.equal(card.querySelector('.tr-expand-icon'), null);
+    await act(async () => register(undefined, 103)); await until(() => card.querySelector('.tr-expand-icon') && f.stats().live === 1);
+    assert.ok(card.querySelector('.tr-open-icon')); assert.equal(card.querySelector('.tr-open-primary'), null);
+    assert.ok(f.stats().peak <= 4); assert.equal(f.stats().rpc, 0); style.remove();
+  } finally { dispose(); controller.abort(); await f.dispose(); }
+});

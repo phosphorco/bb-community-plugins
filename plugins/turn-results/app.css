@@ -66,3 +66,7 @@
 .tr-caption .tr-expand-icon { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; padding: 8px; border: 0; background: transparent; color: var(--muted-foreground); opacity: .4; }
 .tr-card:hover .tr-expand-icon, .tr-card:focus-within .tr-expand-icon { opacity: 1; }
 @media (hover: none) { .tr-caption .tr-expand-icon { opacity: 1; } }
+
+/* A presenter with no additional full view keeps a discoverable exact action. */
+.tr-caption .tr-open-primary { display: inline-flex; align-items: center; justify-content: center; min-width: 40px; min-height: 32px; padding: 4px 6px; border: 0; background: transparent; color: var(--muted-foreground); opacity: 1; }
+.tr-caption .tr-open-primary:hover { color: var(--foreground); }
