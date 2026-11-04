@@ -552,7 +552,7 @@ test("page25 replacement, three-location disclosure and original #msg links pres
   });
   await slot.findByRole("link", { name: "User message 40" });
   expect(slot.queryByRole("link", { name: "Assistant message 43" })).toBeNull();
-  const more = slot.getByRole("button", { name: "Show 1 more in this thread" });
+  const more = slot.getByRole("button", { name: "Show 1 more" });
   fireEvent.click(more);
   expect(slot.getByRole("link", { name: "Assistant message 43" }).getAttribute("href")).toBe("/projects/proj_context/threads/thr_context#msg=43");
   expect(requests).toHaveLength(1);
@@ -561,7 +561,7 @@ test("page25 replacement, three-location disclosure and original #msg links pres
   fireEvent.click(slot.getByRole("button", { name: "Next page" }));
   await slot.findByRole("link", { name: "Assistant message 49" });
   expect(slot.queryByRole("link", { name: "User message 40" })).toBeNull();
-  expect(slot.getByText(/4 mentions/)).toBeTruthy();
+  expect(slot.container.querySelector(".mentions__headline")?.textContent).toContain("4 mentions");
   expect(requests[1]?.input).toMatchObject({ pageSize: 25, cursor: "next" });
   fireEvent.click(slot.getByRole("button", { name: "First page" }));
   await slot.findByRole("link", { name: "User message 40" });
@@ -792,7 +792,7 @@ test("invalid manual output choice is contained before selection, reads or navig
     expect(slot.inspection.navigateCalls).toHaveLength(1);
     const navigation = slot.inspection.navigateCalls[0];
     if (navigation?.method !== "toPluginPanel") throw Error("Expected selected query navigation");
-    expect(parseMentionsSubPath(navigation.options?.subPath ?? "")).toEqual({ v: 1, kind: "query", input: { version: 2, query: { kind: "resource", target: mentionTarget, relation: "self" } } });
+    expect(parseMentionsSubPath(navigation.options?.subPath ?? "")).toEqual({ v: 1, kind: "query", input: { version: 2, query: { kind: "resource", target: mentionTarget, relation: "self" } }, label: "Additive valid resource" });
     expect(uncaught).toHaveLength(0);
   } finally {
     window.removeEventListener("error", onError);
@@ -860,4 +860,21 @@ test("mention snippets read like the message: Markdown links collapse to their l
   expect(excerptDisplay({ before: "see [", match: "the PR", after: "](https://example.test/pr) now" })).toEqual({ before: "see ", match: "the PR", after: " now" });
   expect(cleanInlineMarkdown("run `bun test` and see [docs](https://x.test/a_(b)) **now**")).toBe("run bun test and see docs now");
   expect(cleanInlineMarkdown("keep snake_case_names and thr_abc")).toBe("keep snake_case_names and thr_abc");
+});
+
+test("a reopened Mentions link keeps the searched resource's display label, and the label never selects the query", async () => {
+  const path = mentionsSubPath({ v: 1, kind: "query", input: { version: 2, query: { kind: "resource", target: mentionTarget, relation: "self" } }, label: "org/repo#123" });
+  expect(parseMentionsSubPath(path)).toMatchObject({ label: "org/repo#123" });
+  expect(() => mentionsSubPath({ v: 1, kind: "query", input: { version: 2, query: { kind: "resource", target: mentionTarget, relation: "self" } }, label: "bad\u0007label" })).toThrow();
+  const requests: UiRequest[] = [];
+  const { slot } = await mountMentionPanel(path, request => { requests.push(request); return mentionPage(1); });
+  expect(await slot.findByRole("heading", { level: 2, name: "org/repo#123" })).toBeTruthy();
+  await waitFor(() => expect(requests.at(-1)?.input).toEqual({ version: 2, query: { kind: "resource", target: mentionTarget, relation: "self" }, pageSize: 25 }));
+  slot.lifecycle.unmount();
+});
+
+test("mention snippets drop emphasis and code wrapped around the highlighted match", async () => {
+  const { excerptDisplay } = await import("../app.tsx");
+  expect(excerptDisplay({ before: "see **", match: "PR #12", after: "** now" })).toEqual({ before: "see ", match: "PR #12", after: " now" });
+  expect(excerptDisplay({ before: "run `", match: "org/repo#12", after: "` first" })).toEqual({ before: "run ", match: "org/repo#12", after: " first" });
 });

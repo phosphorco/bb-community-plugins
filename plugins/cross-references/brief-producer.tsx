@@ -137,6 +137,6 @@ export function BriefMentionRow({item}:{item:BriefMention}){
    {item.authoredUrl.state==='withheld'&&<p className="mentions__muted">{item.authoredUrl.display}</p>}
    {item.confirmation!=='producer-attested'&&<span className="mentions__chip mentions__chip--warn">Not reconfirmed</span>}
   </div>
-  <span className="mentions__actions">{item.authoredUrl.state==='exact'&&<UrlLink href={item.authoredUrl.href} className="mentions__icon" aria-label="Authored destination" title="Open the link as written">↗</UrlLink>}</span>
+  <span className="mentions__actions">{item.authoredUrl.state==='exact'&&<UrlLink href={item.authoredUrl.href} className="mentions__icon" aria-label="Open mentioned link" title="Open the link as written">↗</UrlLink>}</span>
  </article>;
 }

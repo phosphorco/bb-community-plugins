@@ -122,7 +122,9 @@ import {
 export type MentionItem = Extract<ListMentionsOutputV2, { status: "page" }>["items"][number];
 export type MentionSelection = Omit<ListMentionsInputV2, "cursor" | "ifSnapshot" | "pageSize">;
 const routeSchema = z.discriminatedUnion("kind", [
-  z.strictObject({ v: z.literal(1), kind: z.literal("query"), input: listMentionsInputV2Schema.refine(input => input.cursor === undefined && input.ifSnapshot === undefined && input.pageSize === undefined) }),
+  z.strictObject({ v: z.literal(1), kind: z.literal("query"), input: listMentionsInputV2Schema.refine(input => input.cursor === undefined && input.ifSnapshot === undefined && input.pageSize === undefined),
+    // Display only: never used to select or authorize the query.
+    label: z.string().trim().min(1).max(256).refine(text => !/\p{Cc}/u.test(text)).optional() }),
   z.strictObject({ v: z.literal(1), kind: z.literal("lookup"), href: safeAuthoredHrefSchema, mode: z.enum(["recognize", "exact-url"]) }),
 ]);
 export type MentionsRoute = z.infer<typeof routeSchema>;

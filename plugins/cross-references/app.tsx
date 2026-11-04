@@ -569,16 +569,21 @@ function MentionResultOwner({ selection }: { selection: MentionSelection }) {
           ...(cursor ? { cursor } : conditional && page.current ? { ifSnapshot: page.current.snapshot } : {}),
         };
         let result = await client.listMentions(input, controller.signal);
+        let recovered = false;
         if (result.status === "restart") {
           // Exactly one recovery read; no repeated cursor/restart loop.
           result = await client.listMentions({ ...selection, pageSize: 25 }, controller.signal);
+          recovered = true;
         }
         if (!lifetime.current || controller.signal.aborted) return;
         // A refresh queued during pagination supersedes that obsolete page.
         if (cursor && pending.current) return;
         if (result.status === "page") {
           page.current = result;
-          setExpanded(new Set());
+          // Position and expansion follow the page actually shown: a restart
+          // recovery lands on page one, and a background refresh keeps open groups.
+          cursorUsed.current = Boolean(cursor) && !recovered;
+          if (!conditional) setExpanded(new Set());
           setView({ page: result, loading: false, error: null, stale: false });
         } else if (result.status === "not-modified" && page.current) {
           page.current = { ...page.current, coverage: result.coverage };
@@ -647,11 +652,12 @@ function MentionResultOwner({ selection }: { selection: MentionSelection }) {
   }
   const atFirstPage = view.page !== null && !cursorUsed.current;
   return <BriefNavigationSurface><section ref={resultRef} tabIndex={-1} className="mentions__results" aria-label="Mention results" aria-busy={view.loading}>
-    {view.loading && view.page === null && <p className="mentions__muted" role="status">Looking for mentions…</p>}
+    <p className="cross-references__visually-hidden" role="status" aria-live="polite">{view.loading ? "Looking for mentions…" : view.page ? `${view.page.counts.retainedOccurrences === 1 ? "1 mention" : `${view.page.counts.retainedOccurrences} mentions`} found.` : ""}</p>
+    {view.loading && view.page === null && <p className="mentions__muted" aria-hidden="true">Looking for mentions…</p>}
     {view.stale && <p className="mentions__notice" role="status"><Icon name="RefreshCw" aria-hidden />Showing the last results; they may be out of date while BB reconnects.</p>}
     {view.error && <div className="mentions__notice mentions__notice--error"><p role="alert">{view.error}</p><button type="button" disabled={view.loading} onClick={() => run.current(undefined, true)}>Retry mentions</button></div>}
     {view.page && <>
-      <MentionSummary page={view.page} refreshing={view.loading} onRefresh={() => { cursorUsed.current = false; run.current(); }} />
+      <MentionSummary page={view.page} refreshing={view.loading} onRefresh={() => run.current(undefined, true)} />
       {view.page.items.length === 0 && <p className="mentions__empty">No mentions found in the threads BB has scanned.</p>}
       <ul className="mentions__groups">{[...groups].map(([key, items]) => {
         const first = items[0]!.item;
@@ -664,12 +670,12 @@ function MentionResultOwner({ selection }: { selection: MentionSelection }) {
             if ((item.kind === "occurrence" || item.kind === "brief-occurrence") && ++shown > 3 && !expanded.has(key)) return null;
             return <li key={mentionItemKey(item, pageSlot)}><MentionRow item={item} /></li>;
           })}</ul>
-          {hidden > 0 && <button type="button" className="mentions__more" aria-expanded={expanded.has(key)} onClick={() => setExpanded(current => { const next = new Set(current); if (next.has(key)) next.delete(key); else next.add(key); return next; })}>{expanded.has(key) ? "Show fewer" : `Show ${hidden} more in this thread`}</button>}
+          {hidden > 0 && <button type="button" className="mentions__more" aria-expanded={expanded.has(key)} onClick={() => setExpanded(current => { const next = new Set(current); if (next.has(key)) next.delete(key); else next.add(key); return next; })}>{expanded.has(key) ? "Show fewer" : `Show ${hidden} more`}</button>}
         </li>;
       })}</ul>
       {(view.page.nextCursor !== null || !atFirstPage) && <nav className="mentions__pages" aria-label="Mention pages">
-        <button type="button" disabled={view.loading || atFirstPage} onClick={() => { cursorUsed.current = false; run.current(); }}>First page</button>
-        <button type="button" disabled={view.loading || view.page.nextCursor === null} onClick={() => { if (page.current?.nextCursor) { cursorUsed.current = true; run.current(page.current.nextCursor); } }}>Next page</button>
+        <button type="button" disabled={view.loading || atFirstPage} onClick={() => run.current()}>First page</button>
+        <button type="button" disabled={view.loading || view.page.nextCursor === null} onClick={() => { if (page.current?.nextCursor) run.current(page.current.nextCursor); }}>Next page</button>
       </nav>}
     </>}
   </section></BriefNavigationSurface>;
@@ -681,10 +687,10 @@ function MentionGroupHeader({ item, count }: { item: MentionItem; count: number 
   const capNote = item.cap.state === "capped" ? "Only the newest 100 mentions from this thread are kept." : item.cap.state === "unknown" || item.cap.sourceHistoryUnknown ? "Some older mentions from this thread may not have been kept." : undefined;
   return <header className="mentions__group-head">
     <Icon name="MessageSquare" fallback="ChevronRight" aria-hidden />
-    {url ? <UrlLink href={url} className="mentions__thread">{label}</UrlLink> : <strong className="mentions__thread">{label}</strong>}
+    <h3 className="mentions__thread-heading">{url ? <UrlLink href={url} className="mentions__thread">{label}</UrlLink> : <span className="mentions__thread">{label}</span>}</h3>
     <span className="mentions__chip">{PRODUCER_LABELS[item.producerPluginId] ?? item.producerPluginId}</span>
     {count > 0 && <span className="mentions__count">{count === 1 ? "1 mention" : `${count} mentions`}</span>}
-    {capNote && <span className="mentions__chip mentions__chip--warn" title={capNote}>Partial</span>}
+    {capNote && <span className="mentions__chip mentions__chip--warn" title={capNote} aria-label={`Partial: ${capNote}`}>Partial</span>}
   </header>;
 }
 function MentionSummary({ page, refreshing, onRefresh }: { page: MentionPage; refreshing: boolean; onRefresh: () => void }) {
@@ -694,13 +700,13 @@ function MentionSummary({ page, refreshing, onRefresh }: { page: MentionPage; re
   const partial = coverage.collectionIncomplete || coverage.retentionLimited || coverage.capHistoryUnknown || coverage.evidenceStateUnknown || coverage.authoredUrlCoverage.state === "partial" || coverage.reasons.length > 0;
   return <div className="mentions__summary">
     <div className="mentions__headline-row">
-      <p className="mentions__headline">{mentions === 1 ? "1 mention" : `${mentions} mentions`} <span>in {threads === 1 ? "1 thread" : `${threads} threads`}</span></p>
+      <p className="mentions__headline">{mentions === 1 ? "1 mention" : `${mentions} mentions`} <span>from {threads === 1 ? "1 place" : `${threads} places`}</span></p>
       <button type="button" className="mentions__refresh" aria-label="Refresh mentions" title="Refresh" disabled={refreshing} onClick={onRefresh}><Icon name="RefreshCw" aria-hidden /></button>
     </div>
     <details className="mentions__about">
       <summary>{partial && <Icon name="TriangleAlert" fallback="Info" aria-hidden />}About these results{partial ? " · may be incomplete" : ""}</summary>
       <ul>
-        <li>Only threads BB has scanned are included, and counts cover this whole search, not just this page.</li>
+        <li>A place is one conversation or one thread brief; the same thread can appear twice. Only places BB has scanned are included, and counts cover this whole search, not just this page.</li>
         <li>{counts.confirmedOccurrences} confirmed and {counts.unconfirmedOccurrences} unconfirmed locations from {counts.producerClaims} {counts.producerClaims === 1 ? "claim" : "claims"}; {counts.excerptUnavailable} without a quotable sentence; {counts.claimsWithoutLocations} claims without a location.</li>
         {coverage.collectionIncomplete && <li>Some threads were too long to scan completely, so older mentions there may be missing or out of date.</li>}
         {coverage.retentionLimited && <li>Retention limits have dropped some older mentions.</li>}
@@ -729,6 +735,10 @@ export function excerptDisplay(parts: { before: string; match: string; after: st
   else if (before.endsWith("[")) {
     const close = /^\]\((?:[^()\s]|\([^()\s]*\))*\)/.exec(after);
     if (close) { before = before.slice(0, -1); after = after.slice(close[0].length); }
+  }
+  // Emphasis or code wrapping exactly the highlighted text would otherwise leave stray delimiters.
+  for (const mark of ["**", "`", "*"]) {
+    if (before.endsWith(mark) && after.startsWith(mark)) { before = before.slice(0, -mark.length); after = after.slice(mark.length); break; }
   }
   return { before: cleanInlineMarkdown(before), match: cleanInlineMarkdown(match) || match, after: cleanInlineMarkdown(after) };
 }
@@ -760,7 +770,7 @@ function MentionRow({ item }: { item: MentionItem }) {
     <span className="mentions__actions">
       {href ? <UrlLink href={href} className="mentions__icon" aria-label={linkName} title={`Open ${linkName.toLowerCase()}`}><Icon name="ArrowUpRight" aria-hidden /></UrlLink>
         : sourceUrl ? <UrlLink href={sourceUrl} className="mentions__icon" aria-label="Open source" title="Exact message unavailable; open the thread"><Icon name="ArrowUpRight" aria-hidden /></UrlLink> : null}
-      {item.provenance.authoredHref && <UrlLink href={item.provenance.authoredHref} className="mentions__icon" aria-label="Authored destination" title="Open the link as written"><Icon name="Link" fallback="ArrowUpRight" aria-hidden /></UrlLink>}
+      {item.provenance.authoredHref && <UrlLink href={item.provenance.authoredHref} className="mentions__icon" aria-label="Open mentioned link" title="Open the link as written"><Icon name="Link" fallback="ArrowUpRight" aria-hidden /></UrlLink>}
     </span>
   </article>;
 }
@@ -773,6 +783,7 @@ function BrowserMentionsAction({ url, isCompactViewport }: ExperimentalPluginBro
     navigate.toPluginPanel("mentions", { subPath });
   }}>{isCompactViewport ? <LinkGlyph /> : "Mentions"}</button>;
 }
+const MODE_HELP = "Smart match understands PR links, short forms like org/repo#123, review links and thread mentions. Exact URL matches the literal text only.";
 function MentionsPanel({ subPath }: PluginNavPanelProps) {
   const navigate = useBbNavigate();
   const client = useMentionClient();
@@ -784,12 +795,14 @@ function MentionsPanel({ subPath }: PluginNavPanelProps) {
   const [mode, setMode] = useState<"recognize" | "exact-url">("recognize");
   const [lookup, setLookup] = useState<ResolveLookupOutputV2 | null>(null);
   const [selection, setSelection] = useState<MentionSelection | null>(null);
+  const [routeLabel, setRouteLabel] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const flight = useRef<AbortController | null>(null);
   const described = useRef(false);
   const generation = useRef(0);
   const fieldId = useId();
+  const modeHelpId = useId();
   const choose = useCallback((option: ResolveLookupOutputV2["options"][number]) => {
     try {
       // Outputs tolerate additions; only current input fields enter a strict query.
@@ -797,7 +810,9 @@ function MentionsPanel({ subPath }: PluginNavPanelProps) {
       const query = option.query.kind === "authored-url" ? { kind: "authored-url" as const, href: option.query.href }
         : { kind: "resource" as const, target: { provider: option.query.target.provider, keys: option.query.target.keys }, relation: option.query.relation };
       const input = listMentionsInputV2Schema.parse({ version: 2, query });
-      const next = mentionsSubPath({ v: 1, kind: "query", input });
+      const label = option.label.trim().slice(0, 256) || undefined;
+      const next = mentionsSubPath({ v: 1, kind: "query", input, ...(label ? { label } : {}) });
+      setRouteLabel(label ?? null);
       navigate.toPluginPanel("mentions", { subPath: next });
       setSelection(input);
       setError(null);
@@ -833,6 +848,7 @@ function MentionsPanel({ subPath }: PluginNavPanelProps) {
     setBusy(false); setError(null); setSelection(null);
     if (route.value?.kind === "query") {
       const input = route.value.input;
+      setRouteLabel(route.value.label ?? null);
       setSelection(input);
       setLookup(current => current?.options.some(option => JSON.stringify(option.query) === JSON.stringify(input.query)) ? current : null);
     }
@@ -844,22 +860,23 @@ function MentionsPanel({ subPath }: PluginNavPanelProps) {
     return () => { ++generation.current; flight.current?.abort(); };
   }, [route, resolve]);
   const queryLabel = selection === null ? null : selection.query.kind === "authored-url" ? selection.query.href
-    : selection.query.target.provider === "url" ? selection.query.target.keys.href
-    : lookup?.options.find(option => JSON.stringify(option.query) === JSON.stringify(selection.query))?.label
+    : routeLabel ?? (selection.query.target.provider === "url" ? selection.query.target.keys.href : undefined)
+    ?? lookup?.options.find(option => JSON.stringify(option.query) === JSON.stringify(selection.query))?.label
     ?? (selection.query.target.provider === "bb" ? selection.query.target.keys.thread ?? selection.query.target.keys.project : undefined);
   const scopeLabel = selection === null ? null : selection.query.kind === "authored-url" ? "Exact authored URL" : selection.query.relation === "github-pr-family" ? "Recognized PR family" : "Exact resource";
   const scopeHint = selection === null ? null : selection.query.kind === "authored-url" ? "Only mentions that wrote exactly this URL." : selection.query.relation === "github-pr-family" ? "The pull request and its reviews and comments, however they were written." : "Mentions of exactly this resource.";
   return <main className="mentions" aria-label="Mentions">
     <header className="mentions__intro">
       <h1>Mentions</h1>
-      <p>Find every place a pull request, thread, file, or link was mentioned in BB conversations and briefs.</p>
+      <p>Find where a pull request, thread, or link was mentioned in the conversations and briefs BB has scanned.</p>
     </header>
     <form className="mentions__search" onSubmit={event => { event.preventDefault(); resolve(text, mode); }}>
       <label htmlFor={fieldId} className="cross-references__visually-hidden">Find mentions of a resource or URL</label>
       <span className="mentions__field"><Icon name="Search" aria-hidden /><input id={fieldId} value={text} onChange={event => setText(event.target.value)} placeholder="Paste a PR link, #123, a thread, or any URL" /></span>
-      <label className="mentions__mode" title="Smart match understands PR links, #123, review links and thread mentions. Exact URL matches the literal text only.">
+      <label className="mentions__mode" title={MODE_HELP}>
         <span className="cross-references__visually-hidden">Lookup mode</span>
-        <select aria-label="Lookup mode" value={mode} onChange={event => setMode(event.target.value === "exact-url" ? "exact-url" : "recognize")}><option value="recognize">Smart match</option><option value="exact-url">Exact URL</option></select>
+        <span id={modeHelpId} className="cross-references__visually-hidden">{MODE_HELP}</span>
+        <select aria-label="Lookup mode" aria-describedby={modeHelpId} value={mode} onChange={event => setMode(event.target.value === "exact-url" ? "exact-url" : "recognize")}><option value="recognize">Smart match</option><option value="exact-url">Exact URL</option></select>
       </label>
       <button type="submit" className="mentions__submit" disabled={busy} aria-label="Find mentions">{busy ? "Searching…" : "Find"}</button>
     </form>
@@ -873,18 +890,21 @@ function MentionsPanel({ subPath }: PluginNavPanelProps) {
       </button>)}
     </section>}
     {selection === null && lookup === null && !busy && !route.invalid && !error && <section className="mentions__help" aria-label="How Mentions works">
-      <h2>How it works</h2>
-      <ul>
-        <li><strong>Paste anything you care about.</strong> A GitHub PR link, a short form like <code>owner/repo#123</code>, a BB thread, a file, or a web URL.</li>
-        <li><strong>Smart match finds every spelling.</strong> A PR includes its review and comment links, and <code>#123</code> written near a repository link.</li>
-        <li><strong>Results are grouped by thread.</strong> Each mention shows the sentence it appeared in; the arrow jumps to that exact message.</li>
-      </ul>
-      <p className="mentions__muted">Mentions come from conversations and thread briefs BB has scanned. You can also open this from the Mentions button on a page in BB's browser, or from any thread's References popup.</p>
+      <p>Try a PR link like <code>github.com/org/repo/pull/123</code>, a short form like <code>org/repo#123</code>, a BB thread, or any web URL. Open a result to jump to that message or brief section.</p>
+      <details>
+        <summary>How matching works</summary>
+        <ul>
+          <li><strong>Smart match</strong> finds the usual spellings: a pull request also matches its review and comment links, and <code>#123</code> written next to a link to its repository.</li>
+          <li><strong>Exact URL</strong> matches only the text exactly as written.</li>
+          <li>Results are grouped by conversation or brief. You can also start from the Mentions button in BB's browser or from a thread's References popup.</li>
+        </ul>
+      </details>
     </section>}
     {selection && <section className="mentions__answer" aria-label="Search">
       <header className="mentions__query">
-        <p className="mentions__query-label">{queryLabel ?? "Selected resource"}</p>
-        <span className="mentions__chip" title={scopeHint ?? undefined} role="status">{scopeLabel}</span>
+        <h2 className="mentions__query-label">{queryLabel ?? "Selected resource"}</h2>
+        <span className="mentions__chip" role="status">{scopeLabel}</span>
+        {scopeHint && <span className="mentions__muted mentions__scope-hint">{scopeHint}</span>}
       </header>
       <MentionResults selection={selection} />
     </section>}
