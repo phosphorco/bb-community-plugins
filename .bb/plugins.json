@@ -3,6 +3,7 @@
   "schemaVersion": 1,
   "name": "phosphor-bb-plugins",
   "plugins": [
+    { "name": "bb-subscribe-to-anything", "source": "./plugins/bb-subscribe-to-anything" },
     { "name": "compact-display", "source": "./plugins/compact-display" },
     { "name": "message-timings-nerd", "source": "./plugins/message-timings-nerd" },
     { "name": "people-accounts", "source": "./plugins/people-accounts" },
