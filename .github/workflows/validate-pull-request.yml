@@ -56,6 +56,7 @@ jobs:
           npm run build --workspace @phosphorco/bb-people-accounts
           npm run build --workspace @phosphorco/bb-thread-context
 
+          npm run build --workspace @phosphorco/bb-inbox-rows
           npm run build --workspace @phosphorco/bb-thread-filters
 
       - name: Check out the selected Turn Results compiler
@@ -152,3 +153,6 @@ jobs:
 
       - name: Inspect Turn Result Images plugin package
         run: npm pack --dry-run --ignore-scripts --workspace @phosphorco/bb-plugin-turn-result-images
+
+      - name: Inspect Inbox Rows package
+        run: npm pack --dry-run --ignore-scripts --workspace @phosphorco/bb-inbox-rows
