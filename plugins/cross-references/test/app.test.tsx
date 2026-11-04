@@ -514,7 +514,7 @@ test("paste form submits explicit Recognize and Exact URL modes; only backend se
   expect(requests).toHaveLength(0);
   fireEvent.click(slot.getByRole("button", { name: "Find mentions" }));
   await slot.findByText("Recognized PR family");
-  await slot.findByText("1 stored locations", { exact: false });
+  await waitFor(() => expect(slot.container.querySelector(".mentions__headline")?.textContent).toContain("1 mention"));
   expect(requests[0]?.input).toEqual({ version: 2, text: "owner/repo PR 7", mode: "recognize" });
   expect(requests[1]?.input).toMatchObject({ query: { relation: "github-pr-family" }, pageSize: 25 });
   fireEvent.change(slot.getByLabelText("Lookup mode"), { target: { value: "exact-url" } });
@@ -535,10 +535,10 @@ test("ambiguous and incomplete recognition keep choices explicit; unrecognized i
   expect(slot.queryByRole("region", { name: "Mention results" })).toBeNull();
   state = "incomplete"; await submit(); await slot.findByText(/Recognition is incomplete/);
   fireEvent.click(slot.getByRole("button", { name: /Recognized resource · stored-codec/ }));
-  await slot.findByText("No matching stored mentions in known sources.");
+  await slot.findByText("No mentions found in the threads BB has scanned.");
   expect(slot.getByText(/Recognition is incomplete/)).toBeTruthy();
   state = "unrecognized"; await submit(); await slot.findByText(/No recognized resource/);
-  expect(slot.queryByText("No matching stored mentions in known sources.")).toBeNull();
+  expect(slot.queryByText("No mentions found in the threads BB has scanned.")).toBeNull();
   slot.lifecycle.unmount();
 });
 
@@ -552,7 +552,7 @@ test("page25 replacement, three-location disclosure and original #msg links pres
   });
   await slot.findByRole("link", { name: "User message 40" });
   expect(slot.queryByRole("link", { name: "Assistant message 43" })).toBeNull();
-  const more = slot.getByRole("button", { name: "Show 1 more locations on this page" });
+  const more = slot.getByRole("button", { name: "Show 1 more in this thread" });
   fireEvent.click(more);
   expect(slot.getByRole("link", { name: "Assistant message 43" }).getAttribute("href")).toBe("/projects/proj_context/threads/thr_context#msg=43");
   expect(requests).toHaveLength(1);
@@ -561,7 +561,7 @@ test("page25 replacement, three-location disclosure and original #msg links pres
   fireEvent.click(slot.getByRole("button", { name: "Next page" }));
   await slot.findByRole("link", { name: "Assistant message 49" });
   expect(slot.queryByRole("link", { name: "User message 40" })).toBeNull();
-  expect(slot.getByText(/4 stored locations/)).toBeTruthy();
+  expect(slot.getByText(/4 mentions/)).toBeTruthy();
   expect(requests[1]?.input).toMatchObject({ pageSize: 25, cursor: "next" });
   fireEvent.click(slot.getByRole("button", { name: "First page" }));
   await slot.findByRole("link", { name: "User message 40" });
@@ -581,7 +581,7 @@ test("coverage-only not-modified invalidation coalesces, filters irrelevant sign
   await slot.behavior.emitRealtime("cross-references-mentions-v2-changed", { ...mentionSignal(), affectedIdentityDigests: ["f".repeat(64)] });
   expect(calls).toBe(1);
   for (let i = 0; i < 5; i++) await slot.behavior.emitRealtime("cross-references-mentions-v2-changed", mentionSignal());
-  await slot.findByText(/unknown for 7 known locations/);
+  await slot.findByText(/unknown for 7 older mentions/);
   expect(calls).toBe(2);
   expect((slot.getByRole("button", { name: "Next page" }) as HTMLButtonElement).disabled).toBe(false);
   slot.lifecycle.unmount();
@@ -655,12 +655,12 @@ test("legacy, unsupported, unavailable and retained cap truth remain visible", a
     { kind: "claim-without-evidence", source: mentionSource, target: base.target, producerPluginId: "legacy", graphRevision: 1, cap: base.cap, reason: "legacy", matchBasis: "primary-resource" },
     { kind: "future-format", source: mentionSource, target: base.target, producerPluginId: "future", graphRevision: 1, cap: base.cap },
   ] }));
-  await slot.findByText(/Retained, unconfirmed location/);
-  expect(slot.getByText(/a word exceeds the excerpt limit/)).toBeTruthy();
-  expect(slot.getByText(/Legacy claim: no collected location/)).toBeTruthy();
-  expect(slot.getByText(/Evidence format unsupported/)).toBeTruthy();
-  expect(slot.getAllByText(/Location cap history unknown/)).toHaveLength(2);
-  expect(slot.getByText(/Additional coverage reasons were clipped/)).toBeTruthy();
+  await slot.findByText(/Not reconfirmed/);
+  expect(slot.getByText(/too long to quote/)).toBeTruthy();
+  expect(slot.getByText(/older Thread Links feature; no sentence/)).toBeTruthy();
+  expect(slot.getByText(/newer format/)).toBeTruthy();
+  expect(slot.getAllByTitle(/may not have been kept/)).toHaveLength(2);
+  expect(slot.getByText(/More coverage notes were omitted/)).toBeTruthy();
   slot.lifecycle.unmount();
 });
 
@@ -811,7 +811,7 @@ test("multiple future slots retain every page row without duplicate keys through
   const rowHrefs = () => [...slot.container.querySelectorAll(".mentions__row")].map(row => row.querySelector("a")?.getAttribute("href"));
   try {
     await slot.findByRole("link", { name: "User message 40" });
-    expect(slot.getAllByText(/Evidence format unsupported/)).toHaveLength(2);
+    expect(slot.getAllByText(/newer format/)).toHaveLength(2);
     expect(slot.container.querySelectorAll(".mentions__row")).toHaveLength(4);
     const zeroNode = slot.getByRole("link", { name: "User message 40" }).closest("li");
     const oneNode = slot.getByRole("link", { name: "Assistant message 41" }).closest("li");
@@ -819,25 +819,25 @@ test("multiple future slots retain every page row without duplicate keys through
     expect(rowHrefs()).toEqual(["/projects/proj_context/threads/thr_context#future-a", "/projects/proj_context/threads/thr_context#msg=40", "/projects/proj_context/threads/thr_context#future-b", "/projects/proj_context/threads/thr_context#msg=41"]);
 
     items = [c, one, b, zero, a];
-    fireEvent.click(slot.getByRole("button", { name: "First page" }));
+    fireEvent.click(slot.getByRole("button", { name: "Refresh mentions" }));
     await waitFor(() => expect(slot.container.querySelectorAll(".mentions__row")).toHaveLength(5));
-    expect(slot.getAllByText(/Evidence format unsupported/)).toHaveLength(3);
+    expect(slot.getAllByText(/newer format/)).toHaveLength(3);
     expect(rowHrefs()).toEqual(["/projects/proj_context/threads/thr_context#future-c", "/projects/proj_context/threads/thr_context#msg=41", "/projects/proj_context/threads/thr_context#future-b", "/projects/proj_context/threads/thr_context#msg=40", "/projects/proj_context/threads/thr_context#future-a"]);
     expect(slot.getByRole("link", { name: "User message 40" }).closest("li")).toBe(zeroNode);
     expect(slot.getByRole("link", { name: "Assistant message 41" }).closest("li")).toBe(oneNode);
 
     items = [zero, a, c, one, b];
-    fireEvent.click(slot.getByRole("button", { name: "First page" }));
+    fireEvent.click(slot.getByRole("button", { name: "Refresh mentions" }));
     await waitFor(() => expect(rowHrefs()[0]).toBe("/projects/proj_context/threads/thr_context#msg=40"));
-    expect(slot.getAllByText(/Evidence format unsupported/)).toHaveLength(3);
+    expect(slot.getAllByText(/newer format/)).toHaveLength(3);
     expect(rowHrefs()).toEqual(["/projects/proj_context/threads/thr_context#msg=40", "/projects/proj_context/threads/thr_context#future-a", "/projects/proj_context/threads/thr_context#future-c", "/projects/proj_context/threads/thr_context#msg=41", "/projects/proj_context/threads/thr_context#future-b"]);
     expect(slot.getByRole("link", { name: "User message 40" }).closest("li")).toBe(zeroNode);
     expect(slot.getByRole("link", { name: "Assistant message 41" }).closest("li")).toBe(oneNode);
 
     items = [b, one];
-    fireEvent.click(slot.getByRole("button", { name: "First page" }));
+    fireEvent.click(slot.getByRole("button", { name: "Refresh mentions" }));
     await waitFor(() => expect(slot.container.querySelectorAll(".mentions__row")).toHaveLength(2));
-    expect(slot.getAllByText(/Evidence format unsupported/)).toHaveLength(1);
+    expect(slot.getAllByText(/newer format/)).toHaveLength(1);
     expect(slot.queryByRole("link", { name: "User message 40" })).toBeNull();
     expect(slot.getByRole("link", { name: "Assistant message 41" }).closest("li")).toBe(oneNode);
     expect(rowHrefs()).toEqual(["/projects/proj_context/threads/thr_context#future-b", "/projects/proj_context/threads/thr_context#msg=41"]);
@@ -852,4 +852,12 @@ test('fixed Brief blocked producer warning stays reachable (info tooltip) at ZER
  const app=await loadPluginApp(()=>import('../app.tsx'));const sdk=mentionSdk(request=>request.method==='crossReferencesProducer.describe'?{protocol:'cross-references-producer',versions:[1],sourceKinds:['thread-brief'],limits:{inputBytes:1048576,statusBytes:16384,locations:512,perTarget:100,headingBytes:256,limitCodes:['target-count']}}:request.method==='crossReferencesProducerV1GetState'?{version:1,projection:null,evidence:null,revisionHighWater:10,status:{state:'over-limit',sourceContentRevision:mentionHash,limits:['target-count'],attemptRevision:10,statusDigest:mentionHash,sourceFile:{kind:'thread-storage',threadId:'thr_zero',path:'BRIEF.md'},applicability:'current'}}:null);
  const slot=renderSlot(app.threadHeaderActions[0]!,{threadId:'thr_zero',projectId:'proj_zero',isCompactViewport:false},{sdk,rpc:{listForwardReferences:()=>({rows:[],total:0,nextCursor:null}),listBacklinks:()=>({rows:[],total:0,nextCursor:null}),checkForwardReferences:()=>[]}} as any);
  fireEvent.click(await slot.findByRole('button',{name:'Cross-references: Thread Brief'}));const info=await slot.findByRole('button',{name:'Reference warning'});const described=()=>document.getElementById(info.getAttribute('aria-describedby')!)!;expect(described().textContent).toContain('brief references not updated: over limit (target-count)');expect(described().className).toContain('cross-references__visually-hidden');expect(info.getAttribute('aria-expanded')).toBe('false');fireEvent.focus(info);expect(described().className).not.toContain('cross-references__visually-hidden');fireEvent.keyDown(document,{key:'Escape'});expect(info.getAttribute('aria-expanded')).toBe('false');expect(slot.getByRole('dialog',{name:'References'})).toBeTruthy();fireEvent.click(info);expect(info.getAttribute('aria-expanded')).toBe('true');expect(slot.queryByText('1 forward reference')).toBeNull();slot.lifecycle.unmount();
+});
+
+test("mention snippets read like the message: Markdown links collapse to their label and keep the highlight", async () => {
+  const { excerptDisplay, cleanInlineMarkdown } = await import("../app.tsx");
+  expect(excerptDisplay({ before: "...to [PR #1925](", match: "https://github.com/phosphorco/monorepo/pull/1925", after: ")...." })).toEqual({ before: "...to ", match: "PR #1925", after: "...." });
+  expect(excerptDisplay({ before: "see [", match: "the PR", after: "](https://example.test/pr) now" })).toEqual({ before: "see ", match: "the PR", after: " now" });
+  expect(cleanInlineMarkdown("run `bun test` and see [docs](https://x.test/a_(b)) **now**")).toBe("run bun test and see docs now");
+  expect(cleanInlineMarkdown("keep snake_case_names and thr_abc")).toBe("keep snake_case_names and thr_abc");
 });

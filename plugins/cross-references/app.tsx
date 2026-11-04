@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, useMemo } from "react";
 import {
   definePluginApp,
+  experimental_Icon as Icon,
   useBbNavigate,
   useRealtime,
   useRealtimeConnectionState,
@@ -537,6 +538,7 @@ function MentionResultOwner({ selection }: { selection: MentionSelection }) {
   const [view, setView] = useState<{ page: MentionPage | null; loading: boolean; error: string | null; stale: boolean }>({ page: null, loading: true, error: null, stale: false });
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
   const page = useRef<MentionPage | null>(null);
+  const cursorUsed = useRef(false);
   const lifetime = useRef(false);
   const flight = useRef<AbortController | null>(null);
   const pending = useRef(false);
@@ -643,69 +645,123 @@ function MentionResultOwner({ selection }: { selection: MentionSelection }) {
     const slot = { item, pageSlot };
     if (group) group.push(slot); else groups.set(key, [slot]);
   }
+  const atFirstPage = view.page !== null && !cursorUsed.current;
   return <BriefNavigationSurface><section ref={resultRef} tabIndex={-1} className="mentions__results" aria-label="Mention results" aria-busy={view.loading}>
-    {view.loading && <p role="status">Loading mentions…</p>}
-    {view.stale && <p role="status">Showing the last available results; they may be out of date.</p>}
-    {view.error && <p role="alert">{view.error}</p>}
-    {view.error && <button type="button" disabled={view.loading} onClick={() => run.current(undefined, true)}>Retry mentions</button>}
+    {view.loading && view.page === null && <p className="mentions__muted" role="status">Looking for mentions…</p>}
+    {view.stale && <p className="mentions__notice" role="status"><Icon name="RefreshCw" aria-hidden />Showing the last results; they may be out of date while BB reconnects.</p>}
+    {view.error && <div className="mentions__notice mentions__notice--error"><p role="alert">{view.error}</p><button type="button" disabled={view.loading} onClick={() => run.current(undefined, true)}>Retry mentions</button></div>}
     {view.page && <>
-      <MentionCoverage page={view.page} />
-      {view.page.items.length === 0 && <p>No matching stored mentions in known sources.</p>}
+      <MentionSummary page={view.page} refreshing={view.loading} onRefresh={() => { cursorUsed.current = false; run.current(); }} />
+      {view.page.items.length === 0 && <p className="mentions__empty">No mentions found in the threads BB has scanned.</p>}
       <ul className="mentions__groups">{[...groups].map(([key, items]) => {
         const first = items[0]!.item;
         const occurrences = items.filter(({ item }) => item.kind === "occurrence" || item.kind === "brief-occurrence");
         const hidden = Math.max(0, occurrences.length - 3);
         let shown = 0;
-        return <li key={key}>
-          <strong>{first.source.presentation.label}</strong>
-          <small>Producer: {first.producerPluginId} · {first.cap.state === "uncapped" ? "No known location clipping" : first.cap.state === "capped" ? "Locations capped at 100" : "Location cap history unknown"}{first.cap.sourceHistoryUnknown ? " · Source clipping history unknown" : ""}</small>
-          <ul>{items.map(({ item, pageSlot }) => {
+        return <li key={key} className="mentions__group">
+          <MentionGroupHeader item={first} count={occurrences.length} />
+          <ul className="mentions__rows">{items.map(({ item, pageSlot }) => {
             if ((item.kind === "occurrence" || item.kind === "brief-occurrence") && ++shown > 3 && !expanded.has(key)) return null;
             return <li key={mentionItemKey(item, pageSlot)}><MentionRow item={item} /></li>;
           })}</ul>
-          {hidden > 0 && <button type="button" aria-expanded={expanded.has(key)} onClick={() => setExpanded(current => { const next = new Set(current); if (next.has(key)) next.delete(key); else next.add(key); return next; })}>{expanded.has(key) ? "Show three locations on this page" : `Show ${hidden} more locations on this page`}</button>}
+          {hidden > 0 && <button type="button" className="mentions__more" aria-expanded={expanded.has(key)} onClick={() => setExpanded(current => { const next = new Set(current); if (next.has(key)) next.delete(key); else next.add(key); return next; })}>{expanded.has(key) ? "Show fewer" : `Show ${hidden} more in this thread`}</button>}
         </li>;
       })}</ul>
-      <nav aria-label="Mention pages">
-        <button type="button" disabled={view.loading} onClick={() => run.current()}>First page</button>
-        <button type="button" disabled={view.loading || view.page.nextCursor === null} onClick={() => { if (page.current?.nextCursor) run.current(page.current.nextCursor); }}>Next page</button>
-      </nav>
-      <p className="mentions__note">This page contains {view.page.items.length} rows. Groups follow their first result. Conversation locations use message time; Brief locations follow their original line. Three locations per claim are initially shown on this page; disclosure reveals the rest of this page.</p>
+      {(view.page.nextCursor !== null || !atFirstPage) && <nav className="mentions__pages" aria-label="Mention pages">
+        <button type="button" disabled={view.loading || atFirstPage} onClick={() => { cursorUsed.current = false; run.current(); }}>First page</button>
+        <button type="button" disabled={view.loading || view.page.nextCursor === null} onClick={() => { if (page.current?.nextCursor) { cursorUsed.current = true; run.current(page.current.nextCursor); } }}>Next page</button>
+      </nav>}
     </>}
   </section></BriefNavigationSurface>;
 }
-function MentionCoverage({ page }: { page: MentionPage }) {
+const PRODUCER_LABELS: Record<string, string> = { "cross-references": "Conversation", "thread-brief": "Brief", "thread-links": "Thread link" };
+function MentionGroupHeader({ item, count }: { item: MentionItem; count: number }) {
+  const url = item.source.presentation.url;
+  const label = item.source.presentation.label;
+  const capNote = item.cap.state === "capped" ? "Only the newest 100 mentions from this thread are kept." : item.cap.state === "unknown" || item.cap.sourceHistoryUnknown ? "Some older mentions from this thread may not have been kept." : undefined;
+  return <header className="mentions__group-head">
+    <Icon name="MessageSquare" fallback="ChevronRight" aria-hidden />
+    {url ? <UrlLink href={url} className="mentions__thread">{label}</UrlLink> : <strong className="mentions__thread">{label}</strong>}
+    <span className="mentions__chip">{PRODUCER_LABELS[item.producerPluginId] ?? item.producerPluginId}</span>
+    {count > 0 && <span className="mentions__count">{count === 1 ? "1 mention" : `${count} mentions`}</span>}
+    {capNote && <span className="mentions__chip mentions__chip--warn" title={capNote}>Partial</span>}
+  </header>;
+}
+function MentionSummary({ page, refreshing, onRefresh }: { page: MentionPage; refreshing: boolean; onRefresh: () => void }) {
   const { counts, coverage } = page;
-  return <div className="mentions__coverage">
-    <p>{counts.retainedOccurrences} stored locations · {counts.confirmedOccurrences} confirmed · {counts.unconfirmedOccurrences} unconfirmed · {counts.producerClaims} producer claims · {counts.indexedSources} sources</p>
-    <p>Known sources only. Counts cover the query, not just this page or all-time mentions.</p>
-    {coverage.collectionIncomplete && <p>Collection is incomplete; unvisited evidence may be retained.</p>}
-    {coverage.retentionLimited && <p>Retention limits have clipped stored evidence.</p>}
-    {coverage.capHistoryUnknown && <p>Some source clipping history is unknown.</p>}
-    {coverage.legacyClaimsPresent && <p>Legacy claims are included.</p>}
-    {coverage.evidenceStateUnknown && <p>Some claims have unknown or unbound evidence.</p>}
-    <p>{counts.claimsWithoutLocations} claims without locations · {counts.excerptUnavailable} locations without excerpts</p>
-    {coverage.authoredUrlCoverage.state === "partial" && <p>Historical authored URLs are unknown for {coverage.authoredUrlCoverage.unknownLocations} known locations; an Exact URL search may miss them.</p>}
-    {coverage.reasons.length > 0 && <details><summary>Coverage details</summary><ul>{coverage.reasons.map(reason => <li key={reason}>{reason==="pr-family-authority-unknown"?"Some stored references lack PR-family authority":reason}</li>)}</ul></details>}
-    {coverage.reasonsClipped && <p>Additional coverage reasons were clipped.</p>}
+  const threads = counts.indexedSources;
+  const mentions = counts.retainedOccurrences;
+  const partial = coverage.collectionIncomplete || coverage.retentionLimited || coverage.capHistoryUnknown || coverage.evidenceStateUnknown || coverage.authoredUrlCoverage.state === "partial" || coverage.reasons.length > 0;
+  return <div className="mentions__summary">
+    <div className="mentions__headline-row">
+      <p className="mentions__headline">{mentions === 1 ? "1 mention" : `${mentions} mentions`} <span>in {threads === 1 ? "1 thread" : `${threads} threads`}</span></p>
+      <button type="button" className="mentions__refresh" aria-label="Refresh mentions" title="Refresh" disabled={refreshing} onClick={onRefresh}><Icon name="RefreshCw" aria-hidden /></button>
+    </div>
+    <details className="mentions__about">
+      <summary>{partial && <Icon name="TriangleAlert" fallback="Info" aria-hidden />}About these results{partial ? " · may be incomplete" : ""}</summary>
+      <ul>
+        <li>Only threads BB has scanned are included, and counts cover this whole search, not just this page.</li>
+        <li>{counts.confirmedOccurrences} confirmed and {counts.unconfirmedOccurrences} unconfirmed locations from {counts.producerClaims} {counts.producerClaims === 1 ? "claim" : "claims"}; {counts.excerptUnavailable} without a quotable sentence; {counts.claimsWithoutLocations} claims without a location.</li>
+        {coverage.collectionIncomplete && <li>Some threads were too long to scan completely, so older mentions there may be missing or out of date.</li>}
+        {coverage.retentionLimited && <li>Retention limits have dropped some older mentions.</li>}
+        {coverage.capHistoryUnknown && <li>For some threads it is unknown whether older mentions were dropped.</li>}
+        {coverage.legacyClaimsPresent && <li>Includes links recorded by the older Thread Links feature.</li>}
+        {coverage.evidenceStateUnknown && <li>Some mentions have no confirmed location yet.</li>}
+        {coverage.authoredUrlCoverage.state === "partial" && <li>The exact URL text is unknown for {coverage.authoredUrlCoverage.unknownLocations} older mentions, so an Exact URL search may miss them.</li>}
+        {coverage.reasons.map(reason => <li key={reason}>{reason === "pr-family-authority-unknown" ? "Some stored references could not be confirmed as part of this pull request." : reason}</li>)}
+        {coverage.reasonsClipped && <li>More coverage notes were omitted.</li>}
+        <li>Groups follow their first result; at most three mentions per thread show until you expand it.</li>
+      </ul>
+    </details>
   </div>;
 }
+/** Snippets are raw source slices; show them the way the message reads, keeping the highlight. */
+export function cleanInlineMarkdown(text: string): string {
+  return text
+    .replace(/!?\[([^\]\n]*)\]\((?:[^()\s]|\([^()\s]*\))*\)/g, "$1")
+    .replace(/`([^`\n]*)`/g, "$1")
+    .replace(/\*\*(?=\S)([^*\n]*?\S)\*\*/g, "$1");
+}
+export function excerptDisplay(parts: { before: string; match: string; after: string }) {
+  let { before, match, after } = parts;
+  const open = /\[([^\]\n]*)\]\($/.exec(before);
+  if (open && after.startsWith(")")) { before = before.slice(0, open.index); match = open[1] || match; after = after.slice(1); }
+  else if (before.endsWith("[")) {
+    const close = /^\]\((?:[^()\s]|\([^()\s]*\))*\)/.exec(after);
+    if (close) { before = before.slice(0, -1); after = after.slice(close[0].length); }
+  }
+  return { before: cleanInlineMarkdown(before), match: cleanInlineMarkdown(match) || match, after: cleanInlineMarkdown(after) };
+}
+const EXCERPT_UNAVAILABLE: Record<string, string> = { "not-materialized": "Sentence not collected yet.", "indivisible-word": "The sentence is too long to quote.", "no-eligible-context": "No safe sentence to quote." };
 function MentionRow({ item }: { item: MentionItem }) {
-  if(item.kind==="brief-occurrence")return <BriefMentionRow item={item}/>;
+  if (item.kind === "brief-occurrence") return <BriefMentionRow item={item} />;
   const href = mentionMessageHref(item);
   const sourceUrl = item.source.presentation.url;
   const parts = mentionExcerptParts(item);
-  return <article className="mentions__row">
-    {href ? <UrlLink href={href}>{item.kind === "occurrence" ? `${item.locator.role === "user" ? "User" : "Assistant"} message ${item.locator.messageSeq}` : "Original message"}</UrlLink>
-      : <>{sourceUrl && <UrlLink href={sourceUrl}>Open source</UrlLink>}<span>Exact message location unavailable.</span></>}
-    {item.kind === "occurrence" ? <>
-      {parts && item.excerpt.state === "ready" ? <p className="mentions__excerpt">
-        {item.excerpt.clippedBefore && <span aria-label="Excerpt clipped before">…</span>}{parts.before}<mark>{parts.match}</mark>{parts.after}{item.excerpt.clippedAfter && <span aria-label="Excerpt clipped after">…</span>}
-      </p> : <p>Excerpt unavailable: {item.excerpt.state === "unavailable" ? ({ "not-materialized": "not collected", "indivisible-word": "a word exceeds the excerpt limit", "no-eligible-context": "no eligible safe context" }[item.excerpt.reason]) : "unsupported"}.</p>}
-      {item.excerpt.state === "ready" && (item.excerpt.matchClippedBefore || item.excerpt.matchClippedAfter) && <small>The highlighted match is clipped; the link opens the full original location.</small>}
-      <small>{item.confirmation === "retained-unconfirmed" ? "Retained, unconfirmed location" : "Observed location"} · {item.provenance.origin === "contributed" ? "Supplier recognition" : "Native recognition"} · {item.provenance.confidence} confidence · {item.provenance.recognition.basis}</small>
-      {item.provenance.authoredHref && <UrlLink href={item.provenance.authoredHref}>Authored destination</UrlLink>}
-    </> : <p>{item.kind === "unsupported" ? "Evidence format unsupported; this claim is still included." : item.reason === "legacy" ? "Legacy claim: no collected location or excerpt." : item.reason === "producer-no-evidence" ? "This producer supplied a claim without location evidence." : "Location evidence has not been collected yet."}</p>}
+  if (item.kind !== "occurrence") {
+    const note = item.kind === "unsupported" ? "This mention uses a newer format; it is still counted." : item.reason === "legacy" ? "Recorded by the older Thread Links feature; no sentence was kept." : item.reason === "producer-no-evidence" ? "Recorded without a location." : "Location not collected yet.";
+    return <article className="mentions__row mentions__row--claim">
+      <p className="mentions__muted">{note}</p>
+      {href ? <UrlLink href={href} className="mentions__open" aria-label="Original message">Open <Icon name="ArrowUpRight" aria-hidden /></UrlLink> : sourceUrl && <UrlLink href={sourceUrl} className="mentions__open" aria-label="Open source">Open <Icon name="ArrowUpRight" aria-hidden /></UrlLink>}
+    </article>;
+  }
+  const role = item.locator.role === "user" ? "user" : "assistant";
+  const linkName = `${role === "user" ? "User" : "Assistant"} message ${item.locator.messageSeq}`;
+  const how = `${item.confirmation === "retained-unconfirmed" ? "Retained, not reconfirmed on the last scan" : "Seen on the last scan"} · ${item.provenance.origin === "contributed" ? "recognized by a plugin" : "recognized by BB"} · ${item.provenance.confidence} confidence · ${item.provenance.recognition.basis}`;
+  const shown = parts && item.excerpt.state === "ready" ? excerptDisplay(parts) : null;
+  return <article className="mentions__row" title={how}>
+    <span className={`mentions__chip mentions__chip--${role}`}>{role === "user" ? "You" : "Agent"}</span>
+    <div className="mentions__body">
+      {shown && item.excerpt.state === "ready" ? <p className="mentions__excerpt">
+        {item.excerpt.clippedBefore && <span aria-label="Excerpt clipped before">…</span>}{shown.before}<mark>{shown.match}</mark>{shown.after}{item.excerpt.clippedAfter && <span aria-label="Excerpt clipped after">…</span>}
+      </p> : <p className="mentions__muted">{item.excerpt.state === "unavailable" ? EXCERPT_UNAVAILABLE[item.excerpt.reason] ?? "Sentence unavailable." : "Sentence unavailable."}</p>}
+      {item.confirmation === "retained-unconfirmed" && <span className="mentions__chip mentions__chip--warn">Not reconfirmed</span>}
+    </div>
+    <span className="mentions__actions">
+      {href ? <UrlLink href={href} className="mentions__icon" aria-label={linkName} title={`Open ${linkName.toLowerCase()}`}><Icon name="ArrowUpRight" aria-hidden /></UrlLink>
+        : sourceUrl ? <UrlLink href={sourceUrl} className="mentions__icon" aria-label="Open source" title="Exact message unavailable; open the thread"><Icon name="ArrowUpRight" aria-hidden /></UrlLink> : null}
+      {item.provenance.authoredHref && <UrlLink href={item.provenance.authoredHref} className="mentions__icon" aria-label="Authored destination" title="Open the link as written"><Icon name="Link" fallback="ArrowUpRight" aria-hidden /></UrlLink>}
+    </span>
   </article>;
 }
 
@@ -787,21 +843,50 @@ function MentionsPanel({ subPath }: PluginNavPanelProps) {
     } else setLookup(null);
     return () => { ++generation.current; flight.current?.abort(); };
   }, [route, resolve]);
+  const queryLabel = selection === null ? null : selection.query.kind === "authored-url" ? selection.query.href
+    : selection.query.target.provider === "url" ? selection.query.target.keys.href
+    : lookup?.options.find(option => JSON.stringify(option.query) === JSON.stringify(selection.query))?.label
+    ?? (selection.query.target.provider === "bb" ? selection.query.target.keys.thread ?? selection.query.target.keys.project : undefined);
+  const scopeLabel = selection === null ? null : selection.query.kind === "authored-url" ? "Exact authored URL" : selection.query.relation === "github-pr-family" ? "Recognized PR family" : "Exact resource";
+  const scopeHint = selection === null ? null : selection.query.kind === "authored-url" ? "Only mentions that wrote exactly this URL." : selection.query.relation === "github-pr-family" ? "The pull request and its reviews and comments, however they were written." : "Mentions of exactly this resource.";
   return <main className="mentions" aria-label="Mentions">
-    <h1>Mentions</h1>
-    <form onSubmit={event => { event.preventDefault(); resolve(text, mode); }}>
-      <label htmlFor={fieldId}>Find mentions of a resource or URL</label>
-      <input id={fieldId} value={text} onChange={event => setText(event.target.value)} placeholder="Paste a resource or URL" />
-      <label>Lookup mode <select value={mode} onChange={event => setMode(event.target.value === "exact-url" ? "exact-url" : "recognize")}><option value="recognize">Recognize</option><option value="exact-url">Exact URL</option></select></label>
-      <button type="submit" disabled={busy}>{busy ? "Resolving…" : "Find mentions"}</button>
+    <header className="mentions__intro">
+      <h1>Mentions</h1>
+      <p>Find every place a pull request, thread, file, or link was mentioned in BB conversations and briefs.</p>
+    </header>
+    <form className="mentions__search" onSubmit={event => { event.preventDefault(); resolve(text, mode); }}>
+      <label htmlFor={fieldId} className="cross-references__visually-hidden">Find mentions of a resource or URL</label>
+      <span className="mentions__field"><Icon name="Search" aria-hidden /><input id={fieldId} value={text} onChange={event => setText(event.target.value)} placeholder="Paste a PR link, #123, a thread, or any URL" /></span>
+      <label className="mentions__mode" title="Smart match understands PR links, #123, review links and thread mentions. Exact URL matches the literal text only.">
+        <span className="cross-references__visually-hidden">Lookup mode</span>
+        <select aria-label="Lookup mode" value={mode} onChange={event => setMode(event.target.value === "exact-url" ? "exact-url" : "recognize")}><option value="recognize">Smart match</option><option value="exact-url">Exact URL</option></select>
+      </label>
+      <button type="submit" className="mentions__submit" disabled={busy} aria-label="Find mentions">{busy ? "Searching…" : "Find"}</button>
     </form>
-    <p className="mentions__note">Recognize finds typed resources, including supported PR families. Exact URL searches the literal authored URL without merging aliases.</p>
-    {route.invalid && <p role="alert">This lookup route is invalid, unsupported or too large. Paste a supported resource or URL.</p>}
-    {error && <p role="alert">{error}</p>}
-    {lookup && <section aria-label="Lookup choices">
-      {lookup.state !== "ready" && <p role="status">{lookup.state === "ambiguous" ? "Choose the intended resource." : lookup.state === "incomplete" ? "Recognition is incomplete. Available choices may not cover every interpretation." : "No recognized resource. Try Exact URL for a supported URL."}</p>}
-      {lookup.options.length > 1 || lookup.state !== "ready" ? lookup.options.map((option, index) => <button key={index} type="button" onClick={() => choose(option)}>{option.label} · {option.basis}{option.query.kind === "resource" && option.query.relation === "github-pr-family" ? " · PR family" : option.query.kind === "authored-url" ? " · Exact authored URL" : " · Exact resource"}</button>) : null}
+    {route.invalid && <p className="mentions__notice mentions__notice--error" role="alert">This link to Mentions is invalid or too large. Paste what you are looking for above.</p>}
+    {error && <p className="mentions__notice mentions__notice--error" role="alert">{error}</p>}
+    {lookup && (lookup.options.length > 1 || lookup.state !== "ready") && <section className="mentions__choices" aria-label="Lookup choices">
+      <p role="status">{lookup.state === "ambiguous" ? "Choose the intended resource." : lookup.state === "incomplete" ? "Recognition is incomplete. Available choices may not cover every interpretation." : lookup.state === "unrecognized" ? "No recognized resource. Try Exact URL for a supported URL." : "Choose what to search for."}</p>
+      {lookup.options.map((option, index) => <button key={index} type="button" onClick={() => choose(option)}>
+        <span>{option.label} · {option.basis}</span>
+        <span className="mentions__chip">{option.query.kind === "resource" && option.query.relation === "github-pr-family" ? "PR family" : option.query.kind === "authored-url" ? "Exact URL" : "Exact resource"}</span>
+      </button>)}
     </section>}
-    {selection && <><p className="mentions__note">{selection.query.kind === "authored-url" ? selection.query.href : selection.query.target.provider === "url" ? selection.query.target.keys.href : selection.query.target.provider === "bb" ? selection.query.target.keys.thread ?? selection.query.target.keys.project : "Selected stored resource"}</p><p role="status">{selection.query.kind === "authored-url" ? "Exact authored URL" : selection.query.relation === "github-pr-family" ? "Recognized PR family" : "Exact resource"}</p><MentionResults selection={selection} /></>}
+    {selection === null && lookup === null && !busy && !route.invalid && !error && <section className="mentions__help" aria-label="How Mentions works">
+      <h2>How it works</h2>
+      <ul>
+        <li><strong>Paste anything you care about.</strong> A GitHub PR link, a short form like <code>owner/repo#123</code>, a BB thread, a file, or a web URL.</li>
+        <li><strong>Smart match finds every spelling.</strong> A PR includes its review and comment links, and <code>#123</code> written near a repository link.</li>
+        <li><strong>Results are grouped by thread.</strong> Each mention shows the sentence it appeared in; the arrow jumps to that exact message.</li>
+      </ul>
+      <p className="mentions__muted">Mentions come from conversations and thread briefs BB has scanned. You can also open this from the Mentions button on a page in BB's browser, or from any thread's References popup.</p>
+    </section>}
+    {selection && <section className="mentions__answer" aria-label="Search">
+      <header className="mentions__query">
+        <p className="mentions__query-label">{queryLabel ?? "Selected resource"}</p>
+        <span className="mentions__chip" title={scopeHint ?? undefined} role="status">{scopeLabel}</span>
+      </header>
+      <MentionResults selection={selection} />
+    </section>}
   </main>;
 }

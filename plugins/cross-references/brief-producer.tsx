@@ -128,11 +128,15 @@ function navigationInput(item:BriefMention):BriefNavigationInput {
 export function BriefMentionRow({item}:{item:BriefMention}){
  const owner=useContext(IntentContext),input=navigationInput(item),heading=item.locator.section.heading;
  const provenance=item.provenance.state==='safe'?{...item.provenance.value,basis:item.provenance.value.recognition.basis}:item.provenance.summary;
- return <article className="mentions__row brief-producer__mention">
-  <FileLink target={input.sourceFile} location={null} onClick={event=>owner?.primary(event,input)} onAuxClickCapture={()=>owner?.cancel()} onContextMenuCapture={()=>owner?.cancel()}>{heading===null?'Brief introduction':heading.state==='named'?heading.text||'Untitled heading':heading.display}</FileLink>
-  <p>Excerpt unavailable: Brief excerpts are not materialized.</p>
-  <small>{item.confirmation==='producer-attested'?'Producer-attested Brief snapshot':'Retained, unconfirmed Brief location'} · {provenance.origin==='contributed'?'Supplier':'Native'} recognition · {provenance.confidence} confidence · {provenance.basis}</small>
-  {item.provenance.state==='withheld'&&<p>{item.provenance.display}</p>}
-  {item.authoredUrl.state==='exact'?<UrlLink href={item.authoredUrl.href}>Authored destination</UrlLink>:item.authoredUrl.state==='withheld'?<p>{item.authoredUrl.display}</p>:null}
+ const how=`${item.confirmation==='producer-attested'?'From the current brief':'Kept from an earlier brief, not reconfirmed'} · ${provenance.origin==='contributed'?'recognized by a plugin':'recognized by BB'} · ${provenance.confidence} confidence · ${provenance.basis}`;
+ return <article className="mentions__row brief-producer__mention" title={how}>
+  <span className="mentions__chip mentions__chip--brief">Brief</span>
+  <div className="mentions__body">
+   <p className="mentions__excerpt">Under <FileLink target={input.sourceFile} location={null} className="mentions__brief-heading" onClick={event=>owner?.primary(event,input)} onAuxClickCapture={()=>owner?.cancel()} onContextMenuCapture={()=>owner?.cancel()}>{heading===null?'Brief introduction':heading.state==='named'?heading.text||'Untitled heading':heading.display}</FileLink></p>
+   {item.provenance.state==='withheld'&&<p className="mentions__muted">{item.provenance.display}</p>}
+   {item.authoredUrl.state==='withheld'&&<p className="mentions__muted">{item.authoredUrl.display}</p>}
+   {item.confirmation!=='producer-attested'&&<span className="mentions__chip mentions__chip--warn">Not reconfirmed</span>}
+  </div>
+  <span className="mentions__actions">{item.authoredUrl.state==='exact'&&<UrlLink href={item.authoredUrl.href} className="mentions__icon" aria-label="Authored destination" title="Open the link as written">↗</UrlLink>}</span>
  </article>;
 }
