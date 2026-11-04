@@ -2,8 +2,9 @@ import type { CanvasLease, CanvasRequest } from './canvas-owner.ts';
 
 /** Consumer-owned bridge. Abort fences immediately; passive cleanup or an
  * acknowledged root disposal proves absence. Neither onReady nor time proves it. */
-export function createPresentationLifetime(request: CanvasRequest, options: { signal: AbortSignal; current: () => boolean }) {
+export function createPresentationLifetime(request: CanvasRequest, options: { signal: AbortSignal; current: () => boolean; displayCurrent?: () => boolean }) {
   const bindings = new WeakMap<CanvasLease, object>();
+  const displayed = new WeakSet<CanvasLease>();
   const states = new WeakMap<CanvasLease, { mounts: number; absent: boolean }>();
   let attached = 0, rootHolds = 0, rootAbsent = false, stopped = false, queued = false;
   function state(lease: CanvasLease) {
@@ -41,6 +42,18 @@ export function createPresentationLifetime(request: CanvasRequest, options: { si
       bindings.set(lease, value); return value;
     },
     isActive(): boolean { return !stopped && !options.signal.aborted && options.current(); },
+    /** Physical/source continuity alone never admits a new or loading host. */
+    isDisplayCurrent(lease: CanvasLease): boolean {
+      const snapshot = request.getSnapshot();
+      return !stopped && !options.signal.aborted && !lease.signal.aborted && (options.displayCurrent ?? options.current)()
+        && snapshot.state === 'granted' && snapshot.lease === lease;
+    },
+    displayed(lease: CanvasLease): boolean { return displayed.has(lease); },
+    confirmDisplayed(lease: CanvasLease): void {
+      if (!stopped && !options.signal.aborted && options.current() && request.getSnapshot().state === 'granted'
+        && request.getSnapshot().lease === lease && !lease.signal.aborted) displayed.add(lease);
+    },
+    forgetDisplayed(lease: CanvasLease): void { displayed.delete(lease); },
     isCurrent(lease: CanvasLease): boolean {
       const snapshot = request.getSnapshot();
       return !stopped && !options.signal.aborted && !lease.signal.aborted && options.current()

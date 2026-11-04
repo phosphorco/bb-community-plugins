@@ -233,11 +233,11 @@ export default definePluginApp(app => {
         if (handle.current) handle.current.update(result.anchors, result.checked, scopeRows);
         else {
           const owner = runtime;
-          handle.current = mountGalleryPane(sentinel.current, threadId, result.anchors, (host, anchor, current, lifetime, actionScope) => {
-            const presentationRoot = owner.presentationRoot(lifetime, current);
+          handle.current = mountGalleryPane(sentinel.current, threadId, result.anchors, (host, anchor, current, lifetime, actionScope, displayCurrent) => {
+            const presentationRoot = owner.presentationRoot(lifetime, current, displayCurrent);
             const root = createRoot(host); let shown = false, selected = anchor, verified = true;
             const render = () => root.render(<TurnGallery anchor={selected} runtime={owner} sdk={sdk} navigate={navigate}
-              current={current} lifetime={lifetime} visible={shown} shell={host} demanded={verified} presentationRoot={presentationRoot} actionScope={actionScope} requestOpen={requestOpen} />);
+              current={current} displayCurrent={displayCurrent} lifetime={lifetime} visible={shown} shell={host} demanded={verified} presentationRoot={presentationRoot} actionScope={actionScope} requestOpen={requestOpen} />);
             render();
             return { update(nextAnchor: GalleryAnchor) { selected = nextAnchor; render(); },
               visible(next: boolean) { if (shown !== next) { shown = next; render(); } },

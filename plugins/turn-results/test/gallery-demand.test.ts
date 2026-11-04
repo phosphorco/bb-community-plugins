@@ -360,3 +360,26 @@ test('owned mutation overflow and hidden demand do not query native rows or inva
     f.pane.querySelectorAll = query;
   } finally { stop(); f.restore(); }
 });
+
+test('physical display witness survives same-turn sibling proof suspension but observed target or ancestor ABA permanently retires it', async t => {
+  for (const kind of ['same-turn-sibling', 'target-ABA', 'ancestor-ABA', 'identity-ABA', 'reparent']) await t.test(kind, async () => {
+    const f = fixture(2); let action = () => false, display = () => false, signal!: AbortSignal, disposals = 0;
+    const anchor: GalleryAnchor = { threadId: 'thread', turnId: 'turn', rowId: 'opaque-row-0', sourceSeqStart: 3,
+      sourceSeqEnd: 5, turnSeqStart: 1, turnSeqEnd: 5, historySnapshot: 'A' };
+    const handle = mountGalleryPane(f.sentinel, 'thread', [anchor], (_host, _anchor, current, lifetime, _scope, physical) => {
+      action = current; display = physical; signal = lifetime; return { dispose() { disposals++; } };
+    }, [{ id: 'opaque-row-0', turnId: 'turn' }, { id: 'opaque-row-1', turnId: 'turn' }]);
+    try {
+      await tick(); handle.invalidate(['opaque-row-1']); assert.equal(action(), false); assert.equal(display(), true);
+      if (kind === 'same-turn-sibling') f.rows[1]!.remove();
+      if (kind === 'target-ABA') { const parent = f.rows[0]!.parentElement!; f.rows[0]!.remove(); parent.append(f.rows[0]!); }
+      if (kind === 'ancestor-ABA') { const list = f.pane.querySelector('[data-timeline-row-list]')!; list.remove(); f.pane.prepend(list); }
+      if (kind === 'identity-ABA') { f.rows[0]!.dataset.timelineRowId = 'other'; f.rows[0]!.dataset.timelineRowId = anchor.rowId; }
+      if (kind === 'reparent') { const wrapper = document.createElement('div'); f.pane.querySelector('[data-timeline-row-list]')!.append(wrapper); wrapper.append(f.rows[0]!); }
+      await tick(); await tick();
+      assert.equal(display(), kind === 'same-turn-sibling'); assert.equal(signal.aborted, kind !== 'same-turn-sibling');
+      assert.equal(disposals, kind === 'same-turn-sibling' ? 0 : 1);
+      if (kind === 'same-turn-sibling') { handle.update([{ ...anchor, historySnapshot: 'B' }]); assert.equal(action(), true); assert.equal(display(), true); }
+    } finally { await handle.dispose(); f.restore(); }
+  });
+});

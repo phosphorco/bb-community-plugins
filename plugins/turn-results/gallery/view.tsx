@@ -107,12 +107,13 @@ function visibleCardTitle(title: string): string {
   return prefix.trimEnd() + '…';
 }
 export function ResultCard({ row, runtime, sdk, navigate, current, lifetime, presentationRoot, mode = 'docked', customEnabled = true,
-  actionScope, requestOpen, currentRow, watchCurrent, readAfter, sourceChoice = false }: {
+  actionScope, requestOpen, currentRow, watchCurrent, readAfter, sourceChoice = false, displayCurrent = current }: {
   row: GalleryObservation; runtime: GalleryRuntime; sdk: Sdk; navigate: BbNavigate; current(): boolean; lifetime: AbortSignal;
   presentationRoot?: GalleryPresentationRoot | undefined; mode?: 'docked' | 'full'; customEnabled?: boolean;
   actionScope?: GalleryActionScope | undefined; requestOpen?: GalleryOpenPort | undefined;
   readAfter?: { seq: number; key: string } | undefined; sourceChoice?: boolean;
   currentRow?: (() => GalleryObservation | null) | undefined; watchCurrent?: ((changed: () => void) => () => void) | undefined;
+  displayCurrent?: (() => boolean) | undefined;
 }) {
   const site = useRef<CardSite | null>(null);
   const card = useRef<HTMLElement>(null), operation = useRef<OpenOperation | null>(null);
@@ -221,7 +222,9 @@ export function ResultCard({ row, runtime, sdk, navigate, current, lifetime, pre
     : destination ? <button className="tr-canvas tr-data-action" onClick={open} aria-label={openName}>{content}</button>
       : <div className="tr-canvas tr-data-action">{content}</div>;
   return <article ref={card} className="tr-card" data-result-key={row.key}>
-    <PresentationCanvas row={row} runtime={runtime} sdk={sdk} navigate={navigate} current={current} lifetime={lifetime}
+    <PresentationCanvas row={row} runtime={runtime} sdk={sdk} navigate={navigate} current={current} displayCurrent={displayCurrent}
+      bindingCurrent={() => { const latest = currentRow ? currentRow() : row; return Boolean(latest && !latest.sourceExpired && !latest.retracted
+        && !latest.unresolved && fact && openFingerprint(latest) === fact); }} lifetime={lifetime}
       presentationRoot={presentationRoot} mode={mode} enabled={customEnabled} site={site} fallback={fallback} />
     <div className="tr-caption"><span>{value?.fallback.kind !== 'image' && title === caption ? null : caption}</span><div>
       {mode === 'docked' && value?.presentation && <button ref={expandButton} onClick={full} className="tr-expand-icon" aria-label={`Expand ${title || caption}`} title={`Expand ${title || caption}`}>
@@ -234,12 +237,14 @@ export function ResultCard({ row, runtime, sdk, navigate, current, lifetime, pre
     {openStatus && <small className="tr-freshness" role="status" data-turn-result-open-status="">{openStatus}</small>}
   </article>;
 }
-function PresentationCanvas({ row, runtime, sdk, navigate, current, lifetime, presentationRoot, mode, enabled, site, fallback }: {
+function PresentationCanvas({ row, runtime, sdk, navigate, current, displayCurrent, bindingCurrent, lifetime, presentationRoot, mode, enabled, site, fallback }: {
   row: GalleryObservation; runtime: GalleryRuntime; sdk: Sdk; navigate: BbNavigate; current(): boolean; lifetime: AbortSignal;
+  displayCurrent(): boolean;
+  bindingCurrent(): boolean;
   presentationRoot?: GalleryPresentationRoot | undefined; mode: 'docked' | 'full'; enabled: boolean;
   site: { current: CardSite | null }; fallback: React.ReactNode;
 }) {
-  const container = useRef<HTMLDivElement>(null), latest = useRef({ current, row, enabled });
+  const container = useRef<HTMLDivElement>(null), latest = useRef({ current, displayCurrent, bindingCurrent, row, enabled });
   const ownedSite = useRef<PresentationLifetime | null>(null);
   const [scope, setScope] = useState<PresentationLifetime | null>(null), [retry, setRetry] = useState(0);
   const [fallbackFocused, setFallbackFocused] = useState(false);
@@ -247,19 +252,22 @@ function PresentationCanvas({ row, runtime, sdk, navigate, current, lifetime, pr
   const [size, setSize] = useState({ maxWidth: 320, maxHeight: 240, preferredHeight: 240 });
   const readyPlugins = useSelector(runtime.readyOwners), dialogs = useSelector(runtime.dialogSites);
   const presentation = row.resolution?.presentation;
-  const authorityKey = canonicalJson([enabled, current(), row.owner, row.identity, row.resolution?.revision ?? null, presentation ?? null]);
+  const authorityKey = canonicalJson([enabled, displayCurrent(), row.owner, row.identity, row.resolution?.revision ?? null, presentation ?? null]);
   const [committedAuthority, setCommittedAuthority] = useState<string | null>(null);
   // Public host availability is calculated during render. Publish a committed
   // authority change before allowing that calculation to reuse this site; a
   // layout-ref update alone provides no subsequent render on unchanged recovery.
-  useLayoutEffect(() => { latest.current = { current, row, enabled }; setCommittedAuthority(authorityKey); });
+  useLayoutEffect(() => { latest.current = { current, displayCurrent, bindingCurrent, row, enabled }; setCommittedAuthority(authorityKey); });
   useLayoutEffect(() => {
     const node = container.current;
     if (!presentation || !node || lifetime.aborted) return;
-    const root = presentationRoot ?? runtime.presentationRoot(lifetime, () => latest.current.current());
+    const root = presentationRoot ?? runtime.presentationRoot(lifetime, () => latest.current.current(), () => latest.current.displayCurrent());
     const key = canonicalJson([root.id, row.key]);
     const owned = root.site(row.key, { visible: false, focused: false, dialog: mode === 'full', order: root.id, activation: 0 }, () =>
-      latest.current.enabled && latest.current.current() && runtime.isReadyOwner(latest.current.row.owner)
+      latest.current.enabled && latest.current.current() && latest.current.bindingCurrent() && runtime.isReadyOwner(latest.current.row.owner)
+      && lookupPresentation(latest.current.row.owner, latest.current.row.resolution?.presentation?.schema ?? '')?.methods.length === 0
+      && (mode === 'full' || runtime.dialogSites.state.active !== key && runtime.dialogSites.state.pending !== key), () =>
+      latest.current.enabled && latest.current.displayCurrent() && latest.current.bindingCurrent() && runtime.isReadyOwner(latest.current.row.owner)
       && lookupPresentation(latest.current.row.owner, latest.current.row.resolution?.presentation?.schema ?? '')?.methods.length === 0
       && (mode === 'full' || runtime.dialogSites.state.active !== key && runtime.dialogSites.state.pending !== key));
     if (!owned) return;
@@ -326,10 +334,11 @@ function PresentationCanvas({ row, runtime, sdk, navigate, current, lifetime, pr
 interface LayoutMemory { columns: number; spans: Map<string, { revision: string; width: number; height: number }> }
 // Geometry belongs to this exact physical shell and resolved source revision.
 const layouts = new WeakMap<HTMLElement, LayoutMemory>();
-export function TurnGallery({ anchor, runtime, sdk, navigate, current, lifetime, visible = true, shell, demanded = true, presentationRoot, actionScope, requestOpen }: {
+export function TurnGallery({ anchor, runtime, sdk, navigate, current, lifetime, visible = true, shell, demanded = true, presentationRoot, actionScope, requestOpen, displayCurrent = current }: {
   anchor: GalleryAnchor; runtime: GalleryRuntime; sdk: Sdk; navigate: BbNavigate; current(): boolean;
   lifetime: AbortSignal; visible?: boolean; shell?: HTMLElement | undefined; demanded?: boolean; presentationRoot?: GalleryPresentationRoot | undefined;
   actionScope?: GalleryActionScope | undefined; requestOpen?: GalleryOpenPort | undefined;
+  displayCurrent?: (() => boolean) | undefined;
 }) {
   const [resource, setResource] = useState<ReturnType<GalleryRuntime['retain']> | null>(null);
   const localLayout = useRef<LayoutMemory>({ columns: 1, spans: new Map() });
@@ -345,12 +354,13 @@ export function TurnGallery({ anchor, runtime, sdk, navigate, current, lifetime,
   }, [runtime, anchor.threadId, anchor.turnId, anchor.turnSeqStart, anchor.turnSeqEnd, lifetime, visible]);
   useLayoutEffect(() => { resource?.visible(demanded); }, [resource, demanded]);
   return resource && !resource.capacity ? <GalleryContents resource={resource} runtime={runtime} sdk={sdk} navigate={navigate} current={current} lifetime={lifetime}
-    memory={memory} shell={shell} presentationRoot={presentationRoot} actionScope={actionScope} requestOpen={requestOpen} /> : null;
+    displayCurrent={displayCurrent} memory={memory} shell={shell} presentationRoot={presentationRoot} actionScope={actionScope} requestOpen={requestOpen} /> : null;
 }
-function GalleryContents({ resource, runtime, sdk, navigate, current, lifetime, memory, shell, presentationRoot, actionScope, requestOpen }: {
+function GalleryContents({ resource, runtime, sdk, navigate, current, displayCurrent, lifetime, memory, shell, presentationRoot, actionScope, requestOpen }: {
   resource: ReturnType<GalleryRuntime['retain']>; runtime: GalleryRuntime; sdk: Sdk; navigate: BbNavigate;
   current(): boolean; lifetime: AbortSignal; memory: LayoutMemory; shell?: HTMLElement | undefined; presentationRoot?: GalleryPresentationRoot | undefined;
   actionScope?: GalleryActionScope | undefined; requestOpen?: GalleryOpenPort | undefined;
+  displayCurrent(): boolean;
 }) {
   const state = useSelector(resource.store), container = useRef<HTMLElement>(null);
   const rows = projectResults(state.rows), hasContent = rows.length > 0;
@@ -382,6 +392,8 @@ function GalleryContents({ resource, runtime, sdk, navigate, current, lifetime, 
           {result.kind === 'single' ? <ResultCard row={result.row} runtime={runtime} sdk={sdk} navigate={navigate}
             current={() => current() && resource.store.state.rows.some(row => row.key === result.row.key && row.owner === result.row.owner && canonicalJson(row.identity) === canonicalJson(result.row.identity)
               && canonicalJson(row.resolution?.revision ?? null) === canonicalJson(result.row.resolution?.revision ?? null))}
+            displayCurrent={() => { const fact = openFingerprint(result.row); return Boolean(fact && displayCurrent() && !result.row.sourceExpired && !result.row.retracted && !result.row.unresolved
+              && resource.store.state.rows.some(row => row.key === result.row.key && openFingerprint(row) === fact)); }}
             lifetime={lifetime} presentationRoot={presentationRoot} actionScope={actionScope} requestOpen={requestOpen}
             readAfter={state.bindings?.[result.row.key]?.after ?? undefined}
             currentRow={() => resource.store.state.rows.find(row => row.key === result.row.key && row.owner === result.row.owner) ?? null}

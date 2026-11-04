@@ -44,9 +44,9 @@ async function fixture() {
       { schema, methods: [], decode: data => data, load });
     disposers.push(dispose); return dispose;
   }
-  function scope(key: string, order: number, dialog = false) {
+  function scope(key: string, order: number, dialog = false, authority = { current: () => true, displayCurrent: () => true }) {
     const controller = new AbortController(), request = owner.request(key, priority(order, dialog));
-    const lifetime = createPresentationLifetime(request, { signal: controller.signal, current: () => true });
+    const lifetime = createPresentationLifetime(request, { signal: controller.signal, ...authority });
     scopes.push(lifetime); return { lifetime, controller, request };
   }
   async function render(children: ReactNode) { await act(async () => { root.render(children); await tick(); }); }
@@ -240,4 +240,66 @@ test('public generic failure fallback and explicit retry preserve data and use a
     assert.notEqual(s.request.getSnapshot().lease, lease); assert.match(f.dom.window.document.body.textContent!, /Recovered pure card/);
     assert.doesNotMatch(f.dom.window.document.body.textContent!, /Hosted view failed/); assert.equal(ready, 1); assert.equal(f.counts().rpc, 0);
   } finally { console.error = originalError; await f.dispose(); }
+});
+
+test('already-ready frame keeps exact lease, DOM and focus through action-proof suspension, with captured callbacks refused', async () => {
+  const f = await fixture(); let current = true, physical = true;
+  try {
+    f.register(); const s = f.scope('continuous', 0, false, { current: () => current && physical, displayCurrent: () => physical });
+    await f.render(f.canvas(s)); const lease = s.request.getSnapshot().lease!, node = f.dom.window.document.querySelector<HTMLElement>('[data-canvas]')!;
+    node.tabIndex = 0; node.focus(); const old = f.captured.at(-1)!;
+    assert.equal(s.lifetime.displayed(lease), true);
+    current = false; await f.render(f.canvas(s));
+    assert.equal(s.request.getSnapshot().lease, lease); assert.equal(lease.signal.aborted, false);
+    assert.equal(f.dom.window.document.querySelector('[data-canvas]'), node); assert.equal(f.dom.window.document.activeElement, node);
+    assert.equal(f.counts().setups, 1); assert.equal(f.counts().cleanups, 0);
+    old.navigate.toThread('thread'); old.navigate.openUrl('https://example.com'); old.requestFull!(); old.refresh!();
+    assert.equal(f.counts().navigation, 0); assert.equal(f.counts().rpc, 0);
+    assert.equal(s.lifetime.isCurrent(lease), false); assert.equal(s.lifetime.isDisplayCurrent(lease), true);
+    current = true; await f.render(f.canvas(s)); assert.equal(s.request.getSnapshot().lease, lease);
+    f.captured.at(-1)!.navigate.toThread('thread'); assert.equal(f.counts().navigation, 1);
+    physical = false; await f.render(f.canvas(s)); assert.equal(lease.signal.aborted, true); assert.equal(f.counts().live, 0);
+    old.navigate.toThread('stale'); assert.equal(f.counts().navigation, 1);
+  } finally { await f.dispose(); }
+});
+
+test('loading and fifth queued frames cannot gain continuity or new admission while proof is pending', async () => {
+  const f = await fixture(); let current = true, release!: (view: PresentationComponent) => void;
+  try {
+    f.register(() => new Promise(resolve => { release = resolve; }));
+    const loading = f.scope('loading', 0, false, { current: () => current, displayCurrent: () => true });
+    await f.render(f.canvas(loading)); const old = loading.request.getSnapshot().lease!;
+    assert.equal(loading.lifetime.displayed(old), false); current = false;
+    await f.render(f.canvas(loading)); assert.equal(old.signal.aborted, true); assert.equal(f.owner.counts().occupied, 0);
+    await act(async () => { release(() => h('div', { 'data-late': '' }, 'late')); await tick(); });
+    await f.render(f.canvas(loading)); assert.equal(f.dom.window.document.querySelector('[data-late]'), null);
+    assert.equal(loading.request.getSnapshot().lease, null);
+    loading.lifetime.dispose(); f.register();
+    const four = Array.from({ length: 4 }, (_, i) => f.scope(`held/${i}`, i));
+    const fifth = f.scope('fifth', 4, false, { current: () => current, displayCurrent: () => true });
+    await f.render([...four, fifth].map(s => f.canvas(s)));
+    assert.equal(f.counts().live, 4); assert.equal(fifth.request.getSnapshot().state, 'queued');
+    await act(async () => { four[0]!.controller.abort(); await tick(); });
+    assert.equal(f.counts().live, 3); assert.equal(fifth.request.getSnapshot().lease, null);
+    current = true; await f.render([...four.slice(1), fifth].map(s => f.canvas(s)));
+    assert.equal(f.counts().live, 4); assert.equal(fifth.request.getSnapshot().state, 'granted'); assert.equal(f.counts().peak, 4);
+  } finally { release?.(() => h('div')); await f.dispose(); }
+});
+
+test('paused frame still retires on source readiness, immutable revision or realm replacement; no new admission until fresh proof', async () => {
+  const f = await fixture(); let current = true;
+  try {
+    f.register(); const s = f.scope('revocation', 0, false, { current: () => current, displayCurrent: () => true });
+    await f.render(f.canvas(s)); let lease = s.request.getSnapshot().lease!;
+    current = false; await f.render(f.canvas(s)); assert.equal(s.request.getSnapshot().lease, lease);
+    await f.render(f.canvas(s, { readyPlugins: new Set() })); assert.equal(lease.signal.aborted, true); assert.equal(f.counts().live, 0);
+    await f.render(f.canvas(s)); assert.equal(f.counts().live, 0);
+    current = true; await f.render(f.canvas(s)); lease = s.request.getSnapshot().lease!;
+    current = false; await f.render(f.canvas(s, { revision: 'r2' })); assert.equal(lease.signal.aborted, true); assert.equal(f.counts().live, 0);
+    current = true; await f.render(f.canvas(s, { revision: 'r2' })); lease = s.request.getSnapshot().lease!;
+    current = false; await f.render(f.canvas(s, { revision: 'r2' }));
+    await act(async () => { f.register(); await tick(); });
+    assert.equal(lease.signal.aborted, true); assert.equal(f.counts().live, 0); assert.equal(s.request.getSnapshot().lease, null);
+    current = true; await f.render(f.canvas(s, { revision: 'r2' })); assert.equal(f.counts().live, 1);
+  } finally { await f.dispose(); }
 });

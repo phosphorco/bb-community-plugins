@@ -26,14 +26,17 @@ export function HostedCanvas(props: HostedCanvasProps) {
   }, [request, host.stamp.pluginId, host.stamp.schema]);
   const entry = useSyncExternalStore(subscribeEntry,
     () => lookupPresentation(host.stamp.pluginId, host.stamp.schema), () => undefined);
-  const available = entry !== undefined && host.readyPlugins.has(host.stamp.pluginId) && lifetime.isActive();
   // Data is immutable at a source revision. Identity/stamp/revision/retry/mode
   // changes get a new reservation; size alone is an inexpensive resize.
   const key = JSON.stringify([host.identity, host.stamp, host.revision ?? null, host.retryKey ?? 0, host.mode]);
   const lease = snapshot.lease;
   const binding = lease ? lifetime.capture(lease, { entry, key, sdk: host.sdk }) : null;
+  const bound = binding?.entry === entry && binding?.key === key && binding?.sdk === host.sdk;
+  const sourceAvailable = entry !== undefined && host.readyPlugins.has(host.stamp.pluginId);
+  const continuity = lease !== null && bound && lifetime.displayed(lease) && lifetime.isDisplayCurrent(lease);
+  const available = sourceAvailable && (lifetime.isActive() || continuity);
   const show = lease !== null && snapshot.state === 'granted' && available
-    && binding?.entry === entry && binding?.key === key && binding?.sdk === host.sdk && lifetime.isCurrent(lease);
+    && bound && (lifetime.isCurrent(lease) || continuity);
   useLayoutEffect(() => {
     request.setAvailable(available);
     if (snapshot.state === 'granted' && available && !show) request.restart();
@@ -53,8 +56,14 @@ export function HostedCanvas(props: HostedCanvasProps) {
     },
     ...(host.requestFull ? { requestFull: () => { if (current()) host.requestFull!(); } } : {}),
     ...(host.refresh ? { refresh: () => { if (current()) host.refresh!(); } } : {}),
-    ...(host.onReady ? { onReady: () => { if (current()) host.onReady!(); } } : {}),
-    ...(host.onDiagnostic ? { onDiagnostic: diagnostic => { if (current()) host.onDiagnostic!(diagnostic); } } : {}),
+    onReady: () => {
+      if (current()) { lifetime.confirmDisplayed(lease); host.onReady?.(); }
+    },
+    onDiagnostic: diagnostic => {
+      if (lifetime.isDisplayCurrent(lease) && lookupPresentation(host.stamp.pluginId, host.stamp.schema) === binding?.entry) {
+        lifetime.forgetDisplayed(lease); host.onDiagnostic?.(diagnostic);
+      }
+    },
   };
   return createElement(MountedHost, { key: lease.id, lifetime, lease }, createElement(PresentationHost, guarded));
 }

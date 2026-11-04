@@ -268,7 +268,7 @@ export function observeGalleryDemand(sentinel: HTMLElement, changed: (ids: strin
  * measured, inert owned shells on still-mounted rows. No native styles/hooks.
  * Exact row reuse aborts input authority synchronously before deferred unmount. */
 export function mountGalleryPane(sentinel: HTMLElement, threadId: string,
-  initialAnchors: readonly GalleryAnchor[], mount: (host: HTMLElement, anchor: GalleryAnchor, current: () => boolean, lifetime: AbortSignal, actionScope: GalleryActionScope) => GalleryRoot,
+  initialAnchors: readonly GalleryAnchor[], mount: (host: HTMLElement, anchor: GalleryAnchor, current: () => boolean, lifetime: AbortSignal, actionScope: GalleryActionScope, displayCurrent: () => boolean) => GalleryRoot,
   initialScopeRows?: readonly ScopeRow[]) {
   let anchors = initialAnchors;
   const scopeMap = (rows: readonly ScopeRow[] | undefined) => {
@@ -293,7 +293,8 @@ export function mountGalleryPane(sentinel: HTMLElement, threadId: string,
   const retiring = new Set<Promise<void>>();
   const invalid = new WeakSet<GalleryAnchor>();
   const roots = new Map<string, { anchor: GalleryAnchor; row: HTMLElement; host: HTMLElement; controller: AbortController; root: GalleryRoot; validity: { current: boolean };
-    actionToken: object; actionCapture: { touched(records: readonly MutationRecord[]): boolean } | null }>();
+    actionToken: object; actionCapture: { touched(records: readonly MutationRecord[]): boolean } | null;
+    physicalTouched(records: readonly MutationRecord[]): boolean }>();
   const shells = new Map<string, { row: HTMLElement; host: HTMLElement; ready: boolean }>();
   const own = () => active && owners.get(pane) === handle && sentinel.isConnected && sentinel.closest('[data-thread-window]') === pane;
   function retire(key: string, keepShell = false) {
@@ -354,8 +355,31 @@ export function mountGalleryPane(sentinel: HTMLElement, threadId: string,
       host.dataset.sourceTurn = anchor.turnId; host.dataset.sourceRow = anchor.rowId;
       if (host.parentElement !== next) next.append(host);
       const validity = { current: true };
-      const current = () => own() && validity.current && !controller.signal.aborted && host.isConnected && host.parentElement === next
-        && next.dataset.timelineRowId === anchor.rowId && next.closest('[data-thread-window]') === pane;
+      const physicalChain: Element[] = []; let ancestor: Element | null = next;
+      while (ancestor && ancestor !== pane && physicalChain.length < 32) { physicalChain.push(ancestor); ancestor = ancestor.parentElement; }
+      const physicalList = next.closest('[data-timeline-row-list]');
+      const current = () => validity.current && currentPhysical();
+      function physicalTouched(records: readonly MutationRecord[]) {
+        const native = records.filter(record => {
+          const target = record.target instanceof Element ? record.target : record.target.parentElement;
+          return !target?.closest(ownedSurface);
+        });
+        if (native.length > 64) return true;
+        const watched = [host, ...physicalChain, pane!]; let visited = 0;
+        for (const record of native) {
+          if (record.type === 'attributes' && watched.includes(record.target as Element)) return true;
+          if (record.type !== 'childList') continue;
+          for (const node of record.removedNodes) {
+            if (++visited > 128 || watched.some(element => node === element || node.contains(element))) return true;
+          }
+          for (const node of record.addedNodes) {
+            // The consumer's initial host insertion is not a native remount.
+            if (node === host) continue;
+            if (++visited > 128 || physicalChain.some(element => node === element || node.contains(element))) return true;
+          }
+        }
+        return false;
+      }
       const actionScope: GalleryActionScope = { capture() {
         const old = roots.get(anchor.turnId);
         if (!old || old.host !== host || document.hidden || !currentPhysical()) return null;
@@ -387,17 +411,23 @@ export function mountGalleryPane(sentinel: HTMLElement, threadId: string,
           && sameBoundary(old.anchor, boundary) };
       } };
       function currentPhysical() { return own() && !controller.signal.aborted && host.isConnected && host.parentElement === next
-        && next!.isConnected && next!.dataset.timelineRowId === anchor.rowId && next!.closest('[data-thread-window]') === pane; }
+        && next!.isConnected && next!.dataset.timelineRowId === anchor.rowId && next!.closest('[data-thread-window]') === pane
+        && physicalList?.getAttribute('data-timeline-row-list') === 'top-level'
+        && next!.closest('[data-timeline-row-list]') === physicalList
+        && physicalChain.every((element, i) => element.parentElement === (physicalChain[i + 1] ?? ancestor)); }
       let root: GalleryRoot;
-      try { root = mount(host, anchor, current, controller.signal, actionScope); }
+      try { root = mount(host, anchor, current, controller.signal, actionScope, () => ancestor === pane && currentPhysical()); }
       catch { controller.abort(); host.remove(); capacity = true; continue; }
-      roots.set(anchor.turnId, { anchor, row: next, host, controller, root, validity, actionToken: {}, actionCapture: null });
+      roots.set(anchor.turnId, { anchor, row: next, host, controller, root, validity, actionToken: {}, actionCapture: null, physicalTouched });
       root.visible?.(!document.hidden && (next.contains(document.activeElement) || intersects(next, pane!)));
       observer.observe(next);
     }
   }
   const observer = new IntersectionObserver(() => reconcile());
   const mutations = new MutationObserver(records => {
+    for (const [key, old] of roots) if (old.physicalTouched(records)) {
+      invalid.add(old.anchor); retire(key, true);
+    }
     // Structural history revokes a capture even after same-task remove/readd.
     // This is local to a captured root; no historical node/ID registry.
     for (const old of roots.values()) if (old.actionCapture?.touched(records)) { old.actionToken = {}; old.actionCapture = null; }

@@ -164,7 +164,7 @@ async function fixture(count = 6, mount = true, contribution = {}) {
     resolve(input) { return buildResolveOutput(input, input.items.map(() => ({ state: 'unavailable', reason: 'not used' }))); } });
   const sdk = { threads: { async timeline(input) {
     nativeCalls.push(input);
-    if (contribution.sameTurnClaims) return { rows: [{ id: 'opaque-0', threadId: 'thread', turnId: 'turn-0',
+    if (contribution.sameTurnClaims) return { rows: [...structuralRows, contribution.terminalRow ?? { id: 'opaque-0', threadId: 'thread', turnId: 'turn-0',
       kind: 'turn', status: 'completed', sourceSeqStart: 1, sourceSeqEnd: 5 }], completedTurnDisplay: 'collapse',
       timelinePage: { historySnapshot: 'public-snapshot-A', olderCursor: null } };
     return { rows: rows.map((row, i) => ({ id: `opaque-${i}`, threadId: 'thread', turnId: row.identity.ref.source.turnId,
@@ -536,20 +536,21 @@ test('Checking capacity preserves accepted queued debt; five-second deadline has
 });
 
 test('cancelled Checking stays declined until a later explicit Open; native refusal remains visible', async () => {
-  const f = await fixture(1, true, { fileRoute: true }); let release = () => {};
+  const f = await fixture(1, true, { fileRoute: true }); let release = () => {}, historyHeld = false;
   try {
     await until(() => f.stats().live === 1);
     const card = document.querySelector('[data-result-key="row-0"]');
-    const open = card.querySelector('.tr-open-icon');
+    const open = card.querySelector('.tr-open-icon'), frame = card.querySelector('[data-supplier]');
     const original = f.sdk.threads.timeline;
-    f.sdk.threads.timeline = async input => { await new Promise(resolve => { release = resolve; });
+    f.sdk.threads.timeline = async input => { historyHeld = true; await new Promise(resolve => { release = resolve; });
       const page = await original(input); return { ...page, timelinePage: { historySnapshot: 'genuinely-fresh-public-snapshot', olderCursor: null } }; };
     await act(async () => { document.querySelector('[data-timeline-row-id="opaque-0"] > button').firstChild.data = 'Native row changed'; await tick(10); });
     await act(async () => open.click());
     assert.equal(f.fileOpenCalls.length, 0, 'suspended authority cannot reach the public native port');
     assert.match(card.querySelector('[data-turn-result-open-status]')?.textContent ?? '', /Checking/);
     await act(async () => document.dispatchEvent(new f.dom.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true })));
-    await until(() => f.nativeCalls.length >= 1 && f.stats().live === 0);
+    await until(() => historyHeld && f.stats().live === 1);
+    assert.equal(card.querySelector('[data-supplier]'), frame, 'Checking cancellation does not replace the already-admitted frame');
     await settle(160); f.sdk.threads.timeline = original;
     await act(async () => { release(); await tick(); }); await until(() => f.stats().live === 1);
     assert.equal(f.fileOpenCalls.length, 0, 'fresh proof never replays a prior user gesture');
@@ -1027,6 +1028,11 @@ test('native fast stream preserves unchanged custom target and bounds first fres
     const target = document.querySelector('[data-timeline-row-id="opaque-0"] [data-supplier]');
     const shell = target.closest('[data-turn-results-gallery]'), lists = f.stats().listCalls, native = f.nativeCalls.length;
     const setups = f.stats().setups;
+    const timeline = f.sdk.threads.timeline; let completedToken = null;
+    f.sdk.threads.timeline = async input => {
+      const token = document.querySelector('[data-timeline-row-id="opaque-1"] > button').textContent;
+      const page = await timeline(input); completedToken = token; return page;
+    };
     let unchangedReads = 0; const original = f.sdk.plugins.callRpc;
     f.sdk.plugins.callRpc = args => { if (args.method === GALLERY_METHODS.read && args.input.turnId === 'turn-0') unchangedReads++; return original(args); };
     for (let i = 0; i < 8; i++) {
@@ -1037,7 +1043,9 @@ test('native fast stream preserves unchanged custom target and bounds first fres
     }
     assert.equal(f.stats().listCalls, lists, 'native history hints do not erase genuine ready membership');
     assert.equal(unchangedReads, 0, 'unrelated history proof cannot restart unchanged turn supplier/debt cursors');
-    await until(() => f.stats().live === 2);
+    // Mounted frames intentionally survive pending proof. Wait for the actual
+    // coalesced public read after the final hint before measuring idle silence.
+    await until(() => completedToken === 'Unrelated native token 7');
     assert.ok(f.stats().setups >= setups); assert.equal(f.stats().rpc, 0);
     const quietCalls = f.nativeCalls.length, quietLists = f.stats().listCalls;
     await settle(220); assert.equal(f.nativeCalls.length, quietCalls); assert.equal(f.stats().listCalls, quietLists);
@@ -1112,7 +1120,7 @@ test('exact native row mutation revokes custom callbacks before fresh proof; unl
   } finally { await f.dispose(); }
 });
 
-test('earlier public row of same proven turn invalidates its terminal custom host; unknown scope stays broad', async () => {
+test('earlier same-turn and unknown history revoke actions while preserving an admitted physical frame', async () => {
   const f = await fixture(2);
   try {
     await until(() => f.stats().live === 2);
@@ -1130,12 +1138,12 @@ test('earlier public row of same proven turn invalidates its terminal custom hos
     const before = f.navigation.length;
     await act(async () => { sibling.querySelector('button').firstChild.data = 'Earlier same-turn row changed'; await tick(10); });
     old.navigate.openUrl('https://fixture.invalid/stale-sibling'); assert.equal(f.navigation.length, before);
-    assert.equal(document.querySelector('[data-timeline-row-id="opaque-0"] [data-supplier]'), null);
+    assert.ok(document.querySelector('[data-timeline-row-id="opaque-0"] [data-supplier]'), 'history suspension retains the already-admitted immutable view');
     assert.equal(document.querySelector('[data-timeline-row-id="opaque-1"] [data-supplier]'), other);
     await until(() => f.stats().live === 2);
     const unknown = document.createElement('aside'); unknown.textContent = 'Native structural change';
     await act(async () => { document.querySelector('[data-thread-window]').append(unknown); await tick(10); });
-    assert.equal(f.stats().live, 0, 'unknown pane structure conservatively invalidates every docked boundary');
+    assert.equal(f.stats().live, 2, 'unknown history still revokes actions while unchanged physical immutable views remain painted');
     await until(() => f.stats().live === 2);
   } finally { await f.dispose(); }
 });
@@ -1888,4 +1896,85 @@ test('five custom claims share at most four canvases while queued fallback remai
     old.navigate.openUrl('https://fixture.invalid/stale'); assert.equal(f.navigation.length, 1);
     assert.ok(f.stats().peak <= 4); assert.equal(f.stats().rpc, 0);
   } finally { await f.dispose(); }
+});
+
+test('scroll-same-turn sibling windowing retains visual presentation while action proof revalidates', async()=>{
+ const result={state:'running',phases:[],history:[],publicRpc:[],cleanup:null};
+ const f=await fixture(1,true,{sameTurnClaims:3,nativeItems:true,terminalRow:{id:'opaque-0',threadId:'thread',turnId:'turn-0',kind:'conversation',role:'assistant',status:'completed',sourceSeqStart:3,sourceSeqEnd:5},structuralRows:[{id:'public-earlier-command',threadId:'thread',turnId:'turn-0',kind:'turn',status:'completed',sourceSeqStart:1,sourceSeqEnd:2}]});
+ const visible=node=>!!node&&f.dom.window.getComputedStyle(node).visibility!=='hidden';
+ const cards=()=>[...document.querySelectorAll('[data-result-key]')];
+ const rich=()=>cards().filter(card=>visible(card.querySelector('.tr-hosted'))&&card.querySelector('[data-supplier]')&&!card.querySelector('.tr-hosted').hasAttribute('inert'));
+ const snapshot=label=>{const v={label,rich:rich().length,fallback:cards().filter(card=>visible(card.querySelector('.tr-fallback'))).length,cards:cards().map(card=>({key:card.dataset.resultKey,hostInert:card.querySelector('.tr-hosted')?.hasAttribute('inert'),hostVisibility:card.querySelector('.tr-hosted')?.style.visibility,opener:!!card.querySelector('.tr-expand-icon')})),stats:f.stats()};result.phases.push(v);console.log('SCROLL_PHASE',JSON.stringify(v));return v;};
+ let release, released=false, releases=0;
+ const gate=new Promise(done=>{release=()=>{if(!released){released=true;releases++;done();}};});
+ const history=f.sdk.threads.timeline,rpc=f.sdk.plugins.callRpc;
+ let pending;
+ try{
+  await until(()=>cards().length===3&&rich().length===3&&f.stats().live===3);await settle(30);
+  const row=document.querySelector('[data-timeline-row-id="opaque-0"]'),shell=row.querySelector('[data-turn-results-gallery]'),pane=row.closest('[data-thread-window]');
+  const command=document.querySelector('[data-timeline-row-id="public-earlier-command"]');
+  assert.equal(command.parentElement.getAttribute('data-timeline-items'),'');
+  const originalCards=cards(),openers=originalCards.map(card=>card.querySelector('.tr-expand-icon')),frames=originalCards.map(card=>card.querySelector('[data-supplier]'));
+  const prior=[...f.captured],facts=JSON.stringify(f.rows()),lists=f.stats().listCalls,initialNative=f.nativeCalls.length;
+  assert.equal(document.activeElement.closest?.('.tr-fallback'),null);snapshot('initial-rich');
+  f.sdk.plugins.callRpc=async args=>{const out=await rpc(args);result.publicRpc.push({plugin:args.pluginId,method:args.method,state:out?.state??null});return out;};
+  f.sdk.threads.timeline=async input=>{
+   const call={threadId:input.threadId,beforeAnchorId:input.beforeAnchorId??null,completed:false,aborted:false};result.history.push(call);
+   let abort;
+   try{await Promise.race([gate,new Promise((_,reject)=>{abort=()=>reject(input.signal.reason??Error('aborted'));input.signal.addEventListener('abort',abort,{once:true});if(input.signal.aborted)abort();})]);input.signal.throwIfAborted();
+    const output=await history(input);call.completed=true;call.rows=structuredClone(output.rows);return output;
+   }catch(error){call.aborted=input.signal.aborted;throw error;}finally{input.signal.removeEventListener('abort',abort);}
+  };
+  // Exact native structural shape: one known nonterminal same-turn row is
+  // detached from the top-level items wrapper; final row and shell stay put.
+  await act(async()=>{command.remove();await tick();});
+  await until(()=>result.history.length===1);await settle();
+  pending=snapshot('fresh-history-held');assert.deepEqual(cards().map(card=>card.querySelector('[data-supplier]')),frames,'existing presenter DOM stays mounted');assert.equal(f.stats().setups,3);assert.equal(f.stats().cleanups,0);
+  assert.equal(row,document.querySelector('[data-timeline-row-id="opaque-0"]'));assert.equal(shell,row.querySelector('[data-turn-results-gallery]'));assert.equal(pane,row.closest('[data-thread-window]'));
+  assert.ok(row.isConnected&&shell.isConnected);assert.deepEqual(cards(),originalCards);assert.equal(command.isConnected,false);
+  const before=f.navigation.length;for(const props of prior)props.navigate.openUrl('https://fixture.invalid/old-before-revalidation');
+  await act(async()=>{openers[0].click();await tick();});
+  assert.equal(f.navigation.length,before,'captured public actions cannot navigate while native proof is suspended');assert.equal(document.querySelector('dialog'),null,'consumer Expand cannot act on suspended proof');
+  result.pendingActionsRefused=true;assert.equal(JSON.stringify(f.rows()),facts);assert.equal(f.stats().listCalls,lists);
+  await act(async()=>{release();await tick();});await until(()=>rich().length===3&&f.stats().live===3);
+  const recovered=snapshot('unchanged-proof-recovered');assert.deepEqual(cards().map(card=>card.querySelector('[data-supplier]')),frames);assert.equal(f.stats().setups,3);assert.equal(f.stats().cleanups,0);
+  assert.equal(result.history.length,1);assert.equal(result.history[0].completed,true);assert.equal(result.history[0].aborted,false);assert.equal(releases,1);
+  assert.equal(f.nativeCalls.length,initialNative+1);assert.deepEqual(cards(),originalCards);assert.equal(shell,row.querySelector('[data-turn-results-gallery]'));
+  cards().forEach((card,i)=>assert.equal(card.querySelector('.tr-expand-icon'),openers[i]));
+  assert.equal(JSON.stringify(f.rows()),facts);assert.equal(f.stats().listCalls,lists);assert.equal(result.publicRpc.filter(c=>c.method===METHODS.describe).length,0);assert.ok(f.stats().peak<=4);
+  const quiet={history:result.history.length,rpc:result.publicRpc.length};await settle(40);assert.deepEqual({history:result.history.length,rpc:result.publicRpc.length},quiet);
+  result.sameNative=true;result.sameShell=true;result.sameCards=3;result.sameOpeners=3;result.sourceFactsUnchanged=true;result.state='causal-result-captured';
+ }catch(error){result.error={message:error.message,stack:error.stack};throw error;}
+ finally{release();f.sdk.threads.timeline=history;f.sdk.plugins.callRpc=rpc;await f.dispose();result.cleanup=f.stats();}
+ assert.equal(pending.rich,3,'same visible immutable rich contents must remain painted during same-turn nonterminal windowing; action authority is suspended separately');
+ result.state='passed';
+});
+
+test('retained frame loses continuity for published source expiry before props commit and for actual source disable', async t => {
+  for (const change of ['expiry', 'disable']) await t.test(change, async () => {
+    const f = await fixture(1, true, { captureRuntime: true, nativeItems: true, sameTurnClaims: 1,
+      terminalRow: { id: 'opaque-0', threadId: 'thread', turnId: 'turn-0', kind: 'conversation', role: 'assistant', status: 'completed', sourceSeqStart: 3, sourceSeqEnd: 5 },
+      structuralRows: [{ id: 'public-command', threadId: 'thread', turnId: 'turn-0', kind: 'turn', status: 'completed', sourceSeqStart: 1, sourceSeqEnd: 2 }] });
+    const history = f.sdk.threads.timeline; let release = () => {}, calls = 0, lease;
+    try {
+      await until(() => f.stats().live === 1);
+      const old = f.captured.at(-1), card = document.querySelector('[data-result-key]'), frame = card.querySelector('[data-supplier]');
+      const gate = new Promise(resolve => { release = resolve; });
+      f.sdk.threads.timeline = async input => { calls++; await gate; input.signal.throwIfAborted(); return history(input); };
+      await act(async () => { document.querySelector('[data-timeline-row-id="public-command"]').remove(); await tick(); });
+      await until(() => calls === 1); assert.equal(card.querySelector('[data-supplier]'), frame);
+      if (change === 'expiry') {
+        lease = f.runtime().retain({ threadId: 'thread', turnId: 'turn-0', rowId: 'opaque-0', sourceSeqStart: 3, sourceSeqEnd: 5,
+          turnSeqStart: 1, turnSeqEnd: 5, historySnapshot: 'public-snapshot-A' }, false);
+        await act(async () => {
+          lease.store.setState(previous => ({ ...previous, rows: previous.rows.map(row => ({ ...row, sourceExpired: { epoch: 'fixture', sequence: 2 } })) }));
+          old.navigate.openUrl('https://fixture.invalid/expired-before-commit'); assert.equal(f.navigation.length, 0);
+        });
+      } else { f.enabled(false); await f.membership(); }
+      await until(() => f.stats().live === 0);
+      old.navigate.openUrl('https://fixture.invalid/retired-frame'); assert.equal(f.navigation.length, 0);
+      assert.equal(card.querySelector('.tr-hosted').style.visibility, 'hidden'); assert.ok(card.querySelector('.tr-fallback'));
+      assert.ok(f.stats().peak <= 4); assert.equal(f.stats().rpc, 0);
+    } finally { release(); f.sdk.threads.timeline = history; lease?.dispose(); await f.dispose(); }
+  });
 });

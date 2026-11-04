@@ -23,7 +23,7 @@ export interface TurnSnapshot { loaded?: boolean; next?: { seq: number; key: str
   rows: GalleryObservation[]; busy: boolean; continued: boolean; error: string | null; coverage: string }
 export interface GalleryPresentationRoot {
   readonly id: number;
-  site(key: string, priority: CanvasPriority, current: () => boolean): PresentationLifetime | null;
+  site(key: string, priority: CanvasPriority, current: () => boolean, displayCurrent?: () => boolean): PresentationLifetime | null;
   beginDisposal(): () => void;
   whenDrained(): Promise<void>;
 }
@@ -92,18 +92,19 @@ export function createGalleryRuntime(sdk: Sdk) {
     discoveryGeneration++; discoveryController?.abort(); discovering = null;
     sources = null; discoveryCursor = null; discoveryCapacity = false; descriptorDebt.clear(); publishReady(new Set());
   }
-  function presentationRoot(signal: AbortSignal, current: () => boolean): GalleryPresentationRoot {
+  function presentationRoot(signal: AbortSignal, current: () => boolean, displayCurrent = current): GalleryPresentationRoot {
     const id = ++rootId;
     const sites = new Map<PresentationLifetime, () => void>();
     let closing = false, finishRoot: (() => void) | null = null;
     let resolve: (() => void) | null = null, drain: Promise<void> | null = null;
     const check = () => { if (!sites.size && resolve) { const done = resolve; resolve = null; done(); } };
     return { id,
-      site(key, priority, siteCurrent) {
+      site(key, priority, siteCurrent, siteDisplayCurrent = siteCurrent) {
         if (!active || closing || signal.aborted) return null;
         const request = canvases.request(canonicalJson([id, key]), { ...priority, visible: false, focused: false, dialog: false });
         const scope = createPresentationLifetime(request, { signal,
-          current: () => active && !closing && current() && siteCurrent() });
+          current: () => active && !closing && current() && siteCurrent(),
+          displayCurrent: () => active && visible && !closing && displayCurrent() && siteDisplayCurrent() });
         request.setAvailable(false); // Only a committed public host can admit it.
         // A denied request owns no reservation; never retain it in a root map.
         if (request.getSnapshot().state === 'capacity' || request.getSnapshot().state === 'released') {
