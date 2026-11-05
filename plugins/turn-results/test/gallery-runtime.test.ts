@@ -7,7 +7,7 @@ import type { RegistrationPort } from '@phosphorco/bb-turn-results/bb';
 import { createGalleryRuntime, GALLERY_RUNTIME_LIMITS } from '../gallery/runtime.ts';
 import { GALLERY_METHODS } from '../gallery/rpc.ts';
 import type { GalleryAnchor } from '../gallery/anchors.ts';
-import type { StageRecord } from '../gallery/index.ts';
+import type { StageRecord, GalleryObservation } from '../gallery/index.ts';
 const tick = () => new Promise(resolve => setTimeout(resolve, 0));
 async function until(condition: () => boolean) { for (let i = 0; i < 500; i++) { if (condition()) return; await tick(); } assert.fail('Demand did not settle.'); }
 function anchor(threadId: string, turnId = 'turn', start = 1): GalleryAnchor {
@@ -580,4 +580,225 @@ test('uncancellable retained read holds occupancy, aborted priority cannot run l
     h.setHold(null); release(); await drainage; await until(() => h.runtime.stats().running === 0);
     assert.equal(h.runtime.stats().historyReads, 0); assert.equal(actionCalls, 0);
   } finally { release?.(); controller.abort(); lease.dispose(); h.dispose(); }
+});
+
+test('advertised public Describe membership skips nonparticipants but still requires fresh list and real descriptors', async () => {
+  const h = setup(5), original = h.sdk.plugins.callRpc, ids = Array.from({ length: 5 }, (_, i) => `source-${String(i).padStart(3, '0')}`);
+  const described: string[] = []; let metadataCalls = 0, listed = ids, disabled = '', invalid = '';
+  h.sdk.plugins.experimental_discoverRpc = async args => {
+    assert.equal(args?.method, METHODS.describe); metadataCalls++;
+    return [...ids, 'absent-owner', 'turn-results'].map(pluginId => ({ pluginId, method: METHODS.describe }));
+  };
+  h.sdk.plugins.list = async () => ({ plugins: [...listed.map(id => ({ id, enabled: id !== disabled, status: 'running' })),
+    ...Array.from({ length: 70 }, (_, i) => ({ id: `noise-${i}`, enabled: true, status: 'running' }))] });
+  h.sdk.plugins.callRpc = async args => {
+    if (args.method === METHODS.describe) { described.push(args.pluginId); if (args.pluginId === invalid) return args.outputSchema.parse({ version: -1 }); }
+    return original(args);
+  };
+  const lease = h.runtime.retain(anchor('advertised'));
+  try {
+    await until(() => h.sourceCalls.length === 5 && h.runtime.stats().running === 0);
+    assert.deepEqual(described, ids); assert.equal(metadataCalls, 1);
+    assert.equal(h.runtime.isReadyOwner('absent-owner'), false);
+    const idle = { calls: metadataCalls, descriptions: described.length, reads: h.reads.length };
+    await tick(); await tick(); assert.deepEqual({ calls: metadataCalls, descriptions: described.length, reads: h.reads.length }, idle);
+    // A stale advertised name cannot override fresh removal, disabling or a
+    // malformed genuine descriptor; reconnect uses new metadata/list admission.
+    listed = ids.slice(1); disabled = ids[1]!; invalid = ids[2]!;
+    h.runtime.invalidate(undefined, true);
+    await until(() => metadataCalls === 2 && h.runtime.stats().running === 0);
+    for (const id of ids.slice(0, 3)) assert.equal(h.runtime.isReadyOwner(id), false);
+    assert.deepEqual(described.slice(5), ids.slice(2));
+    listed = ids; disabled = ''; invalid = ''; h.runtime.invalidate(undefined, true);
+    await until(() => metadataCalls === 3 && h.runtime.stats().running === 0);
+    for (const id of ids) assert.equal(h.runtime.isReadyOwner(id), true);
+    assert.ok(described.every(id => ids.includes(id)), 'zero nonparticipant Describe calls across membership generations');
+  } finally { lease.dispose(); h.dispose(); }
+});
+
+for (const mode of ['unsupported', 'failure', 'malformed', 'overbound'] as const) test(`optional advertised membership ${mode} falls back to genuine bounded discovery`, async () => {
+  const h = setup(1), original = h.sdk.plugins.callRpc; let described = 0;
+  if (mode !== 'unsupported') h.sdk.plugins.experimental_discoverRpc = async () => {
+    if (mode === 'failure') throw Error('Unsupported RPC discovery');
+    if (mode === 'malformed') return [{ pluginId: 'INVALID ID', method: METHODS.describe }];
+    return Array.from({ length: 257 }, (_, i) => ({ pluginId: `listed-${i}`, method: METHODS.describe }));
+  };
+  h.sdk.plugins.callRpc = async args => { if (args.method === METHODS.describe) described++; return original(args); };
+  const lease = h.runtime.retain(anchor(`metadata-${mode}`));
+  try {
+    await until(() => h.sourceCalls.length === 1 && h.runtime.stats().running === 0);
+    assert.equal(described, 1); assert.equal(h.runtime.isReadyOwner('source-000'), true);
+  } finally { lease.dispose(); h.dispose(); }
+});
+
+test('valid empty advertised membership grants nothing; later genuine membership demand can discover', async () => {
+  const h = setup(1); let empty = true, metadata = 0;
+  h.sdk.plugins.experimental_discoverRpc = async () => { metadata++; return empty ? [] : [{ pluginId: 'source-000', method: METHODS.describe }]; };
+  const lease = h.runtime.retain(anchor('empty-membership'));
+  try {
+    await until(() => metadata === 1 && h.runtime.stats().running === 0);
+    assert.equal(h.runtime.isReadyOwner('source-000'), false); assert.equal(h.sourceCalls.length, 0);
+    await tick(); assert.equal(metadata, 1);
+    empty = false; h.runtime.invalidate(undefined, true);
+    await until(() => h.runtime.isReadyOwner('source-000') && h.runtime.stats().running === 0);
+    assert.equal(metadata, 2); assert.equal(h.sourceCalls.length, 1);
+  } finally { lease.dispose(); h.dispose(); }
+});
+
+test('ignored metadata/list cancellation retains actual lane and late old membership cannot regain readiness', async () => {
+  const h = setup(1), originalList = h.sdk.plugins.list;
+  let release!: () => void, entered = false, settled = false;
+  h.sdk.plugins.experimental_discoverRpc = async () => [{ pluginId: 'source-000', method: METHODS.describe }];
+  h.sdk.plugins.list = async () => {
+    entered = true; await new Promise<void>(done => { release = done; }); settled = true; return originalList();
+  };
+  const lease = h.runtime.retain(anchor('ignored-metadata'));
+  try {
+    await until(() => entered); h.hidden(true); await tick();
+    assert.equal(settled, false); assert.equal(h.runtime.stats().running, 1);
+    assert.equal(h.runtime.isReadyOwner('source-000'), false); assert.equal(h.sourceCalls.length, 0);
+    release(); await until(() => h.runtime.stats().running === 0);
+    assert.equal(h.runtime.isReadyOwner('source-000'), false);
+    h.sdk.plugins.list = originalList; h.sdk.plugins.experimental_discoverRpc = async () => [{ pluginId: 'source-000', method: METHODS.describe }];
+    h.hidden(false); await until(() => h.runtime.isReadyOwner('source-000') && h.runtime.stats().running === 0);
+    assert.equal(h.sourceCalls.length, 1);
+    lease.dispose(); h.runtime.dispose(); await h.runtime.whenDrained();
+    assert.equal(h.runtime.stats().running, 0); assert.equal(h.runtime.stats().queued, 0);
+  } finally { release?.(); lease.dispose(); h.dispose(); }
+});
+
+function prefixRow(i: number, padding = 0): GalleryObservation {
+  const source = { threadId: 'prefix', turnId: 'turn', eventId: `event-${i}`, seq: i + 1, itemId: `item-${i}`, eventType: 'item/completed' as const };
+  const identity: GalleryObservation['identity'] = { version: 1, ref: { source, member: 'result', kind: 'example/result' },
+    artifact: { provider: 'example', id: `artifact-${i}`, kind: 'image' }, specificity: 'typed',
+    evidence: { basis: 'native-completion', sites: [], targetUrls: [], selectedDigest: 'a'.repeat(64) }, lookup: null };
+  return { key: `prefix-${i}`, owner: 'source-000', identity, unresolved: false, firstObservedOrder: i,
+    corrections: [], sourceExpired: null, retracted: null, freshness: 'stale', currentAvailability: null,
+    resolution: { identity, revision: { epoch: 'fixture', sequence: 1 }, proof: { kind: 'native-image', source, selectedDigest: 'a'.repeat(64) },
+      knowledge: 'confirmed', outcomeEvidence: { kind: 'observation', id: `receipt-${i}`, digest: 'b'.repeat(64), recordedAt: 1 },
+      availability: { state: 'unknown', asOf: 1, expiresAt: null }, route: { kind: 'url', href: `https://fixture.invalid/${i}` },
+      provenance: { originHost: { state: 'unknown', reason: 'not-recorded' }, artifactLocation: { state: 'unknown', reason: 'not-verified' } },
+      fallback: { kind: 'card', title: `Useful retained ${i}` }, spans: { width: 1, height: 1 },
+      ...(padding ? { presentation: { schema: 'example/card@1', data: { padding: 'x'.repeat(padding) } } } : {}) } };
+}
+const prefixRead = (rows: GalleryObservation[], next: { seq: number; key: string } | null = null) => ({ page: { rows, next }, coverage: { state: 'partial', intervals: [] } });
+
+test('incomplete initial prefix survives restart/omission but explicit retraction revokes; only complete membership replaces', async () => {
+  const h = setup(), original = h.sdk.plugins.callRpc, a = prefixRow(0), b = prefixRow(1);
+  const cursor = { seq: 1, key: a.key }; let wave = 0, release!: () => void, held = false;
+  h.sdk.plugins.callRpc = async args => {
+    if (args.method !== GALLERY_METHODS.read) return original(args);
+    const input = args.input as { after?: typeof cursor };
+    if (!input.after) return args.outputSchema.parse(prefixRead(wave === 0 ? [a] : wave === 1 ? [b] : [{ ...a,
+      retracted: { revision: { epoch: 'fixture', sequence: 2 }, supersedesEvidenceDigest: 'b'.repeat(64), reason: 'Corrected' } }], cursor));
+    assert.deepEqual(input.after, cursor); held = true;
+    await new Promise<void>(done => { release = done; });
+    return args.outputSchema.parse(prefixRead([]));
+  };
+  const lease = h.runtime.retain(anchor('prefix'));
+  try {
+    await until(() => held && lease.store.state.rows.length === 1);
+    assert.equal(lease.store.state.loaded, false); assert.deepEqual(lease.store.state.rows, [a]);
+    assert.ok(h.runtime.stats().bytes > Buffer.byteLength(JSON.stringify(lease.store.state)), 'in-flight pass memory is charged alongside the published prefix');
+    h.hidden(true); release(); await until(() => h.runtime.stats().running === 0);
+    assert.deepEqual(lease.store.state.rows, [a]); assert.equal(lease.store.state.loaded, false, 'abort cannot complete provisional membership');
+    assert.equal(h.runtime.stats().bytes, Buffer.byteLength(JSON.stringify(lease.store.state)), 'retired pass memory releases only after actual raw settlement');
+    wave = 1; held = false; h.hidden(false);
+    await until(() => held && lease.store.state.rows.length === 2);
+    assert.deepEqual(lease.store.state.rows.map(row => row.key), [a.key, b.key], 'a restarted prefix omission does not withdraw earlier positive');
+    assert.equal(lease.store.state.loaded, false);
+    h.hidden(true); release(); await until(() => h.runtime.stats().running === 0);
+    wave = 2; held = false; h.hidden(false);
+    await until(() => held && lease.store.state.rows.length === 1);
+    assert.deepEqual(lease.store.state.rows, [b], 'explicit returned retraction revokes its own earlier positive');
+    assert.equal(lease.store.state.loaded, false);
+    release(); await until(() => lease.store.state.loaded === true && h.runtime.stats().running === 0);
+    assert.equal(lease.store.state.rows.length, 1); assert.equal(lease.store.state.rows[0]!.key, a.key);
+    assert.ok(lease.store.state.rows[0]!.retracted, 'complete snapshot alone replaces provisional membership');
+  } finally { release?.(); lease.dispose(); h.dispose(); }
+});
+
+test('page continuation keeps its original deadline across queue wait and releases parked pass memory', async () => {
+  const h = setup(), original = h.sdk.plugins.callRpc, a = prefixRow(0), b = prefixRow(1);
+  const cursor = { seq: 1, key: a.key }, queuedSignal = new AbortController();
+  let now = performance.now(), reads = 0, waitQueued = false, waitFinished = false;
+  const clock = mock.method(performance, 'now', () => now);
+  let queued: ReturnType<typeof h.runtime.readScope> | undefined;
+  h.sdk.plugins.callRpc = async args => {
+    if (args.method !== GALLERY_METHODS.read) return original(args);
+    reads++;
+    const input = args.input as { after?: typeof cursor };
+    if (!input.after) {
+      if (!waitQueued) {
+        waitQueued = true;
+        queued = h.runtime.readScope('prefix', queuedSignal.signal, async () => {
+          now += GALLERY_RUNTIME_LIMITS.sliceMs + 1; waitFinished = true;
+        });
+      }
+      return args.outputSchema.parse(prefixRead([a], cursor));
+    }
+    assert.deepEqual(input.after, cursor);
+    return args.outputSchema.parse(prefixRead([b]));
+  };
+  const lease = h.runtime.retain(anchor('prefix'));
+  try {
+    await until(() => waitFinished && h.runtime.stats().running === 0 && h.runtime.stats().queued === 0);
+    await queued;
+    assert.equal(reads, 1, 'queue wait cannot start page two with a renewed six-second deadline');
+    assert.equal(lease.store.state.loaded, false); assert.deepEqual(lease.store.state.rows, [a]);
+    assert.match(lease.store.state.error!, /deadline/);
+    assert.equal(h.runtime.stats().bytes, Buffer.byteLength(JSON.stringify(lease.store.state)), 'parked private pass is no longer retained');
+    await tick(); await tick(); assert.equal(reads, 1, 'expired collection stays parked while idle');
+    lease.more();
+    await until(() => lease.store.state.loaded === true && h.runtime.stats().running === 0);
+    assert.equal(reads, 3, 'genuine later demand restarts latest, then uses its newly issued continuation');
+    assert.deepEqual(lease.store.state.rows, [a, b]);
+    assert.equal(h.runtime.stats().bytes, Buffer.byteLength(JSON.stringify(lease.store.state)), 'completion transfers rows without retaining a second collection');
+  } finally { queuedSignal.abort(); lease.dispose(); h.dispose(); clock.mock.restore(); }
+});
+
+test('conflicting duplicate page cannot complete a prefix and complete last-good data is not replaced by refresh prefix', async () => {
+  const h = setup(), original = h.sdk.plugins.callRpc, a = prefixRow(0), b = prefixRow(1);
+  let complete = false, held = false, release!: () => void;
+  h.sdk.plugins.callRpc = async args => {
+    if (args.method !== GALLERY_METHODS.read) return original(args);
+    const input = args.input as { after?: { seq: number; key: string } };
+    if (!input.after) return args.outputSchema.parse(complete ? prefixRead([a]) : prefixRead([b], { seq: 2, key: b.key }));
+    held = true; await new Promise<void>(done => { release = done; });
+    return args.outputSchema.parse(prefixRead([b])); // Exact duplicate in the issued chain is refused.
+  };
+  const lease = h.runtime.retain(anchor('prefix'));
+  try {
+    await until(() => held && lease.store.state.rows.length === 1); release();
+    await until(() => h.runtime.stats().running === 0);
+    assert.equal(lease.store.state.loaded, false); assert.match(lease.store.state.error!, /collection changed/);
+    assert.deepEqual(lease.store.state.rows, [b]);
+    complete = true; lease.more(); await until(() => lease.store.state.loaded === true && h.runtime.stats().running === 0);
+    assert.deepEqual(lease.store.state.rows, [a]);
+    complete = false; held = false; lease.more(); await until(() => held);
+    assert.deepEqual(lease.store.state.rows, [a]); assert.equal(lease.store.state.loaded, true, 'existing complete last-good behavior is unchanged');
+    release(); await until(() => h.runtime.stats().running === 0);
+    assert.deepEqual(lease.store.state.rows, [a]);
+  } finally { release?.(); lease.dispose(); h.dispose(); }
+});
+
+test('prefix union and incomplete collection obey existing row/byte/page limits and park without authority or idle work', async () => {
+  const h = setup(), original = h.sdk.plugins.callRpc, rows = Array.from({ length: 64 }, (_, i) => prefixRow(i, 4000));
+  let reads = 0;
+  h.sdk.plugins.callRpc = async args => {
+    if (args.method !== GALLERY_METHODS.read) return original(args);
+    reads++; const input = args.input as { after?: { seq: number; key: string } };
+    const start = input.after ? rows.findIndex(row => row.key === input.after!.key) + 1 : 0;
+    const page = rows.slice(start, start + 8), last = page.at(-1)!;
+    return args.outputSchema.parse(prefixRead(page, start + 8 < rows.length ? { seq: last.identity.ref.source.seq, key: last.key } : null));
+  };
+  const lease = h.runtime.retain(anchor('prefix'));
+  try {
+    await until(() => h.runtime.stats().running === 0 && lease.store.state.limited === true);
+    assert.equal(lease.store.state.loaded, false); assert.equal(lease.store.state.continued, true);
+    assert.ok(lease.store.state.rows.length > 0 && lease.store.state.rows.length < 64);
+    assert.ok(Buffer.byteLength(JSON.stringify(lease.store.state)) <= GALLERY_RUNTIME_LIMITS.snapshotBytes);
+    assert.ok(reads <= GALLERY_RUNTIME_LIMITS.collectionPages); assert.equal(h.runtime.isReadyOwner('source-000'), false);
+    const count = reads; await tick(); await tick(); assert.equal(reads, count, 'finite capacity stays parked without polling');
+  } finally { lease.dispose(); h.dispose(); }
 });

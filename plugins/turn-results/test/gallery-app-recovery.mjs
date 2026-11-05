@@ -154,7 +154,14 @@ test('hidden invalidation and removed row ignore late old refresh and do not pub
     f.hold(true); await f.notify(); await until(() => f.held.length === 1);
     await f.hidden(true); f.set([publicRow('pending', 15)]); f.mutate('Pending while hidden'); await f.notify();
     const count = f.calls.length; await settle(200); assert.equal(f.calls.length, count);
-    f.hold(false); await f.hidden(false); await until(() => f.roots().length === 0 && f.calls.length === count + 1);
+    const retired = f.calls.at(-1); assert.equal(retired.signal.aborted, true); assert.equal(retired.finished, undefined);
+    f.hold(false); await f.hidden(false); await settle();
+    assert.equal(f.calls.length, count, 'abort-ignoring old history retains the actual thread lane');
+    // The fixture's raw promise ignores AbortSignal. A local abort is not a
+    // transport settlement receipt; fresh proof must wait for this release.
+    f.held[0](); await until(() => f.roots().length === 0 && f.calls.length === count + 1 && f.calls.at(-1).finished);
+    assert.equal(retired.finished, true); assert.notEqual(f.calls.at(-1), retired);
+    assert.equal(f.responses.at(-1).rows[0].status, 'pending'); assert.equal(f.maxOwned(), 1);
     f.held[0](); await settle(200); assert.equal(f.roots().length, 0);
     f.set([publicRow('completed', 20)]); await f.notify(); await until(() => f.roots().length === 1);
     f.native.remove(); f.set([]); await settle(200); assert.equal(document.querySelector('.tr-gallery'), null);
@@ -290,8 +297,16 @@ test('failed refresh retains last-good host without global status; bounded Open 
     await act(async () => host.querySelector('button.tr-data-action').click()); assert.equal(f.navigation.length, navigation + 1);
     f.set([publicRow('pending', 10)], 'A-late'); f.hold(true, true); await f.notify(); await until(() => f.held.length === 1);
     assert.ok(f.calls.at(-1).beforeAnchorId, 'held A reply is an actual older snapshot-pinned continuation');
+    const retired = f.calls.at(-1), heldCount = f.calls.length;
     await f.hidden(true); f.set([publicRow('completed', 30)], 'C-new'); f.hold(false); await f.hidden(false);
+    await settle(); assert.equal(retired.signal.aborted, true); assert.equal(retired.finished, undefined);
+    assert.equal(f.calls.length, heldCount, 'fresh C cannot overlap the still-pending raw A continuation');
+    assert.equal(f.roots()[0], host);
+    f.held[0](); // Settle actual old transport before admitting the fresh chain.
     await until(() => f.responses.at(-1).timelinePage.historySnapshot === 'C-new' && f.calls.at(-1).finished);
+    assert.equal(retired.finished, true); assert.equal(f.calls.length, heldCount + 2);
+    assert.equal(f.calls[heldCount].beforeAnchorId, undefined, 'C begins at fresh latest, not the retired A cursor');
+    assert.equal(f.calls[heldCount + 1].beforeAnchorId, f.responses[heldCount].timelinePage.olderCursor.anchorId);
     assert.equal(f.roots()[0], host);
     const count = f.calls.length; f.held[0](); await settle(200);
     assert.equal(f.calls.length, count); assert.equal(f.roots()[0], host);

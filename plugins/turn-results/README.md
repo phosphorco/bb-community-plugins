@@ -99,12 +99,22 @@ slices select at most 32 completions; atomic applications admit at most eight
 candidates/resolutions. Media retains at most 64 entries, two active operations
 and 32 MiB of verified image blobs. One bounded turn collection follows at most
 eight actually issued pages, admitting up to64 rows within256KiB including
-row-to-issued-cursor bindings, inside the existing16MiB aggregate budget. A lane
-collects once and performs its finite owner slice; one queued follow-up observes
-committed facts while yielding to other demands. Failures retain the last usable
-turn. No per-card read or hidden all-history walk is performed. Actual capacity
-may show a quiet limitation beside meaningful results. Empty/routine-only turns
-have no frame, loading/error strip or reserved space. Plain data cards use1x1,
+row-to-issued-cursor bindings, inside the existing16MiB aggregate budget.
+Each settled retained page yields its lane to other demanded turns. Open checks
+run first; retained pages, native history and image Media then share FIFO service
+before optional supplier work. A collection keeps its original six-second deadline
+across queue waits; a slow raw request still owns its credit until settlement.
+Validated initial-page positives may display early, with actions and custom hosts
+disabled until the collection completes. Partial pages cannot prove absence or
+conflict, replace a complete last-good snapshot, or update an authoritative dialog.
+Private continuation memory shares the existing budgets. Public advertised RPC
+membership narrows descriptor candidates when available; the ordinary current
+plugin list and Describe still establish supplier readiness. Unsupported or invalid
+metadata uses ordinary discovery. No per-card discovery or hidden all-history
+walk is performed. Actual capacity
+may show a quiet limitation beside meaningful results. Successful empty/routine-only turns
+have no frame or reserved space; a failed empty read shows its current error until
+a genuine successful read clears it. Plain data cards use1x1,
 images2x2, and custom presentations their supplied spans. Unresolved guesses are
 never cached; resolved geometry follows its source revision. SQLite bounds
 and transaction/eviction accounting live in gallery/index.ts and its actual
@@ -121,7 +131,11 @@ asynchronous or GPU cleanup by an uncooperative contributor.
 An app-generation resource owner preserves verified image blobs through native
 row/root remounts and pane resize. Source-issued preview URLs are ephemeral and
 never enter durable observations; the fetched PNG is independently hashed before
-local Blob publication. Native file navigation uses the source's explicit host.
+local Blob publication. Media verification joins the same bounded passive read
+queue. Once dispatched, its public response stays owned even when a card retires;
+a retired card cannot fetch or publish late bytes. This does not prove cancellation
+of unobserved remote file work. Queue wait counts toward the unchanged seven-second
+media deadline. Native file navigation uses the source's explicit host.
 Historical origin remains unknown unless the source recorded it.
 
 A public per-header bridge supplies the actual thread id and that surface's

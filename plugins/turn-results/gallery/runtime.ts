@@ -1,6 +1,6 @@
 import { Store } from '@tanstack/store';
 import { z } from 'zod';
-import { canonicalByteLength, canonicalJson, InputSchemas } from '@phosphorco/bb-turn-results';
+import { canonicalByteLength, canonicalJson, InputSchemas, PluginIdSchema } from '@phosphorco/bb-turn-results';
 import { createResultsDiscoveryOwner, discoverResultsParticipants, createResultsSupplierClient, classifyResultsError } from '@phosphorco/bb-turn-results/bb';
 import type { ResultsDiscoveryCursor } from '@phosphorco/bb-turn-results/bb';
 import type { GalleryAnchor } from './anchors.ts';
@@ -17,7 +17,9 @@ import type { PresentationLifetime } from './presentation-lifetime.ts';
 import type { GalleryDialogInput, GalleryDialogController } from './dialog.tsx';
 import { untilAborted } from './lifetime.ts';
 
-type Sdk = { plugins: Parameters<typeof discoverResultsParticipants>[0]['sdk']['plugins']; threads: { events: Parameters<typeof consumeTurnSource>[1] } };
+type Sdk = { plugins: Parameters<typeof discoverResultsParticipants>[0]['sdk']['plugins'] & {
+  experimental_discoverRpc?(input?: { method?: string; signal?: AbortSignal }): Promise<readonly { pluginId: string; method: string }[]>;
+}; threads: { events: Parameters<typeof consumeTurnSource>[1] } };
 export interface TurnSnapshot { loaded?: boolean; next?: { seq: number; key: string } | null;
   bindings?: Record<string, { after: { seq: number; key: string } | null }>; limited?: boolean;
   rows: GalleryObservation[]; busy: boolean; continued: boolean; error: string | null; coverage: string }
@@ -29,8 +31,15 @@ export interface GalleryPresentationRoot {
 }
 interface TurnEntry {
   key: string; threadId: string; anchor: GalleryAnchor; after: { seq: number; key: string } | undefined; store: Store<TurnSnapshot>; refs: number; visible: number;
-  dirty: boolean; controller: AbortController | null; afterOwner: string | null;
+  dirty: boolean; phase: 'read' | 'source'; controller: AbortController | null; afterOwner: string | null;
   debts: Set<string>; enumerateRetries: Set<string>; debtBudget: number; bytes: number; cursorCharge: number;
+  collection: TurnCollection | null; collectionBytes: number;
+}
+interface TurnCollection {
+  anchor: GalleryAnchor; after: { seq: number; key: string } | undefined;
+  rows: GalleryObservation[]; bindings: NonNullable<TurnSnapshot['bindings']>;
+  seen: Set<string>; cursors: Set<string>; pages: number; charged: number;
+  coverage: string; limited: boolean; done: boolean; retired: boolean; deadline: number;
 }
 interface HistoryRead { threadId: string; priority: boolean; live(): boolean; start(): void; cancel(): void }
 type Work = TurnEntry | HistoryRead;
@@ -187,6 +196,51 @@ export function createGalleryRuntime(sdk: Sdk) {
       if (result.state !== 'committed' && result.state !== 'unchanged') throw Error(`History ${result.state}: ${result.reason ?? 'continuation was not committed'}`);
     },
   };
+  async function discoveryExclusions(signal: AbortSignal, deadline: number): Promise<string[]> {
+    const exclude = ['turn-results'];
+    if (!sdk.plugins.experimental_discoverRpc) return exclude;
+    const controller = new AbortController(), abort = () => controller.abort(signal.reason);
+    signal.addEventListener('abort', abort, { once: true });
+    if (signal.aborted) abort();
+    // Optional metadata shares the existing discovery deadline and Describe
+    // call bound. It narrows candidates, never admits a supplier or readiness.
+    const timer = setTimeout(() => controller.abort('deadline'), Math.max(0, Math.min(500, deadline - performance.now())));
+    const calls: Promise<unknown>[] = [];
+    try {
+      const methodCall = Promise.resolve().then(() => { controller.signal.throwIfAborted(); return sdk.plugins.experimental_discoverRpc!({ method: 'turnResultsDescribe', signal: controller.signal }); });
+      calls.push(methodCall);
+      const methods = await untilAborted(methodCall, controller.signal);
+      signal.throwIfAborted();
+      canonicalByteLength(methods, 262144);
+      if (!Array.isArray(methods) || methods.length > 256) return exclude;
+      const advertised = new Set<string>(), seen = new Set<string>();
+      for (const row of methods) {
+        if (!row || !PluginIdSchema.safeParse(row.pluginId).success || row.method !== 'turnResultsDescribe' || advertised.has(row.pluginId)) return exclude;
+        advertised.add(row.pluginId);
+      }
+      // Older SDK hosts may expose this optional method but reject its call.
+      // Do not add a second list on that fallback path.
+      const listCall = Promise.resolve().then(() => { controller.signal.throwIfAborted(); return sdk.plugins.list({ signal: controller.signal }); });
+      calls.push(listCall);
+      const listed = await untilAborted(listCall, controller.signal);
+      signal.throwIfAborted();
+      if (!listed || !Array.isArray(listed.plugins) || listed.plugins.length > 256) return exclude;
+      for (const row of listed.plugins) {
+        if (!row || !PluginIdSchema.safeParse(row.id).success || typeof row.enabled !== 'boolean' || typeof row.status !== 'string'
+          || row.status.length > 64 || seen.has(row.id)) return ['turn-results'];
+        seen.add(row.id);
+        if (!advertised.has(row.id)) exclude.push(row.id);
+      }
+      return exclude;
+    } catch {
+      signal.throwIfAborted();
+      return exclude; // Unsupported/failing/malformed metadata uses public Describe discovery.
+    } finally {
+      clearTimeout(timer); signal.removeEventListener('abort', abort);
+      // Ignored cancellation retains the initiating lane until actual settlement.
+      await Promise.allSettled(calls);
+    }
+  }
   async function discover(signal: AbortSignal, spendRetry?: () => boolean) {
     const retry = sources !== null && !discoveryCursor && queuedDescriptors();
     if (sources && !discoveryCursor && (!retry || !discovering && !spendRetry?.())) return sources;
@@ -200,8 +254,10 @@ export function createGalleryRuntime(sdk: Sdk) {
         // keep their valid descriptor and canvas authority.
         const candidates = retry ? [...descriptorDebt].filter(([, state]) => state === 'queued').slice(0, 32).map(([id]) => id) : [];
         for (const id of candidates) descriptorDebt.set(id, 'parked');
+        const exclude = await discoveryExclusions(controller.signal, deadline);
+        controller.signal.throwIfAborted();
         const result = await discoverResultsParticipants({ sdk, owner: discoveryOwner, cursor: retry ? null : discoveryCursor,
-          exclude: ['turn-results'], budgets: { concurrency: 1, ...(retry ? { processingSlots: 0 } : {}) },
+          exclude, budgets: { concurrency: 1, ...(retry ? { processingSlots: 0 } : {}) },
           overallDeadline: deadline, signal: controller.signal });
         controller.signal.throwIfAborted();
         if (generation !== discoveryGeneration) throw Error('Result discovery retired.');
@@ -282,34 +338,91 @@ export function createGalleryRuntime(sdk: Sdk) {
   function collect() {
     const cached = [...turns.values()].filter(entry => !entry.refs && !entry.controller);
     for (const entry of cached.slice(0, Math.max(0, cached.length - GALLERY_RUNTIME_LIMITS.cached))) {
-      turns.delete(entry.key); bytes -= entry.bytes;
+      dropCollection(entry); turns.delete(entry.key); bytes -= entry.bytes;
     }
   }
-  async function readTurn(anchor: GalleryAnchor, signal: AbortSignal, initialAfter?: { seq: number; key: string }) {
-    let after = initialAfter, coverage = 'unindexed', limited = false;
-    const rows: GalleryObservation[] = [], bindings: NonNullable<TurnSnapshot['bindings']> = Object.create(null);
-    let charged = canonicalByteLength({ rows, bindings });
-    const seen = new Set<string>(), cursors = new Set<string>();
-    for (let page = 0; page < GALLERY_RUNTIME_LIMITS.collectionPages; page++) {
-      const result = await backend.read(anchor.threadId, anchor.turnId, signal, after); signal.throwIfAborted();
-      coverage = result.coverage.state;
-      for (const row of result.page.rows) {
-        if (row.identity.ref.source.threadId !== anchor.threadId || row.identity.ref.source.turnId !== anchor.turnId || seen.has(row.key))
-          throw Error('Turn result collection changed.');
-        const binding = { after: after ?? null };
-        const charge = canonicalByteLength(row, 1048576) + canonicalByteLength({ [row.key]: binding }, 16384) - 2 + (rows.length ? 2 : 0);
-        if (rows.length >= GALLERY_RUNTIME_LIMITS.collectionRows || charged + charge > GALLERY_RUNTIME_LIMITS.snapshotBytes - 2048) { limited = true; break; }
-        charged += charge;
-        rows.push(row); seen.add(row.key); bindings[row.key] = binding;
+  function publishPrefix(entry: TurnEntry, rows: GalleryObservation[], bindings: NonNullable<TurnSnapshot['bindings']>, coverage: string, limited: boolean) {
+    if (entry.store.state.loaded) return; // A complete last-good snapshot is never replaced by a prefix.
+    const retained = new Map(entry.store.state.rows.map(row => [row.key, row]));
+    const bound = { ...entry.store.state.bindings };
+    const charge = (row: GalleryObservation) => canonicalByteLength(row, 1048576)
+      + canonicalByteLength({ [row.key]: bound[row.key] ?? { after: null } }, 16384) - 1;
+    let bytes = canonicalByteLength({ rows: [], bindings: {} }) + [...retained.values()].reduce((sum, row) => sum + charge(row), 0);
+    for (const row of rows) {
+      const previous = retained.get(row.key), oldBinding = bound[row.key], oldCharge = previous ? charge(previous) : 0;
+      // An explicitly returned changed/unresolved/retracted row can revoke its
+      // own old positive. Omitted rows say nothing about absent membership.
+      if (!row.resolution || row.unresolved || row.retracted) {
+        retained.delete(row.key); delete bound[row.key]; bytes -= oldCharge; continue;
       }
-      if (limited || !result.page.next) break;
-      limited = page + 1 === GALLERY_RUNTIME_LIMITS.collectionPages || rows.length >= GALLERY_RUNTIME_LIMITS.collectionRows;
-      if (limited) break;
+      bound[row.key] = bindings[row.key]!;
+      const added = charge(row);
+      if ((!previous && retained.size >= GALLERY_RUNTIME_LIMITS.collectionRows) || bytes - oldCharge + added > GALLERY_RUNTIME_LIMITS.snapshotBytes - 2048) {
+        if (previous && canonicalJson(previous) === canonicalJson(row)) bound[row.key] = oldBinding!;
+        else { retained.delete(row.key); delete bound[row.key]; bytes -= oldCharge; }
+        limited = true; continue;
+      }
+      retained.set(row.key, row); bytes += added - oldCharge;
+    }
+    publish(entry, { ...entry.store.state, rows: [...retained.values()], bindings: bound, loaded: false,
+      limited, coverage, continued: true }, false);
+  }
+  function newCollection(anchor: GalleryAnchor, after?: { seq: number; key: string }, deadline = Infinity): TurnCollection {
+    return { anchor: { ...anchor }, after, rows: [], bindings: Object.create(null), seen: new Set(), cursors: new Set(), pages: 0,
+      charged: canonicalByteLength({ rows: [], bindings: {} }), coverage: 'unindexed', limited: false, done: false, retired: false, deadline };
+  }
+  function collectionCharge(pass: TurnCollection) {
+    return canonicalByteLength({ anchor: pass.anchor, after: pass.after ?? null, rows: pass.rows, bindings: pass.bindings,
+      seen: [...pass.seen], cursors: [...pass.cursors], pages: pass.pages }, 1048576) + 256;
+  }
+  function chargeCollection(entry: TurnEntry, pass: TurnCollection) {
+    const next = collectionCharge(pass);
+    if (next > GALLERY_RUNTIME_LIMITS.snapshotBytes || bytes - entry.collectionBytes + next
+      > GALLERY_RUNTIME_LIMITS.totalSnapshotBytes - GALLERY_RUNTIME_LIMITS.leases * 16384) throw Error('Results collection capacity reached.');
+    bytes += next - entry.collectionBytes; entry.collectionBytes = next;
+  }
+  function dropCollection(entry: TurnEntry) {
+    if (active) bytes -= entry.collectionBytes;
+    entry.collectionBytes = 0; entry.collection = null;
+  }
+  function retireCollection(entry: TurnEntry) {
+    if (!entry.collection) return;
+    entry.collection.retired = true;
+    // In-flight ignored calls still retain their pass memory/credit until drain.
+    if (!entry.controller) dropCollection(entry);
+  }
+  async function readCollectionPage(pass: TurnCollection, signal: AbortSignal) {
+    signal.throwIfAborted();
+    const { anchor, after, rows, bindings, seen, cursors } = pass;
+    const result = await backend.read(anchor.threadId, anchor.turnId, signal, after); signal.throwIfAborted();
+    if (pass.retired) throw Error('Turn result collection retired.');
+    pass.coverage = result.coverage.state; pass.pages++;
+    for (const row of result.page.rows) {
+      if (row.identity.ref.source.threadId !== anchor.threadId || row.identity.ref.source.turnId !== anchor.turnId || seen.has(row.key))
+        throw Error('Turn result collection changed.');
+      const binding = { after: after ?? null };
+      const charge = canonicalByteLength(row, 1048576) + canonicalByteLength({ [row.key]: binding }, 16384) - 2 + (rows.length ? 2 : 0);
+      if (rows.length >= GALLERY_RUNTIME_LIMITS.collectionRows || pass.charged + charge > GALLERY_RUNTIME_LIMITS.snapshotBytes - 2048) { pass.limited = true; break; }
+      pass.charged += charge;
+      rows.push(row); seen.add(row.key); bindings[row.key] = binding;
+    }
+    pass.limited ||= Boolean(result.page.next && (pass.pages === GALLERY_RUNTIME_LIMITS.collectionPages || rows.length >= GALLERY_RUNTIME_LIMITS.collectionRows));
+    pass.done = pass.limited || !result.page.next;
+    if (!pass.done) {
       const key = canonicalJson(result.page.next);
       if (cursors.has(key)) throw Error('Turn result cursor did not advance.');
-      cursors.add(key); after = result.page.next; // Only an actually issued cursor.
+      cursors.add(key); pass.after = result.page.next!; // Only an actually issued cursor.
     }
-    return { rows, bindings, limited, coverage };
+    // Persisted pass metadata shares the original per-collection byte bound.
+    // A trimmed candidate is provisional capacity, never completed absence.
+    while (rows.length && collectionCharge(pass) > GALLERY_RUNTIME_LIMITS.snapshotBytes) {
+      const removed = rows.pop()!; seen.delete(removed.key); delete bindings[removed.key]; pass.limited = pass.done = true;
+    }
+  }
+  async function readTurn(anchor: GalleryAnchor, signal: AbortSignal) {
+    const pass = newCollection(anchor);
+    while (!pass.done) await readCollectionPage(pass, signal);
+    return pass;
   }
   function publish(entry: TurnEntry, next: TurnSnapshot, authoritative = false) {
     const encoded = canonicalJson(next, GALLERY_RUNTIME_LIMITS.snapshotBytes);
@@ -337,12 +450,20 @@ export function createGalleryRuntime(sdk: Sdk) {
   function dequeue(): Work | null {
     const threads = [...queue];
     const urgent = ([, entries]: typeof threads[number]) => [...entries].some(entry => 'start' in entry && entry.priority && entry.live());
-    for (const [threadId, entries] of [...threads.filter(urgent), ...threads.filter(entry => !urgent(entry))]) {
+    // Open is first; retained pages/history/Media then share FIFO ahead of
+    // optional source work. A short turn's enrichment cannot consume the
+    // original deadline of a sibling's still-incomplete retained collection.
+    const useful = (entry: Work) => 'start' in entry || entry.phase === 'read';
+    const usefulThread = ([, entries]: typeof threads[number]) => [...entries].some(entry => useful(entry)
+      && ('start' in entry ? entry.live() : entry.refs && entry.visible && entry.dirty && !entry.controller));
+    for (const [threadId, entries] of [...threads.filter(urgent), ...threads.filter(entry => !urgent(entry) && usefulThread(entry)),
+      ...threads.filter(entry => !urgent(entry) && !usefulThread(entry))]) {
       if (runningThreads.has(threadId)) continue;
       queue.delete(threadId);
       let next: Work | null = null;
       const priority = [...entries].find(entry => 'start' in entry && entry.priority && entry.live());
-      for (const entry of priority ? [priority, ...[...entries].filter(entry => entry !== priority)] : entries) {
+      for (const entry of priority ? [priority, ...[...entries].filter(entry => entry !== priority)]
+        : [...[...entries].filter(useful), ...[...entries].filter(entry => !useful(entry))]) {
         entries.delete(entry);
         if ('start' in entry ? entry.live() : entry.refs && entry.visible && entry.dirty && !entry.controller) { next = entry; break; }
       }
@@ -362,7 +483,8 @@ export function createGalleryRuntime(sdk: Sdk) {
       if ('start' in entry) { running++; runningThreads.set(entry.threadId, () => false); entry.start(); continue; }
       entry.dirty = false;
       const controller = new AbortController(); entry.controller = controller; running++;
-      let collecting = true, yielded = false;
+      const collecting = entry.phase === 'read'; let yielded = false;
+      const collection = collecting ? entry.collection ??= newCollection(entry.anchor, entry.after, performance.now() + GALLERY_RUNTIME_LIMITS.sliceMs) : null;
       runningThreads.set(entry.anchor.threadId, () => {
         // Source operations may have their own nested transport lifetimes.
         // Yield only the tracked retained-read phase; other work finishes its
@@ -371,12 +493,34 @@ export function createGalleryRuntime(sdk: Sdk) {
         yielded = true; controller.abort('open-priority'); return true;
       });
       const anchor = entry.anchor;
-      const signal = controller.signal, timer = setTimeout(() => controller.abort('deadline'), GALLERY_RUNTIME_LIMITS.sliceMs);
+      const signal = controller.signal;
+      const remaining = collection ? Math.max(0, collection.deadline - performance.now()) : GALLERY_RUNTIME_LIMITS.sliceMs;
+      const timer = setTimeout(() => controller.abort('deadline'), remaining);
       publish(entry, { ...entry.store.state, busy: true });
       void (async () => {
-        const cached = await readTurn(anchor, signal, entry.after); signal.throwIfAborted();
-        collecting = false;
-        publish(entry, { ...entry.store.state, ...cached, loaded: true, next: null, continued: cached.limited, error: null }, true);
+        if (collecting) {
+          const pass = collection!;
+          if (remaining <= 0) controller.abort('deadline');
+          signal.throwIfAborted(); chargeCollection(entry, pass);
+          await readCollectionPage(pass, signal); signal.throwIfAborted();
+          if (pass.retired || entry.collection !== pass) throw Error('Turn result collection retired.');
+          chargeCollection(entry, pass);
+          if (!pass.done) {
+            publishPrefix(entry, pass.rows, pass.bindings, pass.coverage, pass.limited);
+            entry.dirty = true; return; // Same deadline/issued pass, FIFO after one settled page.
+          }
+          const cached = { rows: pass.rows, bindings: pass.bindings, limited: pass.limited, coverage: pass.coverage };
+          dropCollection(entry); // Transfer into the sole store before charging its completed snapshot.
+          if (cached.limited) {
+            publishPrefix(entry, cached.rows, cached.bindings, cached.coverage, true);
+            publish(entry, { ...entry.store.state, continued: true, limited: true, error: null });
+          } else publish(entry, { ...entry.store.state, ...cached, loaded: true, next: null, continued: false, error: null }, true);
+          // Release this lane before optional discovery/source work. Other
+          // proved turns get their own retained read instead of waiting behind
+          // a sibling's enrichment. The same entry/cursors/debt resume FIFO.
+          entry.phase = 'source'; entry.dirty = true; return;
+        }
+        const cached = entry.store.state;
         const available = await discover(signal, () => { if (!entry.debtBudget) return false; entry.debtBudget--; return true; }); signal.throwIfAborted();
         // Finish a finite first visit to every listed owner before revisiting
         // productive owner debt. Failures park only that owner, never this pass.
@@ -436,19 +580,22 @@ export function createGalleryRuntime(sdk: Sdk) {
         const productive = unvisited || discoveryCursor !== null || ((entry.debts.size > 0 || queuedDescriptors()) && entry.debtBudget > 0);
         publish(entry, { ...entry.store.state, busy: false,
           continued: productive || entry.debts.size > 0 || descriptorDebt.size > 0 || cached.limited || discoveryCapacity,
-          error: failure, coverage: discoveryCapacity ? 'source-capacity' : cached.coverage }, true);
+          error: failure, coverage: discoveryCapacity ? 'source-capacity' : cached.coverage }, Boolean(entry.store.state.loaded));
         // Yield after the existing owner slice. One queued collection observes
         // its committed facts; there is no second page walk inside this unit.
-        if (productive || source) entry.dirty = true;
+        if (productive || source) { entry.phase = 'read'; entry.dirty = true; }
       })().catch(error => {
+        if (collection?.retired) return; // Reset owns the new pass; old completion cannot publish into it.
         if (yielded) { if (active && visible && entry.refs && entry.visible) entry.dirty = true; return; }
-        if (signal.aborted && signal.reason === 'deadline' && entry.afterOwner !== null
+        if (collection) retireCollection(entry);
+        if (!collection && signal.aborted && signal.reason === 'deadline' && entry.afterOwner !== null
           && (sources?.some(source => source.pluginId > entry.afterOwner!) || discoveryCursor !== null)) entry.dirty = true;
         if (active && entry.controller === controller) publish(entry, { ...entry.store.state, busy: false, continued: true,
           error: signal.aborted ? signal.reason === 'deadline' ? 'Results read reached its deadline. Continue results.' : entry.store.state.error
             : error instanceof Error ? error.message.slice(0, 160) : 'Results are temporarily unavailable.' });
       }).finally(async () => {
         await Promise.allSettled([...(retainedCalls.get(signal) ?? [])]);
+        if (collection?.retired && entry.collection === collection) dropCollection(entry);
         clearTimeout(timer); if (entry.controller === controller) entry.controller = null;
         running--; runningThreads.delete(anchor.threadId);
         drainedWork();
@@ -493,13 +640,16 @@ export function createGalleryRuntime(sdk: Sdk) {
       }
     });
   }
-  function reset(entry: TurnEntry) { entry.dirty = true; entry.afterOwner = null; entry.debts.clear(); entry.enumerateRetries.clear(); entry.debtBudget = GALLERY_RUNTIME_LIMITS.automaticDebtUnits; }
+  function reset(entry: TurnEntry) {
+    if (entry.collection) { retireCollection(entry); entry.controller?.abort('collection-reset'); }
+    entry.dirty = true; entry.phase = 'read'; entry.afterOwner = null; entry.debts.clear(); entry.enumerateRetries.clear(); entry.debtBudget = GALLERY_RUNTIME_LIMITS.automaticDebtUnits;
+  }
   function stopUnusedDiscovery() {
     if (!visibleDiscoveryDemands && ![...turns.values()].some(entry => entry.refs && entry.visible)) discoveryController?.abort();
   }
   function visibility() {
     visible = !document.hidden; media.visible(visible); canvases.setHidden(!visible);
-    if (!visible) { pendingDialog = null; dialogSites.setState(previous => ({ ...previous, pending: null })); invalidateReadiness(); for (const read of historyReads) read.cancel(); for (const entry of turns.values()) entry.controller?.abort(); }
+    if (!visible) { pendingDialog = null; dialogSites.setState(previous => ({ ...previous, pending: null })); invalidateReadiness(); for (const read of historyReads) read.cancel(); for (const entry of turns.values()) { retireCollection(entry); entry.controller?.abort(); } }
     else { demandDescriptors(); for (const entry of turns.values()) if (entry.refs && entry.visible) { reset(entry); enqueue(entry); } }
   }
   document.addEventListener('visibilitychange', visibility);
@@ -573,8 +723,8 @@ export function createGalleryRuntime(sdk: Sdk) {
           after, capacity: true, store: new Store<TurnSnapshot>({ rows: [], busy: false, continued: true, error: null, coverage: 'view-capacity' }),
           visible(_next: boolean) {}, more() {}, dispose() {},
         };
-        entry = { key, threadId: anchor.threadId, anchor: { ...anchor }, after, store: new Store(initial), refs: 0, visible: 0, dirty: true,
-          controller: null, afterOwner: null, debts: new Set(), enumerateRetries: new Set(), debtBudget: GALLERY_RUNTIME_LIMITS.automaticDebtUnits, bytes: initialBytes, cursorCharge };
+        entry = { key, threadId: anchor.threadId, anchor: { ...anchor }, after, store: new Store(initial), refs: 0, visible: 0, dirty: true, phase: 'read',
+          controller: null, afterOwner: null, debts: new Set(), enumerateRetries: new Set(), debtBudget: GALLERY_RUNTIME_LIMITS.automaticDebtUnits, bytes: initialBytes, cursorCharge, collection: null, collectionBytes: 0 };
         turns.set(key, entry); bytes += entry.bytes;
       }
       const owned = entry;
@@ -587,12 +737,12 @@ export function createGalleryRuntime(sdk: Sdk) {
       enqueue(owned);
       return { after, capacity: false, store: owned.store,
         visible(next: boolean) { if (!live || shown === next) return; shown = next; owned.visible += next ? 1 : -1;
-          if (!owned.visible) { owned.controller?.abort(); unqueue(owned); stopUnusedDiscovery(); }
+          if (!owned.visible) { retireCollection(owned); owned.controller?.abort(); unqueue(owned); stopUnusedDiscovery(); }
           else { demandDescriptors(); reset(owned); enqueue(owned); } },
         more() { if (!live) return; demandDescriptors(); reset(owned); enqueue(owned); },
         dispose() {
           if (!live) return; live = false; if (!active) return; owned.refs--; leases--; if (shown) owned.visible--;
-          if (!owned.refs || !owned.visible) { owned.controller?.abort(); unqueue(owned); stopUnusedDiscovery(); }
+          if (!owned.refs || !owned.visible) { retireCollection(owned); owned.controller?.abort(); unqueue(owned); stopUnusedDiscovery(); }
           // Refresh LRU position only on lease retirement, never on idle ticks.
           turns.delete(key); turns.set(key, owned); collect();
         } };

@@ -26,19 +26,19 @@ const mediaOutput = z.discriminatedUnion('state', [
     width: z.number().int().min(1).max(32768), height: z.number().int().min(1).max(32768), sizeBytes: z.number().int().min(1).max(8388608) }) }),
 ]);
 type MediaHandle = ReturnType<GalleryRuntime['media']['retain']>;
-function LoadedImage({ handle, alt, open }: { handle: MediaHandle; alt: string; open: OpenClick }) {
+function LoadedImage({ handle, alt, open, actionsReady }: { handle: MediaHandle; alt: string; open: OpenClick; actionsReady: boolean }) {
   const state = useSelector(handle.store);
   const [decodeError, setDecodeError] = useState(false);
-  if (state.url && !decodeError) return <button className="tr-image-action" onClick={open} aria-label={`Open ${alt}`} title="Image bytes match the saved generation">
+  if (state.url && !decodeError) return <button className="tr-image-action" onClick={open} disabled={!actionsReady} aria-label={`Open ${alt}`} title="Image bytes match the saved generation">
     <img src={state.url} alt={alt} onLoad={event => {
       const image = event.currentTarget;
       if (!image.naturalWidth || !image.naturalHeight || image.naturalWidth > 32768 || image.naturalHeight > 32768 || image.naturalWidth * image.naturalHeight > 16777216) setDecodeError(true);
     }} onError={() => setDecodeError(true)} />
   </button>;
   return <div className="tr-placeholder"><span>{decodeError ? 'Image could not be displayed' : state.state === 'loading' ? 'Loading image…' : state.error ?? 'Generated image'}</span>
-    {(decodeError || state.state === 'error') && <button onClick={() => { setDecodeError(false); handle.retry(); }}>Retry image</button>}</div>;
+    {(decodeError || state.state === 'error') && <button disabled={!actionsReady} onClick={() => { if (!actionsReady) return; setDecodeError(false); handle.retry(); }}>Retry image</button>}</div>;
 }
-function ImageCanvas({ row, runtime, sdk, open, lifetime }: { row: GalleryObservation; runtime: GalleryRuntime; sdk: Sdk; open: OpenClick; lifetime: AbortSignal }) {
+function ImageCanvas({ row, runtime, sdk, open, lifetime, actionsReady }: { row: GalleryObservation; runtime: GalleryRuntime; sdk: Sdk; open: OpenClick; lifetime: AbortSignal; actionsReady: boolean }) {
   const host = useRef<HTMLDivElement>(null), [handle, setHandle] = useState<MediaHandle | null>(null);
   const resolution = row.resolution;
   const location = resolution?.provenance.artifactLocation;
@@ -53,10 +53,17 @@ function ImageCanvas({ row, runtime, sdk, open, lifetime }: { row: GalleryObserv
     void sha256Canonical({ target, sha256 }).then(fingerprint => {
       if (!live) return;
       resource = runtime.media.retain({ key: row.key, fingerprint, sha256, async acquire(signal) {
-        const raw = await sdk.plugins.callRpc({ pluginId: row.owner, method: 'turnResultImagesV1Media',
-          input: { version: 1, identity: JSON.parse(canonicalJson(row.identity)) }, outputSchema: mediaRaw, signal });
+        const read = await runtime.readScope(row.identity.ref.source.threadId, signal, bounded => {
+          bounded.throwIfAborted();
+          // Local retirement must not abort the HTTP promise and release its
+          // lane while the supplier's independent verification still runs.
+          // Own the dispatched response; caller fences prohibit a late GET.
+          return sdk.plugins.callRpc({ pluginId: row.owner, method: 'turnResultImagesV1Media',
+            input: { version: 1, identity: JSON.parse(canonicalJson(row.identity)) }, outputSchema: mediaRaw });
+        });
         signal.throwIfAborted();
-        const output = mediaOutput.parse(raw);
+        if (read.state === 'capacity') throw Error('Image verification capacity reached.');
+        const output = mediaOutput.parse(read.value);
         if (output.state !== 'ready') throw Error(output.reason);
         if (output.image.sha256 !== sha256 || output.image.width * output.image.height > 16777216
           || output.lease.targetFingerprint !== fingerprint || !output.lease.url.startsWith(`${output.lease.baseUrl}/`)
@@ -70,7 +77,7 @@ function ImageCanvas({ row, runtime, sdk, open, lifetime }: { row: GalleryObserv
     return () => { lifetime.removeEventListener('abort', abort); live = false; observer.disconnect(); resource?.dispose(); };
   }, [runtime, sdk, row.key, sha256, route?.kind === 'file' ? canonicalJson(route.target) : '', lifetime]);
   const alt = resolution?.fallback.kind === 'image' ? resolution.fallback.alt : 'Result image';
-  return <div ref={host} className="tr-canvas">{handle ? <LoadedImage handle={handle} alt={alt} open={open} /> : <div className="tr-placeholder">{resolution?.fallback.title ?? 'Image result'}</div>}</div>;
+  return <div ref={host} className="tr-canvas">{handle ? <LoadedImage handle={handle} alt={alt} open={open} actionsReady={actionsReady} /> : <div className="tr-placeholder">{resolution?.fallback.title ?? 'Image result'}</div>}</div>;
 }
 interface CardSite { key: string; retire(): void }
 type OpenClick = (event: React.MouseEvent<HTMLButtonElement>) => void;
@@ -107,13 +114,14 @@ function visibleCardTitle(title: string): string {
   return prefix.trimEnd() + '…';
 }
 export function ResultCard({ row, runtime, sdk, navigate, current, lifetime, presentationRoot, mode = 'docked', customEnabled = true,
-  actionScope, requestOpen, currentRow, watchCurrent, readAfter, sourceChoice = false, displayCurrent = current }: {
+  actionScope, requestOpen, currentRow, watchCurrent, readAfter, sourceChoice = false, displayCurrent = current, collectionReady = () => true }: {
   row: GalleryObservation; runtime: GalleryRuntime; sdk: Sdk; navigate: BbNavigate; current(): boolean; lifetime: AbortSignal;
   presentationRoot?: GalleryPresentationRoot | undefined; mode?: 'docked' | 'full'; customEnabled?: boolean;
   actionScope?: GalleryActionScope | undefined; requestOpen?: GalleryOpenPort | undefined;
   readAfter?: { seq: number; key: string } | undefined; sourceChoice?: boolean;
   currentRow?: (() => GalleryObservation | null) | undefined; watchCurrent?: ((changed: () => void) => () => void) | undefined;
   displayCurrent?: (() => boolean) | undefined;
+  collectionReady?: (() => boolean) | undefined;
 }) {
   const site = useRef<CardSite | null>(null);
   const card = useRef<HTMLElement>(null), operation = useRef<OpenOperation | null>(null);
@@ -132,6 +140,7 @@ export function ResultCard({ row, runtime, sdk, navigate, current, lifetime, pre
     // new action takes the direct/unavailable branch and creates no request.
     const outcome = Symbol(); openOutcome = outcome;
     operation.current?.supersede(); pendingOpen?.supersede();
+    if (!collectionReady()) return; // Provisional positives cannot start direct Open or Checking/capture.
     const latest = currentRow ? currentRow() : row;
     // Saved unavailable is authoritative even when the display clock masks it.
     if (!latest || !openAvailable(latest)) { setOpenStatus('This saved result is unavailable.'); return; }
@@ -203,7 +212,7 @@ export function ResultCard({ row, runtime, sdk, navigate, current, lifetime, pre
   };
   const supportsExpansion = useSyncExternalStore(subscribePresentations, expansionAllowed, () => true);
   const full = () => {
-    if (!current() || !value || !site.current || !runtime.isActive() || !expansionAllowed()) return;
+    if (!collectionReady() || !current() || !value || !site.current || !runtime.isActive() || !expansionAllowed()) return;
     // Contributor controls retire with the dock. The consumer action survives
     // that handoff; dialog close still checks its exact native/revision scope.
     runtime.openDialog({ row, sdk, navigate, siteKey: site.current.key, retireDock: site.current.retire,
@@ -221,11 +230,11 @@ export function ResultCard({ row, runtime, sdk, navigate, current, lifetime, pre
   const content = <>{title && <span className="tr-result-title">{visibleTitle}</span>}
     {description && description !== title && description !== caption && <span className="tr-excerpt">{description}</span>}</>;
   if (sourceChoice) return <article ref={card}>
-    <button onClick={open} aria-label={`${row.owner}: ${openName}`}>{row.owner}</button>
+    <button onClick={open} disabled={!collectionReady()} aria-label={`${row.owner}: ${openName}`}>{row.owner}</button>
     {openStatus && <small className="tr-freshness" role="status" data-turn-result-open-status="">{openStatus}</small>}
   </article>;
-  const fallback = value?.fallback.kind === 'image' ? <ImageCanvas row={row} runtime={runtime} sdk={sdk} open={open} lifetime={lifetime} />
-    : destination ? <button className="tr-canvas tr-data-action" onClick={open} aria-label={openName}>{content}</button>
+  const fallback = value?.fallback.kind === 'image' ? <ImageCanvas row={row} runtime={runtime} sdk={sdk} open={open} lifetime={lifetime} actionsReady={collectionReady()} />
+    : destination ? <button className="tr-canvas tr-data-action" onClick={open} disabled={!collectionReady()} aria-label={openName}>{content}</button>
       : <div className="tr-canvas tr-data-action">{content}</div>;
   return <article ref={card} className="tr-card" data-result-key={row.key}>
     <PresentationCanvas row={row} runtime={runtime} sdk={sdk} navigate={navigate} current={current} displayCurrent={displayCurrent}
@@ -233,10 +242,10 @@ export function ResultCard({ row, runtime, sdk, navigate, current, lifetime, pre
         && !latest.unresolved && fact && openFingerprint(latest) === fact); }} lifetime={lifetime}
       presentationRoot={presentationRoot} mode={mode} enabled={customEnabled} site={site} fallback={fallback} />
     <div className="tr-caption"><span>{value?.fallback.kind !== 'image' && title === caption ? null : caption}</span><div>
-      {mode === 'docked' && value?.presentation && supportsExpansion && <button ref={expandButton} onClick={full} className="tr-expand-icon" aria-label={`Expand ${title || caption}`} title={`Expand ${title || caption}`}>
+      {mode === 'docked' && value?.presentation && supportsExpansion && <button ref={expandButton} onClick={full} disabled={!collectionReady()} className="tr-expand-icon" aria-label={`Expand ${title || caption}`} title={`Expand ${title || caption}`}>
         <svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true" focusable="false"><path d="M6 2H2v4M10 2h4v4M14 10v4h-4M6 14H2v-4" /></svg>
       </button>}
-      {destination && (value?.presentation || value?.fallback.kind === 'image') && <button onClick={open} className={mode === 'docked' ? supportsExpansion ? 'tr-open-icon' : 'tr-open-primary' : undefined} aria-label={openName} title="Open result">
+      {destination && (value?.presentation || value?.fallback.kind === 'image') && <button onClick={open} disabled={!collectionReady()} className={mode === 'docked' ? supportsExpansion ? 'tr-open-icon' : 'tr-open-primary' : undefined} aria-label={openName} title="Open result">
         {mode === 'docked' && supportsExpansion ? <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true" focusable="false"><path d="M6 3H3v10h10v-3M9 3h4v4M7 9l6-6" /></svg> : 'Open'}
       </button>}
     </div></div>
@@ -266,7 +275,7 @@ function PresentationCanvas({ row, runtime, sdk, navigate, current, displayCurre
   useLayoutEffect(() => { latest.current = { current, displayCurrent, bindingCurrent, row, enabled }; setCommittedAuthority(authorityKey); });
   useLayoutEffect(() => {
     const node = container.current;
-    if (!presentation || !node || lifetime.aborted) return;
+    if (!presentation || !node || lifetime.aborted || !enabled) return;
     const root = presentationRoot ?? runtime.presentationRoot(lifetime, () => latest.current.current(), () => latest.current.displayCurrent());
     const key = canonicalJson([root.id, row.key]);
     const owned = root.site(row.key, { visible: false, focused: false, dialog: mode === 'full', order: root.id, activation: 0 }, () =>
@@ -301,7 +310,7 @@ function PresentationCanvas({ row, runtime, sdk, navigate, current, displayCurre
       document.removeEventListener('visibilitychange', update); if (site.current === handle) site.current = null;
       owned.dispose();
     };
-  }, [runtime, lifetime, presentationRoot, row.key, Boolean(presentation), mode, retry, site]);
+  }, [runtime, lifetime, presentationRoot, row.key, Boolean(presentation), mode, retry, site, enabled]);
   useEffect(() => {
     const owned = ownedSite.current;
     return () => {
@@ -312,7 +321,7 @@ function PresentationCanvas({ row, runtime, sdk, navigate, current, displayCurre
       // still prevent release until their real disposal finishes.
       queueMicrotask(() => { const lease = owned.request.getSnapshot().lease; if (lease) owned.committedAbsent(lease); });
     };
-  }, [runtime, lifetime, presentationRoot, row.key, Boolean(presentation), mode, retry]);
+  }, [runtime, lifetime, presentationRoot, row.key, Boolean(presentation), mode, retry, enabled]);
   const snapshot = useSyncExternalStore(scope?.request.subscribe ?? (() => () => {}), scope?.request.getSnapshot ?? (() => null), () => null);
   const revision = row.resolution ? canonicalJson([row.resolution.revision.epoch, row.resolution.revision.sequence]) : '';
   const binding = canonicalJson([revision, presentation ?? null, retry]);
@@ -369,7 +378,11 @@ function GalleryContents({ resource, runtime, sdk, navigate, current, displayCur
   displayCurrent(): boolean;
 }) {
   const state = useSelector(resource.store), container = useRef<HTMLElement>(null);
-  const rows = projectResults(state.rows), hasContent = rows.length > 0;
+  // Partial membership cannot suppress another source or declare a contested
+  // group. Show each positive independently until complete membership exists.
+  const rows = state.loaded ? projectResults(state.rows)
+    : state.rows.flatMap(row => projectResults([row]).map(result => ({ ...result, key: row.key })));
+  const hasContent = rows.length > 0;
   const [columns, setColumns] = useState(() => { const width = shell?.getBoundingClientRect().width; const value = width && width > 0 ? paneColumns(width) : memory.columns; memory.columns = value; return value; });
   useLayoutEffect(() => {
     if (!container.current) return;
@@ -397,7 +410,8 @@ function GalleryContents({ resource, runtime, sdk, navigate, current, displayCur
       {rows.map((result, index) => { const place = packing.placements[index]!;
         return <div key={result.key} style={{ gridColumn: `${place.column + 1} / span ${place.width}`, gridRow: `${place.row + 1} / span ${place.height}` }}>
           {result.kind === 'single' ? <ResultCard row={result.row} runtime={runtime} sdk={sdk} navigate={navigate}
-            current={() => current() && resource.store.state.rows.some(row => row.key === result.row.key && row.owner === result.row.owner && canonicalJson(row.identity) === canonicalJson(result.row.identity)
+            collectionReady={() => resource.store.state.loaded === true} customEnabled={state.loaded === true}
+            current={() => resource.store.state.loaded === true && current() && resource.store.state.rows.some(row => row.key === result.row.key && row.owner === result.row.owner && canonicalJson(row.identity) === canonicalJson(result.row.identity)
               && canonicalJson(row.resolution?.revision ?? null) === canonicalJson(result.row.resolution?.revision ?? null))}
             displayCurrent={() => { const fact = openFingerprint(result.row); return Boolean(fact && displayCurrent() && !result.row.sourceExpired && !result.row.retracted && !result.row.unresolved
               && resource.store.state.rows.some(row => row.key === result.row.key && openFingerprint(row) === fact)); }}
@@ -407,7 +421,8 @@ function GalleryContents({ resource, runtime, sdk, navigate, current, displayCur
             watchCurrent={changed => { const subscription = resource.store.subscribe(changed); return () => subscription.unsubscribe(); }} />
             : <article className="tr-card"><div className="tr-data-action">
               {result.rows.map(row => openAvailable(row) ? <ResultCard key={row.key} sourceChoice row={row} runtime={runtime} sdk={sdk} navigate={navigate}
-                current={() => current() && resource.store.state.rows.some(next => next.key === row.key && next.owner === row.owner
+                collectionReady={() => resource.store.state.loaded === true}
+                current={() => resource.store.state.loaded === true && current() && resource.store.state.rows.some(next => next.key === row.key && next.owner === row.owner
                   && canonicalJson(next.identity) === canonicalJson(row.identity) && canonicalJson(next.resolution?.revision ?? null) === canonicalJson(row.resolution?.revision ?? null))}
                 lifetime={lifetime} actionScope={actionScope} requestOpen={requestOpen}
                 readAfter={state.bindings?.[row.key]?.after ?? undefined}

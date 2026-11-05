@@ -130,9 +130,14 @@ async function fixture(count = 6, mount = true, contribution = {}) {
     if (type === 'change' && changes.get(this)?.delete(listener)) { subscriptions--; if (!changes.get(this).size) changes.delete(this); }
     return removeEvent.call(this, type, listener, options);
   };
-  class Observer { constructor(callback) { this.callback = callback; } observe(target) {
-    if (contribution.loadedImage && target.classList.contains('tr-canvas')) this.callback([{ target, isIntersecting: true }]);
-  } unobserve() {} disconnect() {} }
+  const imageObservers = new Set();
+  class Observer { constructor(callback) { this.callback = callback; this.targets = new Set(); } observe(target) {
+    this.targets.add(target);
+    if (contribution.loadedImage && target.classList.contains('tr-canvas')) {
+      imageObservers.add(this);
+      if (!contribution.manualImageVisibility) this.callback([{ target, isIntersecting: true }]);
+    }
+  } unobserve(target) { this.targets.delete(target); } disconnect() { this.targets.clear(); imageObservers.delete(this); } }
   Object.assign(globalThis, { window: dom.window, document: dom.window.document, Element: dom.window.Element, HTMLElement: dom.window.HTMLElement,
     MutationObserver: dom.window.MutationObserver, ResizeObserver: Observer, IntersectionObserver: Observer, IS_REACT_ACT_ENVIRONMENT: true });
   const box = { top: 0, bottom: 600, left: 0, right: 800, width: 800, height: 600, x: 0, y: 0, toJSON() {} };
@@ -143,8 +148,14 @@ async function fixture(count = 6, mount = true, contribution = {}) {
     row.identity.artifact.id = `artifact-${i}`; row.resolution.identity = row.identity;
     row.resolution.presentation.data.label = `Referent ${i}`; return row;
   });
-  if (contribution.fileRoute) rows = rows.map(row => ({ ...row, resolution: { ...row.resolution,
-    route: { kind: 'file', target: { kind: 'host', hostId: 'recorded-host', path: '/saved/result.png' } } } }));
+  if (contribution.turnClaims) rows = rows.flatMap((row, turn) => Array.from({ length: contribution.turnClaims[turn] ?? 1 }, (_, i) => {
+    if ((contribution.turnClaims[turn] ?? 1) === 1) return row;
+    const value = structuredClone(row); value.key = `turn-${turn}-claim-${i}`;
+    value.identity.ref.member = `fixture-member-${i}`; value.identity.artifact.id = `artifact-${turn}-${i}`;
+    value.resolution.identity = value.identity; return value;
+  }));
+  if (contribution.fileRoute) rows = rows.map((row, i) => ({ ...row, resolution: { ...row.resolution,
+    route: { kind: 'file', target: { kind: 'host', hostId: 'recorded-host', path: contribution.distinctImageTargets ? `/saved/result-${i}.png` : '/saved/result.png' } } } }));
   if (contribution.savedUnavailable) rows = rows.map(row => ({ ...row, currentAvailability: { state: 'unknown', asOf: 1, expiresAt: null },
     resolution: { ...row.resolution, availability: { state: 'unavailable', asOf: 1, expiresAt: null, reason: 'source-refused' } } }));
   const mediaBytes = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aX1cAAAAASUVORK5CYII=', 'base64');
@@ -167,6 +178,9 @@ async function fixture(count = 6, mount = true, contribution = {}) {
     if (contribution.sameTurnClaims) return { rows: [...structuralRows, contribution.terminalRow ?? { id: 'opaque-0', threadId: 'thread', turnId: 'turn-0',
       kind: 'turn', status: 'completed', sourceSeqStart: 1, sourceSeqEnd: 5 }], completedTurnDisplay: 'collapse',
       timelinePage: { historySnapshot: 'public-snapshot-A', olderCursor: null } };
+    if (contribution.turnClaims) return { rows: [...new Map(rows.map(row => [row.identity.ref.source.turnId, row])).values()].map((row, i) => ({
+      id: `opaque-${i}`, threadId: 'thread', turnId: row.identity.ref.source.turnId, kind: 'turn', status: 'completed', sourceSeqStart: i * 10 + 1, sourceSeqEnd: i * 10 + 5,
+    })), completedTurnDisplay: 'collapse', timelinePage: { historySnapshot: 'public-snapshot', olderCursor: null } };
     return { rows: rows.map((row, i) => ({ id: `opaque-${i}`, threadId: 'thread', turnId: row.identity.ref.source.turnId,
       kind: 'turn', status: 'completed', sourceSeqStart: i * 10 + 1, sourceSeqEnd: i * 10 + 5 })).concat(structuralRows), completedTurnDisplay: 'collapse', timelinePage: { historySnapshot: 'public-snapshot', olderCursor: null } };
   }, events: { async list() { throw Error('No native event read is allowed in this fixture'); } } }, plugins: {
@@ -174,7 +188,7 @@ async function fixture(count = 6, mount = true, contribution = {}) {
     async callRpc(args) {
       let value;
       if (contribution.loadedImage && args.method === 'turnResultImagesV1Media') {
-        mediaCalls++; const now = Date.now(), target = rows[0].resolution.route.target;
+        mediaCalls++; const now = Date.now(), target = rows.find(row => row.identity.ref.source.eventId === args.input.identity.ref.source.eventId).resolution.route.target;
         value = { version: 1, state: 'ready', image: { mimeType: 'image/png', sha256: mediaSha, width: 1, height: 1, sizeBytes: mediaBytes.length },
           lease: { targetFingerprint: await sha256Canonical({ target, sha256: mediaSha }), leaseGeneration: 'fixture',
             baseUrl: '/api/v1/file-previews/fixture', url: '/api/v1/file-previews/fixture/image.png', resolvedAt: now, expiresAtMs: now + 60000 } };
@@ -209,6 +223,7 @@ async function fixture(count = 6, mount = true, contribution = {}) {
     registrations.push(dispose); return dispose;
   }
   if (!contribution.deferPresentation) register();
+  contribution.configureSdk?.(sdk);
   const runtimeProbe = []; if (contribution.captureRuntime) globalThis.__turnResultsRuntimeFixture = runtimeProbe;
   const app = await loadPluginApp(contribution.definition ?? (contribution.captureRuntime ? runtimeDefinition : definition)), controller = new AbortController();
   let script = await app.contentScripts[0].mount({ pluginId: 'turn-results', generation: 1, signal: controller.signal });
@@ -225,6 +240,11 @@ async function fixture(count = 6, mount = true, contribution = {}) {
     fileOpenCalls, fileOpenAccepted(value) { fileOpenAccepted = value; },
     runtime: () => runtimeProbe.at(-1), element: () => h(banner.component, { ...headerProps }),
     mediaCounts: () => ({ calls: mediaCalls, fetches: mediaFetches }),
+    imagesVisible: (value, key) => act(async () => { for (const observer of imageObservers) {
+      const entries = [...observer.targets].filter(target => !key || target.closest('[data-result-key]')?.dataset.resultKey === key)
+        .map(target => ({ target, isIntersecting: value }));
+      if (entries.length) observer.callback(entries);
+    } await tick(); }),
     rerender: () => act(async () => { rendered.lifecycle.rerender(h(banner.component, headerProps)); await tick(); }),
     thread: value => act(async () => { headerProps.threadId = value; rendered.lifecycle.rerender(h(banner.component, { ...headerProps })); await tick(); }),
     stats: () => ({ listCalls, rpc, live, peak, setups, cleanups, full, fullPeak, subscriptions, subscriptionPeak }),
@@ -2093,4 +2113,267 @@ test('priority Open verification yields ordinary collection without changing5s o
   await f.dispose();await runtime.whenDrained();result.cleanup={runtime:runtime.stats(),canvases:runtime.canvases.counts(),publicReadsLive:live,fixture:f.stats()};save();
   assert.equal(live,0);assert.equal(result.cleanup.runtime.running,0);assert.equal(result.cleanup.runtime.queued,0);assert.equal(result.cleanup.runtime.historyReads,0);assert.equal(result.cleanup.runtime.leases,0);assert.equal(result.cleanup.canvases.occupied,0);
  }
+});
+
+test('cold proved turns publish indexed previews before unrelated optional supplier work', async () => {
+  let release, held = false, released = false, live = 0, peak = 0, steps = 0, commits = 0;
+  const reads = [], gate = new Promise(done => { release = () => { released = true; done(); }; });
+  const f = await fixture(2, true, { captureRuntime: true, nativeItems: true, deferPresentation: true,
+    configureSdk(sdk) {
+      const original = sdk.plugins.callRpc;
+      sdk.plugins.callRpc = async args => {
+        live++; peak = Math.max(peak, live);
+        try {
+          if (args.method === GALLERY_METHODS.read) reads.push(args.input.turnId);
+          if (args.method === GALLERY_METHODS.stage) steps++;
+          if (!held && args.method === GALLERY_METHODS.stage) { held = true; await gate; }
+          if (args.method === GALLERY_METHODS.apply) commits++;
+          args.signal?.throwIfAborted(); return await original(args);
+        } finally { live--; }
+      };
+    } });
+  const runtime = f.runtime();
+  try {
+    await until(() => held);
+    await settle();
+    const target = document.querySelector('[data-timeline-row-id="opaque-1"] [data-result-key="row-1"] .tr-data-action');
+    console.log('COLD_RETAINED_BEFORE_OPTIONAL_RELEASE', JSON.stringify({ reads, targetUseful: !!target, released, peak, stats: runtime.stats() }));
+    assert.ok(reads.includes('turn-0'), 'earlier retained read completed');
+    assert.equal(released, false);
+    assert.ok(target?.isConnected && target.textContent.includes(f.rows()[1].resolution.fallback.title), 'indexed target useful preview must precede unrelated supplier release');
+    assert.equal(peak, 1, 'same-thread actual public occupancy never overlaps');
+    await act(async () => { release(); await tick(); });
+    await until(() => runtime.stats().running === 0 && runtime.stats().queued === 0);
+    assert.ok(steps > 1 && commits > 0, 'ordinary supplier stage/commit progress resumes after the retained-first turn');
+    assert.equal(target, document.querySelector('[data-result-key="row-1"] .tr-data-action'));
+    const idle = reads.length; await settle(); assert.equal(reads.length, idle);
+  } finally {
+    release(); await f.dispose(); await runtime.whenDrained();
+    assert.equal(live, 0); assert.equal(runtime.stats().running, 0); assert.equal(runtime.stats().queued, 0);
+    assert.equal(runtime.stats().leases, 0); assert.equal(runtime.canvases.counts().occupied, 0);
+  }
+});
+
+
+test('validated positive prefix is visible but cannot Open, capture or acquire a custom lease before complete membership', async () => {
+  const result = { phases: [], calls: [], cleanup: null, nativeClaim: false };
+  const save = () => {};
+  let release, released = false, held = false, live = 0, peak = 0, issued = null;
+  const gate = new Promise(done => { release = () => { released = true; done(); }; });
+  const f = await fixture(1, true, { captureRuntime: true, nativeItems: true, sameTurnClaims: 10,
+    configureSdk(sdk) {
+      const rpc = sdk.plugins.callRpc;
+      sdk.plugins.callRpc = async args => {
+        if (args.method !== GALLERY_METHODS.read) return rpc(args);
+        const call = { turn: args.input.turnId, after: args.input.after ?? null, start: performance.now() }; result.calls.push(call);
+        live++; peak = Math.max(peak, live);
+        try {
+          if (args.input.after) {
+            assert.deepEqual(args.input.after, issued, 'continuation must be exactly the public issued cursor');
+            if (!held) { held = true; await gate; }
+          }
+          args.signal?.throwIfAborted(); const value = await rpc(args);
+          call.keys = value.page.rows.map(row => row.key); call.next = value.page.next; call.finished = performance.now();
+          if (!args.input.after) issued = structuredClone(value.page.next);
+          return value;
+        } finally { live--; }
+      };
+    } });
+  const runtime = f.runtime(), facts = JSON.stringify(f.rows());
+  try {
+    await until(() => held);
+    await settle();
+    const native = document.querySelector('[data-timeline-row-id="opaque-0"]');
+    const shell = native.querySelector('[data-turn-results-gallery]');
+    const prefix = shell.querySelector('[data-result-key="claim-0"]');
+    const pending = { phase: 'issued-next-page-held', nativeConnected: native.isConnected, shellConnected: shell.isConnected,
+      nativePublic: f.nativeCalls.map(call => ({ threadId: call.threadId, beforeAnchorId: call.beforeAnchorId ?? null })),
+      prefixVisible: !!prefix && f.dom.window.getComputedStyle(prefix).visibility !== 'hidden',
+      cards: shell.querySelectorAll('[data-result-key]').length, customLive: f.stats().live,
+      canOpen: runtime.isReadyOwner(owner), occupancy: runtime.canvases.counts(), stats: runtime.stats(), peak, released };
+    result.phases.push(pending); save();
+    assert.ok(native.isConnected && shell.isConnected); assert.equal(f.nativeCalls.length, 1);
+    assert.equal(result.calls[0].keys.length, 8); assert.ok(issued); assert.equal(result.calls.length, 2);
+    assert.equal(pending.customLive, 0); assert.equal(pending.occupancy.occupied, 0);
+    assert.equal(pending.canOpen, false); assert.equal(f.navigation.length, 0);
+    assert.equal(prefix.querySelector('.tr-data-action').disabled, true);
+    assert.ok([...prefix.querySelectorAll('button')].every(button => button.disabled));
+    await act(async () => { for (const button of prefix.querySelectorAll('button')) button.dispatchEvent(new f.dom.window.MouseEvent('click', { bubbles: true })); await tick(); });
+    assert.equal(f.navigation.length, 0); assert.equal(result.calls.length, 2);
+    assert.equal(prefix.querySelector('[data-turn-result-open-status]'), null);
+    assert.equal(runtime.canvases.counts().requests, 0);
+    assert.equal(peak, 1); assert.equal(released, false);
+    // Complete the same chain before the final RED assertion, preserving a
+    // usable completion/control and exact cleanup even when prefix is absent.
+    await act(async () => { release(); await tick(); });
+    await until(() => shell.querySelectorAll('[data-result-key]').length === 10 && f.stats().live === 4 && runtime.stats().running === 0 && runtime.stats().queued === 0);
+    assert.equal(native.querySelector('[data-turn-results-gallery]'), shell);
+    assert.equal(JSON.stringify(f.rows()), facts); assert.equal(result.calls[1].keys.length, 2); assert.equal(result.calls[1].next, null);
+    assert.equal(f.stats().peak, 4); assert.equal(f.stats().rpc, 0);
+    const opener = shell.querySelector('[data-result-key="claim-0"] .tr-open-icon');
+    assert.ok(opener?.isConnected); await act(async () => { opener.click(); await tick(); });
+    assert.deepEqual(f.navigation, ['https://fixture.invalid/0']);
+    result.phases.push({ phase: 'complete-same-chain', cards: shell.querySelectorAll('[data-result-key]').length,
+      live: f.stats().live, actions: [...f.navigation], factsUnchanged: true, samePhysicalShell: true, occupancy: runtime.canvases.counts() });
+    save();
+    assert.equal(pending.prefixVisible, true, 'validated useful first-page prefix must display before issued next-page release');
+  } catch (error) { result.error = { message: error.message, stack: error.stack }; save(); throw error; }
+  finally {
+    release(); await f.dispose(); await runtime.whenDrained();
+    result.cleanup = { live, peak, runtime: runtime.stats(), canvases: runtime.canvases.counts(), fixture: f.stats() }; save();
+    assert.equal(live, 0); assert.equal(runtime.stats().running, 0); assert.equal(runtime.stats().queued, 0); assert.equal(runtime.stats().leases, 0); assert.equal(runtime.canvases.counts().occupied, 0);
+  }
+});
+
+test('image Media shares passive native lanes and owns dispatched response after local retirement', async () => {
+  const { untilAborted } = await import('../gallery/lifetime.ts');
+  let releaseRead, releaseOther, releaseMedia, arm = false, readHeld = false, firstMediaHeld = false;
+  let raw = 0, mediaRaw = 0, other = 0, combinedPeak = 0, mediaPeak = 0;
+  const mediaCalls = [], sourceCalls = [];
+  const count = () => { combinedPeak = Math.max(combinedPeak, raw + mediaRaw + other); mediaPeak = Math.max(mediaPeak, mediaRaw); };
+  const readGate = new Promise(done => { releaseRead = done; }), otherGate = new Promise(done => { releaseOther = done; });
+  const mediaGate = new Promise(done => { releaseMedia = done; });
+  const f = await fixture(2, true, { captureRuntime: true, nativeItems: true, loadedImage: true, fileRoute: true,
+    owner: 'turn-result-images', manualImageVisibility: true, distinctImageTargets: true,
+    configureSdk(sdk) {
+      const rpc = sdk.plugins.callRpc, timeline = sdk.threads.timeline;
+      sdk.threads.timeline = async input => { raw++; count(); try { return await timeline(input); } finally { raw--; } };
+      sdk.plugins.callRpc = args => {
+        if (args.method === 'turnResultImagesV1Media') {
+          const call = { event: args.input.identity.ref.source.eventId, signal: args.signal, finished: false };
+          mediaCalls.push(call);
+          // Model the actual transport boundary: abort can reject the client
+          // fetch while the source handler's independent operation still runs.
+          const source = (async () => {
+            mediaRaw++; count();
+            try {
+              if (!firstMediaHeld) { firstMediaHeld = true; await mediaGate; }
+              const value = await rpc(args); call.finished = true; return value;
+            } finally { mediaRaw--; }
+          })();
+          sourceCalls.push(source);
+          return args.signal ? untilAborted(source, args.signal) : source;
+        }
+        return (async () => {
+          raw++; count();
+          try {
+            if (arm && args.method === GALLERY_METHODS.read && args.input.turnId === 'turn-0') {
+              arm = false; readHeld = true; await readGate; // deliberately ignores local abort
+            }
+            return await rpc(args);
+          } finally { raw--; }
+        })();
+      };
+    } });
+  const runtime = f.runtime(), control = new AbortController(); let otherRead;
+  try {
+    await until(() => document.querySelectorAll('[data-result-key]').length === 2 && runtime.stats().running === 0 && runtime.stats().queued === 0);
+    assert.deepEqual(f.mediaCounts(), { calls: 0, fetches: 0 });
+    const facts = JSON.stringify(f.rows()); arm = true;
+    await act(async () => { document.querySelector('[data-timeline-row-id="opaque-0"] > button').firstChild.data = 'Ordinary current image turn demand'; await tick(); });
+    await until(() => readHeld);
+    otherRead = runtime.readScope('other-thread', control.signal, async () => { other++; count(); try { await otherGate; return 'other-complete'; } finally { other--; } });
+    void otherRead.catch(() => {}); // Teardown cancellation must not mask the causal assertion.
+    await until(() => other === 1);
+    await f.imagesVisible(true); await settle(20);
+    console.log('MEDIA_LANE_BEFORE_RETAINED_RELEASE', JSON.stringify({ dispatched: mediaCalls.map(call => call.event), combinedPeak, mediaPeak,
+      raw, mediaRaw, other, runtime: runtime.stats(), image: f.mediaCounts() }));
+    assert.equal(mediaCalls.length, 0, 'same-thread Media must queue behind the actual retained raw read');
+    assert.equal(combinedPeak, 2);
+    await act(async () => { releaseRead(); releaseOther(); await tick(); });
+    assert.equal((await otherRead).state, 'ready');
+    await until(() => firstMediaHeld);
+    assert.equal(mediaCalls.length, 1); assert.equal(mediaRaw, 1); assert.equal(mediaCalls[0].signal, undefined,
+      'dispatched source response remains owned instead of aborting its client transport on caller retirement');
+    const healthy = await runtime.readScope('other-thread', control.signal, async () => { other++; count(); try { return 'healthy'; } finally { other--; } });
+    assert.equal(healthy.state, 'ready');
+    await f.imagesVisible(false, 'row-0'); await settle();
+    assert.equal(mediaRaw, 1); assert.equal(mediaCalls[0].finished, false);
+    assert.equal(mediaCalls.length, 1, 'second same-thread image remains undispatched');
+    assert.equal(runtime.stats().running, 1, 'caller retirement does not free dispatched response occupancy');
+    assert.equal(f.mediaCounts().fetches, 0);
+    const duringRetirement = await runtime.readScope('other-thread', control.signal, async () => 'still-progressing');
+    assert.equal(duringRetirement.state, 'ready', 'other-thread progress stays live while second image is queued');
+    await act(async () => { releaseMedia(); await tick(); });
+    await until(() => document.querySelector('[data-result-key="row-1"] img[src^="blob:"]') && mediaRaw === 0 && runtime.stats().running === 0);
+    assert.equal(f.mediaCounts().fetches, 1, 'only still-visible second image downloads; retired response cannot start GET/hash/Blob');
+    assert.equal(document.querySelector('[data-result-key="row-0"] img'), null);
+    await f.imagesVisible(true, 'row-0');
+    await until(() => document.querySelectorAll('.tr-image-action img[src^="blob:"]').length === 2 && runtime.stats().running === 0 && runtime.stats().queued === 0);
+    const blobs = [...document.querySelectorAll('.tr-image-action img')].map(image => image.src);
+    assert.equal(new Set(mediaCalls.map(call => call.event)).size, 2, 'two distinct immutable source identities complete');
+    assert.equal(f.mediaCounts().fetches, 2); assert.equal(combinedPeak, 2); assert.equal(mediaPeak, 1);
+    assert.equal(JSON.stringify(f.rows()), facts);
+    const warm = { ...f.mediaCounts() }; await f.notify();
+    await until(() => runtime.stats().running === 0 && runtime.stats().queued === 0); await settle();
+    assert.deepEqual(f.mediaCounts(), warm); assert.deepEqual([...document.querySelectorAll('.tr-image-action img')].map(image => image.src), blobs);
+    await act(async () => { for (const button of document.querySelectorAll('.tr-image-action')) button.click(); await tick(); });
+    assert.deepEqual(f.fileOpenCalls.map(value => value.target), [0, 1].map(i => ({ kind: 'host', hostId: 'recorded-host', path: `/saved/result-${i}.png` })));
+    console.log('MEDIA_LANE_AFTER', JSON.stringify({ mediaIdentities: mediaCalls.map(call => call.event), combinedPeak, mediaPeak,
+      blobs: blobs.length, warmSameBlob: true, image: f.mediaCounts(), exactFileOpen: f.fileOpenCalls }));
+  } finally {
+    releaseRead(); releaseOther(); releaseMedia(); control.abort();
+    await f.dispose(); await Promise.allSettled(sourceCalls); await otherRead?.catch(() => {}); await runtime.whenDrained();
+    assert.equal(raw, 0); assert.equal(mediaRaw, 0); assert.equal(other, 0);
+    assert.equal(runtime.stats().running, 0); assert.equal(runtime.stats().queued, 0); assert.equal(runtime.stats().historyReads, 0);
+    assert.equal(runtime.media.stats().running, 0); assert.equal(runtime.canvases.counts().occupied, 0);
+  }
+});
+
+test('page-boundary FIFO admits proved next turn before a later issued page and defers optional source work', async () => {
+  let release, releaseOptional, held = false, optionalHeld = false, released = false, issued = null, live = 0, peak = 0;
+  const calls = [], gate = new Promise(done => { release = () => { released = true; done(); }; });
+  const optionalGate = new Promise(done => { releaseOptional = done; });
+  const f = await fixture(2, true, { captureRuntime: true, nativeItems: true, deferPresentation: true, turnClaims: [17, 1],
+    configureSdk(sdk) {
+      const rpc = sdk.plugins.callRpc;
+      sdk.plugins.callRpc = async args => {
+        live++; peak = Math.max(peak, live);
+        try {
+          if (args.method === GALLERY_METHODS.read) {
+            const call = { turn: args.input.turnId, after: args.input.after ?? null, start: performance.now() }; calls.push(call);
+            if (args.input.turnId === 'turn-0' && args.input.after) {
+              assert.deepEqual(args.input.after, issued, 'continuation uses only the preceding actually-issued cursor');
+              if (!held && args.input.after.key === 'turn-0-claim-15') { held = true; await gate; }
+            }
+            const value = await rpc(args); call.keys = value.page.rows.map(row => row.key); call.next = value.page.next;
+            if (args.input.turnId === 'turn-0') issued = structuredClone(value.page.next);
+            return value;
+          }
+          if (!optionalHeld && args.method === GALLERY_METHODS.stage) { optionalHeld = true; await optionalGate; }
+          return await rpc(args);
+        } finally { live--; }
+      };
+    } });
+  const runtime = f.runtime(), facts = JSON.stringify(f.rows());
+  try {
+    await until(() => held); await settle();
+    const first = document.querySelector('[data-timeline-row-id="opaque-0"] [data-turn-results-gallery]');
+    const target = document.querySelector('[data-timeline-row-id="opaque-1"] [data-result-key="row-1"]');
+    console.log('PAGE_FIFO_PENDING', JSON.stringify({ calls, firstCards: first.querySelectorAll('[data-result-key]').length,
+      targetUseful: !!target, held, released, peak, stats: runtime.stats() }));
+    assert.equal(issued.key, 'turn-0-claim-15'); assert.equal(released, false);
+    assert.ok(target?.isConnected, 'proved next-turn useful preview must precede earlier later-page release');
+    assert.ok(calls.findIndex(call => call.turn === 'turn-1') < calls.findIndex(call => call.turn === 'turn-0' && call.after));
+    assert.equal(first.querySelectorAll('[data-result-key]').length, 16);
+    assert.equal(optionalHeld, false, 'short completed turn cannot start optional work ahead of an incomplete retained continuation');
+    assert.ok([...first.querySelectorAll('button')].every(button => button.disabled), 'unfinished first collection cannot Open/Expand/capture');
+    assert.equal(runtime.canvases.counts().occupied, 0);
+    await act(async () => { target.querySelector('.tr-open-icon').click(); await tick(); });
+    assert.deepEqual(f.navigation, ['https://fixture.invalid/1'], 'independently complete target has exact current action');
+    await act(async () => { release(); await tick(); });
+    await until(() => first.querySelectorAll('[data-result-key]').length === 17 && optionalHeld);
+    assert.equal(document.querySelector('[data-timeline-row-id="opaque-0"] [data-turn-results-gallery]'), first);
+    assert.deepEqual([...first.querySelectorAll('[data-result-key]')].map(card => card.dataset.resultKey).sort(), f.rows().filter(row => row.identity.ref.source.turnId === 'turn-0').map(row => row.key).sort());
+    await act(async () => { first.querySelector('.tr-open-icon').click(); await tick(); });
+    assert.deepEqual(f.navigation, ['https://fixture.invalid/1', 'https://fixture.invalid/0']);
+    await act(async () => { releaseOptional(); await tick(); });
+    await until(() => runtime.stats().running === 0 && runtime.stats().queued === 0);
+    assert.equal(JSON.stringify(f.rows()), facts); assert.equal(peak, 1);
+    const idle = calls.length; await settle(); assert.equal(calls.length, idle);
+  } finally {
+    release(); releaseOptional(); await f.dispose(); await runtime.whenDrained();
+    assert.equal(live, 0); assert.equal(runtime.stats().running, 0); assert.equal(runtime.stats().queued, 0);
+    assert.equal(runtime.stats().leases, 0); assert.equal(runtime.canvases.counts().occupied, 0);
+  }
 });
