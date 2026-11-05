@@ -10,8 +10,19 @@ import { loadPluginApp, renderSlot } from '@get-bb/plugin-sdk/testing/app';
 import { GALLERY_METHODS } from '../gallery/rpc.ts';
 registerHooks({ load(url, context, next) {
   if (url.endsWith('.css')) return { format: 'module', shortCircuit: true, source: 'export default {}' };
-  if (url.endsWith('.tsx')) return { format: 'module', shortCircuit: true,
-    source: ts.transpileModule(readFileSync(new URL(url), 'utf8'), { compilerOptions: { target: ts.ScriptTarget.ES2023, module: ts.ModuleKind.ESNext, jsx: ts.JsxEmit.ReactJSX } }).outputText };
+  if (new URL(url).pathname.endsWith('.tsx')) {
+    let source = readFileSync(new URL(url), 'utf8');
+    const parsed = new URL(url);
+    if (parsed.search.startsWith('?startup-recovery-') && parsed.pathname.endsWith('/app.tsx')) {
+      source = source.replaceAll("'./gallery/view.tsx'", "'./gallery/view.tsx" + parsed.search + "'")
+        .replace('useSdk,', 'useSdk as originalUseSdk,')
+        + '\nfunction useSdk() { const sdk = originalUseSdk(); return globalThis.__startupRecoveryProbe?.sdkOverride ?? sdk; }';
+    }
+    if (parsed.search.startsWith('?startup-recovery-') && parsed.pathname.endsWith('/view.tsx'))
+      source = 'const startupProbe = globalThis.__startupRecoveryProbe; startupProbe.attempts++; await startupProbe.gate; startupProbe.evaluated = true;\n' + source;
+    return { format: 'module', shortCircuit: true,
+    source: ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2023, module: ts.ModuleKind.ESNext, jsx: ts.JsxEmit.ReactJSX } }).outputText };
+  }
   return next(url, context);
 } });
 const definition = await import('../app.tsx');
@@ -94,12 +105,13 @@ async function fixture(status = 'pending', depth = 0, options = {}) {
     if (args.method === GALLERY_METHODS.pending) return args.outputSchema.parse({ rows: [], next: null });
     throw Error(`Unexpected fixture RPC ${args.method}`);
   } } };
-  const app = await loadPluginApp(definition), controller = new AbortController();
+  const app = await loadPluginApp(await (options.definition ?? definition)), controller = new AbortController();
   const script = app.contentScripts[0].mount({ signal: controller.signal });
   const bridge = app.threadHeaderActions[0];
   const rendered = renderSlot({ ...bridge, component: props => createPortal(createElement(bridge.component, props), document.querySelector('[data-fixture-header]')) }, { threadId: 'thread', projectId: 'project', isCompactViewport: false }, { sdk,
     openUrl(url) { navigation.push(url); return true; }, realtimeConnectionState: 'connected' });
   return { dom, native, rendered, app, sdk, calls, held, navigation, responses, subscriptions, subscriptionCountsAtRead,
+    async replaceSdk() { globalThis.__startupRecoveryProbe.sdkOverride = Object.create(sdk); await act(async () => { rendered.lifecycle.rerender(createPortal(createElement(bridge.component, { threadId: 'thread', projectId: 'project', isCompactViewport: false }), document.querySelector('[data-fixture-header]'))); }); },
     changed(event, channel = 'thread:changed') { for (const subscription of [...subscriptions]) if (subscription.event === channel) subscription.callback(event); },
     depth(value) { depth = value; }, maxOwned: () => maxOwned,
     set(value, nextSnapshot = `snapshot-${JSON.stringify(value)}`) { rows = value; snapshot = nextSnapshot; },
@@ -441,4 +453,61 @@ test('old visible target single Open obtains a NEW seven-page chain within the o
  assert.equal(f.calls.length-mark,7);assert.equal(f.calls[mark].beforeAnchorId,undefined);for(let i=mark+1;i<f.calls.length;i++)assert.equal(f.calls[i].beforeAnchorId,f.responses[i-1].timelinePage.olderCursor.anchorId);
  assert.equal(f.roots()[0],host);assert.equal(f.maxOwned(),1);await settle(200);assert.equal(f.calls.length,mark+7);assert.equal(f.navigation.length,1);
  }finally{await f.dispose();}
+});
+
+
+test('startup module failure is contained without idle import retries; a genuine new frontend generation recovers', async () => {
+  let failLoad;
+  const failed = globalThis.__startupRecoveryProbe = { attempts: 0, evaluated: false, gate: new Promise((_, reject) => { failLoad = reject; }) };
+  let f;
+  try {
+    f = await fixture('completed', 0, { definition: import('../app.tsx?startup-recovery-failed-generation') });
+    await until(() => failed.attempts === 1 && f.calls.length > 0);
+    await act(async () => { failLoad(Error('Actual held implementation failed to evaluate')); await tick(); });
+    await until(() => document.querySelector('[data-turn-results-notice]')?.textContent.includes('could not load'));
+    assert.equal(f.roots().length, 0); assert.deepEqual(f.navigation, []);
+    const reads = f.calls.length; await settle(200); assert.equal(f.calls.length, reads); assert.equal(failed.attempts, 1);
+    await act(async () => f.changed({ type: 'changed', entity: 'thread', id: 'thread', changes: ['events-appended'] }));
+    await until(() => f.calls.length > reads && f.calls.at(-1).finished);
+    assert.equal(failed.attempts, 1, 'a new proof demand does not loop failed ESM imports');
+    assert.ok(document.querySelector('[data-turn-results-notice]'), 'restart alone cannot clear the actual load failure');
+    await f.dispose(); f = null;
+    // A new actual frontend-module generation, as after reload/update; no
+    // production cache-busting or fabricated module value supplies recovery.
+    const fresh = globalThis.__startupRecoveryProbe = { attempts: 0, evaluated: false, gate: Promise.resolve() };
+    f = await fixture('completed', 0, { definition: import('../app.tsx?startup-recovery-new-generation') });
+    await until(() => f.roots()[0]?.querySelector('.tr-data-action'));
+    assert.equal(fresh.attempts, 1); assert.equal(fresh.evaluated, true);
+    assert.equal(document.querySelector('[data-turn-results-notice]'), null);
+    await act(async () => f.roots()[0].querySelector('.tr-data-action').click());
+    assert.deepEqual(f.navigation, ['https://fixture.invalid/turn']);
+  } finally { failLoad?.(Error('cleanup')); if (f) await f.dispose(); delete globalThis.__startupRecoveryProbe; }
+});
+
+for (const retirement of ['hide', 'semantic', 'SDK']) test(`startup late implementation cannot attach retired ${retirement} proof`, async () => {
+  let release;
+  const probe = globalThis.__startupRecoveryProbe = { attempts: 0, evaluated: false, gate: new Promise(resolve => { release = resolve; }) };
+  let f;
+  try {
+    f = await fixture('completed', 0, { definition: import(`../app.tsx?startup-recovery-late-${retirement}`) });
+    await until(() => probe.attempts === 1 && f.calls.length > 0 && f.calls.at(-1).finished);
+    const initial = f.calls.length;
+    f.set([publicRow('pending')], 'successor-pending');
+    if (retirement === 'hide') await f.hidden(true);
+    else if (retirement === 'semantic') await act(async () => f.changed({ type: 'changed', entity: 'thread', id: 'thread', changes: ['history-rewritten'] }));
+    else await f.replaceSdk();
+    release(); await until(() => probe.evaluated); await settle(200);
+    assert.equal(f.roots().length, 0, 'old completed history must not gain placement when its code arrives late');
+    assert.deepEqual(f.navigation, []);
+    if (retirement === 'hide') assert.equal(f.calls.length, initial, 'hidden generation dispatches no fresh work');
+    else assert.ok(f.calls.length > initial, 'successor proof comes from an actual fresh public request');
+    f.set([publicRow('completed', 15)], 'genuinely-current');
+    if (retirement === 'hide') await f.hidden(false);
+    else await act(async () => f.changed({ type: 'changed', entity: 'thread', id: 'thread', changes: ['events-appended'] }));
+    await until(() => f.roots()[0]?.querySelector('.tr-data-action'));
+    assert.equal(f.responses.at(-1).timelinePage.historySnapshot, 'genuinely-current');
+    assert.equal(probe.attempts, 1);
+    await act(async () => f.roots()[0].querySelector('.tr-data-action').click());
+    assert.deepEqual(f.navigation, ['https://fixture.invalid/turn']);
+  } finally { release(); if (f) await f.dispose(); delete globalThis.__startupRecoveryProbe; }
 });

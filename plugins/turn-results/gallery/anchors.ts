@@ -1,5 +1,44 @@
-import { canonicalByteLength } from '@phosphorco/bb-turn-results';
 import type { Anchor, ProbeRow } from '../probe/anchor.ts';
+
+/** Exact JSON byte accounting only for our selected primitive ProbeRow DTOs.
+ * Key order cannot change byte length. JSON lone surrogates are accepted and
+ * charged as six escaped bytes, matching the public canonical meter. */
+export function sparseRowByteLength(value: ProbeRow | readonly ProbeRow[], maxBytes: number): number {
+  if (!Number.isSafeInteger(maxBytes) || maxBytes < 1) throw RangeError('Invalid sparse byte budget.');
+  let bytes = 0;
+  const add = (size: number) => { bytes += size; if (bytes > maxBytes) throw Error('Sparse timeline exceeds byte budget.'); };
+  const text = (value: string) => {
+    if (value.length + 2 > maxBytes - bytes) throw Error('Sparse timeline exceeds byte budget.');
+    add(2);
+    for (let i = 0; i < value.length; i++) {
+      const code = value.charCodeAt(i);
+      if (code === 34 || code === 92 || [8, 9, 10, 12, 13].includes(code)) add(2);
+      else if (code < 32) add(6);
+      else if (code < 128) add(1);
+      else if (code < 2048) add(2);
+      else if (code >= 0xd800 && code <= 0xdbff && i + 1 < value.length && value.charCodeAt(i + 1) >= 0xdc00 && value.charCodeAt(i + 1) <= 0xdfff) { add(4); i++; }
+      else add(code >= 0xd800 && code <= 0xdfff ? 6 : 3);
+    }
+  };
+  const stringKeys = new Set(['id', 'threadId', 'kind', 'role']), nullableKeys = new Set(['turnId', 'status']);
+  const row = (value: ProbeRow) => {
+    if (!value || typeof value !== 'object' || ![Object.prototype, null].includes(Object.getPrototypeOf(value)) || Object.getOwnPropertySymbols(value).length) throw Error('Invalid sparse row.');
+    add(2); const keys = Object.keys(value);
+    for (const [i, key] of keys.entries()) {
+      const property = Object.getOwnPropertyDescriptor(value, key);
+      if (!property || !('value' in property)) throw Error('Invalid sparse field.');
+      const item: unknown = property.value;
+      if (i) add(1); text(key); add(1);
+      if (stringKeys.has(key)) { if (typeof item !== 'string') throw Error('Invalid sparse string.'); text(item); }
+      else if (nullableKeys.has(key)) { if (item === null) add(4); else { if (typeof item !== 'string') throw Error('Invalid sparse string.'); text(item); } }
+      else if (key === 'sourceSeqStart' || key === 'sourceSeqEnd') { if (typeof item !== 'number' || !Number.isFinite(item)) throw Error('Invalid sparse number.'); add(JSON.stringify(item).length); }
+      else throw Error('Unknown sparse field.');
+    }
+  };
+  if (Array.isArray(value)) { add(2); for (let i = 0; i < value.length; i++) { if (i) add(1); const property = Object.getOwnPropertyDescriptor(value, String(i)); if (!property || !('value' in property)) throw Error('Invalid sparse row list.'); row(property.value); } }
+  else row(value as ProbeRow);
+  return bytes;
+}
 
 /** Exact terminal placement plus a separately witnessed full-turn discovery scope. */
 export interface GalleryAnchor extends Anchor { turnSeqStart: number; turnSeqEnd: number }
@@ -135,7 +174,7 @@ export function createGalleryAnchorReader(port: GalleryTimelinePort, threadId: s
           return { anchors: targets.flatMap(id => matched.has(id) ? [matched.get(id)!] : []), continued: true,
             unplaced: targets.filter(unresolved), checked: targets.filter(id => !unresolved(id) || exhausted), capacity: true, pages, exhausted, automatic: false };
         }
-        try { canonicalByteLength(sparse, GALLERY_HISTORY_LIMITS.bytes); }
+        try { sparseRowByteLength(sparse, GALLERY_HISTORY_LIMITS.bytes); }
         catch { return { anchors: targets.flatMap(id => matched.has(id) ? [matched.get(id)!] : []), continued: true,
           unplaced: targets.filter(unresolved), checked: targets.filter(id => !unresolved(id) || exhausted), capacity: true, pages, exhausted, automatic: false }; }
         snapshot = page.timelinePage.historySnapshot; display = page.completedTurnDisplay;
@@ -145,7 +184,7 @@ export function createGalleryAnchorReader(port: GalleryTimelinePort, threadId: s
         limited ||= combined.length > GALLERY_HISTORY_LIMITS.rows;
         let prefix = 0, charge = 2;
         for (const row of combined.slice(0, GALLERY_HISTORY_LIMITS.rows)) {
-          const bytes = canonicalByteLength(row, GALLERY_HISTORY_LIMITS.bytes) + 1;
+          const bytes = sparseRowByteLength(row, GALLERY_HISTORY_LIMITS.bytes) + 1;
           if (charge + bytes > GALLERY_HISTORY_LIMITS.bytes) break;
           charge += bytes; prefix++;
         }

@@ -1,3 +1,6 @@
+export { createGalleryRuntime } from './runtime.ts';
+export { createRoot } from 'react-dom/client';
+export { navigateResult } from '@phosphorco/bb-turn-results/bb';
 import type { BbNavigate, useSdk } from '@get-bb/plugin-sdk/app';
 import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { useSelector } from '@tanstack/react-store';

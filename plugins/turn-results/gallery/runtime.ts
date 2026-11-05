@@ -18,6 +18,8 @@ import { createPresentationLifetime } from './presentation-lifetime.ts';
 import type { PresentationLifetime } from './presentation-lifetime.ts';
 import type { GalleryDialogInput, GalleryDialogController } from './dialog.tsx';
 import { untilAborted } from './lifetime.ts';
+import { createGalleryWorkOwner } from './work-owner.ts';
+import type { GalleryWorkOwner } from './work-owner.ts';
 
 type Sdk = { plugins: Parameters<typeof discoverResultsParticipants>[0]['sdk']['plugins'] & {
   experimental_discoverRpc?(input?: { method?: string; signal?: AbortSignal }): Promise<readonly { pluginId: string; method: string }[]>;
@@ -48,14 +50,6 @@ interface TurnCollection {
   seen: Set<string>; cursors: Set<string>; pages: number; charged: number;
   coverage: string; limited: boolean; done: boolean; retired: boolean; deadline: number;
 }
-interface LatestJoin { scope: object; client: object; key: string; current(): boolean }
-interface HistoryGroup { controller: AbortController; members: HistoryRead[] }
-interface HistoryRead {
-  threadId: string; priority: boolean; speculative: boolean; interruptible: boolean; join: LatestJoin | undefined;
-  live(): boolean; policy(): boolean; start(): void; cancel(reason?: unknown): void; interrupt(): void;
-  attach(group: HistoryGroup): void; dispatched(): void; settle(value: unknown, failure?: unknown): void;
-}
-type Work = TurnEntry | HistoryRead;
 class SourceWorkCapacity extends Error {}
 class BorrowedWindowExpired extends ResultsCallError { constructor() { super('timeout'); } }
 export const GALLERY_RUNTIME_LIMITS = Object.freeze({ leases: 128, cached: 64, lanes: 2,
@@ -71,22 +65,12 @@ const readSchema = z.object({ page: z.object({ rows: z.array(observationSchema).
 
 /** Window-generation owner. Only demanded turns run. All values/notifications
  * live in keyed TanStack stores; queues and controllers own resources only. */
-export function createGalleryRuntime(sdk: Sdk) {
+export function createGalleryRuntime(sdk: Sdk, workOwner: GalleryWorkOwner = createGalleryWorkOwner()) {
   const turns = new Map<string, TurnEntry>(), discoveryOwner = createResultsDiscoveryOwner();
   let sources: ConsumerSource[] | null = null, discovering: Promise<ConsumerSource[]> | null = null;
   let discoveryCursor: ResultsDiscoveryCursor | null = null;
-  let active = true, visible = !document.hidden, running = 0, scheduled = false, leases = 0, bytes = 0;
-  // Open checks precede queued optional work; otherwise FIFO threads/turns.
-  // A busy thread never occupies both lanes.
-  const queue = new Map<string, Set<Work>>(), runningThreads = new Map<string, () => boolean>();
-  const speculativeThreads = new Set<string>();
-  let warmLeases = 0;
-  // A yielded retained read still owns its lane until the actual public call
-  // settles. An abort-aware wrapper alone is not a cancellation receipt.
-  const retainedCalls = new WeakMap<AbortSignal, Set<Promise<unknown>>>();
-  let workDrain: Promise<void> | null = null, finishWorkDrain: (() => void) | null = null;
-  const drainedWork = () => { if (!running && finishWorkDrain) { const done = finishWorkDrain; finishWorkDrain = null; workDrain = null; done(); } };
-  const historyReads = new Set<HistoryRead>();
+  let active = true, visible = !document.hidden, leases = 0, bytes = 0;
+  const { queue, runningThreads, speculativeThreads, retainedCalls, historyReads, enqueue, unqueue, schedule, readScope, readTimeline } = workOwner;
   let discoveryController: AbortController | null = null, discoveryGeneration = 0;
   let earlyDiscoveryGeneration = -1;
   let discoveryCapacity = false;
@@ -101,6 +85,7 @@ export function createGalleryRuntime(sdk: Sdk) {
     for (const [id, state] of descriptorDebt) if (state === 'parked') descriptorDebt.set(id, 'queued');
   }
   let discoveryDemands = 0, visibleDiscoveryDemands = 0;
+  let warmLeases = 0;
   const lifetime = new AbortController();
   const media = createGalleryMedia({ fetch: (url, signal) => fetch(url, { signal }),
     createUrl: blob => URL.createObjectURL(blob), revokeUrl: url => URL.revokeObjectURL(url), demand: schedule });
@@ -623,56 +608,10 @@ export function createGalleryRuntime(sdk: Sdk) {
     entry.store.setState(() => next);
     if (authoritative) dialog?.observe(next.rows);
   }
-  function enqueue(entry: TurnEntry) {
-    if (!entry.refs || !entry.visible || !entry.dirty || !active || !visible) return;
-    const thread = queue.get(entry.anchor.threadId) ?? new Set<Work>();
-    thread.add(entry); queue.set(entry.anchor.threadId, thread); schedule();
-  }
-  function unqueue(entry: Work) {
-    const pending = queue.get(entry.threadId); pending?.delete(entry);
-    if (!pending?.size) queue.delete(entry.threadId);
-  }
-  function dequeue(): Work | null {
-    const threads = [...queue];
-    const urgent = ([, entries]: typeof threads[number]) => [...entries].some(entry => 'start' in entry && entry.priority && entry.live());
-    // Open is first; retained pages/history/Media then share FIFO ahead of
-    // optional source work. A short turn's enrichment cannot consume the
-    // original deadline of a sibling's still-incomplete retained collection.
-    const speculative = (entry: Work) => 'start' in entry ? entry.speculative : entry.visible <= entry.speculative;
-    const useful = (entry: Work) => !speculative(entry) && ('start' in entry || entry.phase === 'read');
-    const usefulThread = ([, entries]: typeof threads[number]) => [...entries].some(entry => useful(entry)
-      && ('start' in entry ? entry.live() : entry.refs && entry.visible && entry.dirty && !entry.controller));
-    const foreground = ([, entries]: typeof threads[number]) => [...entries].some(entry => !speculative(entry));
-    for (const [threadId, entries] of [...threads.filter(urgent), ...threads.filter(entry => !urgent(entry) && usefulThread(entry)),
-      ...threads.filter(entry => !urgent(entry) && !usefulThread(entry) && foreground(entry)),
-      ...threads.filter(entry => !urgent(entry) && !foreground(entry))]) {
-      if (runningThreads.has(threadId)) continue;
-      queue.delete(threadId);
-      let next: Work | null = null;
-      const priority = [...entries].find(entry => 'start' in entry && entry.priority && entry.live());
-      for (const entry of priority ? [priority, ...[...entries].filter(entry => entry !== priority)]
-        : [...[...entries].filter(useful), ...[...entries].filter(entry => !useful(entry) && !speculative(entry)), ...[...entries].filter(speculative)]) {
-        entries.delete(entry);
-        if ('start' in entry ? entry.live() : entry.refs && entry.visible && entry.dirty && !entry.controller) { next = entry; break; }
-      }
-      if (entries.size) queue.set(threadId, entries);
-      if (next) return next;
-    }
-    return null;
-  }
-  function schedule() {
-    if (!active || !visible || scheduled) return;
-    scheduled = true; queueMicrotask(() => { scheduled = false; pump(); });
-  }
-  function pump() {
-    if (!active || !visible) return;
-    while (running < GALLERY_RUNTIME_LIMITS.lanes) {
-      const entry = dequeue(); if (!entry) break;
-      if ('start' in entry) { running++; if (entry.speculative) speculativeThreads.add(entry.threadId); runningThreads.set(entry.threadId, () => {
-        if (!entry.speculative || !entry.interruptible) return false; entry.interrupt(); return true;
-      }); entry.start(); continue; }
+  function startTurn(work: Parameters<GalleryWorkOwner['enqueue']>[0]) {
+      const entry = work as TurnEntry;
       entry.dirty = false;
-      const controller = new AbortController(); entry.controller = controller; running++;
+      const controller = new AbortController(); entry.controller = controller;
       const collecting = entry.phase === 'read'; let yielded = false;
       let unit: ReturnType<typeof sourceUnit> | null = null;
       let selectionRecovery: string | null = null, selectionGeneration = -1;
@@ -830,96 +769,12 @@ export function createGalleryRuntime(sdk: Sdk) {
         await Promise.allSettled([...(retainedCalls.get(signal) ?? [])]);
         if (collection?.retired && entry.collection === collection) dropCollection(entry);
         clearTimeout(timer); if (entry.controller === controller) entry.controller = null;
-        running--; runningThreads.delete(anchor.threadId); speculativeThreads.delete(anchor.threadId);
-        drainedWork();
+        workOwner.complete(anchor.threadId);
         if (active && entry.store.state.busy) publish(entry, { ...entry.store.state, busy: false });
         collect(); if (entry.dirty) enqueue(entry); schedule();
       });
-    }
   }
-  function readScope<T>(threadId: string, signal: AbortSignal, read: (signal: AbortSignal) => Promise<T>, priority = false,
-    speculative: boolean | (() => boolean) = false, interruptible = true, join?: LatestJoin, onDispatch?: () => void): Promise<{ state: 'ready'; value: T } | { state: 'capacity' }> {
-    signal.throwIfAborted();
-    if (!active || !visible) return Promise.reject(Error('Gallery read retired.'));
-    // Every consumer remains charged, including detached members of a raw
-    // cohort that has not settled. Sharing cannot create extra queue capacity.
-    if (historyReads.size >= GALLERY_RUNTIME_LIMITS.historyQueue) return Promise.resolve({ state: 'capacity' });
-    return new Promise((resolve, reject) => {
-      let live = true, group: HistoryGroup | null = null;
-      const cleanup = () => signal.removeEventListener('abort', callerAbort);
-      const policy = () => typeof speculative === 'function' ? speculative() : speculative;
-      const eligible = (entry: HistoryRead) => { try { return !!entry.join?.current(); } catch { return false; } };
-      const cancel = (reason?: unknown) => {
-        if (!live) return; live = false; cleanup(); reject(reason ?? Error('Gallery read retired.'));
-        if (!group) { unqueue(work); historyReads.delete(work); }
-        else if (!group.members.some(member => member.live())) group.controller.abort(reason);
-      };
-      const callerAbort = () => cancel(signal.reason);
-      const work: HistoryRead = { threadId, priority, interruptible, join, live: () => live,
-        policy, get speculative() { return group ? group.members.filter(member => member.live()).every(member => member.policy()) : policy(); },
-        cancel, interrupt() {
-          if (!group) { cancel(); return; }
-          for (const member of group.members) member.cancel();
-          group.controller.abort();
-        },
-        attach(value) { group = value; },
-        dispatched() { if (live) { try { onDispatch?.(); } catch (error) { cancel(error); } } },
-        settle(value, failure) {
-          if (!live) return; live = false; cleanup();
-          if (failure !== undefined) reject(failure); else resolve({ state: 'ready', value: value as T });
-        },
-        start() {
-          const owned: HistoryGroup = { controller: new AbortController(), members: [work] };
-          // Only work still queued at THIS dispatch boundary can join. A
-          // started/settled item is never searched or made matchable again.
-          if (!priority && join && eligible(work)) for (const candidate of [...(queue.get(threadId) ?? [])]) {
-            if (!('start' in candidate) || candidate.priority || !candidate.live() || !candidate.join
-              || candidate.join.scope !== join.scope || candidate.join.client !== join.client || candidate.join.key !== join.key || !eligible(candidate)) continue;
-            unqueue(candidate); owned.members.push(candidate);
-          }
-          for (const member of owned.members) member.attach(owned);
-          const controller = owned.controller;
-          const call = Promise.resolve().then(() => {
-            controller.signal.throwIfAborted();
-            // A reset may run between grouping and this actual SDK microtask.
-            if (owned.members.length > 1) for (const member of owned.members) if (!eligible(member)) member.cancel(Error('Shared history reader retired.'));
-            controller.signal.throwIfAborted();
-            for (const member of owned.members) member.dispatched();
-            controller.signal.throwIfAborted(); return read(controller.signal);
-          });
-          void untilAborted(call, controller.signal).then(value => {
-            for (const member of owned.members) {
-              if (owned.members.length > 1 && !eligible(member)) member.cancel(Error('Shared history reader retired.'));
-              else member.settle(value);
-            }
-          }, failure => { for (const member of owned.members) member.settle(undefined, failure ?? Error('Gallery read failed.')); }).finally(async () => {
-            await call.catch(() => {});
-            await Promise.allSettled([...(retainedCalls.get(controller.signal) ?? [])]);
-            for (const member of owned.members) historyReads.delete(member);
-            running--; runningThreads.delete(threadId); speculativeThreads.delete(threadId); drainedWork(); schedule();
-          });
-        } };
-      signal.addEventListener('abort', callerAbort, { once: true }); historyReads.add(work);
-      const pending = queue.get(threadId) ?? new Set<Work>(); pending.add(work); queue.set(threadId, pending); schedule();
-      if (priority || !work.speculative) {
-        const sameThread = runningThreads.get(threadId);
-        if (sameThread && (priority || speculativeThreads.has(threadId))) sameThread();
-        else if (running >= GALLERY_RUNTIME_LIMITS.lanes) {
-          for (const [id, yieldRead] of runningThreads) if ((priority || speculativeThreads.has(id)) && yieldRead()) break;
-        }
-      }
-    });
-  }
-  function readTimeline(input: Parameters<GalleryTimelinePort['timeline']>[0], client: GalleryTimelinePort,
-    options: { scope: object; current(): boolean; dispatched?(): void; speculative?: boolean }) {
-    const { signal, ...wire } = input;
-    // Cursor reads and Open never participate. Token identity only separates
-    // current queued ownership; it is not a completed-content validator.
-    const join = !input.beforeAnchorId && input.beforeAnchorSeq === undefined
-      ? { scope: options.scope, client, key: canonicalJson(wire), current: options.current } : undefined;
-    return readScope(input.threadId, signal, bounded => client.timeline({ ...input, signal: bounded }), false,
-      options.speculative ?? false, true, join, options.dispatched);
-  }
+  workOwner.attachTurnStarter(startTurn);
   function reset(entry: TurnEntry) {
     retireSourceWindow(entry);
     if (entry.collection) { retireCollection(entry); entry.controller?.abort('collection-reset'); }
@@ -1161,17 +1016,17 @@ export function createGalleryRuntime(sdk: Sdk) {
     },
     stats: () => ({ leases, entries: turns.size, cached: [...turns.values()].filter(entry => !entry.refs).length,
       historyReads: historyReads.size, discoveryDemands, visibleDiscoveryDemands,
-      queued: [...queue.values()].reduce((sum, entries) => sum + entries.size, 0), running, bytes }),
+      queued: [...queue.values()].reduce((sum, entries) => sum + entries.size, 0), running: workOwner.running, bytes }),
     dispose() {
       if (!active) return; active = false; lifetime.abort(); discoveryController?.abort(); document.removeEventListener('visibilitychange', visibility);
       pendingDialog = null; publishReady(new Set()); dialogDrain = dialog?.dispose() ?? Promise.resolve();
-      for (const read of historyReads) read.cancel(); for (const entry of turns.values()) entry.controller?.abort(); turns.clear(); queue.clear(); bytes = 0; leases = 0; discoveryDemands = 0; visibleDiscoveryDemands = 0; discoveryOwner.dispose(); media.dispose(); canvases.dispose();
+      for (const read of historyReads) read.cancel(); for (const entry of turns.values()) entry.controller?.abort(); turns.clear(); workOwner.dispose(); bytes = 0; leases = 0; discoveryDemands = 0; visibleDiscoveryDemands = 0; discoveryOwner.dispose(); media.dispose(); canvases.dispose();
     },
     async whenDrained() {
       await dialogDrain; await canvases.whenDrained();
       // Replacement generations cannot buy new lanes while an old ignored
       // transport still occupies this owner's lane after disposal.
-      if (running) await (workDrain ??= new Promise<void>(resolve => { finishWorkDrain = resolve; }));
+      await workOwner.whenDrained();
     },
   };
   return api;

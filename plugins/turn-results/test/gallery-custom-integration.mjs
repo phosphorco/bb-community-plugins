@@ -18,6 +18,7 @@ import { createGalleryRuntime, GALLERY_RUNTIME_LIMITS as queueLimits } from '../
 import { mountGalleryPane } from '../gallery/pane.ts';
 const navigationVariantUrl = new URL('../app.tsx?public-navigation-reference-fixture', import.meta.url).href;
 const runtimeVariantUrl = new URL('../app.tsx?public-runtime-constructor-fixture', import.meta.url).href;
+const startupVariantUrl = new URL('../app.tsx?startup-proof-public-fixture', import.meta.url).href;
 const navigationHookFixture = `
 function useBbNavigate() {
   const api = originalUseBbNavigate(), probe = globalThis.__turnResultsNavigationFixture;
@@ -45,8 +46,10 @@ registerHooks({ load(url, context, next) {
     let source = readFileSync(new URL(url), 'utf8');
     if (url === navigationVariantUrl) source = source.replace('useBbNavigate,', 'useBbNavigate as originalUseBbNavigate,')
       .replace('useSdk,', 'useSdk as originalUseSdk,') + navigationHookFixture;
-    if (url === runtimeVariantUrl) source = source.replace('import { createGalleryRuntime }', 'import { createGalleryRuntime as originalCreateGalleryRuntime }')
-      + '\nfunction createGalleryRuntime(...args) { const owner = originalCreateGalleryRuntime(...args); globalThis.__turnResultsRuntimeFixture?.push(owner); return owner; }';
+    if (url === runtimeVariantUrl) source = source.replace('module.createGalleryRuntime(sdk, work)', 'observeRuntimeFactory(module.createGalleryRuntime, sdk, work)')
+      + '\nfunction observeRuntimeFactory(factory, ...args) { const owner = factory(...args); globalThis.__turnResultsRuntimeFixture?.push(owner); return owner; }';
+    if (url === startupVariantUrl || url === new URL('../app.tsx?startup-continuation-public-fixture', import.meta.url).href) source = source.replaceAll("'./gallery/view.tsx'", url === startupVariantUrl ? "'./gallery/view.tsx?startup-heavy-evaluation'" : "'./gallery/view.tsx?startup-continuation-heavy-evaluation'");
+    if (url === new URL('../gallery/view.tsx?startup-heavy-evaluation', import.meta.url).href || url === new URL('../gallery/view.tsx?startup-continuation-heavy-evaluation', import.meta.url).href) source = 'globalThis.__startupHeavyEvaluation.entered = true; await globalThis.__startupHeavyEvaluation.gate; globalThis.__startupHeavyEvaluation.evaluated = true;\n' + source;
     return { format: 'module', shortCircuit: true,
       source: ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2023, module: ts.ModuleKind.ESNext, jsx: ts.JsxEmit.ReactJSX } }).outputText };
   }
@@ -248,7 +251,7 @@ async function fixture(count = 6, mount = true, contribution = {}) {
     runtimeProbe.push = function (...owners) { for (const owner of owners) contribution.observeRuntime(owner); return push.apply(this, owners); };
   }
   if (contribution.captureRuntime) globalThis.__turnResultsRuntimeFixture = runtimeProbe;
-  const app = await loadPluginApp(contribution.definition ?? (contribution.captureRuntime ? runtimeDefinition : definition)), controller = new AbortController();
+  const app = await loadPluginApp(await (contribution.definition ?? (contribution.captureRuntime ? runtimeDefinition : definition))), controller = new AbortController();
   let script = await app.contentScripts[0].mount({ pluginId: 'turn-results', generation: 1, signal: controller.signal });
   assert.equal(app.composerCustomizations.length, 0); assert.equal(app.threadPanelActions.length, 0);
   const originalBridge = app.threadHeaderActions[0];
@@ -258,7 +261,11 @@ async function fixture(count = 6, mount = true, contribution = {}) {
   const renderBanner = () => renderSlot(banner, headerProps, { sdk,
     openFilePreview(options) { fileOpenCalls.push(options); if (contribution.focusOnFileOpen) { const preview = document.createElement('button'); document.body.append(preview); preview.focus(); } return fileOpenAccepted; },
     openUrl(url) { navigation.push(url); return true; }, realtimeConnectionState: 'connected' });
-  let rendered = null; if (mount) act(() => { rendered = renderBanner(); }); const slots = [];
+  let rendered = null; if (mount) act(() => { rendered = renderBanner(); });
+  // Factory capture now waits for the real deferred implementation. This is
+  // observation only: no runtime or readiness is fabricated for old fixtures.
+  if (mount && contribution.captureRuntime) await until(() => runtimeProbe.length > 0);
+  const slots = [];
   return { dom, sdk, app, controller, captured, navigation, nativeCalls, register, renderer: View, slot: () => rendered,
     arrive: () => act(async () => { if (arrivingPane && !arrivingPane.isConnected) document.querySelector('[data-split-pane-id]').append(arrivingPane); await tick(); }),
     coreSubscriptions: () => [...coreSubscriptions],
@@ -2961,5 +2968,89 @@ test('bound Media response survives same-root card replacement only after genuin
     result.cleanup = { liveMedia, subscriptions: subscriptions.size, runtime: runtime?.stats(), media: runtime?.media.stats(), canvases: runtime?.canvases.counts() };
     assert.equal(liveMedia, 0); assert.equal(subscriptions.size, 0);
     if (runtime) { assert.equal(runtime.stats().running, 0); assert.equal(runtime.stats().queued, 0); assert.equal(runtime.stats().historyReads, 0); assert.equal(runtime.media.stats().running, 0); assert.equal(runtime.canvases.counts().occupied, 0); }
+  }
+});
+
+test('startup: committed public header proves native history before real heavy implementation evaluates', async () => {
+  let releaseHeavy;
+  const gate = new Promise(resolve => { releaseHeavy = resolve; });
+  const probe = globalThis.__startupHeavyEvaluation = { gate, entered: false, evaluated: false };
+  let f, pendingFixture, closed = false;
+  const native = [], rpcCalls = [], sequence = [];
+  let preRelease;
+  try {
+    const modulePromise = import(new URL('../app.tsx?startup-proof-public-fixture', import.meta.url).href);
+    pendingFixture = fixture(1, true, { definition: modulePromise, nativeItems: true, preloadNearby: true,
+      url: 'https://fixture.invalid/projects/project/threads/thread',
+      configureSdk(sdk) {
+        const timeline = sdk.threads.timeline;
+        sdk.threads.timeline = async input => { sequence.push('native-dispatch'); native.push({ input: { ...input, signal: undefined }, signal: input.signal }); return timeline(input); };
+        const callRpc = sdk.plugins.callRpc;
+        sdk.plugins.callRpc = args => { rpcCalls.push(args.method); return callRpc(args); };
+      },
+    });
+    await until(() => probe.entered);
+    await settle(80);
+    preRelease = { header: !!document.querySelector('[data-turn-results-bridge]'), native: native.length,
+      sourceOrRetained: rpcCalls.length, cards: document.querySelectorAll('.tr-card').length, heavyEvaluated: probe.evaluated };
+    sequence.push('heavy-release'); releaseHeavy();
+    f = await pendingFixture;
+    await until(() => document.querySelector('[data-result-key="row-0"] [data-supplier]'));
+    const rowBefore = JSON.stringify(f.rows()), card = document.querySelector('[data-result-key="row-0"]');
+    const open = card.querySelector('button[title="Open result"]'); assert.ok(open && !open.disabled);
+    await act(async () => { open.focus(); open.click(); });
+    await until(() => f.navigation.length === 1);
+    assert.deepEqual(f.navigation, ['https://fixture.invalid/0']);
+    assert.equal(JSON.stringify(f.rows()), rowBefore);
+    assert.ok(native.every(call => call.input.includeNestedRows === 'false' && call.input.segmentLimit === '100' && call.input.deferContent === 'true'));
+    assert.equal(preRelease.sourceOrRetained, 0, 'no retained/source execution before heavy implementation');
+    assert.equal(preRelease.cards, 0, 'no custom/placement/action before implementation and proof');
+    await f.dispose(); closed = true;
+    console.log('STARTUP_MODULE_RESULT', JSON.stringify({ preRelease, nativeTotal: native.length, navigation: 1, factsExact: true, cleanup: true, sequence }));
+    assert.ok(preRelease.header, 'actual public header must commit without waiting for heavy implementation module');
+    assert.ok(preRelease.native >= 1, 'genuine charged native-history request must dispatch while real heavy implementation remains held');
+    assert.equal(preRelease.heavyEvaluated, false);
+  } finally {
+    releaseHeavy();
+    if (!f && pendingFixture) f = await pendingFixture;
+    if (f && !closed) await f.dispose();
+    delete globalThis.__startupHeavyEvaluation;
+  }
+});
+
+test('startup: real issued older cursor finishes before heavy evaluation, with no replay on attachment', async () => {
+  let releaseHeavy;
+  const probe = globalThis.__startupHeavyEvaluation = { gate: new Promise(resolve => { releaseHeavy = resolve; }), entered: false, evaluated: false };
+  const issued = { anchorId: 'opaque issued cursor / not parsed', anchorSeq: 100 }, calls = [];
+  let f, pendingFixture, closed = false, beforeCalls;
+  try {
+    pendingFixture = fixture(1, true, { definition: import(new URL('../app.tsx?startup-continuation-public-fixture', import.meta.url).href),
+      nativeItems: true, preloadNearby: true, url: 'https://fixture.invalid/projects/project/threads/thread',
+      configureSdk(sdk) {
+        const timeline = sdk.threads.timeline;
+        sdk.threads.timeline = async input => {
+          const page = await timeline(input); calls.push({ older: !!input.beforeAnchorId, anchorId: input.beforeAnchorId, anchorSeq: input.beforeAnchorSeq });
+          if (!input.beforeAnchorId) return { ...page, rows: [{ id: 'genuine newer boundary', threadId: 'thread', turnId: 'newer', kind: 'turn', status: 'completed', sourceSeqStart: 100, sourceSeqEnd: 105 }], timelinePage: { historySnapshot: 'public-snapshot', olderCursor: issued } };
+          assert.equal(input.beforeAnchorId, issued.anchorId); assert.equal(input.beforeAnchorSeq, String(issued.anchorSeq));
+          return { ...page, rows: [{ id: 'earlier public user', threadId: 'thread', turnId: null, kind: 'conversation', role: 'user', sourceSeqStart: 0, sourceSeqEnd: 0 }, ...page.rows], timelinePage: { historySnapshot: 'public-snapshot', olderCursor: null } };
+        };
+      },
+    });
+    await until(() => probe.entered);
+    await until(() => calls.some(call => call.older)); await settle(40);
+    beforeCalls = calls.length;
+    assert.equal(probe.evaluated, false);
+    assert.equal(document.querySelectorAll('.tr-card').length, 0);
+    releaseHeavy(); f = await pendingFixture;
+    await until(() => document.querySelector('[data-result-key="row-0"] [data-supplier]'));
+    await act(async () => document.querySelector('[data-result-key="row-0"] button[title="Open result"]').click());
+    await until(() => f.navigation.length === 1);
+    assert.deepEqual(f.navigation, ['https://fixture.invalid/0']);
+    assert.equal(calls.length, beforeCalls, 'attachment consumes the same completed live chain, not a redundant latest/older replay');
+    await f.dispose(); closed = true;
+    console.log('STARTUP_CONTINUATION_RESULT', JSON.stringify({ beforeCalls, totalCalls: calls.length, exactIssuedOlder: true, rich: true, exactOpen: true, cleanup: true }));
+  } finally {
+    releaseHeavy(); if (!f && pendingFixture) f = await pendingFixture;
+    if (f && !closed) await f.dispose(); delete globalThis.__startupHeavyEvaluation;
   }
 });

@@ -192,3 +192,25 @@ test('nearby hints use only complete public ranges and issued cursors; handoff i
   reader.invalidate(); assert.equal(reader.adopt([target.id], f.port), false, 'a retired window cannot be restored by token or ID equality');
   await assert.rejects(reader.nearby(-1, signal()), /Invalid nearby/);
 });
+
+
+test('lean sparse meter equals public canonical bytes for selected Unicode/primitives and exact budget edges', async () => {
+  const { sparseRowByteLength } = await import('../gallery/anchors.ts');
+  const { canonicalByteLength } = await import('@phosphorco/bb-turn-results');
+  for (const text of ['ordinary', 'astral \ud83e\udd16', '\ud800', '\udc00', '\ud800x\udc00', '\u0000\b\t\n\f\r"\\', 'e\u0301\u2028']) {
+    const row = { id: text, threadId: 'thread', turnId: null, kind: 'conversation', sourceSeqStart: -0, sourceSeqEnd: 1, role: '', status: null };
+    for (const value of [row, Object.fromEntries(Object.entries(row).reverse()), [], [row], [row, { ...row, role: 'assistant', status: 'completed' }]]) {
+      const expected = canonicalByteLength(value, 1048576);
+      assert.equal(sparseRowByteLength(value as never, expected), expected);
+      assert.throws(() => sparseRowByteLength(value as never, expected - 1));
+    }
+  }
+  const base = { id: 'row', threadId: 'thread', turnId: 'turn', kind: 'turn', sourceSeqStart: 1, sourceSeqEnd: 2 };
+  for (const invalid of [NaN, Infinity, -Infinity, undefined, null, '1', 1n]) assert.throws(() => sparseRowByteLength({ ...base, sourceSeqStart: invalid } as never, 1048576));
+  assert.throws(() => sparseRowByteLength({ ...base, role: undefined } as never, 1048576));
+  assert.throws(() => sparseRowByteLength({ ...base, unknown: 'not selected' } as never, 1048576));
+  assert.throws(() => sparseRowByteLength(Object.defineProperty({ ...base }, 'role', { enumerable: true, get() { throw Error('must not invoke'); } }) as never, 1048576));
+  const big = Array.from({ length: 1000 }, (_, i) => ({ ...base, id: `${i}` + '\u0000'.repeat(180), sourceSeqStart: i, sourceSeqEnd: i }));
+  assert.throws(() => canonicalByteLength(big, 1048576));
+  assert.throws(() => sparseRowByteLength(big, 1048576));
+});
