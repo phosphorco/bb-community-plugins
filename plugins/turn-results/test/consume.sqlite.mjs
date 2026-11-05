@@ -4,7 +4,7 @@ import { createHash } from 'node:crypto';
 import { createFakePluginHost } from '@get-bb/plugin-sdk/testing';
 import { createRegisteredHandlerRpc } from '@phosphorco/bb-turn-results/testing';
 import { createResultsSupplierClient } from '@phosphorco/bb-turn-results/bb';
-import { canonicalJson, claimKey } from '@phosphorco/bb-turn-results';
+import { canonicalJson, claimKey, resolveOutcomeBudget } from '@phosphorco/bb-turn-results';
 import galleryPlugin from '../server.ts';
 import imagePlugin from '../../turn-result-images/server.ts';
 import { JSDOM } from 'jsdom';
@@ -35,7 +35,8 @@ async function fixture(t) {
   const imageHost = createFakePluginHost({ pluginId: 'turn-result-images', sdk: {
     threads: { events: { async list(args) { return filtered(args); } }, async get() { return { environmentId: 'environment' }; } },
     environments: { async get() { return { hostId: 'host' }; } },
-    files: { async read() { reads++; return { path: '/saved/image.png', content: png.toString('base64'), contentEncoding: 'base64', sizeBytes: png.length, mimeType: 'image/png', sha256 }; } },
+    files: { async read() { reads++; return { path: '/saved/image.png', content: png.toString('base64'), contentEncoding: 'base64', sizeBytes: png.length, mimeType: 'image/png', sha256 }; },
+      async createPreview() { return { baseUrl: '/api/v1/file-previews/consume', expiresAtMs: Date.now() + 120000 }; } },
   } });
   imagePlugin(imageHost.bb);
   let galleryHost = createFakePluginHost({ pluginId: 'turn-results' }); galleryPlugin(galleryHost.bb);
@@ -52,8 +53,30 @@ async function fixture(t) {
   const client = createResultsSupplierClient({ plugins: imageRpc }, 'turn-result-images');
   const described = await client.describe(); assert.equal(described.state, 'ready');
   const source = { pluginId: 'turn-result-images', client, capabilities: described.capabilities };
+  // Explicit test demand, never part of fixture setup or consumeTurnSource.
+  // Recognition alone must leave new Images unconfirmed; only the actual
+  // registered Media operation can admit them before normal Resolve/Apply.
+  async function admitImages(signal = new AbortController().signal) {
+    let after;
+    do {
+      const page = await backend.read('thread', 'turn', signal, after);
+      for (const row of page.page.rows.filter(row => row.unresolved)) {
+        assert.equal(row.resolution, null, 'recognition cannot fabricate generation proof');
+        const media = await imageRpc.callRpc({ pluginId: 'turn-result-images', method: 'turnResultImagesV1Media',
+          input: { version: 1, identity: row.identity }, outputSchema: { parse: value => value }, signal });
+        assert.equal(media.state, 'ready');
+        const output = await client.resolve({ version: 1, threadId: 'thread', items: [row.identity], maxOutcomeBytes: resolveOutcomeBudget(1) }, signal);
+        assert.equal(output.resolutions[0].state, 'resolved');
+        await backend.apply({ owner: 'turn-result-images', threadId: 'thread', changes: [{ kind: 'upsert', value: output.resolutions[0].value }] });
+        const retained = await backend.read('thread', 'turn', signal, after);
+        assert.equal(retained.page.rows.find(value => value.key === row.key).resolution.provenance.artifactLocation.sha256, media.image.sha256);
+      }
+      after = page.page.next ?? undefined;
+    } while (after);
+  }
+
   t.after(async () => { await galleryHost.harness.lifecycle.dispose(); await imageHost.harness.lifecycle.dispose(); });
-  return { backend, source, call, lookups, applications, get db() { return galleryHost.bb.storage.database(); }, runtimeSdk: { plugins: {
+  return { backend, source, call, lookups, applications, admitImages, get db() { return galleryHost.bb.storage.database(); }, runtimeSdk: { plugins: {
     async list() { return { plugins: [{ id: 'turn-result-images', enabled: true, status: 'running' }] }; },
     async callRpc(args) { return args.pluginId === 'turn-results' ? args.outputSchema.parse(await call(args.method, args.input)) : imageRpc.callRpc(args); },
   } }, queries, add(row) { events.push(row); },
@@ -66,6 +89,7 @@ test('actual pure selector/source RPC/index atomically retains original occurren
   const result = await consumeTurnSource(f.backend, f.reader, f.source, anchor, signal); assert.equal(result.continued, false);
   assert.deepEqual([anchor.rowId, anchor.sourceSeqStart, anchor.sourceSeqEnd, anchor.turnSeqStart, anchor.turnSeqEnd], ['opaque-row', 11, 12, 1, 12]);
   assert.deepEqual(f.queries.map(q => [q.afterSeq, q.beforeSeq]), [['0', '13']]);
+  await f.admitImages(signal);
   const first = await f.backend.read('thread', 'turn', signal); assert.equal(first.page.rows.length, 1);
   const row = first.page.rows[0]; assert.equal(row.resolution.knowledge, 'confirmed'); assert.equal(row.identity.ref.source.eventId, 'event');
   assert.equal(row.resolution.route.target.hostId, 'host'); assert.equal(f.reads, 1);
@@ -107,7 +131,9 @@ test('real timeline start expansion with unchanged end restarts a complete persi
   assert.equal(stage.value.status, 'complete'); assert.equal(stage.value.debt.fromSeq, 1); assert.equal(stage.value.debt.throughSeq, 12);
   assert.deepEqual(f.queries.map(q => [q.afterSeq, q.beforeSeq]), [['7', '13'], ['0', '13']]);
   const row = (await f.backend.read('thread', 'turn', signal)).page.rows[0];
-  assert.equal(row.identity.ref.source.seq, 3); assert.equal(row.resolution.knowledge, 'confirmed'); assert.equal(f.reads, 1);
+  await f.admitImages(signal);
+  const admitted = (await f.backend.read('thread', 'turn', signal)).page.rows[0];
+  assert.equal(row.identity.ref.source.seq, 3); assert.equal(admitted.resolution.knowledge, 'confirmed'); assert.equal(f.reads, 1);
   assert.equal(narrow.rowId, anchor.rowId); assert.equal(narrow.sourceSeqStart, anchor.sourceSeqStart);
 });
 test('native scope correction drops old recognition cursors and legacy end-only completion', async t => {
@@ -119,7 +145,8 @@ test('native scope correction drops old recognition cursors and legacy end-only 
     await consumeTurnSource(f.backend, f.reader, f.source, anchor, signal);
     assert.deepEqual(f.queries.map(q => [q.afterSeq, q.beforeSeq]), [['0', '13']]);
     const rows = (await f.backend.read('thread', 'turn', signal)).page.rows;
-    assert.equal(rows.length, 1); assert.equal(rows[0].resolution.knowledge, 'confirmed');
+    assert.equal(rows.length, 1); await f.admitImages(signal);
+    assert.equal((await f.backend.read('thread', 'turn', signal)).page.rows[0].resolution.knowledge, 'confirmed');
     const stage = await f.backend.stage('thread', 'turn-result-images', 'native:turn', signal);
     assert.equal(stage.value.cursor, null); assert.equal(stage.value.status, 'complete');
     assert.equal(stage.value.debt.fromSeq, 1); assert.equal(stage.value.debt.throughSeq, 12);
@@ -136,12 +163,14 @@ test('production partial/adjacent/interleaved timeline rules do not discover adj
   assert.deepEqual(f.queries.map(q => [q.afterSeq, q.beforeSeq]), [['0', '13']]);
   assert.equal((await f.backend.read('thread', 'next', signal)).page.rows.length, 0);
   const rows = (await f.backend.read('thread', 'turn', signal)).page.rows;
-  assert.equal(rows.length, 1); assert.equal(rows[0].identity.ref.source.seq, 3); assert.equal(f.reads, 1);
+  assert.equal(rows.length, 1); assert.equal(rows[0].identity.ref.source.seq, 3);
+  await f.admitImages(signal); assert.equal(f.reads, 1);
 });
 
 test('feed scope restart clears a persisted cursor on changed start with unchanged end', async t => {
   const f = await fixture(t), signal = new AbortController().signal;
   await consumeTurnSource(f.backend, f.reader, f.source, anchor, signal);
+  await f.admitImages(signal);
   const epoch = (await f.backend.read('thread', 'turn', signal)).page.rows[0].resolution.revision.epoch;
   await f.backend.apply({ threadId: 'thread', owner: 'turn-result-images', changes: [],
     stage: { id: 'feed:turn', expectedVersion: null, value: { stage: 'feed', cursor: 'narrow-only', status: 'complete', debt: { fromSeq: 8, throughSeq: 12 } } } });
@@ -184,6 +213,8 @@ for (const changed of ['start', 'end']) test(`runtime aborts stale native work a
     first.dispose(); // This view replaces its scope; an independent split lease must not be cancelled.
     second = runtime.retain(updated);
     assert.equal(firstSignal.aborted, true, 'bound change synchronously retires old native slice');
+    await wait(() => second.store.state.rows.some(row => row.unresolved && row.resolution === null) && !second.store.state.busy);
+    await f.admitImages(); runtime.invalidate('thread');
     await wait(() => second.store.state.rows.some(row => row.resolution?.knowledge === 'confirmed') && !second.store.state.busy);
     assert.deepEqual(queries.map(q => [q.afterSeq, q.beforeSeq]), changed === 'start' ? [['7', '13'], ['0', '13']] : [['0', '13'], ['0', '14']]);
     const before = await f.backend.read('thread', 'turn');
@@ -201,6 +232,7 @@ test('derived narrow seq9 survives pruning/reopen while same-end expansion admit
   f.add({ ...structuredClone(native), id: 'event9', seq: 9, data: { item: { ...structuredClone(native.data.item), id: 'item9' } } });
   const narrow = galleryAnchors(timeline.slice(1), 'thread', 'narrow', true)[0];
   await consumeTurnSource(f.backend, f.reader, f.source, narrow, signal);
+  await f.admitImages(signal);
   const before = (await f.backend.read('thread', 'turn')).page.rows[0];
   assert.equal(before.identity.ref.source.seq, 9); assert.equal(before.resolution.knowledge, 'confirmed');
   const pruned = f.pruneResult(9), selected = await adaptCompletedEvent(pruned); assert.equal(selected.state, 'admitted');
@@ -214,6 +246,7 @@ test('derived narrow seq9 survives pruning/reopen while same-end expansion admit
   const narrowStage = await f.backend.stage('thread', 'turn-result-images', 'native:turn');
   await f.reopen();
   const result = await consumeTurnSource(f.backend, f.reader, f.source, anchor, signal); assert.equal(result.continued, false);
+  await f.admitImages(signal);
   const after = (await f.backend.read('thread', 'turn')).page.rows;
   assert.deepEqual(after.map(row => row.identity.ref.source.seq), [3, 9]);
   assert.ok(after.every(row => row.resolution.knowledge === 'confirmed'));
@@ -245,6 +278,7 @@ test('multiple recognition pages reuse exact retained identities across repeated
     data: { item: { ...structuredClone(native.data.item), id: `item${seq}` } } });
   const narrow = galleryAnchors(timeline.slice(1), 'thread', 'narrow', true)[0];
   await consumeTurnSource(f.backend, f.reader, f.source, narrow, signal);
+  await f.admitImages(signal);
   const old = (await f.backend.read('thread', 'turn')).page.rows;
   for (const seq of [8, 9, 10]) f.pruneResult(seq);
   await f.reopen();
@@ -252,6 +286,7 @@ test('multiple recognition pages reuse exact retained identities across repeated
     let continued = true, demands = 0;
     while (continued && demands++ < 5) continued = (await consumeTurnSource(f.backend, f.reader, f.source, anchor, signal)).continued;
     assert.equal(continued, false); assert.equal(demands, 2);
+    await f.admitImages(signal);
     const first = await f.backend.read('thread', 'turn');
     const second = await f.backend.read('thread', 'turn', signal, first.page.next);
     const rows = [...first.page.rows, ...second.page.rows];
@@ -341,6 +376,7 @@ test('fault during reconciled image page rolls back new claim and full-scope sta
   f.add({ ...structuredClone(native), id: 'event9', seq: 9, data: { item: { ...structuredClone(native.data.item), id: 'item9' } } });
   const narrow = galleryAnchors(timeline.slice(1), 'thread', 'narrow', true)[0];
   await consumeTurnSource(f.backend, f.reader, f.source, narrow, signal);
+  await f.admitImages(signal);
   const before = (await f.backend.read('thread', 'turn')).page.rows[0];
   const stage = await f.backend.stage('thread', 'turn-result-images', 'native:turn');
   f.pruneResult(9); await f.reopen();
@@ -350,6 +386,7 @@ test('fault during reconciled image page rolls back new claim and full-scope sta
   assert.deepEqual(await f.backend.stage('thread', 'turn-result-images', 'native:turn'), stage);
   f.db.exec('DROP TRIGGER reject_expansion');
   await consumeTurnSource(f.backend, f.reader, f.source, anchor, signal);
+  await f.admitImages(signal);
   const after = (await f.backend.read('thread', 'turn')).page.rows;
   assert.deepEqual(after.map(row => row.identity.ref.source.seq), [3,9]);
   assert.deepEqual(after[1].identity, before.identity); assert.deepEqual(after[1].resolution.proof, before.resolution.proof);

@@ -27,10 +27,11 @@ async function fixture({ path = '/saved/image #1.png', bytes = Buffer.from(PNG, 
   const state = {
     file: { path, content: bytes.toString('base64'), contentEncoding: 'base64', sha256: digest, sizeBytes: bytes.length, mimeType: 'image/png' },
     async read() { return state.file; },
+    async nativeRead() { return [native]; },
     async preview() { return { baseUrl: `/api/v1/file-previews/fixture-${++generation}`, expiresAtMs: Date.now() + IMAGE_MEDIA_TTL_MS }; },
   };
   const sdk = {
-    threads: { events: { async list(args) { calls.push(['native', args]); return [native]; } },
+    threads: { events: { async list(args) { calls.push(['native', args]); return state.nativeRead(args); } },
       async get(args) { calls.push(['thread', args]); return { environmentId: 'env_current' }; } },
     environments: { async get(args) { calls.push(['environment', args]); return { hostId: 'host-bound' }; } },
     files: {
@@ -51,12 +52,11 @@ async function fixture({ path = '/saved/image #1.png', bytes = Buffer.from(PNG, 
   };
 }
 
-test('actual server factory registers strict media RPC; unknown/unverified identities never cause source reads', async () => {
+test('actual server factory registers strict media RPC; malformed and conflicting identities cannot obtain a lease', async () => {
   const f = await fixture();
   try {
     assert.ok(f.host.harness.inspection.registrations.rpcMethods.includes(IMAGE_MEDIA_METHOD));
     assert.deepEqual(f.calls, []);
-    assert.deepEqual(await f.media(), { version: 1, state: 'unavailable', reason: 'verified-binding-missing' });
     for (const input of [null, {}, { version: 2, identity: f.identity },
       { version: 1, identity: f.identity, hostId: 'host-foreign' },
       { version: 1, identity: { ...f.identity, unknown: true } },
@@ -64,6 +64,9 @@ test('actual server factory registers strict media RPC; unknown/unverified ident
       await assert.rejects(f.media(input), error => error.code === 'invalid_input');
     }
     assert.deepEqual(f.calls, []); assert.equal(f.store().stats().rows, 0);
+    const missing = structuredClone(f.identity); missing.ref.source.eventId = 'unowned-event';
+    assert.equal((await f.media({ version: 1, identity: missing })).state, 'unavailable');
+    assert.deepEqual(f.calls.map(([kind]) => kind), ['native']); assert.equal(f.store().stats().rows, 0);
     await f.bind(); f.calls.length = 0;
     const foreign = structuredClone(f.identity); foreign.evidence.selectedDigest = '0'.repeat(64);
     assert.equal((await f.media({ version: 1, identity: foreign })).reason, 'source-binding-conflict');
@@ -265,4 +268,106 @@ test('a valid fixed-target image taking 1600ms verifies before a lease and remai
     assert.equal(output.lease.targetFingerprint, await sha256Canonical({ target: { kind: 'host', hostId: 'host-bound', path: '/saved/image #1.png' }, sha256: f.digest }));
     assert.equal(canonicalJson(f.store().read(f.identity.ref.source)), before);
   } finally { await read; await f.dispose(); }
+});
+
+test('initial native read can exceed Resolve budget inside the single existing Media deadline', async () => {
+  const f = await fixture();
+  try {
+    f.state.nativeRead = async () => { await delay(1600); return [f.native]; };
+    const started = performance.now(), output = await f.media();
+    assert.equal(output.state, 'ready'); assert.ok(performance.now() - started >= 1600);
+    assert.ok(performance.now() - started < IMAGE_MEDIA_DEADLINE_MS + 500);
+    assert.deepEqual(f.calls.map(([kind]) => kind), ['native', 'thread', 'environment', 'file', 'preview']);
+    const stored = f.store().read(f.identity.ref.source);
+    assert.equal(stored.resolution.knowledge, 'confirmed'); assert.equal(stored.materialization.providerSha256, f.digest);
+    f.calls.length = 0; assert.deepEqual(await f.bind(), stored.resolution);
+    assert.deepEqual(f.calls, [], 'normal committed Resolve repeats neither native nor file verification');
+  } finally { await f.dispose(); }
+});
+
+test('initial identity/source mismatch and changed file cannot commit or create a lease', async () => {
+  for (const mode of ['identity', 'scope', 'file']) {
+    const f = await fixture();
+    try {
+      if (mode === 'identity') f.native.data.item.id = 'foreign-item';
+      if (mode === 'scope') f.native.scope.turnId = 'foreign-turn';
+      if (mode === 'file') f.state.file = { ...f.state.file, sha256: 'f'.repeat(64) };
+      const before = f.store().stats(), result = await f.media();
+      assert.equal(result.state, 'unavailable'); assert.equal(f.calls.some(([kind]) => kind === 'preview'), false);
+      assert.equal(f.store().read(f.identity.ref.source), null); assert.deepEqual(f.store().stats(), before);
+      const count = f.calls.length; await delay(10); assert.equal(f.calls.length, count, 'failed source admission has no idle retry');
+    } finally { await f.dispose(); }
+  }
+});
+
+test('initial store commit failure rolls back before lease; later explicit demand can admit', async () => {
+  const f = await fixture();
+  try {
+    const db = f.host.bb.storage.database(), before = f.store().stats();
+    db.exec("CREATE TRIGGER reject_first_image BEFORE INSERT ON image_observation_records BEGIN SELECT RAISE(ABORT,'fixture rollback'); END;");
+    assert.equal((await f.media()).state, 'unavailable');
+    assert.equal(f.calls.some(([kind]) => kind === 'preview'), false); assert.equal(f.store().read(f.identity.ref.source), null);
+    assert.deepEqual(f.store().stats(), before); db.exec('DROP TRIGGER reject_first_image');
+    assert.equal((await f.media()).state, 'ready'); assert.equal(f.store().stats().rows, 1);
+    const binding = canonicalJson(f.store().read(f.identity.ref.source).materialization);
+    f.host.harness.sdk.stub('environments.get', async () => ({ hostId: 'foreign-host' })); f.calls.length = 0;
+    assert.equal((await f.media()).state, 'ready'); assert.deepEqual(f.calls.map(([kind]) => kind), ['file', 'preview']);
+    assert.equal(f.calls[0][1].hostId, 'host-bound'); assert.equal(canonicalJson(f.store().read(f.identity.ref.source).materialization), binding);
+  } finally { await f.dispose(); }
+});
+
+test('initial ignored native work retains the actual two source credits after timeout and cannot publish late', async () => {
+  const f = await fixture(), held = deferred(), entered = deferred(); let count = 0;
+  try {
+    f.state.nativeRead = async () => { if (++count === 2) entered.resolve(); await held.promise; return [f.native]; };
+    const first = f.media(), second = f.media(); await entered.promise;
+    assert.equal((await f.media()).reason, 'source-capacity');
+    assert.equal((await first).reason, 'source-timeout'); assert.equal((await second).reason, 'source-timeout');
+    assert.equal((await f.media()).reason, 'source-capacity', 'local deadline does not free ignored source work');
+    assert.equal(count, 2); assert.equal(f.store().stats().rows, 0); assert.equal(f.calls.some(([kind]) => kind === 'file'), false);
+    held.resolve(); await delay(10);
+    assert.equal(f.store().stats().rows, 0); assert.equal(f.calls.some(([kind]) => kind === 'preview'), false);
+    assert.equal((await f.media()).state, 'ready', 'genuine later demand works after actual raw settlement');
+    assert.equal(count, 3);
+  } finally { held.resolve(); await f.dispose(); }
+});
+
+
+test('explicit Media retry refreshes expired source availability before cheap normal Resolve', async t => {
+  let now = Date.now(); t.mock.method(Date, 'now', () => now);
+  const f = await fixture();
+  try {
+    assert.equal((await f.media()).state, 'ready');
+    const initial = f.store().read(f.identity.ref.source);
+    assert.deepEqual(await f.bind(), initial.resolution);
+    // Source admission remains committed across an independent consumer failure.
+    now = initial.resolution.availability.expiresAt + 1;
+    f.calls.length = 0;
+    f.state.read = async () => { await delay(1600); return f.state.file; };
+    assert.equal((await f.media()).state, 'ready', 'explicit retry completes one fresh fixed-file verification');
+    assert.deepEqual(f.calls.map(([kind]) => kind), ['file', 'preview']);
+    const refreshed = f.store().read(f.identity.ref.source);
+    assert.equal(refreshed.resolution.availability.asOf, now);
+    assert.ok(refreshed.resolution.availability.expiresAt > now);
+    assert.equal(canonicalJson(refreshed.history), canonicalJson(initial.history));
+    assert.equal(canonicalJson(refreshed.materialization), canonicalJson(initial.materialization));
+    assert.deepEqual(refreshed.resolution.identity, initial.resolution.identity);
+    assert.deepEqual(refreshed.resolution.proof, initial.resolution.proof);
+    assert.deepEqual(refreshed.resolution.route, initial.resolution.route);
+    f.calls.length = 0;
+    assert.deepEqual(await f.bind(), refreshed.resolution);
+    assert.deepEqual(f.calls, [], 'correlation Resolve must not repeat the just-completed Media file verification');
+    const stats = f.store().stats(), current = canonicalJson(refreshed);
+    assert.equal((await f.media()).state, 'ready');
+    assert.equal(canonicalJson(f.store().read(f.identity.ref.source)), current, 'fresh bound Media causes no revision churn');
+    assert.deepEqual(f.store().stats(), stats);
+    now = refreshed.resolution.availability.expiresAt + 1;
+    f.state.read = async () => { throw Error('fixture offline'); };
+    assert.equal((await f.bind()).availability.state, 'unavailable');
+    f.state.read = async () => f.state.file; f.calls.length = 0;
+    assert.equal((await f.media()).state, 'ready');
+    assert.deepEqual(f.calls.map(([kind]) => kind), ['file', 'preview']);
+    f.calls.length = 0; assert.equal((await f.bind()).availability.state, 'available');
+    assert.deepEqual(f.calls, [], 'fresh Media also repairs an unavailable observation before correlation');
+  } finally { await f.dispose(); }
 });

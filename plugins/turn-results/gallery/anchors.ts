@@ -62,7 +62,7 @@ interface GalleryAnchorRead { anchors: GalleryAnchor[]; continued: boolean; unpl
  * parsing, outline/transcript scan, latest-page restart loop, or detached work.
  * A bounded boundary window witnesses complete turns; a very large turn stays
  * unplaced, with continuation, rather than inventing its missing start. */
-export function createGalleryAnchorReader(port: GalleryTimelinePort, threadId: string) {
+export function createGalleryAnchorReader(port: GalleryTimelinePort, threadId: string, onReset?: () => void) {
   let window: ProbeRow[] = [], snapshot: string | null = null, display: string | undefined;
   let cursor: { anchorId: string; anchorSeq: number } | null = null, started = false, exhausted = false;
   let lastTargets = new Set<string>();
@@ -70,6 +70,7 @@ export function createGalleryAnchorReader(port: GalleryTimelinePort, threadId: s
   let generation = 0, chainPages = 0;
   const unresolved = (id: string) => !matched.has(id) && !ineligible.has(id);
   function reset() {
+    onReset?.();
     generation++; window = []; snapshot = null; display = undefined; cursor = null; started = false; exhausted = false;
     matched.clear(); ineligible.clear(); chainPages = 0;
   }
@@ -82,7 +83,7 @@ export function createGalleryAnchorReader(port: GalleryTimelinePort, threadId: s
   const api = { invalidate,
     // Only a continuously owned NEW chain may use this one-time app handoff.
     // Token equality is never consulted as a content/freshness validator.
-    adopt(targets: readonly string[], nextPort: GalleryTimelinePort) {
+    adopt(targets: readonly string[], nextPort: GalleryTimelinePort, nextReset?: () => void) {
       if (!started || targets.length > GALLERY_HISTORY_LIMITS.targets || targets.some(id => !window.some(row => row.id === id))) return false;
       const anchors = galleryAnchors(window, threadId, snapshot!, exhausted);
       lastTargets = new Set(targets); matched.clear(); ineligible.clear();
@@ -90,7 +91,7 @@ export function createGalleryAnchorReader(port: GalleryTimelinePort, threadId: s
       const complete = new Set(anchors.map(anchor => anchor.turnId));
       for (const row of window) if (lastTargets.has(row.id) && !matched.has(row.id)
         && (row.role === 'user' || row.turnId === null || row.status === 'pending' || row.turnId && complete.has(row.turnId))) ineligible.add(row.id);
-      port = nextPort; return true;
+      port = nextPort; if (nextReset) { onReset = nextReset; onReset(); } return true;
     },
     scopeRows: () => window.map(row => ({ id: row.id, turnId: row.turnId })),
     nearby(sequence: number | null, signal: AbortSignal, restart = true): Promise<GalleryAnchorRead> {

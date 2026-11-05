@@ -227,3 +227,138 @@ test('large valid retained artifacts stop at the charged byte cap with exact bin
     const count = reads.length; await act(async () => { await tick(); await tick(); }); assert.equal(reads.length, count);
   } finally { lease.dispose(); f.restore(); }
 });
+
+// Actual registered source + consumer SQLite. Synthetic carrier/file only;
+// this proves public source/host composition, never native/pixel latency.
+async function initialImageComposition(failPublication = false, retirePending = false) {
+  const { createFakePluginHost } = await import('@get-bb/plugin-sdk/testing');
+  const { createRegisteredHandlerRpc } = await import('@phosphorco/bb-turn-results/testing');
+  const { adaptCompletedEvent } = await import('@phosphorco/bb-turn-results/events');
+  const { imageCandidate } = await import('../../turn-result-images/recognition.ts');
+  const { createImageObservationStore } = await import('../../turn-result-images/store.ts');
+  const { default: imagePlugin } = await import('../../turn-result-images/server.ts');
+  const { default: galleryPlugin } = await import('../server.ts');
+  const h = setup(); h.runtime.dispose();
+  const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aX1cAAAAASUVORK5CYII=', 'base64');
+  const sha = createHash('sha256').update(png).digest('hex');
+  const native = { id: 'native-image', threadId: 'thread', seq: 3, scope: { kind: 'turn', turnId: 'turn' },
+    type: 'item/completed', createdAt: 1, data: { item: { id: 'image', type: 'imageGeneration', status: 'completed',
+      error: null, path: '/saved/image.png', transparentBackground: false, result: png.toString('base64') } } };
+  const selected = await adaptCompletedEvent(native); assert.equal(selected.state, 'admitted');
+  const identity = imageCandidate(selected.event).identity;
+  let release; const held = new Promise(resolve => { release = resolve; });
+  let nativeReads = 0, files = 0, previews = 0, gets = 0, mediaCalls = 0, resolveCalls = 0;
+  const order = [], opens = [], blobs = [];
+  const imageHost = createFakePluginHost({ pluginId: 'turn-result-images', sdk: {
+    threads: { events: { async list() { nativeReads++; order.push('native'); await held; return [native]; } },
+      async get() { return { environmentId: 'environment' }; } },
+    environments: { async get() { return { hostId: 'fixed-host' }; } },
+    files: { async read() { files++; order.push('file'); return { path: '/saved/image.png', content: png.toString('base64'),
+      contentEncoding: 'base64', sha256: sha, sizeBytes: png.length, mimeType: 'image/png' }; },
+      async createPreview() { previews++; order.push('lease'); return { baseUrl: '/api/v1/file-previews/first', expiresAtMs: Date.now() + 120000 }; } },
+  } });
+  const galleryHost = createFakePluginHost({ pluginId: 'turn-results' });
+  imagePlugin(imageHost.bb); galleryPlugin(galleryHost.bb);
+  const store = createImageObservationStore(imageHost.bb.storage.database());
+  const imageRpc = createRegisteredHandlerRpc(imageHost, 'turn-result-images'), galleryRpc = createRegisteredHandlerRpc(galleryHost, 'turn-results');
+  await galleryHost.harness.behavior.callRpc(GALLERY_METHODS.apply, { owner: 'turn-result-images', threadId: 'thread',
+    changes: [{ kind: 'candidate', identity }] });
+  if (failPublication) galleryHost.bb.storage.database().exec("CREATE TRIGGER reject_image_publication BEFORE INSERT ON gallery_records WHEN NEW.kind='claim' BEGIN SELECT RAISE(ABORT,'fixture rollback'); END;");
+  let correlated = false;
+  const sdk = { threads: { events: { async list() { return [native]; } } }, plugins: {
+    async list() { return { plugins: [{ id: 'turn-result-images', enabled: true, status: 'running' }] }; },
+    async callRpc(input) {
+      if (input.pluginId === 'turn-result-images') {
+        if (input.method === 'turnResultImagesV1Media') { mediaCalls++; order.push('Media'); }
+        if (input.method === 'turnResultsV1Resolve') { resolveCalls++; order.push('Resolve'); }
+        return imageRpc.callRpc(input);
+      }
+      const result = await galleryRpc.callRpc(input);
+      if (input.method === GALLERY_METHODS.apply && input.input.changes.some(change => change.kind === 'upsert')) order.push('Apply');
+      if (input.method === GALLERY_METHODS.read && result.page.rows.some(row => row.resolution?.provenance.artifactLocation.state === 'verified')) {
+        correlated = true; order.push('Read-verified');
+      }
+      return result;
+    },
+  } };
+  const runtime = createGalleryRuntime(sdk), originalCreate = URL.createObjectURL;
+  URL.createObjectURL = blob => { blobs.push(blob); return originalCreate(blob); };
+  globalThis.fetch = async () => { gets++; order.push('GET'); assert.equal(correlated, true, 'normal committed resolution must be read before GET');
+    assert.ok(store.read(identity.ref.source)?.materialization); return new Response(png, { headers: { 'content-type': 'image/png' } }); };
+  let props = { ...h.props, runtime, sdk, navigate: { experimental_openFilePreview(target) { opens.push(target); return true; } } };
+  let rendered = renderSlot({ component: TurnGallery }, props), retired = false;
+  try {
+    await until(() => rendered.container.querySelector('[data-result-key]'));
+    await until(() => h.observers.some(observer => [...observer.targets].some(target => target.classList.contains('tr-canvas'))));
+    assert.match(rendered.container.textContent, /Image preview pending/);
+    assert.doesNotMatch(rendered.container.textContent, /Generated image|Image generated|bytes match/);
+    for (let i = 0; i < 12; i++) {
+      await act(async () => { await tick(); for (const observer of h.observers) for (const target of observer.targets)
+        if (target.classList.contains('tr-canvas')) observer.callback([{ target, isIntersecting: true }]); });
+      if (mediaCalls) break;
+    }
+    assert.equal(gets, 0); assert.equal(blobs.length, 0); assert.equal(store.read(identity.ref.source), null);
+    assert.equal(rendered.container.querySelector('button[aria-label^="Open"]'), null, 'unconfirmed candidate has no file Open');
+    console.log('INITIAL_IMAGE_CANDIDATE', JSON.stringify({ mediaCalls, resolveCalls, nativeReads, gets, blobs: blobs.length }));
+    assert.equal(mediaCalls, 1, 'a demanded unresolved exact candidate must start the existing Media admission');
+    assert.equal(resolveCalls, 0, 'initial Media must not depend on a preliminary Resolve');
+    assert.equal(rendered.container.querySelector('.tr-hosted'), null);
+    if (retirePending) {
+      rendered.unmount(); retired = true; runtime.dispose();
+      assert.equal(runtime.stats().running, 1, 'retired caller still owns its dispatched public Media response');
+      release(); await until(() => runtime.stats().running === 0);
+      assert.equal(gets, 0); assert.equal(blobs.length, 0); assert.equal(resolveCalls, 0);
+      assert.equal(mediaCalls, 1); assert.equal(nativeReads, 1);
+      console.log('INITIAL_IMAGE_RETIRED', JSON.stringify({ mediaCalls, nativeReads, gets, blobs: blobs.length, running: runtime.stats().running }));
+      return;
+    }
+    release();
+    if (failPublication) {
+      await until(() => rendered.container.querySelector('.tr-placeholder button'));
+      assert.equal(gets, 0); assert.equal(blobs.length, 0);
+      assert.ok(store.read(identity.ref.source)?.materialization, 'source commit survives failed consumer publication');
+      assert.equal(rendered.container.querySelector('button[aria-label^="Open"]'), null);
+      const candidate = await galleryHost.harness.behavior.callRpc(GALLERY_METHODS.read, { threadId: 'thread', turnId: 'turn' });
+      assert.equal(candidate.page.rows[0].resolution, null); assert.equal(candidate.page.rows[0].unresolved, true);
+      galleryHost.bb.storage.database().exec('DROP TRIGGER reject_image_publication');
+      rendered.unmount(); props = { ...props, anchor: { ...h.anchor, historySnapshot: 'genuinely-new-public-proof' } };
+      rendered = renderSlot({ component: TurnGallery }, props);
+      await until(() => rendered.container.querySelector('.tr-placeholder button'));
+      for (const observer of h.observers) for (const target of observer.targets) if (target.classList.contains('tr-canvas'))
+        await act(async () => observer.callback([{ target, isIntersecting: true }]));
+      await act(async () => { await tick(); await tick(); });
+      assert.equal(mediaCalls, 1, 'retire/reentry does not auto retry a foreground failure');
+      assert.equal(gets, 0);
+      await act(async () => rendered.container.querySelector('.tr-placeholder button').click());
+    }
+    await until(() => rendered.container.querySelector('img'));
+    const attempts = failPublication ? 2 : 1;
+    assert.equal(mediaCalls, attempts); assert.equal(nativeReads, 1); assert.equal(files, attempts); assert.equal(previews, attempts);
+    assert.equal(resolveCalls, attempts); assert.equal(gets, 1); assert.equal(blobs.length, 1);
+    assert.equal(createHash('sha256').update(Buffer.from(await blobs[0].arrayBuffer())).digest('hex'), sha);
+    assert.ok(order.indexOf('lease') < order.indexOf('Resolve')); assert.ok(order.indexOf('Apply') < order.indexOf('Read-verified'));
+    assert.ok(order.indexOf('Read-verified') < order.indexOf('GET'));
+    const node = rendered.container.querySelector('img'), url = node.src;
+    await act(async () => rendered.rerender(React.createElement(TurnGallery, props)));
+    assert.equal(rendered.container.querySelector('img'), node);
+    await act(async () => rendered.container.querySelector('.tr-image-action').click());
+    assert.equal(opens.length, 1);
+    rendered.unmount(); rendered = renderSlot({ component: TurnGallery }, props);
+    await until(() => h.observers.some(observer => [...observer.targets].some(target => target.classList.contains('tr-canvas'))));
+    for (const observer of h.observers) for (const target of observer.targets) if (target.classList.contains('tr-canvas'))
+      await act(async () => observer.callback([{ target, isIntersecting: true }]));
+    await until(() => rendered.container.querySelector('img'));
+    assert.equal(rendered.container.querySelector('img').src, url);
+    assert.equal(mediaCalls, attempts); assert.equal(gets, 1); assert.equal(nativeReads, 1); assert.equal(files, attempts);
+    const idle = JSON.stringify({ mediaCalls, resolveCalls, nativeReads, files, gets }); await act(async () => { await tick(); await tick(); });
+    assert.equal(JSON.stringify({ mediaCalls, resolveCalls, nativeReads, files, gets }), idle);
+    console.log('INITIAL_IMAGE_COMPLETE', JSON.stringify({ order, mediaCalls, resolveCalls, nativeReads, files, gets, opens: opens.length }));
+  } finally {
+    release(); if (!retired) rendered.unmount(); runtime.dispose(); await imageHost.harness.lifecycle.dispose(); await galleryHost.harness.lifecycle.dispose();
+    await tick(); URL.createObjectURL = originalCreate; h.restore();
+  }
+}
+
+test('unresolved exact Images candidate admits once through Media before correlated bytes and keeps its warm owner', () => initialImageComposition());
+test('settled unbound publication error reenters with fresh correlation ownership only on explicit Retry', () => initialImageComposition(true));
+test('retired initial candidate owns its pending Media response but cannot correlate or GET late', () => initialImageComposition(false, true));

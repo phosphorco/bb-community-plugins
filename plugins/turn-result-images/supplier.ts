@@ -6,10 +6,10 @@ import { registerTurnResultsParticipant, ResultsCallError } from '@phosphorco/bb
 import type { RegistrationPort } from '@phosphorco/bb-turn-results/bb';
 import { IMAGE_REVISION, IMAGE_KIND_DESCRIPTOR, recognizeImages } from './recognition.ts';
 import { verifyImage } from './verification.ts';
-import type { ImageHistory, ImageVerificationPorts, ImageMaterialization } from './verification.ts';
+import type { ImageHistory, ImageVerificationPorts, ImageMaterialization, ImageVerification } from './verification.ts';
 import type { ImageObservationStore, ImageStoreEntry } from './store.ts';
 import { ImageStoreError } from './store.ts';
-import { registerImageMedia } from './media.ts';
+import { registerImageMedia, ownedImageReads } from './media.ts';
 import type { ImagePreviewPort } from './media.ts';
 
 export const IMAGE_PLUGIN_ID = 'turn-result-images';
@@ -64,7 +64,8 @@ export function registerImageResults(bb: RegistrationPort, ports: ImageSupplierP
     activeResolves++;
     return () => { activeResolves--; };
   };
-  async function resolveOne(identity: ResultIdentity, signal: AbortSignal): Promise<ProposedResolveOutcome> {
+  async function resolveOne(identity: ResultIdentity, signal: AbortSignal,
+    verification: ImageSupplierPorts['verification']): Promise<ProposedResolveOutcome> {
     signal.throwIfAborted();
     let existing: ImageStoreEntry | null;
     try { existing = ports.store.read(identity.ref.source); }
@@ -81,7 +82,7 @@ export function registerImageResults(bb: RegistrationPort, ports: ImageSupplierP
       && existing.resolution.availability.asOf <= now && existing.resolution.availability.expiresAt > now) {
       return { state: 'resolved', value: existing.resolution };
     }
-    const result = await verifyImage(identity, { ...ports.verification,
+    const result = await verifyImage(identity, { ...verification,
       materializations: { async read(source) {
         signal.throwIfAborted();
         const record = ports.store.read(source);
@@ -124,14 +125,26 @@ export function registerImageResults(bb: RegistrationPort, ports: ImageSupplierP
       // time. An independently enforced registration deadline aborts later I/O.
       const release = acquire();
       if (!release) throw new ResultsCallError('source-error');
+      const pending = new Set<Promise<unknown>>(), verification = ownedImageReads(ports.verification, pending);
       try {
         const outcomes: ProposedResolveOutcome[] = [];
-        for (const identity of input.items) { signal.throwIfAborted(); outcomes.push(await resolveOne(identity, signal)); }
+        for (const identity of input.items) { signal.throwIfAborted(); outcomes.push(await resolveOne(identity, signal, verification)); }
         signal.throwIfAborted();
         return await buildResolveOutput(input, outcomes);
-      } finally { release(); }
+      } finally {
+        if (pending.size) void Promise.allSettled([...pending]).then(release);
+        else release();
+      }
     },
   });
-  const media = ports.preview ? registerImageMedia(bb, { ...ports, preview: ports.preview, acquire }) : null;
+  const media = ports.preview ? registerImageMedia(bb, { ...ports, preview: ports.preview, acquire, admit(result) {
+    const { binding } = result, existing = ports.store.read(binding.identity.ref.source);
+    const history: ImageHistory = { identity: binding.identity, proof: binding.proof, path: binding.path,
+      nativeCreatedAt: binding.nativeCreatedAt, providerSha256: binding.providerSha256 };
+    const committed = ports.store.commit({ history, materialization: binding,
+      resolution: resolutionFor(history, binding, { asOf: result.observedAt, verified: true,
+        reason: result.displayUnsupported ?? 'verified', displaySupported: result.layout !== null }, existing?.resolution) });
+    return 'entry' in committed ? committed.entry : null;
+  } }) : null;
   return { dispose() { participant.dispose(); media?.dispose(); } };
 }

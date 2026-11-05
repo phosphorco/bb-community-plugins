@@ -8,5 +8,5 @@ test('production media/server handlers use public SDK fake-host and actual Node 
     { encoding: 'utf8', timeout: 30_000, maxBuffer: 2 * 1024 * 1024 });
   assert.ifError(result.error);
   assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
-  assert.match(result.stdout, /# tests 12/u); assert.match(result.stdout, /# fail 0/u);
+  assert.match(result.stdout, /# tests 17/u); assert.match(result.stdout, /# fail 0/u);
 });

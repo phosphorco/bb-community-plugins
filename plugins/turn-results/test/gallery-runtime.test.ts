@@ -6,7 +6,8 @@ import { registerTurnResultsParticipant, ResultsCallError } from '@phosphorco/bb
 import type { RegistrationPort } from '@phosphorco/bb-turn-results/bb';
 import { createGalleryRuntime, GALLERY_RUNTIME_LIMITS } from '../gallery/runtime.ts';
 import { GALLERY_METHODS } from '../gallery/rpc.ts';
-import type { GalleryAnchor } from '../gallery/anchors.ts';
+import { createGalleryAnchorReader } from '../gallery/anchors.ts';
+import type { GalleryAnchor, GalleryTimelinePort } from '../gallery/anchors.ts';
 import type { StageRecord, GalleryObservation } from '../gallery/index.ts';
 const tick = () => new Promise(resolve => setTimeout(resolve, 0));
 async function until(condition: () => boolean) { for (let i = 0; i < 500; i++) { if (condition()) return; await tick(); } assert.fail('Demand did not settle.'); }
@@ -964,4 +965,113 @@ test('passive visible image admission remains distinct from conservative specula
     }
     assert.equal(h.runtime.stats().running, 0); assert.equal(h.runtime.stats().historyReads, 0);
   } finally { h.dispose(); await h.runtime.whenDrained(); }
+});
+
+
+const latestInput = (signal: AbortSignal) => ({ threadId: 'cohort', includeNestedRows: 'false' as const,
+  segmentLimit: '100', deferContent: 'true' as const, signal });
+const latestPage = () => ({ rows: [], completedTurnDisplay: 'collapse', timelinePage: { historySnapshot: 'fresh-public', olderCursor: null } });
+
+test('queued latest cohort cancellation detaches one waiter; last abort holds actual raw credit and other thread progresses', async () => {
+  const h = setup(), scope = {}, a = new AbortController(), b = new AbortController(), blocker = new AbortController();
+  let releaseBlock!: () => void, releaseRaw!: () => void, rawSignal!: AbortSignal, calls = 0;
+  const block = new Promise<void>(done => { releaseBlock = done; }), raw = new Promise<void>(done => { releaseRaw = done; });
+  const client: GalleryTimelinePort = { async timeline(input) { calls++; rawSignal = input.signal; await raw; return latestPage(); } };
+  const notices: string[] = [];
+  const held = h.runtime.readScope('cohort', blocker.signal, () => block);
+  await until(() => h.runtime.stats().running === 1);
+  const left = h.runtime.readTimeline(latestInput(a.signal), client, { scope, current: () => true, speculative: true, dispatched() { notices.push('a'); } }).catch(() => null);
+  const right = h.runtime.readTimeline(latestInput(b.signal), client, { scope, current: () => true, dispatched() { notices.push('b'); } }).catch(() => null);
+  try {
+    assert.equal(h.runtime.stats().historyReads, 3); releaseBlock(); await held;
+    await until(() => calls === 1); assert.deepEqual(new Set(notices), new Set(['a', 'b']));
+    b.abort(); await right; assert.equal(rawSignal.aborted, false, 'surviving speculative owner keeps the shared raw response');
+    assert.equal(h.runtime.stats().running, 1); assert.equal(h.runtime.stats().historyReads, 2, 'each waiter remains charged through raw settlement');
+    await h.runtime.readScope('other-thread', new AbortController().signal, async () => {});
+    await until(() => h.runtime.stats().running === 1); // wait for its raw-finally acknowledgement
+    a.abort(); await left; assert.equal(rawSignal.aborted, true); assert.equal(h.runtime.stats().running, 1);
+    releaseRaw(); await until(() => h.runtime.stats().running === 0); assert.equal(calls, 1);
+    assert.equal(h.runtime.stats().historyReads, 0);
+  } finally { releaseBlock(); releaseRaw(); a.abort(); b.abort(); h.dispose(); await h.runtime.whenDrained(); }
+});
+
+test('reset between queued grouping and SDK dispatch removes retired members without cancelling surviving progress', async () => {
+  const h = setup(), scope = {}; let calls = 0, liveA = true, liveB = true, reply: Promise<void> | null = null, releaseReply!: () => void; const notices: string[] = [];
+  const client: GalleryTimelinePort = { async timeline() { calls++; if (reply) await reply; return latestPage(); } };
+  const a = h.runtime.readTimeline(latestInput(new AbortController().signal), client, { scope, current: () => liveA, dispatched() { notices.push('a'); } }).catch(() => null);
+  const b = h.runtime.readTimeline(latestInput(new AbortController().signal), client, { scope, current: () => liveB, dispatched() { notices.push('b'); } }).catch(() => null);
+  // pump/grouping runs first; this is before its deferred SDK call.
+  queueMicrotask(() => { liveA = false; });
+  try {
+    const values = await Promise.all([a, b]); await until(() => h.runtime.stats().running === 0);
+    assert.equal(values[0], null); assert.equal(values[1]?.state, 'ready'); assert.equal(calls, 1); assert.deepEqual(notices, ['b']);
+    liveA = true; liveB = true; const before = calls;
+    const c = h.runtime.readTimeline(latestInput(new AbortController().signal), client, { scope, current: () => liveA, dispatched() { notices.push('retired-a'); } }).catch(() => null);
+    const d = h.runtime.readTimeline(latestInput(new AbortController().signal), client, { scope, current: () => liveB, dispatched() { notices.push('retired-b'); } }).catch(() => null);
+    queueMicrotask(() => { liveA = false; liveB = false; });
+    assert.deepEqual(await Promise.all([c, d]), [null, null]); await until(() => h.runtime.stats().running === 0);
+    assert.equal(calls, before, 'all retired before SDK dispatch means zero raw requests'); assert.deepEqual(notices, ['b']);
+    liveA = true; liveB = true; reply = new Promise<void>(done => { releaseReply = done; });
+    const e = h.runtime.readTimeline(latestInput(new AbortController().signal), client, { scope, current: () => liveA }).catch(() => null);
+    const f = h.runtime.readTimeline(latestInput(new AbortController().signal), client, { scope, current: () => liveB }).catch(() => null);
+    await until(() => calls === before + 1); liveA = false; releaseReply();
+    const late = await Promise.all([e, f]); assert.equal(late[0], null); assert.equal(late[1]?.state, 'ready');
+    await until(() => h.runtime.stats().running === 0); assert.equal(calls, before + 1, 'late retired member receives no shared value; live peer still progresses');
+
+  } finally { releaseReply?.(); h.dispose(); await h.runtime.whenDrained(); }
+});
+
+test('latest sharing excludes started calls, older cursors, reset watermarks and changed common scope; no completed cache', async () => {
+  const h = setup(), scope = {}; let release!: () => void, calls = 0, current = true;
+  const raw = new Promise<void>(done => { release = done; });
+  const client: GalleryTimelinePort = { async timeline() { if (++calls === 1) await raw; return latestPage(); } };
+  const first = h.runtime.readTimeline(latestInput(new AbortController().signal), client, { scope, current: () => true });
+  await until(() => calls === 1);
+  const later = h.runtime.readTimeline(latestInput(new AbortController().signal), client, { scope, current: () => true });
+  try {
+    release(); await Promise.all([first, later]); await until(() => h.runtime.stats().running === 0); assert.equal(calls, 2, 'already-dispatched records cannot join');
+    await h.runtime.readTimeline(latestInput(new AbortController().signal), client, { scope, current: () => true });
+    await until(() => h.runtime.stats().running === 0); assert.equal(calls, 3, 'completed response is never cached for joining');
+    const cursor = () => ({ ...latestInput(new AbortController().signal), beforeAnchorId: 'actual-issued-cursor', beforeAnchorSeq: '100' });
+    await Promise.all([h.runtime.readTimeline(cursor(), client, { scope, current: () => true }), h.runtime.readTimeline(cursor(), client, { scope, current: () => true })]);
+    await until(() => h.runtime.stats().running === 0); assert.equal(calls, 5, 'even identical older cursor work stays independent');
+    const heldController = new AbortController(); let unblock!: () => void;
+    const held = h.runtime.readScope('cohort', heldController.signal, () => new Promise<void>(done => { unblock = done; }));
+    await until(() => h.runtime.stats().running === 1);
+    const obsolete = h.runtime.readTimeline(latestInput(new AbortController().signal), client, { scope, current: () => current });
+    const fresh = h.runtime.readTimeline(latestInput(new AbortController().signal), client, { scope: {}, current: () => true });
+    current = false; unblock(); await held; await Promise.all([obsolete, fresh]); await until(() => h.runtime.stats().running === 0);
+    assert.equal(calls, 7, 'retired matching eligibility falls back to independent ordinary fresh reads, preserving progress');
+  } finally { release(); h.dispose(); await h.runtime.whenDrained(); }
+});
+
+test('queued latest waiters each consume existing128 budget even when one raw dispatch serves them all', async () => {
+  const h = setup(), scope = {}; let unblock!: () => void, release!: () => void, calls = 0;
+  const held = h.runtime.readScope('cohort', new AbortController().signal, () => new Promise<void>(done => { unblock = done; }));
+  await until(() => h.runtime.stats().running === 1);
+  const client: GalleryTimelinePort = { async timeline() { calls++; await new Promise<void>(done => { release = done; }); return latestPage(); } };
+  const waiters = Array.from({ length: 127 }, () => h.runtime.readTimeline(latestInput(new AbortController().signal), client, { scope, current: () => true }));
+  try {
+    assert.equal(h.runtime.stats().historyReads, 128);
+    assert.equal((await h.runtime.readTimeline(latestInput(new AbortController().signal), client, { scope, current: () => true })).state, 'capacity');
+    unblock(); await held; await until(() => calls === 1); assert.equal(h.runtime.stats().historyReads, 127); assert.equal(h.runtime.stats().running, 1);
+    release(); const values = await Promise.all(waiters); assert.ok(values.every(value => value.state === 'ready'));
+    await until(() => h.runtime.stats().running === 0); assert.equal(calls, 1); assert.equal(h.runtime.stats().historyReads, 0);
+  } finally { unblock(); release?.(); h.dispose(); await h.runtime.whenDrained(); }
+});
+
+test('anchor reset callbacks include target additions, explicit invalidation, internal mismatch and adopted ownership', async () => {
+  let marks = 0, replacementMarks = 0, page = 0;
+  const client: GalleryTimelinePort = { async timeline() {
+    page++; return { rows: [{ id: 'row', threadId: 'thread', turnId: 'turn', kind: 'turn', status: 'completed', sourceSeqStart: 1, sourceSeqEnd: 2 }],
+      completedTurnDisplay: 'collapse', timelinePage: { historySnapshot: `snapshot-${page}`, olderCursor: page < 3 ? { anchorId: `issued-${page}`, anchorSeq: 0 } : null } };
+  } };
+  const reader = createGalleryAnchorReader(client, 'thread', () => { marks++; });
+  await reader.read(['row'], new AbortController().signal, false, 1); assert.equal(marks, 1);
+  await reader.read(['new-target'], new AbortController().signal, false, 1); assert.equal(marks, 2, 'target addition reset is observable');
+  await assert.rejects(reader.read(['new-target'], new AbortController().signal, false, 1), /Timeline changed/); assert.equal(marks, 3);
+  reader.invalidate(); assert.equal(marks, 4);
+  await reader.read(['row'], new AbortController().signal); assert.equal(marks, 5);
+  assert.equal(reader.adopt(['row'], client, () => { replacementMarks++; }), true); assert.equal(replacementMarks, 1);
+  reader.invalidate(); assert.equal(marks, 5); assert.equal(replacementMarks, 2);
 });

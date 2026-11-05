@@ -3,12 +3,13 @@ import { z } from 'zod';
 import { canonicalByteLength, canonicalJson, sha256Canonical } from '@phosphorco/bb-turn-results';
 import type { useSdk } from '@get-bb/plugin-sdk/app';
 import type { GalleryObservation } from './index.ts';
+import type { ResultIdentity } from '@phosphorco/bb-turn-results';
 
 export interface ImageLease {
   url: string; expiresAtMs: number; targetFingerprint: string; leaseGeneration: string;
 }
 export interface MediaSnapshot { url: string | null; state: 'idle' | 'loading' | 'ready' | 'error'; error: string | null }
-export interface MediaRequest { key: string; fingerprint: string; sha256: string; acquire(signal: AbortSignal, speculative?: () => boolean): Promise<ImageLease> }
+export interface MediaRequest { key: string; claim?: string; fingerprint: string | null; sha256: string | null; acquire(signal: AbortSignal, speculative?: () => boolean): Promise<ImageLease> }
 export interface MediaPorts {
   fetch(url: string, signal: AbortSignal): Promise<Response>;
   createUrl(blob: Blob): string; revokeUrl(url: string): void;
@@ -25,15 +26,28 @@ const mediaOutput = z.discriminatedUnion('state', [
     width: z.number().int().min(1).max(32768), height: z.number().int().min(1).max(32768), sizeBytes: z.number().int().min(1).max(8388608) }) }),
 ]);
 
+export function nativeImageIdentity(owner: string, identity: ResultIdentity): boolean {
+  return owner === 'turn-result-images' && identity.ref.kind === 'bb-native-images/image-generated'
+    && identity.artifact.provider === 'bb-native-images' && identity.artifact.kind === 'image'
+    && identity.specificity === 'typed' && identity.evidence.basis === 'native-completion';
+}
+export function initialImageCandidate(row: GalleryObservation): boolean {
+  return nativeImageIdentity(row.owner, row.identity) && row.unresolved && row.resolution === null
+    && !row.sourceExpired && !row.retracted && row.currentAvailability?.state !== 'unavailable';
+}
+export interface ImageCorrelation { row: GalleryObservation; publish(): void }
+
 /** One exact Media admission path for visible and speculative owners alike. */
 export async function imageMediaRequest(row: GalleryObservation,
   scope: (signal: AbortSignal, read: (signal: AbortSignal) => Promise<unknown>, speculative: () => boolean) => Promise<{ state: 'ready'; value: unknown } | { state: 'capacity' }>,
-  plugins: Pick<ReturnType<typeof useSdk>['plugins'], 'callRpc'>): Promise<MediaRequest | null> {
+  plugins: Pick<ReturnType<typeof useSdk>['plugins'], 'callRpc'>,
+  correlate?: (signal: AbortSignal, speculative: () => boolean) => Promise<ImageCorrelation>): Promise<MediaRequest | null> {
   const resolution = row.resolution, route = resolution?.route, location = resolution?.provenance.artifactLocation;
   const sha256 = location?.state === 'verified' ? location.sha256 : undefined;
-  if (!sha256 || route?.kind !== 'file' || row.owner !== 'turn-result-images') return null;
-  const fingerprint = await sha256Canonical({ target: route.target, sha256 });
-  return { key: row.key, fingerprint, sha256, async acquire(signal, speculative = () => false) {
+  const initial = initialImageCandidate(row);
+  if (row.owner !== 'turn-result-images' || (!sha256 || route?.kind !== 'file') && (!initial || !correlate)) return null;
+  const fingerprint = sha256 && route?.kind === 'file' ? await sha256Canonical({ target: route.target, sha256 }) : null;
+  const request: MediaRequest = { key: row.key, claim: canonicalJson([row.owner, row.identity]), fingerprint, sha256: sha256 ?? null, async acquire(signal, speculative = () => false) {
     const read = await scope(signal, bounded => {
       bounded.throwIfAborted();
       // Own an already-dispatched response through raw settlement. Retirement
@@ -45,11 +59,24 @@ export async function imageMediaRequest(row: GalleryObservation,
     if (read.state === 'capacity') throw Error('Image verification capacity reached.');
     const output = mediaOutput.parse(read.value);
     if (output.state !== 'ready') throw Error(output.reason);
-    if (output.image.sha256 !== sha256 || output.image.width * output.image.height > 16777216
-      || output.lease.targetFingerprint !== fingerprint || !output.lease.url.startsWith(`${output.lease.baseUrl}/`)
+    const admitted = initial ? await correlate!(signal, speculative) : null;
+    signal.throwIfAborted();
+    const current = admitted?.row ?? row, target = current.resolution?.route, location = current.resolution?.provenance.artifactLocation;
+    if (current.owner !== row.owner || canonicalJson(current.identity) !== canonicalJson(row.identity)
+      || target?.kind !== 'file' || location?.state !== 'verified') throw Error('Image binding changed.');
+    const expectedSha = location.sha256, expectedFingerprint = await sha256Canonical({ target: target.target, sha256: expectedSha });
+    signal.throwIfAborted();
+    if (output.image.sha256 !== expectedSha || output.image.width * output.image.height > 16777216
+      || output.lease.targetFingerprint !== expectedFingerprint || !output.lease.url.startsWith(`${output.lease.baseUrl}/`)
       || output.lease.expiresAtMs - output.lease.resolvedAt > 120000 || output.lease.expiresAtMs <= output.lease.resolvedAt) throw Error('Image binding changed.');
+    // Fill an unknown binding once, after normal source Resolve/Apply/issued
+    // Read correlation, before the same host renders its resolved row.
+    if (request.fingerprint && (request.fingerprint !== expectedFingerprint || request.sha256 !== expectedSha)) throw Error('Image binding changed.');
+    request.fingerprint = expectedFingerprint; request.sha256 = expectedSha;
+    admitted?.publish();
     return output.lease;
   } };
+  return request;
 }
 
 export const MEDIA_LIMITS = Object.freeze({ entries: 64, bytes: 33_554_432, imageBytes: 8_388_608, concurrency: 2, deadlineMs: 7000 });
@@ -89,6 +116,24 @@ export function createGalleryMedia(ports: MediaPorts) {
       entry.foregroundEligible = false; entry.attempted = false;
     }
   }
+  function checkBinding(previous: MediaRequest, request: MediaRequest) {
+    if ((previous.fingerprint !== request.fingerprint || previous.sha256 !== request.sha256)
+      && !(previous.claim && previous.claim === request.claim
+        && (previous.fingerprint === null && previous.sha256 === null || request.fingerprint === null && request.sha256 === null))) {
+      throw new Error('Immutable media binding changed.');
+    }
+  }
+  function renewFailedRequest(entry: Entry, request: MediaRequest) {
+    if (entry.controller || entry.store.state.state !== 'error' || !entry.request.claim || entry.request.claim !== request.claim) return;
+    checkBinding(entry.request, request);
+    // Reentry supplies current correlation ownership, never new target facts.
+    // A binding learned before publication/GET failed remains a constraint on
+    // an otherwise-unbound candidate's next independently correlated response.
+    if (entry.request.fingerprint !== null) {
+      request.fingerprint = entry.request.fingerprint; request.sha256 = entry.request.sha256;
+    }
+    entry.request = request;
+  }
   function pump() {
     if (disposed || !visible) return;
     for (const entry of [...entries.values()].sort((a, b) => Number(a.visible <= a.speculative) - Number(b.visible <= b.speculative))) {
@@ -110,7 +155,7 @@ export function createGalleryMedia(ports: MediaPorts) {
       let responseBody: ReadableStream<Uint8Array> | null = null, bodyHandled = false;
       void (async () => {
         const lease = await wait(entry.request.acquire(signal, () => entry.visible <= entry.speculative)); check();
-        if (lease.targetFingerprint !== entry.request.fingerprint || lease.expiresAtMs <= Date.now()
+        if (!entry.request.fingerprint || !entry.request.sha256 || lease.targetFingerprint !== entry.request.fingerprint || lease.expiresAtMs <= Date.now()
           || !/^\/api\/v1\/file-previews\/[a-zA-Z0-9-]+\/[^/?#]+$/.test(lease.url)) throw new Error('Image serving target changed.');
         const fetching = ports.fetch(lease.url, signal).then(response => {
           // A port may resolve despite cancellation, after our waiter retired.
@@ -167,7 +212,7 @@ export function createGalleryMedia(ports: MediaPorts) {
       if (disposed) throw new Error('Media owner retired.');
       if (speculative && warming >= 2) throw Error('Nearby media capacity reached.');
       let entry = entries.get(request.key);
-      if (entry && (entry.request.fingerprint !== request.fingerprint || entry.request.sha256 !== request.sha256)) throw new Error('Immutable media binding changed.');
+      if (entry) { checkBinding(entry.request, request); renewFailedRequest(entry, request); }
       if (!entry) {
         if (!collect(0, true)) throw new Error('Media entry capacity reached.');
         entry = { request, refs: 0, visible: 0, speculative: 0, bytes: 0, controller: null, attempted: false, foregroundAttempt: false, foregroundEligible: false,
@@ -183,7 +228,7 @@ export function createGalleryMedia(ports: MediaPorts) {
       return { store: owned.store,
         promote() { if (!live || !optional) return; optional = false; warming--; if (shown) owned.speculative--; foregroundDemand(owned); ports.demand?.(); schedule(); },
         visible(next: boolean) { if (!live || shown === next) return; shown = next; owned.visible += next ? 1 : -1; if (optional) owned.speculative += next ? 1 : -1; if (!owned.visible) owned.controller?.abort(); else if (owned.store.state.state === 'idle') owned.attempted = false; foregroundDemand(owned); ports.demand?.(); schedule(); },
-        retry() { if (!live || owned.controller) return; owned.attempted = false; schedule(); },
+        retry() { if (!live || owned.controller) return; renewFailedRequest(owned, request); owned.attempted = false; schedule(); },
         dispose() { if (!live) return; live = false; owned.refs--; if (shown) owned.visible--; if (optional) { warming--; if (shown) owned.speculative--; } if (!owned.refs || !owned.visible) owned.controller?.abort(); },
       };
     },

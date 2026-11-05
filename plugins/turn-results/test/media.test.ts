@@ -140,3 +140,128 @@ test('running speculative response promoted to foreground stays owned and its ev
     assert.equal(h.owner.stats().running, 0); assert.equal(h.counts().fetches, 0);
   } finally { warm.dispose(); h.owner.dispose(); }
 });
+
+test('unknown media binding cannot fetch when normal committed correlation disagrees with the response', async () => {
+  const { imageMediaRequest } = await import('../gallery/media.ts');
+  const source = { threadId: 'thread', turnId: 'turn', eventId: 'event', seq: 1, itemId: 'image', eventType: 'item/completed' as const };
+  const identity = { version: 1 as const, ref: { source, member: 'image:0', kind: 'bb-native-images/image-generated' },
+    artifact: { provider: 'bb-native-images', id: 'event', kind: 'image' }, specificity: 'typed' as const,
+    evidence: { basis: 'native-completion' as const, selectedDigest: 'a'.repeat(64), sites: [], targetUrls: [] }, lookup: null };
+  const target = { kind: 'host' as const, hostId: 'host', path: '/image.png' };
+  const pending = { key: 'image', owner: 'turn-result-images', identity, resolution: null, unresolved: true, firstObservedOrder: 1,
+    corrections: [], sourceExpired: null, retracted: null, freshness: 'unverified' as const, currentAvailability: null };
+  const value = { ...pending, unresolved: false, resolution: { identity, proof: { kind: 'native-image' as const, source, selectedDigest: 'a'.repeat(64) },
+    revision: { epoch: 'e', sequence: 1 }, knowledge: 'confirmed' as const,
+    outcomeEvidence: { kind: 'observation' as const, id: 'event', digest: 'a'.repeat(64), recordedAt: 1 },
+    availability: { state: 'available' as const, asOf: 1, expiresAt: null },
+    route: { kind: 'file' as const, target }, provenance: { originHost: { state: 'unknown' as const, reason: 'not-recorded' as const },
+      artifactLocation: { state: 'verified' as const, target, observedAt: 1, basis: 'explicit-host-read' as const, sha256: digest } },
+    fallback: { kind: 'image' as const, title: 'Generated image', alt: 'Image' }, spans: { width: 2 as const, height: 2 as const } } };
+  let publishes = 0, fetches = 0;
+  const request = await imageMediaRequest(pending, async (_signal, read) => ({ state: 'ready', value: await read(new AbortController().signal) }),
+    { async callRpc(input) { return input.outputSchema.parse({ version: 1, state: 'ready', image: { mimeType: 'image/png', sha256: digest, width: 1, height: 1, sizeBytes: data.length },
+      lease: { targetFingerprint: 'f'.repeat(64), leaseGeneration: 'one', baseUrl: '/api/v1/file-previews/test', url: '/api/v1/file-previews/test/image.png', resolvedAt: Date.now(), expiresAtMs: Date.now() + 60000 } }); } },
+    async () => ({ row: value, publish() { publishes++; } }));
+  assert.ok(request);
+  const owner = createGalleryMedia({ async fetch() { fetches++; return new Response(data); }, createUrl() { throw Error('no Blob'); }, revokeUrl() {} });
+  const handle = owner.retain(request);
+  try {
+    await settled(handle.store, 'error'); assert.equal(handle.store.state.state, 'error');
+    assert.equal(request.fingerprint, null); assert.equal(request.sha256, null); assert.equal(publishes, 0); assert.equal(fetches, 0);
+  } finally { handle.dispose(); owner.dispose(); }
+});
+
+
+async function correlatedImageFixture() {
+  const { imageMediaRequest } = await import('../gallery/media.ts');
+  const { sha256Canonical } = await import('@phosphorco/bb-turn-results');
+  const source = { threadId: 'thread', turnId: 'turn', eventId: 'event', seq: 1, itemId: 'image', eventType: 'item/completed' as const };
+  const identity = { version: 1 as const, ref: { source, member: 'image:0', kind: 'bb-native-images/image-generated' },
+    artifact: { provider: 'bb-native-images', id: 'event', kind: 'image' }, specificity: 'typed' as const,
+    evidence: { basis: 'native-completion' as const, selectedDigest: 'a'.repeat(64), sites: [], targetUrls: [] }, lookup: null };
+  const target = { kind: 'host' as const, hostId: 'host', path: '/image.png' };
+  const candidate = { key: 'image', owner: 'turn-result-images', identity, resolution: null, unresolved: true, firstObservedOrder: 1,
+    corrections: [], sourceExpired: null, retracted: null, freshness: 'unverified' as const, currentAvailability: null };
+  const row = { ...candidate, unresolved: false, currentAvailability: { state: 'available' as const, asOf: 1, expiresAt: null },
+    resolution: { identity, proof: { kind: 'native-image' as const, source, selectedDigest: 'a'.repeat(64) }, revision: { epoch: 'e', sequence: 1 },
+      knowledge: 'confirmed' as const, outcomeEvidence: { kind: 'observation' as const, id: 'event', digest: 'a'.repeat(64), recordedAt: 1 },
+      availability: { state: 'available' as const, asOf: 1, expiresAt: null }, route: { kind: 'file' as const, target },
+      provenance: { originHost: { state: 'unknown' as const, reason: 'not-recorded' as const },
+        artifactLocation: { state: 'verified' as const, target, observedAt: 1, basis: 'explicit-host-read' as const, sha256: digest } },
+      fallback: { kind: 'image' as const, title: 'Generated image', alt: 'Image' }, spans: { width: 2 as const, height: 2 as const } } };
+  const fingerprint = await sha256Canonical({ target, sha256: digest });
+  let mediaCalls = 0;
+  const plugins = { async callRpc(input: Parameters<Parameters<typeof imageMediaRequest>[2]['callRpc']>[0]) {
+    mediaCalls++;
+    return input.outputSchema!.parse({ version: 1, state: 'ready', image: { mimeType: 'image/png', sha256: digest, width: 1, height: 1, sizeBytes: data.length },
+      lease: { targetFingerprint: fingerprint, leaseGeneration: 'one', baseUrl: '/api/v1/file-previews/test', url: lease.url,
+        resolvedAt: Date.now(), expiresAtMs: Date.now() + 60000 } });
+  } } as Parameters<typeof imageMediaRequest>[2];
+  const scope: Parameters<typeof imageMediaRequest>[1] = async (signal, read) => ({ state: 'ready', value: await read(signal) });
+  return { imageMediaRequest, candidate, row, plugins, scope, fingerprint, calls: () => mediaCalls };
+}
+
+test('final publication failure preserves binding but explicit candidate reentry uses current correlation', async () => {
+  const f = await correlatedImageFixture(); let oldCorrelation = 0, currentCorrelation = 0, gets = 0;
+  const firstRequest = (await f.imageMediaRequest(f.candidate, f.scope, f.plugins, async () => {
+    oldCorrelation++; return { row: f.row, publish() { throw Error('publication failed'); } };
+  }))!;
+  const owner = createGalleryMedia({ async fetch() { gets++; return new Response(data, { headers: { 'content-type': 'image/png' } }); },
+    createUrl: () => 'blob:verified', revokeUrl() {} });
+  const first = owner.retain(firstRequest); let next: ReturnType<typeof owner.retain> | undefined;
+  try {
+    await settled(first.store, 'error'); await tick(); assert.equal(firstRequest.fingerprint, f.fingerprint);
+    assert.equal(gets, 0); assert.equal(owner.stats().running, 0); first.dispose();
+    const currentRequest = (await f.imageMediaRequest(f.candidate, f.scope, f.plugins, async () => {
+      currentCorrelation++; return { row: f.row, publish() {} };
+    }))!;
+    assert.equal(currentRequest.fingerprint, null);
+    next = owner.retain(currentRequest); assert.equal(currentRequest.fingerprint, f.fingerprint);
+    assert.equal(currentRequest.sha256, digest); await tick(); assert.equal(f.calls(), 1, 'reentry does not retry');
+    next.retry(); await settled(next.store, 'ready');
+    assert.equal(next.store.state.state, 'ready'); assert.equal(oldCorrelation, 1); assert.equal(currentCorrelation, 1);
+    assert.equal(f.calls(), 2); assert.equal(gets, 1); assert.equal(firstRequest.fingerprint, f.fingerprint);
+  } finally { first.dispose(); next?.dispose(); owner.dispose(); }
+});
+
+test('post-publication hash failure renews a reentered or already-retained resolved handle only on explicit settled retry', async t => {
+  for (const mode of ['reentry', 'retained'] as const) await t.test(mode, async () => {
+    const f = await correlatedImageFixture(); let oldCorrelation = 0, currentScope = 0, gets = 0, correct = false, creates = 0;
+    let oldCurrent = true;
+    const currentRequest = (await f.imageMediaRequest(f.row, async (signal, read, optional) => {
+      currentScope++; return f.scope(signal, read, optional);
+    }, f.plugins))!;
+    const owner = createGalleryMedia({ async fetch() { gets++; return new Response(correct ? data : new Uint8Array([0]), { headers: { 'content-type': 'image/png' } }); },
+      createUrl: () => `blob:verified-${++creates}`, revokeUrl() {} });
+    let next: ReturnType<typeof owner.retain> | undefined;
+    const firstRequest = (await f.imageMediaRequest(f.candidate, f.scope, f.plugins, async () => {
+      oldCorrelation++; if (!oldCurrent) throw Error('old correlation retired');
+      return { row: f.row, publish() {
+        oldCurrent = false;
+        if (mode === 'retained') {
+          next = owner.retain(currentRequest);
+          next.retry(); // Publication rerenders while the original response is owned.
+          assert.equal(owner.stats().running, 1); assert.equal(currentScope, 0);
+        }
+      } };
+    }))!;
+    const first = owner.retain(firstRequest);
+    try {
+      await settled(first.store, 'error'); await tick();
+      assert.match(first.store.state.error!, /no longer matches/); assert.equal(first.store.state.url, null);
+      assert.equal(f.calls(), 1); assert.equal(gets, 1); assert.equal(creates, 0); first.dispose();
+      if (!next) next = owner.retain(currentRequest);
+      assert.throws(() => owner.retain({ ...currentRequest, fingerprint: 'changed' }), /Immutable media binding/);
+      assert.throws(() => owner.retain({ ...currentRequest, sha256: 'f'.repeat(64) }), /Immutable media binding/);
+      next.visible(false); next.visible(true); await tick();
+      assert.equal(f.calls(), 1, 'retention/visibility cannot retry a foreground failure');
+      correct = true; next.retry(); await settled(next.store, 'ready'); await tick();
+      assert.equal(next.store.state.state, 'ready'); assert.equal(currentScope, 1); assert.equal(oldCorrelation, 1);
+      assert.equal(f.calls(), 2); assert.equal(gets, 2); assert.equal(creates, 1); assert.equal(owner.stats().running, 0);
+      const url = next.store.state.url; next.dispose(); next = undefined;
+      const warm = owner.retain(currentRequest);
+      try { assert.equal(warm.store.state.url, url); await tick(); assert.equal(f.calls(), 2); assert.equal(gets, 2); }
+      finally { warm.dispose(); }
+    } finally { first.dispose(); next?.dispose(); owner.dispose(); }
+  });
+});

@@ -12,10 +12,11 @@ import { HostedCanvas } from './presentation.ts';
 import { lookupPresentation, subscribePresentations } from '@phosphorco/bb-context-recognition/presentation';
 import { paneColumns, packResults } from './packing.ts';
 import { projectResults } from './projection.ts';
+import { initialImageCandidate } from './media.ts';
 
 type Sdk = ReturnType<typeof useSdk>;
 type MediaHandle = ReturnType<GalleryRuntime['media']['retain']>;
-function LoadedImage({ handle, alt, open, actionsReady }: { handle: MediaHandle; alt: string; open: OpenClick; actionsReady: boolean }) {
+function LoadedImage({ handle, alt, open, actionsReady, pending = false, retry = () => handle.retry() }: { handle: MediaHandle; alt: string; open: OpenClick; actionsReady: boolean; pending?: boolean; retry?: () => void }) {
   const state = useSelector(handle.store);
   const [decodeError, setDecodeError] = useState(false);
   if (state.url && !decodeError) return <button className="tr-image-action" onClick={open} disabled={!actionsReady} aria-label={`Open ${alt}`} title="Image bytes match the saved generation">
@@ -24,32 +25,64 @@ function LoadedImage({ handle, alt, open, actionsReady }: { handle: MediaHandle;
       if (!image.naturalWidth || !image.naturalHeight || image.naturalWidth > 32768 || image.naturalHeight > 32768 || image.naturalWidth * image.naturalHeight > 16777216) setDecodeError(true);
     }} onError={() => setDecodeError(true)} />
   </button>;
-  return <div className="tr-placeholder"><span>{decodeError ? 'Image could not be displayed' : state.state === 'loading' ? 'Loading image…' : state.error ?? 'Generated image'}</span>
-    {(decodeError || state.state === 'error') && <button disabled={!actionsReady} onClick={() => { if (!actionsReady) return; setDecodeError(false); handle.retry(); }}>Retry image</button>}</div>;
+  return <div className="tr-placeholder"><span>{decodeError ? 'Image could not be displayed' : state.state === 'loading' ? 'Loading image…' : state.error ?? (pending ? 'Image preview pending' : 'Generated image')}</span>
+    {(decodeError || state.state === 'error') && <button disabled={!actionsReady} onClick={() => { if (!actionsReady) return; setDecodeError(false); retry(); }}>Retry image</button>}</div>;
 }
-function ImageCanvas({ row, runtime, sdk, open, lifetime, actionsReady }: { row: GalleryObservation; runtime: GalleryRuntime; sdk: Sdk; open: OpenClick; lifetime: AbortSignal; actionsReady: boolean }) {
+function ImageCanvas({ row, runtime, sdk, open, lifetime, actionsReady, allowInitial }: { row: GalleryObservation; runtime: GalleryRuntime; sdk: Sdk; open: OpenClick; lifetime: AbortSignal; actionsReady: boolean; allowInitial: boolean }) {
   const host = useRef<HTMLDivElement>(null), [handle, setHandle] = useState<MediaHandle | null>(null);
+  const owned = useRef<{ resource: MediaHandle | null; live: boolean; shown: boolean; version: number } | null>(null);
+  const ready = useSelector(runtime.readyOwners, owners => owners.has(row.owner));
+  const admitted = !initialImageCandidate(row) || allowInitial && ready;
+  const identity = canonicalJson([row.owner, row.identity]);
   const resolution = row.resolution;
   const location = resolution?.provenance.artifactLocation;
   const sha256 = location?.state === 'verified' ? location.sha256 : undefined;
   const route = resolution?.route;
   useLayoutEffect(() => {
-    if (!sha256 || route?.kind !== 'file' || row.owner !== 'turn-result-images' || !host.current) return;
-    let live = !lifetime.aborted, resource: MediaHandle | null = null;
-    const abort = () => { live = false; resource?.dispose(); };
+    if (!admitted || row.owner !== 'turn-result-images' || !host.current) return;
+    const owner = { live: !lifetime.aborted, resource: null as MediaHandle | null, shown: false, version: 0 };
+    owned.current = owner;
+    const abort = () => { owner.live = false; owner.resource?.dispose(); };
     lifetime.addEventListener('abort', abort, { once: true });
     void runtime.image(row, false, false, lifetime, sdk.plugins).then(next => {
-      if (!live) { next?.dispose(); return; }
-      resource = next;
-      if (!resource) return;
-      setHandle(resource);
+      if (!owner.live) { next?.dispose(); return; }
+      owner.resource = next;
+      if (!next) return;
+      setHandle(next);
       observer.observe(host.current!);
     }).catch(() => { /* Data fallback and native open action remain accessible. */ });
-    const observer = new IntersectionObserver(entries => { if (live && resource) resource.visible(entries.some(entry => entry.isIntersecting)); });
-    return () => { lifetime.removeEventListener('abort', abort); live = false; observer.disconnect(); resource?.dispose(); };
-  }, [runtime, sdk, row.key, sha256, route?.kind === 'file' ? canonicalJson(route.target) : '', lifetime]);
+    const observer = new IntersectionObserver(entries => { if (owner.live && owner.resource) {
+      owner.shown = entries.some(entry => entry.isIntersecting); owner.resource.visible(owner.shown);
+    } });
+    return () => { lifetime.removeEventListener('abort', abort); owner.live = false; observer.disconnect(); owner.resource?.dispose(); if (owned.current === owner) owned.current = null; };
+  }, [runtime, sdk, row.key, identity, lifetime, admitted]);
+  // Candidate→normal committed resolution keeps the SAME active Media owner.
+  // Retain its replacement handle before releasing the old visible reference;
+  // an already-bound different target/hash still rejects and retires it.
+  useLayoutEffect(() => {
+    const owner = owned.current;
+    if (!owner?.live || !owner.resource || !sha256 || route?.kind !== 'file') return;
+    const version = ++owner.version;
+    void runtime.image(row, owner.shown, false, lifetime, sdk.plugins).then(next => {
+      if (!owner.live || owned.current !== owner || owner.version !== version) { next?.dispose(); return; }
+      if (!next) return;
+      const previous = owner.resource; owner.resource = next; setHandle(next); previous?.dispose();
+    }).catch(() => { if (owner.live && owner.version === version) { owner.resource?.dispose(); owner.resource = null; setHandle(null); } });
+  }, [runtime, sdk, row.key, identity, sha256, route?.kind === 'file' ? canonicalJson(route.target) : '', lifetime]);
   const alt = resolution?.fallback.kind === 'image' ? resolution.fallback.alt : 'Result image';
-  return <div ref={host} className="tr-canvas">{handle ? <LoadedImage handle={handle} alt={alt} open={open} actionsReady={actionsReady} /> : <div className="tr-placeholder">{resolution?.fallback.title ?? 'Image result'}</div>}</div>;
+  const retry = () => {
+    const owner = owned.current;
+    if (!owner?.live || !owner.resource) return;
+    if (!initialImageCandidate(row)) { owner.resource.retry(); return; }
+    if (!allowInitial || !ready) return;
+    const version = ++owner.version;
+    void runtime.image(row, owner.shown, false, lifetime, sdk.plugins).then(next => {
+      if (!owner.live || owned.current !== owner || owner.version !== version) { next?.dispose(); return; }
+      if (!next) return;
+      const previous = owner.resource; owner.resource = next; setHandle(next); previous?.dispose(); next.retry();
+    }).catch(() => { /* A retired source cannot gain a new attempt. */ });
+  };
+  return <div ref={host} className="tr-canvas">{handle ? <LoadedImage handle={handle} alt={alt} open={open} actionsReady={actionsReady} pending={initialImageCandidate(row)} retry={retry} /> : <div className="tr-placeholder">{resolution?.fallback.title ?? 'Image result'}</div>}</div>;
 }
 interface CardSite { key: string; retire(): void }
 type OpenClick = (event: React.MouseEvent<HTMLButtonElement>) => void;
@@ -205,7 +238,7 @@ export function ResultCard({ row, runtime, sdk, navigate, current, lifetime, pre
     <button onClick={open} disabled={!collectionReady()} aria-label={`${row.owner}: ${openName}`}>{row.owner}</button>
     {openStatus && <small className="tr-freshness" role="status" data-turn-result-open-status="">{openStatus}</small>}
   </article>;
-  const fallback = value?.fallback.kind === 'image' ? <ImageCanvas row={row} runtime={runtime} sdk={sdk} open={open} lifetime={lifetime} actionsReady={collectionReady()} />
+  const fallback = value?.fallback.kind === 'image' || initialImageCandidate(row) ? <ImageCanvas row={row} runtime={runtime} sdk={sdk} open={open} lifetime={lifetime} actionsReady={collectionReady()} allowInitial={collectionReady() && current()} />
     : destination ? <button className="tr-canvas tr-data-action" onClick={open} disabled={!collectionReady()} aria-label={openName}>{content}</button>
       : <div className="tr-canvas tr-data-action">{content}</div>;
   return <article ref={card} className="tr-card" data-result-key={row.key}>

@@ -1,15 +1,15 @@
 import { Store } from '@tanstack/store';
 import { z } from 'zod';
-import { canonicalByteLength, canonicalJson, InputSchemas, PluginIdSchema } from '@phosphorco/bb-turn-results';
+import { canonicalByteLength, canonicalJson, InputSchemas, PluginIdSchema, resolveOutcomeBudget } from '@phosphorco/bb-turn-results';
 import { createResultsDiscoveryOwner, discoverResultsParticipants, createResultsSupplierClient, classifyResultsError, ResultsCallError } from '@phosphorco/bb-turn-results/bb';
 import type { ResultsDiscoveryCursor } from '@phosphorco/bb-turn-results/bb';
-import type { GalleryAnchor } from './anchors.ts';
+import type { GalleryAnchor, GalleryTimelinePort } from './anchors.ts';
 import type { GalleryObservation, GalleryPage, StageRecord } from './index.ts';
 import { GALLERY_METHODS, GalleryRawSchema, KnownGalleryOutputSchema, PendingGalleryOutputSchema } from './rpc.ts';
 import type { GalleryBackend, GalleryRead } from './rpc.ts';
 import { consumeTurnSource, consumerSource } from './consume.ts';
 import type { ConsumerSource } from './consume.ts';
-import { createGalleryMedia, imageMediaRequest } from './media.ts';
+import { createGalleryMedia, imageMediaRequest, initialImageCandidate } from './media.ts';
 import { createWindowCanvasOwner } from './canvas-owner.ts';
 import type { CanvasPriority } from './canvas-owner.ts';
 import { createPresentationLifetime } from './presentation-lifetime.ts';
@@ -43,7 +43,13 @@ interface TurnCollection {
   seen: Set<string>; cursors: Set<string>; pages: number; charged: number;
   coverage: string; limited: boolean; done: boolean; retired: boolean; deadline: number;
 }
-interface HistoryRead { threadId: string; priority: boolean; speculative: boolean; interruptible: boolean; live(): boolean; start(): void; cancel(): void }
+interface LatestJoin { scope: object; client: object; key: string; current(): boolean }
+interface HistoryGroup { controller: AbortController; members: HistoryRead[] }
+interface HistoryRead {
+  threadId: string; priority: boolean; speculative: boolean; interruptible: boolean; join: LatestJoin | undefined;
+  live(): boolean; policy(): boolean; start(): void; cancel(reason?: unknown): void; interrupt(): void;
+  attach(group: HistoryGroup): void; dispatched(): void; settle(value: unknown, failure?: unknown): void;
+}
 type Work = TurnEntry | HistoryRead;
 export const GALLERY_RUNTIME_LIMITS = Object.freeze({ leases: 128, cached: 64, lanes: 2,
   historyQueue: 128, cursorBytes: 4096, cursorHistory: 64, collectionRows: 64, collectionPages: 8,
@@ -515,7 +521,7 @@ export function createGalleryRuntime(sdk: Sdk) {
     while (running < GALLERY_RUNTIME_LIMITS.lanes) {
       const entry = dequeue(); if (!entry) break;
       if ('start' in entry) { running++; if (entry.speculative) speculativeThreads.add(entry.threadId); runningThreads.set(entry.threadId, () => {
-        if (!entry.speculative || !entry.interruptible) return false; entry.cancel(); return true;
+        if (!entry.speculative || !entry.interruptible) return false; entry.interrupt(); return true;
       }); entry.start(); continue; }
       entry.dirty = false;
       const controller = new AbortController(); entry.controller = controller; running++;
@@ -641,32 +647,69 @@ export function createGalleryRuntime(sdk: Sdk) {
       });
     }
   }
-  function readScope<T>(threadId: string, signal: AbortSignal, read: (signal: AbortSignal) => Promise<T>, priority = false, speculative: boolean | (() => boolean) = false, interruptible = true): Promise<{ state: 'ready'; value: T } | { state: 'capacity' }> {
+  function readScope<T>(threadId: string, signal: AbortSignal, read: (signal: AbortSignal) => Promise<T>, priority = false,
+    speculative: boolean | (() => boolean) = false, interruptible = true, join?: LatestJoin, onDispatch?: () => void): Promise<{ state: 'ready'; value: T } | { state: 'capacity' }> {
     signal.throwIfAborted();
     if (!active || !visible) return Promise.reject(Error('Gallery read retired.'));
+    // Every consumer remains charged, including detached members of a raw
+    // cohort that has not settled. Sharing cannot create extra queue capacity.
     if (historyReads.size >= GALLERY_RUNTIME_LIMITS.historyQueue) return Promise.resolve({ state: 'capacity' });
     return new Promise((resolve, reject) => {
-      const controller = new AbortController(); let started = false;
-      const cleanup = () => { signal.removeEventListener('abort', callerAbort); controller.signal.removeEventListener('abort', cancelled); };
-      const callerAbort = () => controller.abort(signal.reason);
-      const work: HistoryRead = { threadId, priority, interruptible, get speculative() { return typeof speculative === 'function' ? speculative() : speculative; }, live: () => !controller.signal.aborted,
-        cancel: () => controller.abort(), start() {
-          started = true;
-          const call = Promise.resolve().then(() => { controller.signal.throwIfAborted(); return read(controller.signal); });
-          void untilAborted(call, controller.signal)
-            .then(value => resolve({ state: 'ready', value }), reject).finally(async () => {
-              await call.catch(() => {});
-              // backend.read may reject its abort-aware wrapper before the
-              // underlying SDK promise acknowledges cancellation.
-              await Promise.allSettled([...(retainedCalls.get(controller.signal) ?? [])]);
-              cleanup(); historyReads.delete(work); running--; runningThreads.delete(threadId); speculativeThreads.delete(threadId); drainedWork(); schedule();
-            });
-        } };
-      const cancelled = () => {
-        if (!started) { unqueue(work); historyReads.delete(work); cleanup(); reject(controller.signal.reason); }
+      let live = true, group: HistoryGroup | null = null;
+      const cleanup = () => signal.removeEventListener('abort', callerAbort);
+      const policy = () => typeof speculative === 'function' ? speculative() : speculative;
+      const eligible = (entry: HistoryRead) => { try { return !!entry.join?.current(); } catch { return false; } };
+      const cancel = (reason?: unknown) => {
+        if (!live) return; live = false; cleanup(); reject(reason ?? Error('Gallery read retired.'));
+        if (!group) { unqueue(work); historyReads.delete(work); }
+        else if (!group.members.some(member => member.live())) group.controller.abort(reason);
       };
-      signal.addEventListener('abort', callerAbort, { once: true }); controller.signal.addEventListener('abort', cancelled, { once: true });
-      historyReads.add(work);
+      const callerAbort = () => cancel(signal.reason);
+      const work: HistoryRead = { threadId, priority, interruptible, join, live: () => live,
+        policy, get speculative() { return group ? group.members.filter(member => member.live()).every(member => member.policy()) : policy(); },
+        cancel, interrupt() {
+          if (!group) { cancel(); return; }
+          for (const member of group.members) member.cancel();
+          group.controller.abort();
+        },
+        attach(value) { group = value; },
+        dispatched() { if (live) { try { onDispatch?.(); } catch (error) { cancel(error); } } },
+        settle(value, failure) {
+          if (!live) return; live = false; cleanup();
+          if (failure !== undefined) reject(failure); else resolve({ state: 'ready', value: value as T });
+        },
+        start() {
+          const owned: HistoryGroup = { controller: new AbortController(), members: [work] };
+          // Only work still queued at THIS dispatch boundary can join. A
+          // started/settled item is never searched or made matchable again.
+          if (!priority && join && eligible(work)) for (const candidate of [...(queue.get(threadId) ?? [])]) {
+            if (!('start' in candidate) || candidate.priority || !candidate.live() || !candidate.join
+              || candidate.join.scope !== join.scope || candidate.join.client !== join.client || candidate.join.key !== join.key || !eligible(candidate)) continue;
+            unqueue(candidate); owned.members.push(candidate);
+          }
+          for (const member of owned.members) member.attach(owned);
+          const controller = owned.controller;
+          const call = Promise.resolve().then(() => {
+            controller.signal.throwIfAborted();
+            // A reset may run between grouping and this actual SDK microtask.
+            if (owned.members.length > 1) for (const member of owned.members) if (!eligible(member)) member.cancel(Error('Shared history reader retired.'));
+            controller.signal.throwIfAborted();
+            for (const member of owned.members) member.dispatched();
+            controller.signal.throwIfAborted(); return read(controller.signal);
+          });
+          void untilAborted(call, controller.signal).then(value => {
+            for (const member of owned.members) {
+              if (owned.members.length > 1 && !eligible(member)) member.cancel(Error('Shared history reader retired.'));
+              else member.settle(value);
+            }
+          }, failure => { for (const member of owned.members) member.settle(undefined, failure ?? Error('Gallery read failed.')); }).finally(async () => {
+            await call.catch(() => {});
+            await Promise.allSettled([...(retainedCalls.get(controller.signal) ?? [])]);
+            for (const member of owned.members) historyReads.delete(member);
+            running--; runningThreads.delete(threadId); speculativeThreads.delete(threadId); drainedWork(); schedule();
+          });
+        } };
+      signal.addEventListener('abort', callerAbort, { once: true }); historyReads.add(work);
       const pending = queue.get(threadId) ?? new Set<Work>(); pending.add(work); queue.set(threadId, pending); schedule();
       if (priority || !work.speculative) {
         const sameThread = runningThreads.get(threadId);
@@ -676,6 +719,16 @@ export function createGalleryRuntime(sdk: Sdk) {
         }
       }
     });
+  }
+  function readTimeline(input: Parameters<GalleryTimelinePort['timeline']>[0], client: GalleryTimelinePort,
+    options: { scope: object; current(): boolean; dispatched?(): void; speculative?: boolean }) {
+    const { signal, ...wire } = input;
+    // Cursor reads and Open never participate. Token identity only separates
+    // current queued ownership; it is not a completed-content validator.
+    const join = !input.beforeAnchorId && input.beforeAnchorSeq === undefined
+      ? { scope: options.scope, client, key: canonicalJson(wire), current: options.current } : undefined;
+    return readScope(input.threadId, signal, bounded => client.timeline({ ...input, signal: bounded }), false,
+      options.speculative ?? false, true, join, options.dispatched);
   }
   function reset(entry: TurnEntry) {
     if (entry.collection) { retireCollection(entry); entry.controller?.abort('collection-reset'); }
@@ -690,14 +743,71 @@ export function createGalleryRuntime(sdk: Sdk) {
     else { demandDescriptors(); for (const entry of turns.values()) if (entry.refs && entry.visible) { reset(entry); enqueue(entry); } }
   }
   document.addEventListener('visibilitychange', visibility);
-  const api = { media, canvases, backend, readScope, readyOwners, captionLabels, presentationStatus, dialogSites, presentationRoot, invalidateReadiness,
+  const api = { media, canvases, backend, readScope, readTimeline, readyOwners, captionLabels, presentationStatus, dialogSites, presentationRoot, invalidateReadiness,
     async image(row: GalleryObservation, shown: boolean, speculative = false, signal?: AbortSignal, plugins = sdk.plugins) {
       signal?.throwIfAborted();
       // Optional nearby work may decline stale/unavailable hints. Visible
       // passive bytes retain their archived admission; actions guard separately.
       if (speculative && (row.sourceExpired || row.retracted || row.resolution?.availability.state === 'unavailable'
         || row.currentAvailability?.state === 'unavailable')) return null;
-      const request = await imageMediaRequest(row, (signal, read, speculative) => readScope(row.identity.ref.source.threadId, signal, read, false, speculative, false), plugins);
+      const initial = initialImageCandidate(row);
+      const entry = initial ? [...turns.values()].find(entry => entry.refs && entry.visible && entry.store.state.loaded
+        && entry.store.state.rows.some(value => value.key === row.key && value.owner === row.owner && canonicalJson(value.identity) === canonicalJson(row.identity))) : undefined;
+      const source = initial ? sources?.find(source => source.pluginId === row.owner) : undefined;
+      if (initial && (!entry || !source || !readyOwners.state.has(row.owner))) return null;
+      const generation = discoveryGeneration, anchor = entry?.anchor;
+      const current = () => {
+        const latest = entry?.store.state.rows.find(value => value.key === row.key);
+        return !!(active && visible && !signal?.aborted && entry?.refs && entry.visible && entry.store.state.loaded
+          && entry.anchor === anchor && generation === discoveryGeneration && readyOwners.state.has(row.owner) && sources?.includes(source!)
+          && latest && latest.owner === row.owner && canonicalJson(latest.identity) === canonicalJson(row.identity)
+          && canonicalJson(latest.corrections) === canonicalJson(row.corrections) && !latest.sourceExpired && !latest.retracted);
+      };
+      const request = await imageMediaRequest(row, (signal, read, speculative) => readScope(row.identity.ref.source.threadId, signal, read, false, speculative, false), plugins,
+        initial ? async (mediaSignal, optional) => {
+          const check = () => { mediaSignal.throwIfAborted(); if (!current()) throw Error('Image admission retired.'); };
+          check();
+          const result = await readScope(row.identity.ref.source.threadId, mediaSignal, async bounded => {
+            check(); bounded.throwIfAborted();
+            const binding = entry!.store.state.bindings?.[row.key];
+            if (!binding) throw Error('Image needs its issued retained page.');
+            // Use the actual public client and preserve its raw SDK ownership
+            // through local timeout/abort, exactly like ordinary retained reads.
+            const client = createResultsSupplierClient({ plugins: { callRpc(input) {
+              check(); bounded.throwIfAborted();
+              const call = plugins.callRpc(input), pending = retainedCalls.get(bounded) ?? new Set<Promise<unknown>>();
+              pending.add(call); retainedCalls.set(bounded, pending);
+              void call.finally(() => pending.delete(call)).catch(() => {});
+              return call;
+            } } }, row.owner, { descriptors: source!.capabilities.supplier!.kinds });
+            const resolved = await client.resolve({ version: 1, threadId: row.identity.ref.source.threadId,
+              items: [row.identity], maxOutcomeBytes: resolveOutcomeBudget(1) }, bounded);
+            check(); bounded.throwIfAborted();
+            const outcome = resolved.resolutions[0];
+            if (outcome?.state !== 'resolved' || outcome.value.availability.state !== 'available') throw Error('Image source proof is unavailable.');
+            await backend.apply({ owner: row.owner, threadId: row.identity.ref.source.threadId,
+              changes: [{ kind: 'upsert', value: outcome.value }], supplier: {
+                revision: source!.capabilities.revision, connection: 'connected', freshUntil: Date.now() + 30000 } }, bounded);
+            check(); bounded.throwIfAborted();
+            const page = await backend.read(row.identity.ref.source.threadId, row.identity.ref.source.turnId, bounded, binding.after ?? undefined);
+            check(); bounded.throwIfAborted();
+            const admitted = page.page.rows.find(value => value.key === row.key && value.owner === row.owner
+              && canonicalJson(value.identity) === canonicalJson(row.identity));
+            if (!admitted || admitted.unresolved || admitted.sourceExpired || admitted.retracted
+              || admitted.currentAvailability?.state !== 'available' || canonicalJson(admitted.resolution) !== canonicalJson(outcome.value)) throw Error('Image binding changed.');
+            return admitted;
+          }, false, optional, false);
+          check();
+          if (result.state === 'capacity') throw Error('Image correlation capacity reached.');
+          return { row: result.value, publish() {
+            check();
+            publish(entry!, { ...entry!.store.state, rows: entry!.store.state.rows.map(value => value.key === row.key ? result.value : value) }, true);
+            if (canonicalJson(entry!.store.state.rows.find(value => value.key === row.key)?.resolution) !== canonicalJson(result.value.resolution)) throw Error('Image publication capacity reached.');
+            // Resume the existing ordinary turn read/source path once; this
+            // refreshes shared views without manufacturing source readiness.
+            api.invalidate(row.identity.ref.source.threadId, false, new Set([row.identity.ref.source.turnId]));
+          } };
+        } : undefined);
       signal?.throwIfAborted();
       return request && active ? media.retain(request, shown, speculative) : null;
     },

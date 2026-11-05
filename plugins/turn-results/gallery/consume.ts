@@ -9,6 +9,7 @@ import type { GalleryBackend } from './rpc.ts';
 import type { GalleryPage, StageRecord } from './index.ts';
 import { KnownGalleryOutputSchema, PendingGallerySchema, PendingGalleryOutputSchema } from './rpc.ts';
 import { untilAborted } from './lifetime.ts';
+import { nativeImageIdentity } from './media.ts';
 
 export interface ConsumerSource { pluginId: string; capabilities: CapabilitiesV1; client: ResultsSupplierClient }
 export interface NativeReader {
@@ -145,8 +146,12 @@ export async function consumeTurnSource(backend: GalleryBackend, native: NativeR
   let reason: string | null = parked ? 'Earlier traversed claims remain unresolved.' : null;
   let next = page.next, nextBatch = 8, more = page.next !== null;
   let changes: GalleryPage['changes'] = [];
-  if (page.rows.length) {
-    const request = { version: 1 as const, threadId: anchor.threadId, items: page.rows, maxOutcomeBytes: resolveOutcomeBudget(page.rows.length) };
+  // Native Images first admission belongs to the single request-scoped Media
+  // operation. A preliminary 1300ms Resolve must not block that positive path.
+  const items = page.rows.filter(identity => !nativeImageIdentity(source.pluginId, identity));
+  if (items.length < page.rows.length) parked = true;
+  if (items.length) {
+    const request = { version: 1 as const, threadId: anchor.threadId, items, maxOutcomeBytes: resolveOutcomeBudget(items.length) };
     let output;
     try {
       const raw = await untilAborted(source.client.resolve(request, signal), signal); signal.throwIfAborted();

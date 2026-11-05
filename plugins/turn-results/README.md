@@ -192,3 +192,7 @@ presentation teardown. They do not establish a host's current file availability,
 remote reachability or native behavior at every scale. Native scroll, focus,
 pane/window changes, varied contributor results and remote preview need separate
 live verification against the actual served frontend generation.
+
+Initial native-image candidates may request the existing Images Media operation while still unresolved. The source independently admits native evidence and matching file bytes within its single 3-second request, then commits its normal sparse resolution before issuing a lease. Gallery performs ordinary Resolve, Apply, and the row's actually issued retained-page Read before validating the lease fingerprint/SHA or fetching bytes. All correlation and GET/hash work stays inside the existing 7-second Media budget; starting admission grants no file Open, custom canvas, or confirmed-generation label.
+
+The existing Media owner can fill a previously unknown same-claim binding once after that correlation. Candidate-to-resolved rendering retains the same attempt and Blob owner; verified target/SHA cannot change. A settled unbound error can take a new current correlation owner for explicit Retry after reentry, without an idle retry or replacing an in-flight promoted response. Source facts can remain committed when later consumer publication fails. This route does not promise native completion within either unchanged budget.

@@ -2612,3 +2612,125 @@ test('semantic retirement and hide refuse late warm Media; wrong project never s
     const idle = f.nativeCalls.length; await settle(30); assert.equal(f.nativeCalls.length, idle);
   } finally { release(); await f.dispose(); }
 });
+
+
+test('queued-cohort: two ordinary consumers after one actual semantic reset share one fresh latest dispatch', async () => {
+  const result = { trace: [], dispatches: [], factsUnchanged: false, exactOpen: false, idle: false, cleanup: null };
+  const mark = (kind, extra = {}) => result.trace.push({ order: result.trace.length + 1, kind, ...extra });
+  let armed = false, holdRetained = false, blockStarted = false, releaseBlock, runtime, f, work;
+  const blockGate = new Promise(resolve => { releaseBlock = resolve; });
+  const gates = [];
+  const wire = input => Object.fromEntries(Object.entries(input).filter(([key]) => key !== 'signal')
+    .map(([key,value]) => [key, key === 'beforeAnchorId' ? { sha256: createHash('sha256').update(String(value)).digest('hex') } : value]));
+  try {
+    f = await fixture(2, true, { captureRuntime: true, preloadNearby: true, nativeItems: true,
+      url: 'https://bb.invalid/projects/project/threads/thread#msg=3', positions: { 'opaque-0': 20, 'opaque-1': 1600 },
+      configureSdk(sdk) {
+        const timeline = sdk.threads.timeline, rpc = sdk.plugins.callRpc;
+        sdk.threads.timeline = async input => {
+          if (!armed) return timeline(input);
+          const call = { input: wire(input), rawSignalAborted: input.signal.aborted, settled: false };
+          result.dispatches.push(call); mark('actual-sdk-timeline-dispatch', { index: result.dispatches.length, input: call.input });
+          await new Promise(resolve => gates.push(resolve)); // controlled abort-ignoring public transport
+          call.rawSignalAborted = input.signal.aborted;
+          const response = await timeline(input); call.settled = true; mark('actual-sdk-timeline-settlement', { index: result.dispatches.indexOf(call) + 1 });
+          return response;
+        };
+        sdk.plugins.callRpc = async args => {
+          if (holdRetained && args.method === GALLERY_METHODS.read) {
+            holdRetained = false; blockStarted = true; mark('ordinary-retained-raw-start'); await blockGate;
+          }
+          return rpc(args);
+        };
+      } });
+    runtime = f.runtime();
+    await until(() => f.stats().live === 1 && runtime.stats().running === 0 && runtime.stats().queued === 0);
+    const facts = JSON.stringify(f.rows()), originalScope = runtime.readScope;
+    runtime.readScope = function (...args) {
+      if (armed) {
+        const source = Function.prototype.toString.call(args[2]);
+        mark('ordinary-scope-request', { threadId: args[0], priority: args[3] === true,
+          speculative: args[4] === true, sourceSha256: createHash('sha256').update(source).digest('hex'),
+          sourceKind: source.includes('historyPass') ? 'Sentinel-current-history' : source.includes('sdk.threads.timeline') ? 'Header-preload-history' : 'other' });
+      }
+      return originalScope.apply(this, args);
+    };
+    const originalTimelineScope = runtime.readTimeline;
+    runtime.readTimeline = function (...args) {
+      if (armed) mark('ordinary-timeline-request', { threadId: args[0].threadId, input: wire(args[0]), speculative: args[2].speculative === true });
+      return originalTimelineScope.apply(this, args);
+    };
+    const controller = new AbortController(); holdRetained = true;
+    work = runtime.readScope('thread', controller.signal, signal => runtime.backend.read('thread', 'turn-0', signal));
+    await until(() => blockStarted);
+    armed = true;
+    mark('public-sdk-semantic-reset-delivered');
+    await f.coreChanged({ id: 'thread', reason: 'events-appended', timelineSequence: 1 });
+    await until(() => runtime.stats().historyReads >= 2);
+    mark('sentinel-fresh-request-queued', { stats: runtime.stats() });
+    assert.equal(result.dispatches.length, 0, 'lane is held before fresh SDK dispatch');
+    await f.rowPosition('opaque-1', 800);
+    await until(() => runtime.stats().historyReads >= 3);
+    mark('real-offscreen-nearby-request-queued', { stats: runtime.stats() });
+    assert.equal(result.dispatches.length, 0, 'both reader resets and queued requests precede raw dispatch');
+    releaseBlock(); await work;
+    await until(() => result.dispatches.length === 1);
+    mark('first-held-fresh-response', { stats: runtime.stats() });
+    assert.equal(runtime.stats().running, 1); assert.equal(f.navigation.length, 0);
+    gates.shift()();
+    await until(() => result.dispatches.length > 1 || runtime.stats().historyReads === 0);
+    mark('first-settled-or-duplicate-dispatched', { stats: runtime.stats(), count: result.dispatches.length });
+    // Retire the real proximity hint while the actual foreground row remains.
+    // Under the original code the duplicate has now dispatched; a shared AFTER
+    // would already have delivered the same first response to both readers.
+    await f.rowPosition('opaque-1', 1600);
+    mark('proximity-retired-foreground-row-preserved', { rowConnected: document.querySelector('[data-timeline-row-id="opaque-0"]').isConnected });
+    if (gates.length) {
+      await settle(20); mark('retired-duplicate-still-owns-raw', { stats: runtime.stats() });
+      assert.equal(runtime.stats().running, 1, 'ignored raw response holds the actual lane until settlement');
+      for (const release of gates.splice(0)) release();
+    }
+    await until(() => f.stats().live === 1 && runtime.stats().running === 0 && runtime.stats().queued === 0);
+    const card = document.querySelector('[data-result-key="row-0"]');
+    assert.ok(card.querySelector('[data-supplier]'), 'genuine fresh foreground proof resumes rich useful content');
+    await act(async () => card.querySelector('.tr-open-icon').click());
+    assert.deepEqual(f.navigation, ['https://fixture.invalid/0']); result.exactOpen = true;
+    assert.equal(JSON.stringify(f.rows()), facts); result.factsUnchanged = true;
+    const count = result.dispatches.length; await settle(35); assert.equal(result.dispatches.length, count); result.idle = true;
+    result.qualifiedLatestCount = result.dispatches.filter(call => !call.input.beforeAnchorId).length;
+    assert.ok(result.qualifiedLatestCount >= 1);
+    assert.ok(result.dispatches.every(call => JSON.stringify(call.input) === JSON.stringify(result.dispatches[0].input)), 'actual SDK inputs must be identical');
+    assert.ok(f.stats().peak <= 4);
+  } finally {
+    releaseBlock(); for (const release of gates.splice(0)) release();
+    if (work) await work.catch(() => {});
+    if (f) await f.dispose();
+    if (runtime) { await runtime.whenDrained(); result.cleanup = runtime.stats(); assert.equal(result.cleanup.running, 0); assert.equal(result.cleanup.queued, 0); assert.equal(result.cleanup.leases, 0); }
+    console.log('QUEUED_COHORT_RESULT', JSON.stringify(result));
+  }
+  assert.equal(result.qualifiedLatestCount, 1, 'qualified continuously-live ordinary pending cohort must dispatch once');
+});
+
+
+test('reverse public reset callbacks and a later source hint cannot orphan fresh foreground history behind an ignored old read', async () => {
+  let armed = false, held = false, release; const gate = new Promise(done => { release = done; });
+  const f = await fixture(1, true, { captureRuntime: true, preloadNearby: true, nativeItems: true,
+    url: 'https://bb.invalid/projects/project/threads/thread#msg=3', configureSdk(sdk) {
+      const timeline = sdk.threads.timeline; sdk.threads.timeline = async input => {
+        if (armed && !held) { held = true; await gate; } return timeline(input);
+      };
+    } });
+  try {
+    await until(() => f.stats().live === 1 && f.runtime().stats().running === 0 && f.runtime().stats().queued === 0);
+    const facts = JSON.stringify(f.rows()), before = f.nativeCalls.length; armed = true;
+    await act(async () => { for (const subscription of f.coreSubscriptions().reverse()) if (subscription.event === 'thread:changed')
+      subscription.callback({ id: 'thread', reason: 'history-rewrite', timelineSequence: 1 }); await tick(); });
+    await until(() => held); assert.equal(f.runtime().stats().running, 1);
+    await f.notify(); // Header and Sentinel both revoke before the replacement pass.
+    await act(async () => { release(); await tick(); });
+    await until(() => f.stats().live === 1 && f.runtime().stats().running === 0 && f.runtime().stats().queued === 0);
+    assert.ok(f.nativeCalls.length > before + 1, 'new source demand obtains its own actual fresh latest, not the ignored old response');
+    await act(async () => document.querySelector('.tr-open-icon').click()); assert.deepEqual(f.navigation, ['https://fixture.invalid/0']);
+    assert.equal(JSON.stringify(f.rows()), facts);
+  } finally { release(); await f.dispose(); }
+});

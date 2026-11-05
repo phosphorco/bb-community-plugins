@@ -17,7 +17,7 @@ interface HeaderPreload {
   observe(records: readonly MutationRecord[]): void;
   stop(): void;
   foreground(ids: readonly string[]): { id: string; dispose(): void }[];
-  take(ids: readonly string[], port: GalleryTimelinePort): { reader: ReturnType<typeof createGalleryAnchorReader>; rows: { id: string; turnId: string | null }[] } | null;
+  take(ids: readonly string[], port: GalleryTimelinePort, reset: () => void): { reader: ReturnType<typeof createGalleryAnchorReader>; rows: { id: string; turnId: string | null }[] } | null;
 }
 
 export default definePluginApp(app => {
@@ -58,11 +58,15 @@ export default definePluginApp(app => {
   } });
   function HeaderBridge({ threadId, projectId }: PluginThreadHeaderActionProps) {
     const sdk = useSdk(), connection = useRealtimeConnectionState();
+    const nativeTimeline = useMemo(() => ({ sdk, port: sdk.threads }), [sdk]);
+    const committedTimeline = useRef<typeof nativeTimeline | null>(null);
+    useLayoutEffect(() => { committedTimeline.current = nativeTimeline; return () => { if (committedTimeline.current === nativeTimeline) committedTimeline.current = null; }; }, [nativeTimeline]);
+    const timelineClient = useCallback(() => committedTimeline.current === nativeTimeline ? nativeTimeline.port : null, [nativeTimeline]);
     const marker = useRef<HTMLSpanElement>(null);
     const preload = useRef<HeaderPreload | null>(null), liveConnection = useRef('unknown');
     const nearbyDemand = useRef<((ids: readonly string[]) => void) | null>(null);
     useLayoutEffect(() => { liveConnection.current = connection; return () => { liveConnection.current = 'disconnected'; }; }, [connection]);
-    const bridgeToken = useRef<object>({});
+    const bridgeToken = useRef<object>({}), historyShare = useRef<object>({});
     const [mapping, setMapping] = useState<(NonNullable<ReturnType<typeof resolveGalleryBridge>> & { token: object; parent: Element | null }) | null>(null);
     useRealtime('results-changed', useCallback(payload => {
       if (payload && typeof payload === 'object' && 'threadId' in payload && payload.threadId === threadId) preload.current?.stop();
@@ -84,9 +88,9 @@ export default definePluginApp(app => {
       const epochs = { route: 0, nearby: 0 };
       const combined: HeaderPreload = {
         observe(records) { jobs.route?.observe(records); jobs.nearby?.observe(records); },
-        stop() { if (!live) return; for (const key of ['route', 'nearby'] as const) { epochs[key]++; jobs[key]?.stop(); jobs[key] = null; } },
+        stop() { if (!live) return; historyShare.current = {}; for (const key of ['route', 'nearby'] as const) { epochs[key]++; jobs[key]?.stop(); jobs[key] = null; } },
         foreground(ids) { return [...(jobs.route?.foreground(ids) ?? []), ...(jobs.nearby?.foreground(ids) ?? [])]; },
-        take(ids, port) { return jobs.route?.take(ids, port) ?? null; },
+        take(ids, port, reset) { return jobs.route?.take(ids, port, reset) ?? null; },
       };
       preload.current = combined;
       const chain: Element[] = []; let parent: Element | null = node;
@@ -103,6 +107,8 @@ export default definePluginApp(app => {
         if (!runtime && generationActive) runtime = createGalleryRuntime(sdk);
         if (!runtime) return;
         const owner = runtime, controller = new AbortController(), currentEpoch = epochs[key];
+        const sharedAtBirth = historyShare.current, lineage = { current: {} };
+        const resetReader = () => { lineage.current = {}; };
         let consumed = false, complete = false, arrived = false, stopped = false, adoptable = !nearby;
         const leases: ReturnType<GalleryRuntime['retain']>[] = [], media: { id: string; resource: NonNullable<Awaited<ReturnType<GalleryRuntime['image']>>>; transferred: boolean }[] = [], unwatch: (() => void)[] = [];
         const mediaKeys = new Set<string>();
@@ -111,11 +117,13 @@ export default definePluginApp(app => {
         const discovery = owner.retainDiscoveryDemand(); discovery?.visible(true);
         const reader = createGalleryAnchorReader({ async timeline(input) {
           if (!current()) throw Error('Preload retired.');
-          const read = owner.readScope(threadId, input.signal, signal => sdk.threads.timeline({ ...input, signal }), false, true);
+          const readerMark = lineage.current;
+          const read = owner.readTimeline(input, nativeTimeline.port, { scope: sharedAtBirth, speculative: true,
+            current: () => current() && historyShare.current === sharedAtBirth && lineage.current === readerMark });
           if (!input.beforeAnchorId) discovery?.warm(threadId, true);
           const result = await read; if (!current()) throw Error('Preload retired.');
           return result.state === 'ready' ? result.value : { state: 'capacity' };
-        } }, threadId);
+        } }, threadId, resetReader);
         const timer = setTimeout(() => controller.abort('deadline'), 5000);
         const handle: HeaderPreload = {
           stop() {
@@ -168,12 +176,12 @@ export default definePluginApp(app => {
                   } while (changed);
                   return true;
                 }));
-            if (!allowed) { adoptable = false; for (const lease of leases) lease.passive(); }
+            if (!allowed) { if (historyShare.current === sharedAtBirth) historyShare.current = {}; adoptable = false; for (const lease of leases) lease.passive(); }
             else arrived = true;
           },
-          take(ids, port) {
+          take(ids, port, reset) {
             if (consumed || !adoptable || !arrived || !complete || !current() || !ids.length) return null;
-            if (!reader.adopt(ids, port)) { adoptable = false; reader.invalidate(); for (const lease of leases) lease.passive(); return null; }
+            if (!reader.adopt(ids, port, reset)) { adoptable = false; reader.invalidate(); for (const lease of leases) lease.passive(); return null; }
             consumed = true; clearTimeout(timer);
             return { reader, rows: reader.scopeRows() };
           },
@@ -253,7 +261,7 @@ export default definePluginApp(app => {
         // it grants no authority. A valid mapping always binds its actual parent.
         const parent = next ? next.scope.parentElement : observed?.parent ?? scope?.parentElement ?? null;
         const rebound = observed?.scope !== scope || observed?.pane !== pane || observed?.parent !== parent;
-        if (retire || observed && rebound) bridgeToken.current = {};
+        if (retire || observed && rebound) { bridgeToken.current = {}; historyShare.current = {}; }
         // Follow the current physical witness before exposing its new mapping.
         // Old callbacks stay revoked even when an observed removal/readd ends
         // at the same Element. This covers observed history, not unseen moves.
@@ -267,16 +275,16 @@ export default definePluginApp(app => {
           ? prior : next ? { ...next, token: bridgeToken.current, parent: next.scope.parentElement } : null);
       };
       update();
-      return () => { active = false; bridgeToken.current = {}; observer.disconnect(); parentObserver.disconnect(); observed = null; };
+      return () => { active = false; bridgeToken.current = {}; historyShare.current = {}; observer.disconnect(); parentObserver.disconnect(); observed = null; };
     }, [threadId]);
     const bridgeCurrent = useCallback(() => {
       const next = marker.current && resolveGalleryBridge(marker.current);
       return Boolean(mapping && mapping.token === bridgeToken.current && next?.pane === mapping.pane && next.scope === mapping.scope && next.scope.parentElement === mapping.parent);
     }, [mapping]);
     return <><span ref={marker} hidden aria-hidden="true" data-turn-results-bridge="" />
-      {mapping && createPortal(<Sentinel threadId={threadId} bridgeCurrent={bridgeCurrent} preload={preload} nearby={nearbyDemand} />, mapping.pane, threadId)}</>;
+      {mapping && createPortal(<Sentinel threadId={threadId} bridgeCurrent={bridgeCurrent} preload={preload} nearby={nearbyDemand} historyShare={historyShare} timelineClient={timelineClient} />, mapping.pane, threadId)}</>;
   }
-  function Sentinel({ threadId, bridgeCurrent, preload, nearby }: { threadId: string; bridgeCurrent(): boolean; preload: { current: HeaderPreload | null }; nearby: { current: ((ids: readonly string[]) => void) | null } }) {
+  function Sentinel({ threadId, bridgeCurrent, preload, nearby, historyShare, timelineClient }: { threadId: string; bridgeCurrent(): boolean; preload: { current: HeaderPreload | null }; nearby: { current: ((ids: readonly string[]) => void) | null }; historyShare: { current: object }; timelineClient(): GalleryTimelinePort | null }) {
     const sdk = useSdk(), publicNavigate = useBbNavigate();
     const activation = activationIntent;
     const navigationBinding = useMemo(() => ({ threadId, sdk, activation }), [threadId, sdk, activation]);
@@ -308,6 +316,7 @@ export default definePluginApp(app => {
     const handle = useRef<ReturnType<typeof mountGalleryPane> | null>(null);
     const reader = useRef<ReturnType<typeof createGalleryAnchorReader> | null>(null);
     const foregroundPort = useRef<GalleryTimelinePort | null>(null);
+    const readerLineage = useRef<object>({});
     const foregroundMedia = useRef<{ id: string; dispose(): void }[]>([]);
     const historyRows = useRef(new Map<string, { id: string; turnId: string | null }>());
     const historyBytes = useRef(0);
@@ -399,7 +408,7 @@ export default definePluginApp(app => {
       if (request.current) { queued.current = true; return; }
       if (foregroundPort.current && !handle.current?.pendingRoots && semanticScope.current === scope.current
         && semanticConnection.current === 'connected' && previousConnection.current === 'connected') {
-        const warmed = preload.current?.take(targets.current, foregroundPort.current);
+        const warmed = preload.current?.take(targets.current, foregroundPort.current, () => { readerLineage.current = {}; });
         if (warmed) {
           reader.current = warmed.reader; historyRows.current = new Map(warmed.rows.map(row => [row.id, row]));
           historyBytes.current = new TextEncoder().encode(JSON.stringify(warmed.rows)).length;
@@ -462,7 +471,7 @@ export default definePluginApp(app => {
     const invalidateBoundary = useCallback((mutation = false, changedRows: readonly string[] | null = null) => {
       if (!reader.current || !generationActive) return;
       for (const item of foregroundMedia.current) item.dispose(); foregroundMedia.current = [];
-      historyPass.current = null;
+      historyShare.current = {}; historyPass.current = null;
       boundary.current++; reader.current.invalidate();
       const affected = handle.current?.invalidate(changedRows ?? undefined) ?? [];
       const validation = openValidation.current;
@@ -490,7 +499,10 @@ export default definePluginApp(app => {
         if (mutationTimer.current === null) mutationTimer.current = setTimeout(() => { mutationTimer.current = null; void refresh(); }, 150);
       } else {
         if (mutationTimer.current !== null) clearTimeout(mutationTimer.current);
-        mutationTimer.current = null; void refresh();
+        mutationTimer.current = null;
+        // Finish synchronous Header/Sentinel reset delivery before capturing
+        // a new sharing token. Revocation itself remains immediate.
+        queueMicrotask(() => void refresh());
       }
     }, [refresh]);
     useRealtime('results-changed', useCallback(payload => {
@@ -548,11 +560,16 @@ export default definePluginApp(app => {
         for (const stop of subscriptions.splice(0)) stop();
       }
       const port: GalleryTimelinePort = { async timeline(input) {
-        const pending = owner.readScope(threadId, input.signal, signal => {
-          const pass = historyPass.current;
-          if (!input.beforeAnchorId && pass && request.current?.signal === input.signal
-            && pass.generation === readerScope && pass.version === boundary.current) pass.started = true;
-          return sdk.threads.timeline({ ...input, signal });
+        const readerMark = readerLineage.current, shared = historyShare.current, client = timelineClient() ?? sdk.threads;
+        const pending = owner.readTimeline(input, client, { scope: shared,
+          current: () => generationActive && readerScope === scope.current && bridgeCurrent()
+            && readerLineage.current === readerMark && historyShare.current === shared && timelineClient() === client
+            && semanticConnection.current === 'connected' && previousConnection.current === 'connected',
+          dispatched() {
+            const pass = historyPass.current;
+            if (!input.beforeAnchorId && readerLineage.current === readerMark && pass && request.current?.signal === input.signal
+              && pass.generation === readerScope && pass.version === boundary.current) pass.started = true;
+          },
         });
         // Real native history gets the first FIFO slot. Readiness-only
         // discovery may then negotiate before the older boundary walk ends.
@@ -560,7 +577,7 @@ export default definePluginApp(app => {
         const read = await pending;
         input.signal.throwIfAborted();
         if (!generationActive || readerScope !== scope.current || !owner.isActive()) throw Error('Timeline read retired.');
-        if (read.state === 'ready') {
+        if (read.state === 'ready' && !('state' in read.value)) {
           if (!input.beforeAnchorId) { historyRows.current.clear(); historyBytes.current = 0; }
           const charge = (value: { id: string; turnId: string | null }) => new TextEncoder().encode(JSON.stringify(value)).length;
           for (const row of read.value.rows.slice(0, GALLERY_PANE_LIMITS.rows)) if (typeof row.id === 'string' && row.id.length <= 1024
@@ -573,7 +590,7 @@ export default definePluginApp(app => {
         }
         return read.state === 'ready' ? read.value : { state: 'capacity' };
       } };
-      foregroundPort.current = port; reader.current = createGalleryAnchorReader(port, threadId);
+      foregroundPort.current = port; reader.current = createGalleryAnchorReader(port, threadId, () => { readerLineage.current = {}; });
       const stop = observeGalleryDemand(sentinel.current, (ids, _limited, reason, changedRows) => {
         targets.current = ids;
         for (const item of foregroundMedia.current) if (!ids.includes(item.id)) item.dispose();
@@ -603,7 +620,7 @@ export default definePluginApp(app => {
       document.addEventListener('visibilitychange', visibility);
       return () => {
         for (const item of foregroundMedia.current) item.dispose(); foregroundMedia.current = [];
-        listening = false; semanticScope.current = null; semanticConnection.current = 'unknown'; historyPass.current = null;
+        historyShare.current = {}; listening = false; semanticScope.current = null; semanticConnection.current = 'unknown'; historyPass.current = null;
         for (const unsubscribe of subscriptions) unsubscribe();
         scope.current++; boundary.current++; queued.current = false;
         if (mutationTimer.current !== null) clearTimeout(mutationTimer.current); mutationTimer.current = null;
@@ -611,7 +628,7 @@ export default definePluginApp(app => {
         if (handle.current) { void retirePane(handle.current); handle.current = null; }
         targets.current = []; historyRows.current.clear(); historyBytes.current = 0; refreshTurns.current = new Set();
       };
-    }, [threadId, sdk, refresh, invalidateBoundary]);
+    }, [threadId, sdk, refresh, invalidateBoundary, timelineClient]);
     return <span ref={sentinel} hidden data-turn-results-sentinel="" />;
 
   }
