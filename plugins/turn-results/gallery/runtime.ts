@@ -127,6 +127,7 @@ export function createGalleryRuntime(sdk: Sdk) {
     }
     discoveryController?.abort(); discovering = null;
     sources = null; discoveryCursor = null; discoveryCapacity = false; metadataDebt = null; descriptorDebt.clear(); publishReady(new Set());
+    media.revalidate();
   }
   function presentationRoot(signal: AbortSignal, current: () => boolean, displayCurrent = current): GalleryPresentationRoot {
     const id = ++rootId;
@@ -934,15 +935,15 @@ export function createGalleryRuntime(sdk: Sdk) {
   }
   document.addEventListener('visibilitychange', visibility);
   const api = { media, canvases, backend, readScope, readTimeline, readyOwners, captionLabels, presentationStatus, dialogSites, presentationRoot, invalidateReadiness,
-    async image(row: GalleryObservation, shown: boolean, speculative = false, signal?: AbortSignal, plugins = sdk.plugins) {
+    async image(row: GalleryObservation, shown: boolean, speculative = false, signal?: AbortSignal, plugins = sdk.plugins, nativeCurrent?: () => boolean) {
       signal?.throwIfAborted();
       // Optional nearby work may decline stale/unavailable hints. Visible
       // passive bytes retain their archived admission; actions guard separately.
       if (speculative && (row.sourceExpired || row.retracted || row.resolution?.availability.state === 'unavailable'
         || row.currentAvailability?.state === 'unavailable')) return null;
       const initial = initialImageCandidate(row);
-      const entry = initial ? [...turns.values()].find(entry => entry.refs && entry.visible && entry.store.state.loaded
-        && entry.store.state.rows.some(value => value.key === row.key && value.owner === row.owner && canonicalJson(value.identity) === canonicalJson(row.identity))) : undefined;
+      const entry = [...turns.values()].find(entry => entry.refs && (!initial || entry.visible) && entry.store.state.loaded
+        && entry.store.state.rows.some(value => value.key === row.key && value.owner === row.owner && canonicalJson(value.identity) === canonicalJson(row.identity)));
       const source = initial ? sources?.find(source => source.pluginId === row.owner) : undefined;
       if (initial && (!entry || !source || !readyOwners.state.has(row.owner))) return null;
       const generation = discoveryGeneration, anchor = entry?.anchor;
@@ -999,6 +1000,40 @@ export function createGalleryRuntime(sdk: Sdk) {
           } };
         } : undefined);
       signal?.throwIfAborted();
+      if (request && !initial && !speculative && signal && nativeCurrent && entry && !row.sourceExpired && !row.retracted) {
+        // Continuity concerns bound response data, not Open availability. A
+        // saved unavailable/expired row may still independently verify pixels.
+        const facts = (value: GalleryObservation) => canonicalJson({ key: value.key, owner: value.owner, identity: value.identity,
+          corrections: value.corrections, proof: value.resolution?.proof, revision: value.resolution?.revision,
+          knowledge: value.resolution?.knowledge, outcomeEvidence: value.resolution?.outcomeEvidence,
+          route: value.resolution?.route, provenance: value.resolution?.provenance });
+        const binding = facts(row);
+        const live = () => {
+          const latest = entry.store.state.rows.find(value => value.key === row.key);
+          return !!(active && visible && !signal.aborted && generation === discoveryGeneration && turns.get(entry.key) === entry
+            && latest && !latest.unresolved && latest.resolution && !latest.sourceExpired && !latest.retracted && facts(latest) === binding);
+        };
+        const current = () => live() && !!entry.refs && !!entry.visible && entry.store.state.loaded === true && nativeCurrent();
+        // Per-render SDK plugin proxies are not scope identities. The runtime
+        // owns one SDK; a genuine Sentinel SDK replacement retires this root.
+        request.adoption = { root: signal, client: sdk, generation, binding, live, current,
+          async correlate(mediaSignal, optional) {
+            const check = () => { mediaSignal.throwIfAborted(); if (!current()) throw Error('Image adopter retired.'); };
+            check();
+            const binding = entry.store.state.bindings?.[row.key];
+            if (!binding) throw Error('Image needs its issued retained page.');
+            const read = await readScope(row.identity.ref.source.threadId, mediaSignal, async bounded => {
+              check(); bounded.throwIfAborted();
+              const result = await backend.read(row.identity.ref.source.threadId, row.identity.ref.source.turnId, bounded, binding.after ?? undefined);
+              check(); bounded.throwIfAborted();
+              const fresh = result.page.rows.find(value => value.key === row.key && value.owner === row.owner);
+              if (!fresh || fresh.unresolved || fresh.sourceExpired || fresh.retracted || facts(fresh) !== facts(row)) throw Error('Image binding changed.');
+            }, false, optional, false);
+            check();
+            if (read.state === 'capacity') throw Error('Image correlation capacity reached.');
+          },
+        };
+      }
       return request && active ? media.retain(request, shown, speculative) : null;
     },
     retainDiscoveryDemand() {

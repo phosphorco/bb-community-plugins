@@ -28,9 +28,11 @@ function LoadedImage({ handle, alt, open, actionsReady, pending = false, retry =
   return <div className="tr-placeholder"><span>{decodeError ? 'Image could not be displayed' : state.state === 'loading' ? 'Loading image…' : state.error ?? (pending ? 'Image preview pending' : 'Generated image')}</span>
     {(decodeError || state.state === 'error') && <button disabled={!actionsReady} onClick={() => { if (!actionsReady) return; setDecodeError(false); retry(); }}>Retry image</button>}</div>;
 }
-function ImageCanvas({ row, runtime, sdk, open, lifetime, actionsReady, allowInitial }: { row: GalleryObservation; runtime: GalleryRuntime; sdk: Sdk; open: OpenClick; lifetime: AbortSignal; actionsReady: boolean; allowInitial: boolean }) {
+function ImageCanvas({ row, runtime, sdk, open, lifetime, actionsReady, allowInitial, current }: { row: GalleryObservation; runtime: GalleryRuntime; sdk: Sdk; open: OpenClick; lifetime: AbortSignal; actionsReady: boolean; allowInitial: boolean; current(): boolean }) {
   const host = useRef<HTMLDivElement>(null), [handle, setHandle] = useState<MediaHandle | null>(null);
+  const proof = useRef(current);
   const owned = useRef<{ resource: MediaHandle | null; live: boolean; shown: boolean; version: number } | null>(null);
+  useLayoutEffect(() => { proof.current = current; owned.current?.resource?.revalidate(); });
   const ready = useSelector(runtime.readyOwners, owners => owners.has(row.owner));
   const admitted = !initialImageCandidate(row) || allowInitial && ready;
   const identity = canonicalJson([row.owner, row.identity]);
@@ -44,7 +46,7 @@ function ImageCanvas({ row, runtime, sdk, open, lifetime, actionsReady, allowIni
     owned.current = owner;
     const abort = () => { owner.live = false; owner.resource?.dispose(); };
     lifetime.addEventListener('abort', abort, { once: true });
-    void runtime.image(row, false, false, lifetime, sdk.plugins).then(next => {
+    void runtime.image(row, false, false, lifetime, sdk.plugins, () => proof.current()).then(next => {
       if (!owner.live) { next?.dispose(); return; }
       owner.resource = next;
       if (!next) return;
@@ -63,7 +65,7 @@ function ImageCanvas({ row, runtime, sdk, open, lifetime, actionsReady, allowIni
     const owner = owned.current;
     if (!owner?.live || !owner.resource || !sha256 || route?.kind !== 'file') return;
     const version = ++owner.version;
-    void runtime.image(row, owner.shown, false, lifetime, sdk.plugins).then(next => {
+    void runtime.image(row, owner.shown, false, lifetime, sdk.plugins, () => proof.current()).then(next => {
       if (!owner.live || owned.current !== owner || owner.version !== version) { next?.dispose(); return; }
       if (!next) return;
       const previous = owner.resource; owner.resource = next; setHandle(next); previous?.dispose();
@@ -73,10 +75,9 @@ function ImageCanvas({ row, runtime, sdk, open, lifetime, actionsReady, allowIni
   const retry = () => {
     const owner = owned.current;
     if (!owner?.live || !owner.resource) return;
-    if (!initialImageCandidate(row)) { owner.resource.retry(); return; }
-    if (!allowInitial || !ready) return;
+    if (initialImageCandidate(row) && (!allowInitial || !ready)) return;
     const version = ++owner.version;
-    void runtime.image(row, owner.shown, false, lifetime, sdk.plugins).then(next => {
+    void runtime.image(row, owner.shown, false, lifetime, sdk.plugins, () => proof.current()).then(next => {
       if (!owner.live || owned.current !== owner || owner.version !== version) { next?.dispose(); return; }
       if (!next) return;
       const previous = owner.resource; owner.resource = next; setHandle(next); previous?.dispose(); next.retry();
@@ -238,7 +239,7 @@ export function ResultCard({ row, runtime, sdk, navigate, current, lifetime, pre
     <button onClick={open} disabled={!collectionReady()} aria-label={`${row.owner}: ${openName}`}>{row.owner}</button>
     {openStatus && <small className="tr-freshness" role="status" data-turn-result-open-status="">{openStatus}</small>}
   </article>;
-  const fallback = value?.fallback.kind === 'image' || initialImageCandidate(row) ? <ImageCanvas row={row} runtime={runtime} sdk={sdk} open={open} lifetime={lifetime} actionsReady={collectionReady()} allowInitial={collectionReady() && current()} />
+  const fallback = value?.fallback.kind === 'image' || initialImageCandidate(row) ? <ImageCanvas row={row} runtime={runtime} sdk={sdk} open={open} lifetime={lifetime} actionsReady={collectionReady()} allowInitial={collectionReady() && current()} current={current} />
     : destination ? <button className="tr-canvas tr-data-action" onClick={open} disabled={!collectionReady()} aria-label={openName}>{content}</button>
       : <div className="tr-canvas tr-data-action">{content}</div>;
   return <article ref={card} className="tr-card" data-result-key={row.key}>

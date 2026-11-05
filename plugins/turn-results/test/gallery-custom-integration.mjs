@@ -242,7 +242,12 @@ async function fixture(count = 6, mount = true, contribution = {}) {
   }
   if (!contribution.deferPresentation) register();
   contribution.configureSdk?.(sdk);
-  const runtimeProbe = []; if (contribution.captureRuntime) globalThis.__turnResultsRuntimeFixture = runtimeProbe;
+  const runtimeProbe = [];
+  if (contribution.observeRuntime) {
+    const push = runtimeProbe.push;
+    runtimeProbe.push = function (...owners) { for (const owner of owners) contribution.observeRuntime(owner); return push.apply(this, owners); };
+  }
+  if (contribution.captureRuntime) globalThis.__turnResultsRuntimeFixture = runtimeProbe;
   const app = await loadPluginApp(contribution.definition ?? (contribution.captureRuntime ? runtimeDefinition : definition)), controller = new AbortController();
   let script = await app.contentScripts[0].mount({ pluginId: 'turn-results', generation: 1, signal: controller.signal });
   assert.equal(app.composerCustomizations.length, 0); assert.equal(app.threadPanelActions.length, 0);
@@ -2786,5 +2791,175 @@ test('transient advertised metadata yields to proved foreground work without non
     release(); controller.abort(); await f.dispose(); await runtime.whenDrained();
     assert.equal(live, 0); assert.equal(runtime.stats().running, 0); assert.equal(runtime.stats().queued, 0);
     assert.equal(runtime.stats().leases, 0); assert.equal(runtime.canvases.counts().occupied, 0);
+  }
+});
+
+
+test('bound Media response survives same-root card replacement only after genuine fresh proof and issued row adoption', async () => {
+  const { createFakePluginHost } = await import('@get-bb/plugin-sdk/testing');
+  const { createRegisteredHandlerRpc } = await import('@phosphorco/bb-turn-results/testing');
+  const { createResultsSupplierClient } = await import('@phosphorco/bb-turn-results/bb');
+  const { adaptCompletedEvent } = await import('@phosphorco/bb-turn-results/events');
+  const { resolveOutcomeBudget, canonicalJson } = await import('@phosphorco/bb-turn-results');
+  const { imageCandidate } = await import('../../turn-result-images/recognition.ts');
+  const imagePlugin = (await import('../../turn-result-images/server.ts')).default;
+  const galleryPlugin = (await import('../server.ts')).default;
+  const result = { trace: [], media: [], history: [], imageOwners: [], setup: {}, current: {}, cleanup: null };
+  const start = performance.now();
+  const mark = (kind, fields = {}) => result.trace.push({ order: result.trace.length + 1, ms: performance.now() - start, kind, ...fields });
+  const bytes = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aX1cAAAAASUVORK5CYII=', 'base64');
+  const sha = createHash('sha256').update(bytes).digest('hex');
+  const native = { id: 'native-image', threadId: 'thread', seq: 3, scope: { kind: 'turn', turnId: 'turn-0' }, type: 'item/completed', createdAt: 1,
+    data: { item: { id: 'image', type: 'imageGeneration', status: 'completed', error: null, path: '/saved/image.png', transparentBackground: false, result: bytes.toString('base64') } } };
+  const selected = await adaptCompletedEvent(native); assert.equal(selected.state, 'admitted');
+  const identity = imageCandidate(selected.event).identity;
+  let fileReads = 0, nativeReads = 0, leases = 0, gets = 0, fetchedDigest = null, fileOpens = 0;
+  let liveMedia = 0, peakMedia = 0, releaseMedia, releaseHistory, fresh = false, holdHistory = true;
+  const mediaGate = new Promise(resolve => { releaseMedia = resolve; });
+  const historyGate = new Promise(resolve => { releaseHistory = resolve; });
+  const imageHost = createFakePluginHost({ pluginId: 'turn-result-images', sdk: {
+    threads: { events: { async list() { nativeReads++; return [native]; } }, async get() { return { environmentId: 'environment' }; } },
+    environments: { async get() { return { hostId: 'fixed-host' }; } },
+    files: { async read() { fileReads++; return { path: '/saved/image.png', content: bytes.toString('base64'), contentEncoding: 'base64', sha256: sha, sizeBytes: bytes.length, mimeType: 'image/png' }; },
+      async createPreview() { leases++; return { baseUrl: `/api/v1/file-previews/owned-${leases}`, expiresAtMs: Date.now() + 120000 }; } },
+  } });
+  const galleryHost = createFakePluginHost({ pluginId: 'turn-results' });
+  imagePlugin(imageHost.bb); galleryPlugin(galleryHost.bb);
+  const imageRpc = createRegisteredHandlerRpc(imageHost, 'turn-result-images'), galleryRpc = createRegisteredHandlerRpc(galleryHost, 'turn-results');
+  // Setup uses real public source admission once, never a trusted caller body.
+  const primed = await imageHost.harness.behavior.callRpc('turnResultImagesV1Media', { version: 1, identity });
+  assert.equal(primed.state, 'ready');
+  const client = createResultsSupplierClient({ plugins: imageRpc }, 'turn-result-images');
+  const resolved = await client.resolve({ version: 1, threadId: 'thread', items: [identity], maxOutcomeBytes: resolveOutcomeBudget(1) });
+  assert.equal(resolved.resolutions[0].state, 'resolved');
+  const resolution = resolved.resolutions[0].value;
+  assert.equal(resolution.provenance.artifactLocation.state, 'verified');
+  const committed = await galleryHost.harness.behavior.callRpc(GALLERY_METHODS.apply, { owner: 'turn-result-images', threadId: 'thread', changes: [{ kind: 'upsert', value: resolution }] });
+  assert.equal(committed.state, 'committed');
+  const initial = await galleryHost.harness.behavior.callRpc(GALLERY_METHODS.read, { threadId: 'thread', turnId: 'turn-0' });
+  assert.equal(initial.page.rows.length, 1);
+  const row = initial.page.rows[0], rowKey = row.key;
+  const cardIn = root => [...root.querySelectorAll('[data-result-key]')].find(card => card.dataset.resultKey === rowKey);
+  result.setup = { registeredSource: true, registeredGallery: true, primingMedia: 1, nativeReads, fileReads, leases, revision: resolution.revision,
+    identitySha256: createHash('sha256').update(canonicalJson(identity)).digest('hex'), sha256: sha };
+  const subscriptions = new Set();
+  let f, rootSignal, shell, sourceNode, initialCard, replacementCard, runtime, rawCalls = [], frozenFacts;
+  let failure;
+  try {
+    f = await fixture(1, true, { owner: 'turn-result-images', kind: identity.ref.kind, captureRuntime: true,
+      nativeItems: true, loadedImage: true, fileRoute: true, manualImageVisibility: true,
+      observeRuntime(owner) {
+        const image = owner.image;
+        owner.image = function (...args) {
+          result.imageOwners.push({ row: args[0], shown: args[1], speculative: args[2], signal: args[3] });
+          return image.apply(this, args);
+        };
+      },
+      configureSdk(sdk) {
+        sdk.subscribe = input => { subscriptions.add(input); if (input.event === 'realtime:connection') queueMicrotask(() => {
+          if (subscriptions.has(input)) input.callback({ state: 'connected', reconnected: false, reconnectDelayMs: null });
+        }); return () => subscriptions.delete(input); };
+        sdk.plugins.experimental_discoverRpc = async () => [{ pluginId: 'turn-result-images', method: METHODS.describe }];
+        sdk.plugins.list = async () => ({ plugins: [{ id: 'turn-result-images', enabled: true, status: 'running' }] });
+        sdk.threads.events.list = async () => [native];
+        sdk.threads.timeline = async input => {
+          const call = { started: performance.now() - start, fresh, signal: input.signal, settled: false };
+          result.history.push(call); mark('public-history-start', { fresh, index: result.history.length });
+          if (fresh && holdHistory) await historyGate;
+          const value = { rows: [{ id: 'opaque-0', threadId: 'thread', turnId: 'turn-0', kind: 'turn', status: 'completed', sourceSeqStart: 1, sourceSeqEnd: 5 }],
+            completedTurnDisplay: 'collapse', timelinePage: { historySnapshot: fresh ? 'genuine-new-current-proof' : 'initial-current-proof', olderCursor: null } };
+          call.settled = true; call.ended = performance.now() - start; mark('public-history-settle', { fresh: call.fresh, aborted: input.signal.aborted }); return value;
+        };
+        sdk.plugins.callRpc = args => {
+          const call = (async () => {
+            mark('plugin-dispatch', { owner: args.pluginId, method: args.method });
+            if (args.pluginId === 'turn-result-images') {
+              if (args.method !== 'turnResultImagesV1Media') return imageRpc.callRpc(args);
+              const item = { started: performance.now() - start, inputSha256: createHash('sha256').update(canonicalJson(args.input)).digest('hex'), suppliedSignal: !!args.signal, state: null, settled: false };
+              result.media.push(item); liveMedia++; peakMedia = Math.max(peakMedia, liveMedia);
+              try { const value = await imageRpc.callRpc(args); item.state = value.state; item.leaseFingerprint = value.state === 'ready' ? value.lease.targetFingerprint : null;
+                mark('registered-media-ready-held', { index: result.media.length, state: value.state });
+                if (result.media.length === 1) await mediaGate;
+                item.settled = true; item.ended = performance.now() - start; mark('public-media-settle', { index: result.media.indexOf(item) + 1 }); return value;
+              } finally { liveMedia--; }
+            }
+            if (args.pluginId !== 'turn-results') throw Error('Unexpected supplier');
+            return galleryRpc.callRpc(args);
+          })();
+          rawCalls.push(call); return call;
+        };
+      } });
+    runtime = f.runtime();
+    globalThis.fetch = async () => { assert.ok(result.history.some(call => call.fresh && call.settled), 'replacement cannot GET before fresh native proof'); gets++; mark('preview-GET', { currentRoot: !rootSignal?.aborted, historyFresh: result.history.some(call => call.fresh && call.settled) });
+      fetchedDigest = createHash('sha256').update(bytes).digest('hex'); return new Response(bytes, { headers: { 'content-type': 'image/png' } }); };
+    await until(() => cardIn(document) && runtime.stats().running === 0 && runtime.stats().queued === 0);
+    sourceNode = document.querySelector('[data-timeline-row-id="opaque-0"]'); shell = sourceNode.querySelector('[data-turn-results-gallery]');
+    initialCard = cardIn(shell);
+    rootSignal = result.imageOwners.find(call => call.row.key === rowKey && !call.speculative)?.signal;
+    assert.ok(rootSignal instanceof AbortSignal); assert.equal(rootSignal.aborted, false);
+    frozenFacts = canonicalJson((await galleryHost.harness.behavior.callRpc(GALLERY_METHODS.read, { threadId: 'thread', turnId: 'turn-0' })).page.rows[0].resolution);
+    await f.imagesVisible(true); await until(() => result.media.length === 1 && result.media[0].state === 'ready');
+    assert.equal(gets, 0); assert.equal(runtime.stats().running, 1); assert.equal(result.media[0].suppliedSignal, false);
+    mark('initial-raw-owned');
+    await f.rowPosition('opaque-0', 1700);
+    await until(() => !cardIn(shell));
+    assert.equal(initialCard.isConnected, false); assert.equal(shell.isConnected, true); assert.equal(shell.parentElement, sourceNode); assert.equal(rootSignal.aborted, false);
+    mark('viewport-card-retired-same-live-root');
+    fresh = true;
+    await act(async () => {
+      const event = { type: 'changed', entity: 'thread', id: 'thread', changes: ['events-appended'], metadata: { timelineSequence: 5 } };
+      let count = 0;
+      for (const subscription of [...subscriptions]) if (subscription.event === 'thread:changed') { count++; subscription.callback(event); }
+      assert.ok(count > 0); mark('ordinary-sdk-native-semantic-reset', { subscribers: count }); await tick();
+    });
+    assert.equal(rootSignal.aborted, false, 'a native-proof reset must actually preserve this root lifetime to be eligible');
+    await f.rowPosition('opaque-0', 20);
+    await until(() => cardIn(shell));
+    replacementCard = cardIn(shell);
+    assert.notEqual(replacementCard, initialCard); assert.equal(shell, sourceNode.querySelector('[data-turn-results-gallery]'));
+    assert.equal(rootSignal.aborted, false);
+    const ownerSignals = result.imageOwners.filter(call => call.row.key === rowKey && !call.speculative).map(call => call.signal);
+    assert.ok(ownerSignals.every(signal => signal === rootSignal), 'actual replacement retained the SAME root signal; no manufactured continuity');
+    await f.imagesVisible(true);
+    await settle(20);
+    assert.equal(result.media.length, 1, 'ignored first response retains actual same-thread occupancy');
+    assert.equal(result.history.filter(call => call.fresh).length, 0, 'fresh native history cannot overlap owned same-thread Media');
+    mark('replacement-waits-for-actual-raw');
+    await act(async () => { releaseMedia(); await tick(); });
+    await until(() => result.history.some(call => call.fresh));
+    assert.equal(gets, 0, 'retired owner must not start GET from the ready response');
+    mark('fresh-current-proof-held-after-first-response', { media: result.media.length });
+    holdHistory = false;
+    await act(async () => { releaseHistory(); await tick(); });
+    await until(() => shell.querySelector('img[src^="blob:"]') && runtime.stats().running === 0 && runtime.stats().queued === 0);
+    const node = shell.querySelector('img'), blobUrl = node.src;
+    assert.equal(gets, 1); assert.equal(fetchedDigest, sha); assert.equal(rootSignal.aborted, false); assert.equal(shell.parentElement, sourceNode);
+    assert.ok(result.history.some(call => call.fresh && call.settled));
+    const finalRow = (await galleryHost.harness.behavior.callRpc(GALLERY_METHODS.read, { threadId: 'thread', turnId: 'turn-0' })).page.rows[0];
+    assert.equal(canonicalJson(finalRow.resolution), frozenFacts); assert.equal(canonicalJson(finalRow.identity), canonicalJson(identity));
+    await act(async () => shell.querySelector('.tr-image-action').click());
+    assert.deepEqual(f.fileOpenCalls.map(call => call.target), [{ kind: 'host', hostId: 'fixed-host', path: '/saved/image.png' }]); fileOpens = f.fileOpenCalls.length;
+    await f.rowPosition('opaque-0', 1700); await until(() => !shell.querySelector('[data-result-key]'));
+    await f.rowPosition('opaque-0', 20); await until(() => shell.querySelector('[data-result-key]')); await f.imagesVisible(true);
+    await until(() => shell.querySelector('img'));
+    assert.equal(shell.querySelector('img').src, blobUrl); assert.equal(gets, 1);
+    const idle = JSON.stringify({ media: result.media.length, gets, history: result.history.length }); await settle(80);
+    assert.equal(JSON.stringify({ media: result.media.length, gets, history: result.history.length }), idle);
+    result.current = { mediaCalls: result.media.length, gets, fileOpens, peakMedia, exactBytes: fetchedDigest === sha, sameRootSignal: true,
+      sameSourceShell: true, distinctCards: replacementCard !== initialCard, freshHistory: result.history.filter(call => call.fresh).length,
+      sameMediaInput: new Set(result.media.map(call => call.inputSha256)).size === 1, warmSameBlob: true, idle: true,
+      elapsedFromFirstMediaMs: performance.now() - start - result.media[0].started };
+    console.log('BOUND_MEDIA_RETIREMENT_RESULT', JSON.stringify(result.current));
+    assert.ok(result.current.elapsedFromFirstMediaMs < 7000, 'adoption spends the original request budget');
+    assert.equal(result.media.length, 1, 'same exact bound response must survive eligible card-only retirement and fresh adoption without a second Media');
+  } catch (error) { failure = { name: error.name, message: error.message, stack: error.stack }; throw error; }
+  finally {
+    releaseMedia(); holdHistory = false; releaseHistory();
+    if (f) await f.dispose();
+    await Promise.allSettled(rawCalls); if (runtime) await runtime.whenDrained();
+    await imageHost.harness.lifecycle.dispose(); await galleryHost.harness.lifecycle.dispose();
+    result.cleanup = { liveMedia, subscriptions: subscriptions.size, runtime: runtime?.stats(), media: runtime?.media.stats(), canvases: runtime?.canvases.counts() };
+    assert.equal(liveMedia, 0); assert.equal(subscriptions.size, 0);
+    if (runtime) { assert.equal(runtime.stats().running, 0); assert.equal(runtime.stats().queued, 0); assert.equal(runtime.stats().historyReads, 0); assert.equal(runtime.media.stats().running, 0); assert.equal(runtime.canvases.counts().occupied, 0); }
   }
 });

@@ -9,7 +9,15 @@ export interface ImageLease {
   url: string; expiresAtMs: number; targetFingerprint: string; leaseGeneration: string;
 }
 export interface MediaSnapshot { url: string | null; state: 'idle' | 'loading' | 'ready' | 'error'; error: string | null }
-export interface MediaRequest { key: string; claim?: string; fingerprint: string | null; sha256: string | null; acquire(signal: AbortSignal, speculative?: () => boolean): Promise<ImageLease> }
+export interface MediaAdoption {
+  root: AbortSignal; client: object; generation: number; binding: string;
+  live(): boolean; current(): boolean;
+  correlate(signal: AbortSignal, speculative: () => boolean): Promise<void>;
+}
+export interface MediaRequest { key: string; claim?: string; fingerprint: string | null; sha256: string | null;
+  dispatched?: boolean; adoption?: MediaAdoption;
+  acquire(signal: AbortSignal, speculative?: () => boolean): Promise<ImageLease> }
+
 export interface MediaPorts {
   fetch(url: string, signal: AbortSignal): Promise<Response>;
   createUrl(blob: Blob): string; revokeUrl(url: string): void;
@@ -52,6 +60,7 @@ export async function imageMediaRequest(row: GalleryObservation,
       bounded.throwIfAborted();
       // Own an already-dispatched response through raw settlement. Retirement
       // can refuse a late GET but cannot claim independent source work stopped.
+      request.dispatched = true;
       return plugins.callRpc({ pluginId: row.owner, method: 'turnResultImagesV1Media',
         input: { version: 1, identity: JSON.parse(canonicalJson(row.identity)) }, outputSchema: mediaRaw });
     }, speculative);
@@ -80,14 +89,32 @@ export async function imageMediaRequest(row: GalleryObservation,
 }
 
 export const MEDIA_LIMITS = Object.freeze({ entries: 64, bytes: 33_554_432, imageBytes: 8_388_608, concurrency: 2, deadlineMs: 7000 });
-type Entry = { request: MediaRequest; store: Store<MediaSnapshot>; refs: number; visible: number; speculative: number; bytes: number; controller: AbortController | null; attempted: boolean; foregroundAttempt: boolean; foregroundEligible: boolean };
+type MediaDemand = { request: MediaRequest; live: boolean; shown: boolean };
+type Entry = { demands: Set<MediaDemand>; wake: (() => void) | null;
+  flight: { hold(): boolean; live(): boolean; shed(): boolean; detach(): void } | null; request: MediaRequest; store: Store<MediaSnapshot>; refs: number; visible: number; speculative: number; bytes: number; controller: AbortController | null; attempted: boolean; foregroundAttempt: boolean; foregroundEligible: boolean };
 
 /** A single owner per app generation. TanStack owns notifications; this owner
  * only schedules bounded resources. Loaded blobs survive native row/root churn.
  * No clock polling, durable lease URL, or per-root file read is involved. */
 export function createGalleryMedia(ports: MediaPorts) {
   const entries = new Map<string, Entry>();
-  let bytes = 0, running = 0, disposed = false, visible = true, queued = false, warming = 0;
+  let bytes = 0, running = 0, disposed = false, visible = true, queued = false, warming = 0, demands = 0;
+  // The private adopter ledger spends the same 128 live-demand bound as the
+  // runtime read queue. It contains ownership callbacks, never another cache.
+  const demandLimit = 128;
+  function changed(entry: Entry, detach = false) {
+    if (detach) entry.flight?.detach();
+    if (entry.flight && !entry.flight.live()) entry.controller?.abort('scope-retired');
+    const wake = entry.wake; entry.wake = null; wake?.();
+  }
+  function leave(entry: Entry) {
+    if (!entry.refs || !entry.visible) {
+      entry.flight?.detach();
+      if (!entry.flight?.hold()) entry.controller?.abort();
+    }
+    const wake = entry.wake; entry.wake = null; wake?.();
+  }
+
   function release(entry: Entry) {
     entry.controller?.abort();
     const url = entry.store.state.url;
@@ -137,14 +164,47 @@ export function createGalleryMedia(ports: MediaPorts) {
   function pump() {
     if (disposed || !visible) return;
     for (const entry of [...entries.values()].sort((a, b) => Number(a.visible <= a.speculative) - Number(b.visible <= b.speculative))) {
-      if (running >= MEDIA_LIMITS.concurrency) break;
       if (!entry.refs || !entry.visible || entry.attempted || entry.controller || entry.store.state.url) continue;
+      if (running >= MEDIA_LIMITS.concurrency) {
+        // Only useful foreground pressure can retire settled response DATA.
+        // Actual raw work, visible proof waiters, active GETs and Blobs retain
+        // their ownership. The existing finally returns the media credit.
+        if (entry.visible > entry.speculative && (!entry.request.adoption || entry.request.adoption.current())) {
+          for (const held of entries.values()) if (held !== entry && held.flight?.shed()) break;
+        }
+        continue;
+      }
+      if (entry.request.adoption && !entry.request.adoption.live()) {
+        const replacement = [...entry.demands].find(value => value.live && value.shown && value.request.adoption?.live());
+        if (!replacement) continue;
+        entry.request = replacement.request;
+      }
       entry.attempted = true; entry.foregroundEligible = false; entry.foregroundAttempt = entry.visible > entry.speculative;
       const controller = new AbortController(); entry.controller = controller; running++;
+      const origin = entry.request, adoption = origin.adoption;
+      origin.dispatched = false;
+      let detached = false, fetchStarted = false, responseSettled = false, fetchOwner: MediaDemand | null = null;
+      const ownerCurrent = () => !!fetchOwner?.live && fetchOwner.shown && !!fetchOwner.request.adoption?.current();
+      const sameScope = (demand: MediaDemand) => {
+        const next = demand.request.adoption;
+        return !!(adoption && demand.live && demand.shown && next && next.root === adoption.root && next.client === adoption.client
+          && next.generation === adoption.generation && next.binding === adoption.binding && next.live());
+      };
+      entry.flight = {
+        hold: () => !fetchStarted && origin.dispatched === true && !!adoption?.live(),
+        live: () => !adoption || adoption.live() && (!fetchStarted || ownerCurrent()),
+        shed() {
+          if (controller.signal.aborted || !adoption || !responseSettled || fetchStarted || [...entry.demands].some(sameScope)) return false;
+          controller.abort('foreground-pressure'); return true;
+        },
+        detach() { detached = true; },
+      };
+      const hardAbort = () => controller.abort('scope-retired');
+      adoption?.root.addEventListener('abort', hardAbort, { once: true });
       const signal = controller.signal;
       entry.store.setState(old => ({ ...old, state: 'loading', error: null }));
       const timer = setTimeout(() => controller.abort('deadline'), MEDIA_LIMITS.deadlineMs);
-      const current = () => !disposed && !signal.aborted && entries.get(entry.request.key) === entry && entry.controller === controller;
+      const current = () => !disposed && !signal.aborted && entries.get(entry.request.key) === entry && entry.controller === controller && entry.flight?.live();
       const check = () => { if (!current()) throw new Error('Image request retired.'); };
       const wait = <T,>(operation: Promise<T>): Promise<T> => new Promise((resolve, reject) => {
         const abort = () => { signal.removeEventListener('abort', abort); reject(new Error('Image request retired.')); };
@@ -154,7 +214,28 @@ export function createGalleryMedia(ports: MediaPorts) {
       });
       let responseBody: ReadableStream<Uint8Array> | null = null, bodyHandled = false;
       void (async () => {
-        const lease = await wait(entry.request.acquire(signal, () => entry.visible <= entry.speculative)); check();
+        const lease = await wait(origin.acquire(signal, () => entry.visible <= entry.speculative)); check();
+        responseSettled = true; schedule();
+        if (adoption) {
+          // A ready lease is still only data. Card-only retirement may leave
+          // it owned until a same-scope current consumer independently proves
+          // the exact issued row; the original timer and media credit remain.
+          for (;;) {
+            check();
+            if (!adoption.live()) throw Error('Image response scope retired.');
+            const demand = [...entry.demands].find(value => sameScope(value) && value.request.adoption!.current());
+            if (demand) {
+              const next = demand.request.adoption!;
+              if (detached || demand.request !== origin) await wait(next.correlate(signal, () => entry.visible <= entry.speculative));
+              check();
+              if (!adoption.live() || !next.live()) throw Error('Image response scope retired.');
+              if (demand.live && demand.shown && next.current()) { fetchOwner = demand; break; }
+            }
+            await wait(new Promise<void>(resolve => { entry.wake = resolve; }));
+          }
+        }
+        check();
+        fetchStarted = true;
         if (!entry.request.fingerprint || !entry.request.sha256 || lease.targetFingerprint !== entry.request.fingerprint || lease.expiresAtMs <= Date.now()
           || !/^\/api\/v1\/file-previews\/[a-zA-Z0-9-]+\/[^/?#]+$/.test(lease.url)) throw new Error('Image serving target changed.');
         const fetching = ports.fetch(lease.url, signal).then(response => {
@@ -200,7 +281,8 @@ export function createGalleryMedia(ports: MediaPorts) {
           entry.store.setState(old => ({ ...old, state: retired ? 'idle' : 'error', error: retired ? null : signal.reason === 'deadline' ? 'Image serving deadline reached.' : String(error instanceof Error ? error.message : error) }));
         }
       }).finally(() => {
-        clearTimeout(timer);
+        clearTimeout(timer); adoption?.root.removeEventListener('abort', hardAbort);
+        entry.wake = null; entry.flight = null;
         if (!bodyHandled) void responseBody?.cancel().catch(() => {});
         controller.abort('completed'); // terminate all transport ownership before freeing a token
         if (entry.controller === controller) entry.controller = null; running--; foregroundDemand(entry); schedule();
@@ -210,28 +292,39 @@ export function createGalleryMedia(ports: MediaPorts) {
   return {
     retain(request: MediaRequest, isVisible = true, speculative = false) {
       if (disposed) throw new Error('Media owner retired.');
+      if (demands >= demandLimit) throw Error('Media demand capacity reached.');
       if (speculative && warming >= 2) throw Error('Nearby media capacity reached.');
       let entry = entries.get(request.key);
-      if (entry) { checkBinding(entry.request, request); renewFailedRequest(entry, request); }
+      if (entry) {
+        checkBinding(entry.request, request); renewFailedRequest(entry, request);
+        if (!entry.controller && entry.store.state.state === 'idle' && entry.request.adoption && !entry.request.adoption.live()) entry.request = request;
+      }
       if (!entry) {
         if (!collect(0, true)) throw new Error('Media entry capacity reached.');
-        entry = { request, refs: 0, visible: 0, speculative: 0, bytes: 0, controller: null, attempted: false, foregroundAttempt: false, foregroundEligible: false,
+        entry = { demands: new Set(), wake: null, flight: null, request, refs: 0, visible: 0, speculative: 0, bytes: 0, controller: null, attempted: false, foregroundAttempt: false, foregroundEligible: false,
           store: new Store<MediaSnapshot>({ url: null, state: 'idle', error: null }) };
         entries.set(request.key, entry);
       }
-      const owned = entry; owned.refs++; if (isVisible) owned.visible++;
+      const owned = entry, demand: MediaDemand = { request, live: true, shown: isVisible };
+      owned.demands.add(demand); demands++;
+      owned.refs++; if (isVisible) owned.visible++;
       if (speculative) { warming++; if (isVisible) owned.speculative++; }
       if (owned.store.state.state === 'idle') owned.attempted = false;
-      foregroundDemand(owned); ports.demand?.();
+      foregroundDemand(owned); changed(owned); ports.demand?.();
       schedule();
       let live = true, shown = isVisible, optional = speculative;
       return { store: owned.store,
-        promote() { if (!live || !optional) return; optional = false; warming--; if (shown) owned.speculative--; foregroundDemand(owned); ports.demand?.(); schedule(); },
-        visible(next: boolean) { if (!live || shown === next) return; shown = next; owned.visible += next ? 1 : -1; if (optional) owned.speculative += next ? 1 : -1; if (!owned.visible) owned.controller?.abort(); else if (owned.store.state.state === 'idle') owned.attempted = false; foregroundDemand(owned); ports.demand?.(); schedule(); },
+        revalidate() { if (live) { changed(owned); if (!owned.controller) schedule(); } },
+        promote() { if (!live || !optional) return; optional = false; warming--; if (shown) owned.speculative--; foregroundDemand(owned); changed(owned); ports.demand?.(); schedule(); },
+        visible(next: boolean) { if (!live || shown === next) return; shown = next; demand.shown = next; owned.visible += next ? 1 : -1; if (optional) owned.speculative += next ? 1 : -1; if (!next) changed(owned, true); if (!owned.visible) leave(owned); else if (owned.store.state.state === 'idle') owned.attempted = false; foregroundDemand(owned); changed(owned); ports.demand?.(); schedule(); },
         retry() { if (!live || owned.controller) return; renewFailedRequest(owned, request); owned.attempted = false; schedule(); },
-        dispose() { if (!live) return; live = false; owned.refs--; if (shown) owned.visible--; if (optional) { warming--; if (shown) owned.speculative--; } if (!owned.refs || !owned.visible) owned.controller?.abort(); },
+        dispose() { if (!live) return; live = false; demand.live = false; owned.demands.delete(demand); demands--; changed(owned, true); owned.refs--; if (shown) owned.visible--; if (optional) { warming--; if (shown) owned.speculative--; } leave(owned); },
       };
     },
+    revalidate() { for (const entry of entries.values()) {
+      if (entry.request.adoption && !entry.request.adoption.live()) entry.controller?.abort('scope-retired');
+      changed(entry);
+    } },
     visible(next: boolean) { if (visible === next) return; visible = next; if (!next) for (const entry of entries.values()) entry.controller?.abort(); else { for (const entry of entries.values()) if (entry.store.state.state === 'idle') entry.attempted = false; schedule(); } },
     stats: () => ({ entries: entries.size, bytes, running }),
     dispose() { if (disposed) return; disposed = true; for (const entry of [...entries.values()]) release(entry); },

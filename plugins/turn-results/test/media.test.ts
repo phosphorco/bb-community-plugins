@@ -265,3 +265,180 @@ test('post-publication hash failure renews a reentered or already-retained resol
     } finally { first.dispose(); next?.dispose(); owner.dispose(); }
   });
 });
+
+function boundResponseHarness() {
+  const root = new AbortController(), client = {}, state = { generation: 1, proof: true };
+  let resolve!: (value: typeof lease) => void;
+  const response = new Promise<typeof lease>(done => { resolve = done; });
+  const calls = { media: 0, gets: 0, correlations: 0, blobs: 0 };
+  const owner = createGalleryMedia({
+    async fetch() { calls.gets++; return new Response(data, { headers: { 'content-type': 'image/png' } }); },
+    createUrl() { return `blob:bound-${++calls.blobs}`; }, revokeUrl() {},
+  });
+  function request() {
+    const generation = state.generation;
+    const value: Parameters<typeof owner.retain>[0] = { key: 'bound', claim: 'same-exact-identity', fingerprint: 'fixed', sha256: digest,
+      async acquire() { value.dispatched = true; calls.media++; return response; },
+      adoption: { root: root.signal, client, generation, binding: 'same-target-sha-proof-corrections',
+        live: () => !root.signal.aborted && state.generation === generation,
+        current: () => !root.signal.aborted && state.generation === generation && state.proof,
+        async correlate(signal) { signal.throwIfAborted(); assert.equal(state.proof, true); calls.correlations++; },
+      },
+    };
+    return value;
+  }
+  return { root, state, owner, calls, request, resolve: () => resolve(lease) };
+}
+
+test('dispatched bound response remains data through card retirement and needs a current same-scope adopter', async () => {
+  const h = boundResponseHarness(), first = h.owner.retain(h.request()); let next: ReturnType<typeof h.owner.retain> | undefined;
+  try {
+    await tick(); assert.equal(h.calls.media, 1); first.dispose();
+    await tick(); assert.equal(h.owner.stats().running, 1, 'card disposal cannot abort/reissue an already-dispatched bound response');
+    h.state.proof = false; h.resolve(); await tick();
+    assert.equal(h.calls.gets, 0); assert.equal(h.owner.stats().running, 1);
+    next = h.owner.retain(h.request()); await tick();
+    assert.equal(h.calls.media, 1); assert.equal(h.calls.gets, 0, 'a retained replacement alone supplies no current proof');
+    h.state.proof = true; next.revalidate(); await settled(next.store, 'ready');
+    assert.deepEqual(h.calls, { media: 1, gets: 1, correlations: 1, blobs: 1 });
+    const url = next.store.state.url; next.dispose(); next = h.owner.retain(h.request());
+    assert.equal(next.store.state.url, url); await tick(); assert.equal(h.calls.media, 1); assert.equal(h.calls.gets, 1);
+    assert.throws(() => h.owner.retain({ ...h.request(), fingerprint: 'different-target' }), /Immutable media binding/);
+    assert.throws(() => h.owner.retain({ ...h.request(), sha256: 'f'.repeat(64) }), /Immutable media binding/);
+  } finally { first.dispose(); next?.dispose(); h.resolve(); h.owner.dispose(); }
+});
+
+test('unadopted bound response spends only the original seven-second request and never GETs or retries while idle', { timeout: 10000 }, async () => {
+  const { MEDIA_LIMITS } = await import('../gallery/media.ts');
+  const h = boundResponseHarness(), first = h.owner.retain(h.request()); let next: ReturnType<typeof h.owner.retain> | undefined;
+  try {
+    await tick(); first.dispose(); h.resolve(); await tick();
+    assert.equal(h.calls.media, 1); assert.equal(h.calls.gets, 0); assert.equal(h.owner.stats().running, 1);
+    await new Promise(resolve => setTimeout(resolve, MEDIA_LIMITS.deadlineMs + 40));
+    assert.equal(h.owner.stats().running, 0); assert.equal(first.store.state.state, 'error');
+    assert.match(first.store.state.error!, /deadline/); assert.equal(h.calls.gets, 0);
+    next = h.owner.retain(h.request()); await tick();
+    assert.equal(h.calls.media, 1, 'visibility/reentry does not replay a foreground deadline failure');
+    next.retry(); await settled(next.store, 'ready');
+    assert.equal(h.calls.media, 2); assert.equal(h.calls.gets, 1); assert.equal(next.store.state.state, 'ready');
+  } finally { first.dispose(); next?.dispose(); h.resolve(); h.owner.dispose(); }
+});
+
+test('hard root or source-generation retirement refuses late bound data and cannot refill a successor', async t => {
+  for (const reason of ['root', 'source-generation'] as const) await t.test(reason, async () => {
+    const h = boundResponseHarness(), first = h.owner.retain(h.request());
+    try {
+      await tick(); assert.equal(h.calls.media, 1);
+      if (reason === 'root') h.root.abort('physical-root-retired');
+      else { h.state.generation++; h.owner.revalidate(); }
+      await tick(); h.resolve(); await tick();
+      assert.equal(h.calls.gets, 0); assert.equal(first.store.state.url, null);
+      assert.equal(h.owner.stats().running, 0); await tick(); assert.equal(h.calls.media, 1, 'no stale-scope automatic reacquire');
+      if (reason === 'source-generation') {
+        const current = h.owner.retain(h.request());
+        try { await settled(current.store, 'ready'); assert.equal(h.calls.media, 2); assert.equal(h.calls.gets, 1); }
+        finally { current.dispose(); }
+      }
+    } finally { first.dispose(); h.resolve(); h.owner.dispose(); }
+  });
+});
+
+test('bound response demand callbacks have a finite live-owner budget and disposal restores admission', async () => {
+  const h = boundResponseHarness(), handles: ReturnType<typeof h.owner.retain>[] = [];
+  try {
+    for (let i = 0; i < 128; i++) handles.push(h.owner.retain(h.request(), false));
+    assert.throws(() => h.owner.retain(h.request(), false), /Media demand capacity/);
+    handles.pop()!.dispose(); const replacement = h.owner.retain(h.request(), false); replacement.dispose();
+    assert.equal(h.calls.media, 0); assert.equal(h.calls.gets, 0);
+  } finally { for (const handle of handles) handle.dispose(); h.resolve(); h.owner.dispose(); }
+});
+
+
+test('media foreground pressure: settled unadopted data yields to a different visible image without releasing live raw credit', async () => {
+  const { createGalleryRuntime } = await import('../gallery/runtime.ts');
+  const { JSDOM } = await import('jsdom');
+  const dom = new JSDOM('', { pretendToBeVisual: true }), savedDocument = globalThis.document;
+  globalThis.document = dom.window.document;
+  const runtime = createGalleryRuntime({ plugins: { async list() { return { plugins: [] }; }, async callRpc() { throw Error('No source/backend work is part of this resource test'); } }, threads: { events: { async list() { return []; } } } });
+  const root = new AbortController(), controls = new AbortController(), client = {};
+  const calls: string[] = [], rawThreads = new Map<string, number>(), signals = new Map<string, AbortSignal>(), releases = new Map<string, () => void>();
+  const events: { kind: string; key: string | undefined; raw: number; running: number; ms: number }[] = [];
+  const started = performance.now(); let raw = 0, peak = 0, peakPerThread = 0, gets = 0, correlations = 0, proofA = false;
+  const record = (kind: string, key?: string) => events.push({ kind, key, raw, running: runtime.stats().running, ms: performance.now() - started });
+  const state = { proof: true };
+  const request = (key: string, held = false): Parameters<ReturnType<typeof createGalleryMedia>['retain']>[0] => {
+    const value: Parameters<ReturnType<typeof createGalleryMedia>['retain']>[0] = { key, claim: key, fingerprint: 'fixed', sha256: digest,
+      async acquire(signal) {
+        const result = await runtime.readScope(key, signal, async bounded => {
+          bounded.throwIfAborted(); value.dispatched = true; signals.set(key, bounded); calls.push(key);
+          raw++; peak = Math.max(peak, raw); rawThreads.set(key, (rawThreads.get(key) ?? 0) + 1); peakPerThread = Math.max(peakPerThread, rawThreads.get(key)!);
+          record('raw-start', key);
+          try { if (held) await new Promise<void>(resolve => releases.set(key, resolve)); return lease; }
+          finally { raw--; rawThreads.set(key, rawThreads.get(key)! - 1); record('raw-settle', key); }
+        }, false, false, false);
+        signal.throwIfAborted(); if (result.state !== 'ready') throw Error('Unexpected real runtime capacity'); return result.value;
+      },
+      adoption: { root: root.signal, client, generation: 1, binding: key,
+        live: () => !root.signal.aborted, current: () => !root.signal.aborted && state.proof,
+        async correlate(signal) { signal.throwIfAborted(); assert.equal(state.proof, true); correlations++; },
+      },
+    }; return value;
+  };
+  const owner = createGalleryMedia({ async fetch() { gets++; record('GET'); return new Response(data, { headers: { 'content-type': 'image/png' } }); }, createUrl: () => 'blob:pressure', revokeUrl() {} });
+  const a = owner.retain(request('thread-a', true)), b = owner.retain(request('thread-b', true));
+  let third: ReturnType<typeof owner.retain> | undefined, same: Promise<unknown> | undefined, failure: string | null = null;
+  try {
+    await tick(); await tick(); assert.equal(raw, 2); assert.equal(owner.stats().running, 2); assert.equal(runtime.stats().running, 2);
+    a.dispose(); b.dispose();
+    third = owner.retain(request('thread-c'));
+    same = runtime.readScope('thread-a', controls.signal, async () => { proofA = true; record('same-thread-control'); return 'current'; }, false, false, false);
+    await tick();
+    assert.equal(raw, 2); assert.equal(proofA, false); assert.equal(calls.includes('thread-c'), false);
+    assert.equal(signals.get('thread-a')!.aborted, false); assert.equal(signals.get('thread-b')!.aborted, false);
+    record('pressure-while-raw-pending');
+    releases.get('thread-a')!(); releases.get('thread-b')!();
+    await same; await tick();
+    assert.equal(rawThreads.get('thread-a'), 0); assert.equal(rawThreads.get('thread-b'), 0); assert.equal(proofA, true);
+    record('raw-settled-before-foreground');
+    await settled(third.store, 'ready');
+    console.log('BOUND_PRESSURE', JSON.stringify({ calls, gets, media: owner.stats(), native: runtime.stats(), peak, peakPerThread, elapsedMs: performance.now() - started }));
+    assert.equal(third.store.state.state, 'ready', 'settled DATA holds with no visible adopters must yield to third foreground demand before their seven-second deadlines');
+    assert.deepEqual(calls, ['thread-a', 'thread-b', 'thread-c']); assert.equal(gets, 1); assert.equal(correlations, 0);
+    assert.equal(peak, 2); assert.equal(peakPerThread, 1); assert.equal(signals.get('thread-a')!.aborted, false);
+    assert.ok(performance.now() - started < 2000, 'resource priority cannot spend the old seven-second DATA wait');
+    const idle = JSON.stringify({ calls, gets }); await tick(); assert.equal(JSON.stringify({ calls, gets }), idle);
+  } catch (error) { failure = String(error); throw error; }
+  finally {
+    for (const release of releases.values()) release(); controls.abort(); a.dispose(); b.dispose(); third?.dispose(); owner.dispose();
+    await same?.catch(() => {}); await runtime.whenDrained(); runtime.dispose(); await tick();
+    const cleanup = { raw, owner: owner.stats(), runtime: runtime.stats() };
+    assert.equal(raw, 0); assert.equal(owner.stats().running, 0); assert.equal(runtime.stats().running, 0); assert.equal(runtime.stats().queued, 0); assert.equal(runtime.stats().historyReads, 0);
+    globalThis.document = savedDocument; dom.window.close();
+  }
+});
+
+
+test('foreground pressure preserves a visible same-scope proof waiter and its same-attempt promotion', async () => {
+  const h = boundResponseHarness(); let proof = false, waiterSignal: AbortSignal | undefined;
+  const request = (key: string) => { const value = h.request(); value.key = key; value.claim = key; value.adoption!.binding = key; return value; };
+  const pending = request('visible-proof-waiter'), acquire = pending.acquire;
+  pending.acquire = async (signal, optional) => { waiterSignal = signal; return acquire(signal, optional); };
+  pending.adoption!.current = () => !h.root.signal.aborted && proof;
+  const warm = h.owner.retain(pending, true, true), abandoned = h.owner.retain(request('abandoned'));
+  let foreground: ReturnType<typeof h.owner.retain> | undefined;
+  try {
+    await tick(); assert.equal(h.calls.media, 2); abandoned.dispose();
+    foreground = h.owner.retain(request('foreground')); h.resolve();
+    await settled(foreground.store, 'ready');
+    assert.equal(foreground.store.state.state, 'ready'); assert.equal(h.calls.media, 3); assert.equal(h.calls.gets, 1);
+    assert.equal(warm.store.state.state, 'loading'); assert.equal(waiterSignal!.aborted, false);
+    assert.equal(h.owner.stats().running, 1, 'visible proof waiter keeps its owned response even while current() is false');
+    warm.promote(); assert.equal(waiterSignal!.aborted, false); assert.equal(h.calls.media, 3);
+    proof = true; warm.revalidate(); await settled(warm.store, 'ready');
+    assert.equal(warm.store.state.state, 'ready'); assert.equal(h.calls.media, 3, 'same-attempt promotion cannot reacquire');
+    assert.equal(h.calls.gets, 2); assert.equal(h.calls.blobs, 2); assert.equal(abandoned.store.state.url, null);
+    const url = foreground.store.state.url, same = h.owner.retain(request('foreground'));
+    try { assert.equal(same.store.state.url, url); await tick(); assert.equal(h.calls.media, 3); assert.equal(h.calls.gets, 2); }
+    finally { same.dispose(); }
+  } finally { warm.dispose(); abandoned.dispose(); foreground?.dispose(); h.resolve(); h.owner.dispose(); }
+});

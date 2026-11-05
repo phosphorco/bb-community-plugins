@@ -154,6 +154,15 @@ queue. Once dispatched, its public response stays owned even when a card retires
 a retired card cannot fetch or publish late bytes. This does not prove cancellation
 of unobserved remote file work. Queue wait counts toward the unchanged seven-second
 media deadline. Native file navigation uses the source's explicit host.
+
+An already-dispatched, bound image response may remain data after its card leaves
+the viewport while the same physical root, runtime SDK owner and source generation
+remain live. A replacement card must prove current native placement and read its
+actually issued retained page with the same identity, target, SHA and corrections
+before a GET. No adopter means no GET. Settled response data without a visible
+adopter yields to eligible foreground image demand; visible proof waiters and
+active fetches keep their ownership. This spends the original seven-second budget,
+including correlation, and does not extend a lease or grant Open authority.
 Historical origin remains unknown unless the source recorded it.
 
 A public per-header bridge supplies the actual thread id and that surface's
