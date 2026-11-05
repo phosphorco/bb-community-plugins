@@ -267,3 +267,21 @@ live verification against the actual served frontend generation.
 Initial native-image candidates may request the existing Images Media operation while still unresolved. The source independently admits native evidence and matching file bytes within its single 3-second request, then commits its normal sparse resolution before issuing a lease. Gallery performs ordinary Resolve, Apply, and the row's actually issued retained-page Read before validating the lease fingerprint/SHA or fetching bytes. All correlation and GET/hash work stays inside the existing 7-second Media budget; starting admission grants no file Open, custom canvas, or confirmed-generation label.
 
 The existing Media owner can fill a previously unknown same-claim binding once after that correlation. Candidate-to-resolved rendering retains the same attempt and Blob owner; verified target/SHA cannot change. A settled unbound error can take a new current correlation owner for explicit Retry after reentry, without an idle retry or replacing an in-flight promoted response. Source facts can remain committed when later consumer publication fails. This route does not promise native completion within either unchanged budget.
+
+
+On initial startup with an explicit message-jump sequence and an already mapped
+native pane, route warming waits for
+the first actual foreground demand and its first fresh native-proof result.
+A complete result covering the exact message-jump sequence may omit that one
+optional route job only while the same unique physical row/list/pane is still
+foreground in the same live generation. This omits work; it transfers no proof
+or action authority. Empty demand and unmapped panes keep ordinary pre-arrival
+warming; explicit later route jumps and nearby hints keep their existing paths.
+A no-hash latest-route goal keeps the original immediate warming/sharing path.
+Incomplete or mismatching explicit-goal proof can release the original optional
+intent once; no timer or foreground retry is added. Physical,
+semantic, transport, target-set or scope retirement drops that intent rather
+than reviving it from a later response. An initial mapped pane with nonempty foreground demand can delay optional
+offscreen route warming until that first foreground result; pre-arrival timing
+is not universally unchanged. This trades optional initial warming
+latency for useful foreground precedence, without changing the history budget.
