@@ -31,7 +31,7 @@ function fixture(options: { rows?: Row[]; metadata?: ReturnType<typeof meta>; di
   return { sdk, calls };
 }
 function request(overrides: Partial<ClientFactRequest> = {}): ClientFactRequest {
-  return { version: 1, expectedSource: source, conversations: [{ id: "conversation-one", cursor: null }], discovery: null, ...overrides };
+  return { version: 2, expectedSource: source, conversations: [{ id: "conversation-one", cursor: null }], discovery: null, ...overrides };
 }
 function options() { return { source, signal: new AbortController().signal }; }
 const hasCode = (code: ClientFactReadError["code"]) => (error: unknown) => error instanceof ClientFactReadError && error.code === code;
@@ -53,10 +53,10 @@ test("one conversation retains several sessions and exact Codex checkpoint/reque
   assert.deepEqual(result.facts.filter(fact => fact.kind === "turn_checkpoint").map(fact => fact.checkpoint), [
     { issuer: "codex:turn", id: "codex-turn-one" }, { issuer: "codex:turn", id: "codex-turn-two" },
   ]);
-  assert.deepEqual(result.cursors, [{ conversation: "conversation-one", cursor: { sequence: 6, eventId: "event-6" }, pageExhausted: true }]);
+  assert.deepEqual(result.cursors, [{ conversation: "conversation-one", cursor: { sequence: 6, eventId: "event-6", eventType: "turn/completed", disposition: "fact" }, pageExhausted: true, scannedRows: 6, projectedRows: 6, outsideProjectionRows: 0 }]);
   assert.equal(result.coverage.complete, false);
   assert.deepEqual(result.budget.calls, 2);
-  assert.equal(result.budget.workRows, 1 + 3 * CLIENT_FACT_LIMITS.eventRows);
+  assert.equal(result.budget.workRows, 1 + 5 * CLIENT_FACT_LIMITS.eventRows);
   assert.deepEqual(calls[1]!.input.types, CLIENT_FACT_EVENT_TYPES);
   assert.equal(calls[1]!.input.order, "asc");
 });
@@ -71,7 +71,7 @@ test("Claude message checkpoints remain distinct from HTTP turns; content/error 
   const checkpoint = result.facts.find(fact => fact.kind === "turn_checkpoint");
   assert.ok(checkpoint?.kind === "turn_checkpoint");
   assert.deepEqual(checkpoint.checkpoint, { issuer: "claude-code:message", id: "sdk-message" });
-  assert.equal(result.coverage.claudeHttpTurn, "unsupported");
+  assert.equal(result.coverage.claudeHttpTurn, "response_identity_partial");
   assert.ok(!JSON.stringify(result).includes(rawMessage));
   assert.ok(calls.filter(call => call.method === "events").every(call => !(call.input.types as string[]).includes("client/turn/requested")));
 });
@@ -81,11 +81,11 @@ test("exact cursor anchor is checked before continuation and charged by type", a
     row("thread/identity", 7, { providerThreadId: "native-one" }),
     row("turn/input/accepted", 11, { providerThreadId: "native-one", clientRequestId: "client-one" }),
   ] });
-  const result = await readClientFactBatch(sdk, request({ conversations: [{ id: "conversation-one", cursor: { sequence: 7, eventId: "event-7" } }] }), options());
+  const result = await readClientFactBatch(sdk, request({ conversations: [{ id: "conversation-one", cursor: { sequence: 7, eventId: "event-7", eventType: "thread/identity", disposition: "fact" } }] }), options());
   assert.deepEqual(calls[1]!.input.afterSeq, "6"); assert.deepEqual(calls[1]!.input.beforeSeq, "8");
   assert.equal(calls[2]!.input.afterSeq, "7");
-  assert.equal(result.budget.workRows, 1 + 3 + 3 * CLIENT_FACT_LIMITS.eventRows);
-  assert.deepEqual(result.cursors[0]!.cursor, { sequence: 11, eventId: "event-11" });
+  assert.equal(result.budget.workRows, 1 + 5 + 5 * CLIENT_FACT_LIMITS.eventRows);
+  assert.deepEqual(result.cursors[0]!.cursor, { sequence: 11, eventId: "event-11", eventType: "turn/input/accepted", disposition: "fact" });
   assert.ok(result.facts.some(fact => fact.kind === "native_session" && fact.eventId === "event-7"), "replay anchor facts so Foundation can reject a changed immutable binding digest");
 });
 
@@ -95,7 +95,7 @@ test("epoch mismatch or missing/replaced anchor requests reset without publishin
   assert.equal(changedEpoch.resetReason, "source_epoch_mismatch"); assert.equal(mismatch.calls.length, 0);
   for (const found of [false, true]) {
     const f = fixture({ rows: found ? [row("thread/identity", 3, { providerThreadId: "native-one" })] : [] });
-    const result = await readClientFactBatch(f.sdk, request({ conversations: [{ id: "conversation-one", cursor: { sequence: 3, eventId: "other-event" } }] }), options());
+    const result = await readClientFactBatch(f.sdk, request({ conversations: [{ id: "conversation-one", cursor: { sequence: 3, eventId: "other-event", eventType: "thread/identity", disposition: "fact" } }] }), options());
     assert.equal(result.state, "reset_required"); assert.equal(result.resetReason, found ? "anchor_changed" : "anchor_missing");
     assert.deepEqual(result.facts, []); assert.deepEqual(result.cursors, []); assert.equal(f.calls.length, 2);
   }
@@ -104,7 +104,7 @@ test("epoch mismatch or missing/replaced anchor requests reset without publishin
 test("discovery remains partial and current parent/fork/owner meanings stay separate", async () => {
   const f = fixture({ discovery: [
     { ...meta("child"), parentThreadId: "display-parent", sourceThreadId: "source-fork", lifecycleOwnerThreadId: "owner" } as ReturnType<typeof meta>,
-    meta("unsupported", "other-provider"),
+    meta("response_identity_partial", "other-provider"),
   ] });
   const result = await readClientFactBatch(f.sdk, request({ conversations: [], discovery: { offset: 50 } }), options());
   assert.deepEqual(result.facts[0], { kind: "conversation", conversation: "child", provider: "codex", displayParent: "display-parent", sourceFork: "source-fork", lifecycleOwner: "owner", relationshipRevision: null });
@@ -168,8 +168,9 @@ test("contradictory native sessions and Codex checkpoint joins are conflicts", a
     await assert.rejects(readClientFactBatch(fixture({ rows }).sdk, request(), options()), hasCode("source_conflict"));
   }
   const native = "same-session";
-  const f = fixture({ rows: [row("thread/identity", 1, { providerThreadId: native }), row("thread/identity", 1, { providerThreadId: native }, "other-conversation")] });
-  await assert.rejects(readClientFactBatch(f.sdk, request({ conversations: [{ id: "conversation-one", cursor: null }, { id: "other-conversation", cursor: null }] }), options()), hasCode("source_conflict"));
+  const f = fixture({ rows: [row("thread/identity", 1, { providerThreadId: native }), { ...row("thread/identity", 1, { providerThreadId: native }, "other-conversation"), id: "other-event-1" }] });
+  const shared = await readClientFactBatch(f.sdk, request({ conversations: [{ id: "conversation-one", cursor: null }, { id: "other-conversation", cursor: null }] }), options());
+  assert.equal(shared.facts.filter(fact => fact.kind === "native_session").length, 2, "shared sessions remain diagnostic ambiguous facts, not source corruption");
 });
 
 test("short/capped/empty event pages preserve partial coverage and deterministic replay across sequence gaps", async () => {
@@ -181,7 +182,7 @@ test("short/capped/empty event pages preserve partial coverage and deterministic
   assert.equal(first.cursors[0]!.pageExhausted, false);
   assert.ok(first.coverage.reasons.includes("event_page_capped"));
   const second = await readClientFactBatch(f.sdk, request({ conversations: [{ id: "conversation-one", cursor: first.cursors[0]!.cursor }] }), options());
-  assert.deepEqual(second.cursors[0]!.cursor, { sequence: 100, eventId: "event-100" });
+  assert.deepEqual(second.cursors[0]!.cursor, { sequence: 100, eventId: "event-100", eventType: "turn/input/accepted", disposition: "fact" });
   assert.equal(second.coverage.complete, false, "filtered sequence gaps and exhausting a page establish no history completeness");
   const empty = await readClientFactBatch(f.sdk, request({ conversations: [{ id: "conversation-one", cursor: second.cursors[0]!.cursor }] }), options());
   assert.deepEqual(empty.cursors[0]!.cursor, second.cursors[0]!.cursor);
@@ -193,4 +194,72 @@ test("already-cancelled reads and oversized reset output publish nothing", async
   await assert.rejects(readClientFactBatch(f.sdk, request(), { source, signal: controller.signal }), hasCode("cancelled"));
   await assert.rejects(readClientFactBatch(f.sdk, request({ expectedSource: { ...source, epoch: "other" } }), { ...options(), limits: { outputBytes: 1 } }), hasCode("read_budget"));
   assert.equal(f.calls.length, 0);
+});
+
+function nativePayload(overrides: Record<string, unknown> = {}) {
+  return { version: 1, binding: "turn_scope", reason: null, phase: "message_start", nativeSessionId: "claude-native", messageId: "msg-native", providerRequestId: null, parentToolUseId: null, aborted: null, supersedesSdkUuids: [], ...overrides };
+}
+function nativeRow(seq: number, payload: Record<string, unknown>, state = false): Row {
+  const result = row(state ? "thread/extensionState/updated" : "item/completed", seq,
+    state ? { kind: "provider-claude-code/response-identity", payload } : { item: { type: "extension", kind: "provider-claude-code/response-identity", payload } });
+  if (state) result.scope = { kind: "thread" };
+  return result;
+}
+test("all ignored pages advance typed anchors, charge raw bodies and never export them", async () => {
+  const text = "Synthetic unrelated tool body.".repeat(100);
+  const rows = Array.from({ length: 25 }, (_, index) => row("item/completed", index + 1, { item: { type: "commandExecution", resultText: text } }));
+  const f = fixture({ metadata: meta(undefined, "claude-code"), rows });
+  const first = await readClientFactBatch(f.sdk, request(), options());
+  assert.equal(first.facts.length, 1); assert.ok(!JSON.stringify(first).includes(text));
+  assert.equal(first.cursors[0]!.scannedRows, 25); assert.equal(first.cursors[0]!.projectedRows, 0); assert.equal(first.cursors[0]!.outsideProjectionRows, 25);
+  assert.equal(first.cursors[0]!.cursor!.disposition, "outside_projection"); assert.equal(first.cursors[0]!.pageExhausted, false);
+  assert.ok(first.budget.receivedBytes > text.length * 25); assert.equal(first.budget.workRows, 126);
+  const next = await readClientFactBatch(f.sdk, request({ conversations: [{ id: "conversation-one", cursor: first.cursors[0]!.cursor }] }), options());
+  assert.deepEqual(next.cursors[0]!.cursor, first.cursors[0]!.cursor); assert.equal(next.cursors[0]!.scannedRows, 0);
+  await assert.rejects(readClientFactBatch(f.sdk, request(), { ...options(), limits: { receivedBytes: 1000 } }), (error: unknown) => error instanceof ClientFactReadError && error.code === "read_budget" && error.conversation === "conversation-one");
+  const changed = fixture({ metadata: meta(undefined, "claude-code"), rows: [nativeRow(25, nativePayload())] });
+  const reset = await readClientFactBatch(changed.sdk, request({ conversations: [{ id: "conversation-one", cursor: first.cursors[0]!.cursor }] }), options());
+  assert.equal(reset.resetReason, "anchor_changed"); assert.deepEqual(reset.facts, []); assert.deepEqual(reset.cursors, []);
+});
+
+test("bound initial/enriched identities and unbound diagnosis retain explicit distinct roles", async () => {
+  const f = fixture({ metadata: meta(undefined, "claude-code"), rows: [
+    nativeRow(1, nativePayload()),
+    nativeRow(2, nativePayload({ phase: "assistant", providerRequestId: "req-native", aborted: true, supersedesSdkUuids: ["sdk-before"] })),
+    nativeRow(3, nativePayload({ binding: "unbound", reason: "identity_capacity_exceeded", messageId: null }), true),
+  ] });
+  const value = await readClientFactBatch(f.sdk, request(), options());
+  const bound = value.facts.filter(f => f.kind === "native_response_id");
+  assert.equal(bound.length, 2); assert.equal(bound[0]!.response.id, "msg-native"); assert.equal(bound[1]!.response.id, "msg-native");
+  assert.deepEqual(bound[1]!.providerRequest, { issuer: "anthropic:request", id: "req-native" });
+  const unbound = value.facts.find(f => f.kind === "native_response_coverage")!;
+  assert.ok(!("clientTurn" in unbound)); assert.ok(!("clientRequest" in unbound));
+  assert.equal(value.cursors[0]!.projectedRows, 3);
+});
+
+test("cross-conversation sessions and response owners remain ambiguity evidence, not latest-wins", async () => {
+  const a = nativeRow(1, nativePayload()), b = { ...nativeRow(1, nativePayload()), id: "other-native-event", threadId: "other-conversation", scope: { kind: "turn" as const, turnId: "another-client-turn" } };
+  const f = fixture({ rows: [a, b] });
+  const sdk = { threads: { ...f.sdk.threads, async get(input: Parameters<ClientFactSdk["threads"]["get"]>[0]) { return meta(input.threadId, "claude-code") as Awaited<ReturnType<ClientFactSdk["threads"]["get"]>>; } } };
+  const value = await readClientFactBatch(sdk, request({ conversations: [{ id: "conversation-one", cursor: null }, { id: "other-conversation", cursor: null }] }), options());
+  assert.equal(value.facts.filter(f => f.kind === "native_response_id").length, 2);
+});
+
+test("eligible invalid payloads and wrong typed anchors fail atomically with finite context", async () => {
+  for (const payload of [nativePayload({ extra: true }), nativePayload({ version: 2 }), nativePayload({ parentToolUseId: "subagent" }), nativePayload({ supersedesSdkUuids: Array(16).fill("🧪".repeat(128)) })]) {
+    const f = fixture({ metadata: meta(undefined, "claude-code"), rows: [nativeRow(1, payload)] });
+    await assert.rejects(readClientFactBatch(f.sdk, request(), options()), (error: unknown) => error instanceof ClientFactReadError && error.code === "invalid_source" && error.conversation === "conversation-one");
+  }
+  const f = fixture({ metadata: meta(undefined, "claude-code"), rows: [nativeRow(1, nativePayload())] });
+  const value = await readClientFactBatch(f.sdk, request({ conversations: [{ id: "conversation-one", cursor: { sequence: 1, eventId: "event-1", eventType: "thread/extensionState/updated", disposition: "fact" } }] }), options());
+  assert.equal(value.resetReason, "anchor_changed"); assert.deepEqual(value.facts, []);
+});
+
+
+test("ignored rows still obey scanned immutable identity uniqueness", async () => {
+  const ordinary = row("item/completed", 1, { item: { type: "commandExecution", resultText: "unrelated" } });
+  const f = fixture({ rows: [ordinary, { ...ordinary, seq: 2 }] });
+  await assert.rejects(readClientFactBatch(f.sdk, request(), options()), hasCode("source_conflict"));
+  const anchored = fixture({ rows: [ordinary, { ...ordinary, seq: 2 }] });
+  await assert.rejects(readClientFactBatch(anchored.sdk, request({ conversations: [{ id: "conversation-one", cursor: { sequence: 1, eventId: "event-1", eventType: "item/completed", disposition: "outside_projection" } }] }), options()), hasCode("source_conflict"));
 });

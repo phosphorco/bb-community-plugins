@@ -1,0 +1,4603 @@
+{
+  "version": 1,
+  "status": "Authored contract vectors; not an actual V2 producer/live receipt.",
+  "schema": "client-facts-v2.schema.json",
+  "cases": [
+    {
+      "id": "initial-known-request",
+      "target": "request",
+      "valid": true,
+      "value": {
+        "version": 2,
+        "expectedSource": {
+          "namespace": "fixture-client",
+          "epoch": "fixture-epoch"
+        },
+        "conversations": [
+          {
+            "id": "thread-claude",
+            "cursor": null
+          }
+        ],
+        "discovery": null
+      }
+    },
+    {
+      "id": "discovery-only-request",
+      "target": "request",
+      "valid": true,
+      "value": {
+        "version": 2,
+        "expectedSource": {
+          "namespace": "fixture-client",
+          "epoch": "fixture-epoch"
+        },
+        "conversations": [],
+        "discovery": {
+          "offset": 0
+        }
+      }
+    },
+    {
+      "id": "anchored-request",
+      "target": "request",
+      "valid": true,
+      "value": {
+        "version": 2,
+        "expectedSource": {
+          "namespace": "fixture-client",
+          "epoch": "fixture-epoch"
+        },
+        "conversations": [
+          {
+            "id": "thread-claude",
+            "cursor": {
+              "sequence": 66,
+              "eventId": "accepted-claude-66",
+              "eventType": "turn/input/accepted",
+              "disposition": "fact"
+            }
+          }
+        ],
+        "discovery": null
+      }
+    },
+    {
+      "id": "empty-valid-batch",
+      "target": "batch",
+      "valid": true,
+      "value": {
+        "version": 2,
+        "dataset": "client-conversation-v2",
+        "source": {
+          "namespace": "fixture-client",
+          "epoch": "fixture-epoch"
+        },
+        "state": "partial",
+        "resetReason": null,
+        "facts": [],
+        "cursors": [],
+        "discovery": null,
+        "coverage": {
+          "complete": false,
+          "reasons": [
+            "historical_parentage_unknown",
+            "mutable_discovery",
+            "source_reset_not_fully_detectable"
+          ],
+          "claudeHttpTurn": "response_identity_partial"
+        },
+        "budget": {
+          "calls": 0,
+          "workRows": 0,
+          "receivedBytes": 0
+        }
+      }
+    },
+    {
+      "id": "normal-claude-start-and-enrichment",
+      "target": "pair",
+      "valid": true,
+      "value": {
+        "version": 2,
+        "dataset": "client-conversation-v2",
+        "source": {
+          "namespace": "fixture-client",
+          "epoch": "fixture-epoch"
+        },
+        "state": "partial",
+        "resetReason": null,
+        "facts": [
+          {
+            "kind": "conversation",
+            "conversation": "thread-claude",
+            "provider": "claude-code",
+            "displayParent": null,
+            "sourceFork": null,
+            "lifecycleOwner": null,
+            "relationshipRevision": null
+          },
+          {
+            "kind": "turn_input",
+            "conversation": "thread-claude",
+            "eventId": "accepted-claude-66",
+            "sequence": 66,
+            "clientTurn": "bb-claude-t3",
+            "clientRequest": "canonical-claude-request",
+            "session": {
+              "issuer": "claude-code:header",
+              "id": "native-claude-session"
+            }
+          },
+          {
+            "kind": "native_response_id",
+            "conversation": "thread-claude",
+            "eventId": "response-claude-67",
+            "sequence": 67,
+            "session": {
+              "issuer": "claude-code:header",
+              "id": "native-claude-session"
+            },
+            "clientTurn": "bb-claude-t3",
+            "response": {
+              "issuer": "anthropic:message",
+              "id": "msg_actual_http"
+            },
+            "providerRequest": null,
+            "phase": "message_start",
+            "aborted": null,
+            "supersedesSdkUuids": []
+          },
+          {
+            "kind": "native_response_id",
+            "conversation": "thread-claude",
+            "eventId": "response-claude-68",
+            "sequence": 68,
+            "session": {
+              "issuer": "claude-code:header",
+              "id": "native-claude-session"
+            },
+            "clientTurn": "bb-claude-t3",
+            "response": {
+              "issuer": "anthropic:message",
+              "id": "msg_actual_http"
+            },
+            "providerRequest": {
+              "issuer": "anthropic:request",
+              "id": "req_actual_http"
+            },
+            "phase": "assistant",
+            "aborted": null,
+            "supersedesSdkUuids": []
+          }
+        ],
+        "cursors": [
+          {
+            "conversation": "thread-claude",
+            "cursor": {
+              "sequence": 68,
+              "eventId": "response-claude-68",
+              "eventType": "item/completed",
+              "disposition": "fact"
+            },
+            "pageExhausted": true,
+            "scannedRows": 3,
+            "projectedRows": 3,
+            "outsideProjectionRows": 0
+          }
+        ],
+        "discovery": null,
+        "coverage": {
+          "complete": false,
+          "reasons": [
+            "historical_parentage_unknown",
+            "mutable_discovery",
+            "source_reset_not_fully_detectable"
+          ],
+          "claudeHttpTurn": "response_identity_partial"
+        },
+        "budget": {
+          "calls": 2,
+          "workRows": 126,
+          "receivedBytes": 1000
+        }
+      },
+      "request": {
+        "version": 2,
+        "expectedSource": {
+          "namespace": "fixture-client",
+          "epoch": "fixture-epoch"
+        },
+        "conversations": [
+          {
+            "id": "thread-claude",
+            "cursor": null
+          }
+        ],
+        "discovery": null
+      }
+    },
+    {
+      "id": "all-ignored-forward-page-retains-common-anchor",
+      "target": "pair",
+      "valid": true,
+      "value": {
+        "version": 2,
+        "dataset": "client-conversation-v2",
+        "source": {
+          "namespace": "fixture-client",
+          "epoch": "fixture-epoch"
+        },
+        "state": "partial",
+        "resetReason": null,
+        "facts": [
+          {
+            "kind": "conversation",
+            "conversation": "thread-claude",
+            "provider": "claude-code",
+            "displayParent": null,
+            "sourceFork": null,
+            "lifecycleOwner": null,
+            "relationshipRevision": null
+          },
+          {
+            "kind": "turn_input",
+            "conversation": "thread-claude",
+            "eventId": "accepted-claude-66",
+            "sequence": 66,
+            "clientTurn": "bb-claude-t3",
+            "clientRequest": "canonical-claude-request",
+            "session": {
+              "issuer": "claude-code:header",
+              "id": "native-claude-session"
+            }
+          }
+        ],
+        "cursors": [
+          {
+            "conversation": "thread-claude",
+            "cursor": {
+              "sequence": 91,
+              "eventId": "ordinary-tool-91",
+              "eventType": "item/completed",
+              "disposition": "outside_projection"
+            },
+            "pageExhausted": false,
+            "scannedRows": 25,
+            "projectedRows": 0,
+            "outsideProjectionRows": 25
+          }
+        ],
+        "discovery": null,
+        "coverage": {
+          "complete": false,
+          "reasons": [
+            "historical_parentage_unknown",
+            "mutable_discovery",
+            "source_reset_not_fully_detectable"
+          ],
+          "claudeHttpTurn": "response_identity_partial"
+        },
+        "budget": {
+          "calls": 3,
+          "workRows": 126,
+          "receivedBytes": 1000
+        }
+      },
+      "request": {
+        "version": 2,
+        "expectedSource": {
+          "namespace": "fixture-client",
+          "epoch": "fixture-epoch"
+        },
+        "conversations": [
+          {
+            "id": "thread-claude",
+            "cursor": {
+              "sequence": 66,
+              "eventId": "accepted-claude-66",
+              "eventType": "turn/input/accepted",
+              "disposition": "fact"
+            }
+          }
+        ],
+        "discovery": null
+      }
+    },
+    {
+      "id": "anchor-only-no-new-events",
+      "target": "pair",
+      "valid": true,
+      "value": {
+        "version": 2,
+        "dataset": "client-conversation-v2",
+        "source": {
+          "namespace": "fixture-client",
+          "epoch": "fixture-epoch"
+        },
+        "state": "partial",
+        "resetReason": null,
+        "facts": [
+          {
+            "kind": "conversation",
+            "conversation": "thread-claude",
+            "provider": "claude-code",
+            "displayParent": null,
+            "sourceFork": null,
+            "lifecycleOwner": null,
+            "relationshipRevision": null
+          },
+          {
+            "kind": "turn_input",
+            "conversation": "thread-claude",
+            "eventId": "accepted-claude-66",
+            "sequence": 66,
+            "clientTurn": "bb-claude-t3",
+            "clientRequest": "canonical-claude-request",
+            "session": {
+              "issuer": "claude-code:header",
+              "id": "native-claude-session"
+            }
+          }
+        ],
+        "cursors": [
+          {
+            "conversation": "thread-claude",
+            "cursor": {
+              "sequence": 66,
+              "eventId": "accepted-claude-66",
+              "eventType": "turn/input/accepted",
+              "disposition": "fact"
+            },
+            "pageExhausted": true,
+            "scannedRows": 0,
+            "projectedRows": 0,
+            "outsideProjectionRows": 0
+          }
+        ],
+        "discovery": null,
+        "coverage": {
+          "complete": false,
+          "reasons": [
+            "historical_parentage_unknown",
+            "mutable_discovery",
+            "source_reset_not_fully_detectable"
+          ],
+          "claudeHttpTurn": "response_identity_partial"
+        },
+        "budget": {
+          "calls": 3,
+          "workRows": 126,
+          "receivedBytes": 1000
+        }
+      },
+      "request": {
+        "version": 2,
+        "expectedSource": {
+          "namespace": "fixture-client",
+          "epoch": "fixture-epoch"
+        },
+        "conversations": [
+          {
+            "id": "thread-claude",
+            "cursor": {
+              "sequence": 66,
+              "eventId": "accepted-claude-66",
+              "eventType": "turn/input/accepted",
+              "disposition": "fact"
+            }
+          }
+        ],
+        "discovery": null
+      }
+    },
+    {
+      "id": "unbound-response-is-not-turn-fact",
+      "target": "pair",
+      "valid": true,
+      "value": {
+        "version": 2,
+        "dataset": "client-conversation-v2",
+        "source": {
+          "namespace": "fixture-client",
+          "epoch": "fixture-epoch"
+        },
+        "state": "partial",
+        "resetReason": null,
+        "facts": [
+          {
+            "kind": "conversation",
+            "conversation": "thread-claude",
+            "provider": "claude-code",
+            "displayParent": null,
+            "sourceFork": null,
+            "lifecycleOwner": null,
+            "relationshipRevision": null
+          },
+          {
+            "kind": "native_response_coverage",
+            "conversation": "thread-claude",
+            "eventId": "unbound-claude-72",
+            "sequence": 72,
+            "session": {
+              "issuer": "claude-code:header",
+              "id": "native-claude-session"
+            },
+            "response": {
+              "issuer": "anthropic:message",
+              "id": "msg_unbound"
+            },
+            "providerRequest": null,
+            "reason": "prior_turn_response",
+            "phase": "assistant",
+            "parentToolUseId": null,
+            "aborted": true,
+            "supersedesSdkUuids": []
+          }
+        ],
+        "cursors": [
+          {
+            "conversation": "thread-claude",
+            "cursor": {
+              "sequence": 72,
+              "eventId": "unbound-claude-72",
+              "eventType": "thread/extensionState/updated",
+              "disposition": "fact"
+            },
+            "pageExhausted": true,
+            "scannedRows": 1,
+            "projectedRows": 1,
+            "outsideProjectionRows": 0
+          }
+        ],
+        "discovery": null,
+        "coverage": {
+          "complete": false,
+          "reasons": [
+            "historical_parentage_unknown",
+            "mutable_discovery",
+            "source_reset_not_fully_detectable"
+          ],
+          "claudeHttpTurn": "response_identity_partial"
+        },
+        "budget": {
+          "calls": 2,
+          "workRows": 126,
+          "receivedBytes": 1000
+        }
+      },
+      "request": {
+        "version": 2,
+        "expectedSource": {
+          "namespace": "fixture-client",
+          "epoch": "fixture-epoch"
+        },
+        "conversations": [
+          {
+            "id": "thread-claude",
+            "cursor": null
+          }
+        ],
+        "discovery": null
+      }
+    },
+    {
+      "id": "source-epoch-reset-not-admission",
+      "target": "pair",
+      "valid": true,
+      "value": {
+        "version": 2,
+        "dataset": "client-conversation-v2",
+        "source": {
+          "namespace": "fixture-client",
+          "epoch": "restored-epoch"
+        },
+        "state": "reset_required",
+        "resetReason": "source_epoch_mismatch",
+        "facts": [],
+        "cursors": [],
+        "discovery": null,
+        "coverage": {
+          "complete": false,
+          "reasons": [
+            "historical_parentage_unknown",
+            "mutable_discovery",
+            "source_epoch_mismatch",
+            "source_reset_not_fully_detectable"
+          ],
+          "claudeHttpTurn": "response_identity_partial"
+        },
+        "budget": {
+          "calls": 0,
+          "workRows": 0,
+          "receivedBytes": 0
+        }
+      },
+      "request": {
+        "version": 2,
+        "expectedSource": {
+          "namespace": "fixture-client",
+          "epoch": "fixture-epoch"
+        },
+        "conversations": [
+          {
+            "id": "thread-claude",
+            "cursor": null
+          }
+        ],
+        "discovery": null
+      }
+    },
+    {
+      "id": "approved-native-bound-payload",
+      "target": "nativeItem",
+      "valid": true,
+      "value": {
+        "version": 1,
+        "binding": "turn_scope",
+        "reason": null,
+        "phase": "message_start",
+        "nativeSessionId": "native-claude-session",
+        "messageId": "msg_actual_http",
+        "providerRequestId": null,
+        "parentToolUseId": null,
+        "aborted": null,
+        "supersedesSdkUuids": []
+      }
+    },
+    {
+      "id": "approved-native-unbound-payload",
+      "target": "nativeState",
+      "valid": true,
+      "value": {
+        "version": 1,
+        "binding": "unbound",
+        "reason": "identity_capacity_exceeded",
+        "phase": "message_start",
+        "nativeSessionId": "native-claude-session",
+        "messageId": null,
+        "providerRequestId": null,
+        "parentToolUseId": null,
+        "aborted": null,
+        "supersedesSdkUuids": []
+      }
+    },
+    {
+      "id": "unknown-key",
+      "target": "request",
+      "valid": false,
+      "rejectAt": "schema",
+      "value": {
+        "version": 2,
+        "expectedSource": {
+          "namespace": "fixture-client",
+          "epoch": "fixture-epoch"
+        },
+        "conversations": [
+          {
+            "id": "thread-claude",
+            "cursor": null
+          }
+        ],
+        "discovery": null,
+        "surprise": true
+      }
+    },
+    {
+      "id": "v1-request",
+      "target": "request",
+      "valid": false,
+      "rejectAt": "schema",
+      "value": {
+        "version": 1,
+        "expectedSource": {
+          "namespace": "fixture-client",
+          "epoch": "fixture-epoch"
+        },
+        "conversations": [
+          {
+            "id": "thread-claude",
+            "cursor": null
+          }
+        ],
+        "discovery": null
+      }
+    },
+    {
+      "id": "null-expected-source",
+      "target": "request",
+      "valid": false,
+      "rejectAt": "schema",
+      "value": {
+        "version": 2,
+        "expectedSource": null,
+        "conversations": [
+          {
+            "id": "thread-claude",
+            "cursor": null
+          }
+        ],
+        "discovery": null
+      }
+    },
+    {
+      "id": "duplicate-conversation",
+      "target": "request",
+      "valid": false,
+      "rejectAt": "semantic",
+      "value": {
+        "version": 2,
+        "expectedSource": {
+          "namespace": "fixture-client",
+          "epoch": "fixture-epoch"
+        },
+        "conversations": [
+          {
+            "id": "thread-claude",
+            "cursor": null
+          },
+          {
+            "id": "thread-claude",
+            "cursor": null
+          }
+        ],
+        "discovery": null
+      }
+    },
+    {
+      "id": "lone-surrogate",
+      "target": "request",
+      "valid": false,
+      "rejectAt": "schema",
+      "value": {
+        "version": 2,
+        "expectedSource": {
+          "namespace": "bad-\ud800",
+          "epoch": "fixture-epoch"
+        },
+        "conversations": [
+          {
+            "id": "thread-claude",
+            "cursor": null
+          }
+        ],
+        "discovery": null
+      }
+    },
+    {
+      "id": "utf16-unit-overflow",
+      "target": "request",
+      "valid": false,
+      "rejectAt": "schema",
+      "value": {
+        "version": 2,
+        "expectedSource": {
+          "namespace": "\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea",
+          "epoch": "fixture-epoch"
+        },
+        "conversations": [
+          {
+            "id": "thread-claude",
+            "cursor": null
+          }
+        ],
+        "discovery": null
+      }
+    },
+    {
+      "id": "valid-non-bmp-at-256-units",
+      "target": "request",
+      "valid": true,
+      "value": {
+        "version": 2,
+        "expectedSource": {
+          "namespace": "\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea",
+          "epoch": "fixture-epoch"
+        },
+        "conversations": [
+          {
+            "id": "thread-claude",
+            "cursor": null
+          }
+        ],
+        "discovery": null
+      }
+    },
+    {
+      "id": "sdk-checkpoint-is-not-http-message",
+      "target": "batch",
+      "valid": false,
+      "rejectAt": "schema",
+      "value": {
+        "version": 2,
+        "dataset": "client-conversation-v2",
+        "source": {
+          "namespace": "fixture-client",
+          "epoch": "fixture-epoch"
+        },
+        "state": "partial",
+        "resetReason": null,
+        "facts": [
+          {
+            "kind": "conversation",
+            "conversation": "thread-claude",
+            "provider": "claude-code",
+            "displayParent": null,
+            "sourceFork": null,
+            "lifecycleOwner": null,
+            "relationshipRevision": null
+          },
+          {
+            "kind": "turn_input",
+            "conversation": "thread-claude",
+            "eventId": "accepted-claude-66",
+            "sequence": 66,
+            "clientTurn": "bb-claude-t3",
+            "clientRequest": "canonical-claude-request",
+            "session": {
+              "issuer": "claude-code:header",
+              "id": "native-claude-session"
+            }
+          },
+          {
+            "kind": "native_response_id",
+            "conversation": "thread-claude",
+            "eventId": "response-claude-67",
+            "sequence": 67,
+            "session": {
+              "issuer": "claude-code:header",
+              "id": "native-claude-session"
+            },
+            "clientTurn": "bb-claude-t3",
+            "response": {
+              "issuer": "claude-code:message",
+              "id": "msg_actual_http"
+            },
+            "providerRequest": null,
+            "phase": "message_start",
+            "aborted": null,
+            "supersedesSdkUuids": []
+          },
+          {
+            "kind": "native_response_id",
+            "conversation": "thread-claude",
+            "eventId": "response-claude-68",
+            "sequence": 68,
+            "session": {
+              "issuer": "claude-code:header",
+              "id": "native-claude-session"
+            },
+            "clientTurn": "bb-claude-t3",
+            "response": {
+              "issuer": "anthropic:message",
+              "id": "msg_actual_http"
+            },
+            "providerRequest": {
+              "issuer": "anthropic:request",
+              "id": "req_actual_http"
+            },
+            "phase": "assistant",
+            "aborted": null,
+            "supersedesSdkUuids": []
+          }
+        ],
+        "cursors": [
+          {
+            "conversation": "thread-claude",
+            "cursor": {
+              "sequence": 68,
+              "eventId": "response-claude-68",
+              "eventType": "item/completed",
+              "disposition": "fact"
+            },
+            "pageExhausted": true,
+            "scannedRows": 3,
+            "projectedRows": 3,
+            "outsideProjectionRows": 0
+          }
+        ],
+        "discovery": null,
+        "coverage": {
+          "complete": false,
+          "reasons": [
+            "historical_parentage_unknown",
+            "mutable_discovery",
+            "source_reset_not_fully_detectable"
+          ],
+          "claudeHttpTurn": "response_identity_partial"
+        },
+        "budget": {
+          "calls": 2,
+          "workRows": 126,
+          "receivedBytes": 1000
+        }
+      }
+    },
+    {
+      "id": "no-invented-single-request-on-response",
+      "target": "batch",
+      "valid": false,
+      "rejectAt": "schema",
+      "value": {
+        "version": 2,
+        "dataset": "client-conversation-v2",
+        "source": {
+          "namespace": "fixture-client",
+          "epoch": "fixture-epoch"
+        },
+        "state": "partial",
+        "resetReason": null,
+        "facts": [
+          {
+            "kind": "conversation",
+            "conversation": "thread-claude",
+            "provider": "claude-code",
+            "displayParent": null,
+            "sourceFork": null,
+            "lifecycleOwner": null,
+            "relationshipRevision": null
+          },
+          {
+            "kind": "turn_input",
+            "conversation": "thread-claude",
+            "eventId": "accepted-claude-66",
+            "sequence": 66,
+            "clientTurn": "bb-claude-t3",
+            "clientRequest": "canonical-claude-request",
+            "session": {
+              "issuer": "claude-code:header",
+              "id": "native-claude-session"
+            }
+          },
+          {
+            "kind": "native_response_id",
+            "conversation": "thread-claude",
+            "eventId": "response-claude-67",
+            "sequence": 67,
+            "session": {
+              "issuer": "claude-code:header",
+              "id": "native-claude-session"
+            },
+            "clientTurn": "bb-claude-t3",
+            "response": {
+              "issuer": "anthropic:message",
+              "id": "msg_actual_http"
+            },
+            "providerRequest": null,
+            "phase": "message_start",
+            "aborted": null,
+            "supersedesSdkUuids": [],
+            "clientRequest": "latest-request"
+          },
+          {
+            "kind": "native_response_id",
+            "conversation": "thread-claude",
+            "eventId": "response-claude-68",
+            "sequence": 68,
+            "session": {
+              "issuer": "claude-code:header",
+              "id": "native-claude-session"
+            },
+            "clientTurn": "bb-claude-t3",
+            "response": {
+              "issuer": "anthropic:message",
+              "id": "msg_actual_http"
+            },
+            "providerRequest": {
+              "issuer": "anthropic:request",
+              "id": "req_actual_http"
+            },
+            "phase": "assistant",
+            "aborted": null,
+            "supersedesSdkUuids": []
+          }
+        ],
+        "cursors": [
+          {
+            "conversation": "thread-claude",
+            "cursor": {
+              "sequence": 68,
+              "eventId": "response-claude-68",
+              "eventType": "item/completed",
+              "disposition": "fact"
+            },
+            "pageExhausted": true,
+            "scannedRows": 3,
+            "projectedRows": 3,
+            "outsideProjectionRows": 0
+          }
+        ],
+        "discovery": null,
+        "coverage": {
+          "complete": false,
+          "reasons": [
+            "historical_parentage_unknown",
+            "mutable_discovery",
+            "source_reset_not_fully_detectable"
+          ],
+          "claudeHttpTurn": "response_identity_partial"
+        },
+        "budget": {
+          "calls": 2,
+          "workRows": 126,
+          "receivedBytes": 1000
+        }
+      }
+    },
+    {
+      "id": "unbound-must-not-gain-turn",
+      "target": "batch",
+      "valid": false,
+      "rejectAt": "schema",
+      "value": {
+        "version": 2,
+        "dataset": "client-conversation-v2",
+        "source": {
+          "namespace": "fixture-client",
+          "epoch": "fixture-epoch"
+        },
+        "state": "partial",
+        "resetReason": null,
+        "facts": [
+          {
+            "kind": "conversation",
+            "conversation": "thread-claude",
+            "provider": "claude-code",
+            "displayParent": null,
+            "sourceFork": null,
+            "lifecycleOwner": null,
+            "relationshipRevision": null
+          },
+          {
+            "kind": "native_response_coverage",
+            "conversation": "thread-claude",
+            "eventId": "unbound-claude-72",
+            "sequence": 72,
+            "session": {
+              "issuer": "claude-code:header",
+              "id": "native-claude-session"
+            },
+            "response": {
+              "issuer": "anthropic:message",
+              "id": "msg_unbound"
+            },
+            "providerRequest": null,
+            "reason": "prior_turn_response",
+            "phase": "assistant",
+            "parentToolUseId": null,
+            "aborted": true,
+            "supersedesSdkUuids": [],
+            "clientTurn": "guessed-turn"
+          }
+        ],
+        "cursors": [
+          {
+            "conversation": "thread-claude",
+            "cursor": {
+              "sequence": 72,
+              "eventId": "unbound-claude-72",
+              "eventType": "thread/extensionState/updated",
+              "disposition": "fact"
+            },
+            "pageExhausted": true,
+            "scannedRows": 1,
+            "projectedRows": 1,
+            "outsideProjectionRows": 0
+          }
+        ],
+        "discovery": null,
+        "coverage": {
+          "complete": false,
+          "reasons": [
+            "historical_parentage_unknown",
+            "mutable_discovery",
+            "source_reset_not_fully_detectable"
+          ],
+          "claudeHttpTurn": "response_identity_partial"
+        },
+        "budget": {
+          "calls": 2,
+          "workRows": 126,
+          "receivedBytes": 1000
+        }
+      }
+    },
+    {
+      "id": "scan-count-sum",
+      "target": "batch",
+      "valid": false,
+      "rejectAt": "semantic",
+      "value": {
+        "version": 2,
+        "dataset": "client-conversation-v2",
+        "source": {
+          "namespace": "fixture-client",
+          "epoch": "fixture-epoch"
+        },
+        "state": "partial",
+        "resetReason": null,
+        "facts": [
+          {
+            "kind": "conversation",
+            "conversation": "thread-claude",
+            "provider": "claude-code",
+            "displayParent": null,
+            "sourceFork": null,
+            "lifecycleOwner": null,
+            "relationshipRevision": null
+          },
+          {
+            "kind": "turn_input",
+            "conversation": "thread-claude",
+            "eventId": "accepted-claude-66",
+            "sequence": 66,
+            "clientTurn": "bb-claude-t3",
+            "clientRequest": "canonical-claude-request",
+            "session": {
+              "issuer": "claude-code:header",
+              "id": "native-claude-session"
+            }
+          },
+          {
+            "kind": "native_response_id",
+            "conversation": "thread-claude",
+            "eventId": "response-claude-67",
+            "sequence": 67,
+            "session": {
+              "issuer": "claude-code:header",
+              "id": "native-claude-session"
+            },
+            "clientTurn": "bb-claude-t3",
+            "response": {
+              "issuer": "anthropic:message",
+              "id": "msg_actual_http"
+            },
+            "providerRequest": null,
+            "phase": "message_start",
+            "aborted": null,
+            "supersedesSdkUuids": []
+          },
+          {
+            "kind": "native_response_id",
+            "conversation": "thread-claude",
+            "eventId": "response-claude-68",
+            "sequence": 68,
+            "session": {
+              "issuer": "claude-code:header",
+              "id": "native-claude-session"
+            },
+            "clientTurn": "bb-claude-t3",
+            "response": {
+              "issuer": "anthropic:message",
+              "id": "msg_actual_http"
+            },
+            "providerRequest": {
+              "issuer": "anthropic:request",
+              "id": "req_actual_http"
+            },
+            "phase": "assistant",
+            "aborted": null,
+            "supersedesSdkUuids": []
+          }
+        ],
+        "cursors": [
+          {
+            "conversation": "thread-claude",
+            "cursor": {
+              "sequence": 68,
+              "eventId": "response-claude-68",
+              "eventType": "item/completed",
+              "disposition": "fact"
+            },
+            "pageExhausted": true,
+            "scannedRows": 4,
+            "projectedRows": 3,
+            "outsideProjectionRows": 0
+          }
+        ],
+        "discovery": null,
+        "coverage": {
+          "complete": false,
+          "reasons": [
+            "historical_parentage_unknown",
+            "mutable_discovery",
+            "source_reset_not_fully_detectable"
+          ],
+          "claudeHttpTurn": "response_identity_partial"
+        },
+        "budget": {
+          "calls": 2,
+          "workRows": 126,
+          "receivedBytes": 1000
+        }
+      }
+    },
+    {
+      "id": "outside-cursor-cannot-reference-fact",
+      "target": "batch",
+      "valid": false,
+      "rejectAt": "semantic",
+      "value": {
+        "version": 2,
+        "dataset": "client-conversation-v2",
+        "source": {
+          "namespace": "fixture-client",
+          "epoch": "fixture-epoch"
+        },
+        "state": "partial",
+        "resetReason": null,
+        "facts": [
+          {
+            "kind": "conversation",
+            "conversation": "thread-claude",
+            "provider": "claude-code",
+            "displayParent": null,
+            "sourceFork": null,
+            "lifecycleOwner": null,
+            "relationshipRevision": null
+          },
+          {
+            "kind": "turn_input",
+            "conversation": "thread-claude",
+            "eventId": "accepted-claude-66",
+            "sequence": 66,
+            "clientTurn": "bb-claude-t3",
+            "clientRequest": "canonical-claude-request",
+            "session": {
+              "issuer": "claude-code:header",
+              "id": "native-claude-session"
+            }
+          },
+          {
+            "kind": "native_response_id",
+            "conversation": "thread-claude",
+            "eventId": "response-claude-67",
+            "sequence": 67,
+            "session": {
+              "issuer": "claude-code:header",
+              "id": "native-claude-session"
+            },
+            "clientTurn": "bb-claude-t3",
+            "response": {
+              "issuer": "anthropic:message",
+              "id": "msg_actual_http"
+            },
+            "providerRequest": null,
+            "phase": "message_start",
+            "aborted": null,
+            "supersedesSdkUuids": []
+          },
+          {
+            "kind": "native_response_id",
+            "conversation": "thread-claude",
+            "eventId": "response-claude-68",
+            "sequence": 68,
+            "session": {
+              "issuer": "claude-code:header",
+              "id": "native-claude-session"
+            },
+            "clientTurn": "bb-claude-t3",
+            "response": {
+              "issuer": "anthropic:message",
+              "id": "msg_actual_http"
+            },
+            "providerRequest": {
+              "issuer": "anthropic:request",
+              "id": "req_actual_http"
+            },
+            "phase": "assistant",
+            "aborted": null,
+            "supersedesSdkUuids": []
+          }
+        ],
+        "cursors": [
+          {
+            "conversation": "thread-claude",
+            "cursor": {
+              "sequence": 68,
+              "eventId": "response-claude-68",
+              "eventType": "item/completed",
+              "disposition": "outside_projection"
+            },
+            "pageExhausted": true,
+            "scannedRows": 3,
+            "projectedRows": 3,
+            "outsideProjectionRows": 0
+          }
+        ],
+        "discovery": null,
+        "coverage": {
+          "complete": false,
+          "reasons": [
+            "historical_parentage_unknown",
+            "mutable_discovery",
+            "source_reset_not_fully_detectable"
+          ],
+          "claudeHttpTurn": "response_identity_partial"
+        },
+        "budget": {
+          "calls": 2,
+          "workRows": 126,
+          "receivedBytes": 1000
+        }
+      }
+    },
+    {
+      "id": "complete-history-forbidden",
+      "target": "batch",
+      "valid": false,
+      "rejectAt": "schema",
+      "value": {
+        "version": 2,
+        "dataset": "client-conversation-v2",
+        "source": {
+          "namespace": "fixture-client",
+          "epoch": "fixture-epoch"
+        },
+        "state": "partial",
+        "resetReason": null,
+        "facts": [
+          {
+            "kind": "conversation",
+            "conversation": "thread-claude",
+            "provider": "claude-code",
+            "displayParent": null,
+            "sourceFork": null,
+            "lifecycleOwner": null,
+            "relationshipRevision": null
+          },
+          {
+            "kind": "turn_input",
+            "conversation": "thread-claude",
+            "eventId": "accepted-claude-66",
+            "sequence": 66,
+            "clientTurn": "bb-claude-t3",
+            "clientRequest": "canonical-claude-request",
+            "session": {
+              "issuer": "claude-code:header",
+              "id": "native-claude-session"
+            }
+          },
+          {
+            "kind": "native_response_id",
+            "conversation": "thread-claude",
+            "eventId": "response-claude-67",
+            "sequence": 67,
+            "session": {
+              "issuer": "claude-code:header",
+              "id": "native-claude-session"
+            },
+            "clientTurn": "bb-claude-t3",
+            "response": {
+              "issuer": "anthropic:message",
+              "id": "msg_actual_http"
+            },
+            "providerRequest": null,
+            "phase": "message_start",
+            "aborted": null,
+            "supersedesSdkUuids": []
+          },
+          {
+            "kind": "native_response_id",
+            "conversation": "thread-claude",
+            "eventId": "response-claude-68",
+            "sequence": 68,
+            "session": {
+              "issuer": "claude-code:header",
+              "id": "native-claude-session"
+            },
+            "clientTurn": "bb-claude-t3",
+            "response": {
+              "issuer": "anthropic:message",
+              "id": "msg_actual_http"
+            },
+            "providerRequest": {
+              "issuer": "anthropic:request",
+              "id": "req_actual_http"
+            },
+            "phase": "assistant",
+            "aborted": null,
+            "supersedesSdkUuids": []
+          }
+        ],
+        "cursors": [
+          {
+            "conversation": "thread-claude",
+            "cursor": {
+              "sequence": 68,
+              "eventId": "response-claude-68",
+              "eventType": "item/completed",
+              "disposition": "fact"
+            },
+            "pageExhausted": true,
+            "scannedRows": 3,
+            "projectedRows": 3,
+            "outsideProjectionRows": 0
+          }
+        ],
+        "discovery": null,
+        "coverage": {
+          "complete": true,
+          "reasons": [
+            "historical_parentage_unknown",
+            "mutable_discovery",
+            "source_reset_not_fully_detectable"
+          ],
+          "claudeHttpTurn": "response_identity_partial"
+        },
+        "budget": {
+          "calls": 2,
+          "workRows": 126,
+          "receivedBytes": 1000
+        }
+      }
+    },
+    {
+      "id": "unknown-source-coverage-code",
+      "target": "batch",
+      "valid": false,
+      "rejectAt": "schema",
+      "value": {
+        "version": 2,
+        "dataset": "client-conversation-v2",
+        "source": {
+          "namespace": "fixture-client",
+          "epoch": "fixture-epoch"
+        },
+        "state": "partial",
+        "resetReason": null,
+        "facts": [
+          {
+            "kind": "conversation",
+            "conversation": "thread-claude",
+            "provider": "claude-code",
+            "displayParent": null,
+            "sourceFork": null,
+            "lifecycleOwner": null,
+            "relationshipRevision": null
+          },
+          {
+            "kind": "turn_input",
+            "conversation": "thread-claude",
+            "eventId": "accepted-claude-66",
+            "sequence": 66,
+            "clientTurn": "bb-claude-t3",
+            "clientRequest": "canonical-claude-request",
+            "session": {
+              "issuer": "claude-code:header",
+              "id": "native-claude-session"
+            }
+          },
+          {
+            "kind": "native_response_id",
+            "conversation": "thread-claude",
+            "eventId": "response-claude-67",
+            "sequence": 67,
+            "session": {
+              "issuer": "claude-code:header",
+              "id": "native-claude-session"
+            },
+            "clientTurn": "bb-claude-t3",
+            "response": {
+              "issuer": "anthropic:message",
+              "id": "msg_actual_http"
+            },
+            "providerRequest": null,
+            "phase": "message_start",
+            "aborted": null,
+            "supersedesSdkUuids": []
+          },
+          {
+            "kind": "native_response_id",
+            "conversation": "thread-claude",
+            "eventId": "response-claude-68",
+            "sequence": 68,
+            "session": {
+              "issuer": "claude-code:header",
+              "id": "native-claude-session"
+            },
+            "clientTurn": "bb-claude-t3",
+            "response": {
+              "issuer": "anthropic:message",
+              "id": "msg_actual_http"
+            },
+            "providerRequest": {
+              "issuer": "anthropic:request",
+              "id": "req_actual_http"
+            },
+            "phase": "assistant",
+            "aborted": null,
+            "supersedesSdkUuids": []
+          }
+        ],
+        "cursors": [
+          {
+            "conversation": "thread-claude",
+            "cursor": {
+              "sequence": 68,
+              "eventId": "response-claude-68",
+              "eventType": "item/completed",
+              "disposition": "fact"
+            },
+            "pageExhausted": true,
+            "scannedRows": 3,
+            "projectedRows": 3,
+            "outsideProjectionRows": 0
+          }
+        ],
+        "discovery": null,
+        "coverage": {
+          "complete": false,
+          "reasons": [
+            "anything"
+          ],
+          "claudeHttpTurn": "response_identity_partial"
+        },
+        "budget": {
+          "calls": 2,
+          "workRows": 126,
+          "receivedBytes": 1000
+        }
+      }
+    },
+    {
+      "id": "ninth-call-forbidden",
+      "target": "batch",
+      "valid": false,
+      "rejectAt": "schema",
+      "value": {
+        "version": 2,
+        "dataset": "client-conversation-v2",
+        "source": {
+          "namespace": "fixture-client",
+          "epoch": "fixture-epoch"
+        },
+        "state": "partial",
+        "resetReason": null,
+        "facts": [
+          {
+            "kind": "conversation",
+            "conversation": "thread-claude",
+            "provider": "claude-code",
+            "displayParent": null,
+            "sourceFork": null,
+            "lifecycleOwner": null,
+            "relationshipRevision": null
+          },
+          {
+            "kind": "turn_input",
+            "conversation": "thread-claude",
+            "eventId": "accepted-claude-66",
+            "sequence": 66,
+            "clientTurn": "bb-claude-t3",
+            "clientRequest": "canonical-claude-request",
+            "session": {
+              "issuer": "claude-code:header",
+              "id": "native-claude-session"
+            }
+          },
+          {
+            "kind": "native_response_id",
+            "conversation": "thread-claude",
+            "eventId": "response-claude-67",
+            "sequence": 67,
+            "session": {
+              "issuer": "claude-code:header",
+              "id": "native-claude-session"
+            },
+            "clientTurn": "bb-claude-t3",
+            "response": {
+              "issuer": "anthropic:message",
+              "id": "msg_actual_http"
+            },
+            "providerRequest": null,
+            "phase": "message_start",
+            "aborted": null,
+            "supersedesSdkUuids": []
+          },
+          {
+            "kind": "native_response_id",
+            "conversation": "thread-claude",
+            "eventId": "response-claude-68",
+            "sequence": 68,
+            "session": {
+              "issuer": "claude-code:header",
+              "id": "native-claude-session"
+            },
+            "clientTurn": "bb-claude-t3",
+            "response": {
+              "issuer": "anthropic:message",
+              "id": "msg_actual_http"
+            },
+            "providerRequest": {
+              "issuer": "anthropic:request",
+              "id": "req_actual_http"
+            },
+            "phase": "assistant",
+            "aborted": null,
+            "supersedesSdkUuids": []
+          }
+        ],
+        "cursors": [
+          {
+            "conversation": "thread-claude",
+            "cursor": {
+              "sequence": 68,
+              "eventId": "response-claude-68",
+              "eventType": "item/completed",
+              "disposition": "fact"
+            },
+            "pageExhausted": true,
+            "scannedRows": 3,
+            "projectedRows": 3,
+            "outsideProjectionRows": 0
+          }
+        ],
+        "discovery": null,
+        "coverage": {
+          "complete": false,
+          "reasons": [
+            "historical_parentage_unknown",
+            "mutable_discovery",
+            "source_reset_not_fully_detectable"
+          ],
+          "claudeHttpTurn": "response_identity_partial"
+        },
+        "budget": {
+          "calls": 9,
+          "workRows": 126,
+          "receivedBytes": 1000
+        }
+      }
+    },
+    {
+      "id": "boolean-is-not-counter",
+      "target": "batch",
+      "valid": false,
+      "rejectAt": "schema",
+      "value": {
+        "version": 2,
+        "dataset": "client-conversation-v2",
+        "source": {
+          "namespace": "fixture-client",
+          "epoch": "fixture-epoch"
+        },
+        "state": "partial",
+        "resetReason": null,
+        "facts": [
+          {
+            "kind": "conversation",
+            "conversation": "thread-claude",
+            "provider": "claude-code",
+            "displayParent": null,
+            "sourceFork": null,
+            "lifecycleOwner": null,
+            "relationshipRevision": null
+          },
+          {
+            "kind": "turn_input",
+            "conversation": "thread-claude",
+            "eventId": "accepted-claude-66",
+            "sequence": 66,
+            "clientTurn": "bb-claude-t3",
+            "clientRequest": "canonical-claude-request",
+            "session": {
+              "issuer": "claude-code:header",
+              "id": "native-claude-session"
+            }
+          },
+          {
+            "kind": "native_response_id",
+            "conversation": "thread-claude",
+            "eventId": "response-claude-67",
+            "sequence": 67,
+            "session": {
+              "issuer": "claude-code:header",
+              "id": "native-claude-session"
+            },
+            "clientTurn": "bb-claude-t3",
+            "response": {
+              "issuer": "anthropic:message",
+              "id": "msg_actual_http"
+            },
+            "providerRequest": null,
+            "phase": "message_start",
+            "aborted": null,
+            "supersedesSdkUuids": []
+          },
+          {
+            "kind": "native_response_id",
+            "conversation": "thread-claude",
+            "eventId": "response-claude-68",
+            "sequence": 68,
+            "session": {
+              "issuer": "claude-code:header",
+              "id": "native-claude-session"
+            },
+            "clientTurn": "bb-claude-t3",
+            "response": {
+              "issuer": "anthropic:message",
+              "id": "msg_actual_http"
+            },
+            "providerRequest": {
+              "issuer": "anthropic:request",
+              "id": "req_actual_http"
+            },
+            "phase": "assistant",
+            "aborted": null,
+            "supersedesSdkUuids": []
+          }
+        ],
+        "cursors": [
+          {
+            "conversation": "thread-claude",
+            "cursor": {
+              "sequence": 68,
+              "eventId": "response-claude-68",
+              "eventType": "item/completed",
+              "disposition": "fact"
+            },
+            "pageExhausted": true,
+            "scannedRows": 3,
+            "projectedRows": 3,
+            "outsideProjectionRows": 0
+          }
+        ],
+        "discovery": null,
+        "coverage": {
+          "complete": false,
+          "reasons": [
+            "historical_parentage_unknown",
+            "mutable_discovery",
+            "source_reset_not_fully_detectable"
+          ],
+          "claudeHttpTurn": "response_identity_partial"
+        },
+        "budget": {
+          "calls": true,
+          "workRows": 126,
+          "receivedBytes": 1000
+        }
+      }
+    },
+    {
+      "id": "reset-cannot-carry-facts",
+      "target": "batch",
+      "valid": false,
+      "rejectAt": "schema",
+      "value": {
+        "version": 2,
+        "dataset": "client-conversation-v2",
+        "source": {
+          "namespace": "fixture-client",
+          "epoch": "restored-epoch"
+        },
+        "state": "reset_required",
+        "resetReason": "source_epoch_mismatch",
+        "facts": [
+          {
+            "kind": "conversation",
+            "conversation": "thread-claude",
+            "provider": "claude-code",
+            "displayParent": null,
+            "sourceFork": null,
+            "lifecycleOwner": null,
+            "relationshipRevision": null
+          }
+        ],
+        "cursors": [],
+        "discovery": null,
+        "coverage": {
+          "complete": false,
+          "reasons": [
+            "historical_parentage_unknown",
+            "mutable_discovery",
+            "source_epoch_mismatch",
+            "source_reset_not_fully_detectable"
+          ],
+          "claudeHttpTurn": "response_identity_partial"
+        },
+        "budget": {
+          "calls": 2,
+          "workRows": 126,
+          "receivedBytes": 1000
+        }
+      }
+    },
+    {
+      "id": "bound-subagent-forbidden",
+      "target": "nativeItem",
+      "valid": false,
+      "rejectAt": "schema",
+      "value": {
+        "version": 1,
+        "binding": "turn_scope",
+        "reason": null,
+        "phase": "message_start",
+        "nativeSessionId": "native-claude-session",
+        "messageId": "msg_actual_http",
+        "providerRequestId": null,
+        "parentToolUseId": "subagent-parent",
+        "aborted": null,
+        "supersedesSdkUuids": []
+      }
+    },
+    {
+      "id": "unknown-native-payload-version",
+      "target": "nativeItem",
+      "valid": false,
+      "rejectAt": "schema",
+      "value": {
+        "version": 2,
+        "binding": "turn_scope",
+        "reason": null,
+        "phase": "message_start",
+        "nativeSessionId": "native-claude-session",
+        "messageId": "msg_actual_http",
+        "providerRequestId": null,
+        "parentToolUseId": null,
+        "aborted": null,
+        "supersedesSdkUuids": []
+      }
+    },
+    {
+      "id": "unknown-native-unbound-reason",
+      "target": "nativeState",
+      "valid": false,
+      "rejectAt": "schema",
+      "value": {
+        "version": 1,
+        "binding": "unbound",
+        "reason": "anything",
+        "phase": "message_start",
+        "nativeSessionId": "native-claude-session",
+        "messageId": null,
+        "providerRequestId": null,
+        "parentToolUseId": null,
+        "aborted": null,
+        "supersedesSdkUuids": []
+      }
+    },
+    {
+      "id": "false-aborted-not-supplied",
+      "target": "nativeItem",
+      "valid": false,
+      "rejectAt": "schema",
+      "value": {
+        "version": 1,
+        "binding": "turn_scope",
+        "reason": null,
+        "phase": "message_start",
+        "nativeSessionId": "native-claude-session",
+        "messageId": "msg_actual_http",
+        "providerRequestId": null,
+        "parentToolUseId": null,
+        "aborted": false,
+        "supersedesSdkUuids": []
+      }
+    },
+    {
+      "id": "native-payload-byte-overflow",
+      "target": "nativeItem",
+      "valid": false,
+      "rejectAt": "semantic",
+      "value": {
+        "version": 1,
+        "binding": "turn_scope",
+        "reason": null,
+        "phase": "message_start",
+        "nativeSessionId": "native-claude-session",
+        "messageId": "msg_actual_http",
+        "providerRequestId": null,
+        "parentToolUseId": null,
+        "aborted": null,
+        "supersedesSdkUuids": [
+          "\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea",
+          "\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea",
+          "\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea",
+          "\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea",
+          "\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea",
+          "\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea",
+          "\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea",
+          "\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea",
+          "\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea",
+          "\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea",
+          "\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea",
+          "\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea",
+          "\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea",
+          "\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea",
+          "\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea",
+          "\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea\ud83e\uddea"
+        ]
+      }
+    },
+    {
+      "id": "response-source-mismatch",
+      "target": "pair",
+      "valid": false,
+      "rejectAt": "pair",
+      "value": {
+        "version": 2,
+        "dataset": "client-conversation-v2",
+        "source": {
+          "namespace": "fixture-client",
+          "epoch": "unselected"
+        },
+        "state": "partial",
+        "resetReason": null,
+        "facts": [
+          {
+            "kind": "conversation",
+            "conversation": "thread-claude",
+            "provider": "claude-code",
+            "displayParent": null,
+            "sourceFork": null,
+            "lifecycleOwner": null,
+            "relationshipRevision": null
+          },
+          {
+            "kind": "turn_input",
+            "conversation": "thread-claude",
+            "eventId": "accepted-claude-66",
+            "sequence": 66,
+            "clientTurn": "bb-claude-t3",
+            "clientRequest": "canonical-claude-request",
+            "session": {
+              "issuer": "claude-code:header",
+              "id": "native-claude-session"
+            }
+          },
+          {
+            "kind": "native_response_id",
+            "conversation": "thread-claude",
+            "eventId": "response-claude-67",
+            "sequence": 67,
+            "session": {
+              "issuer": "claude-code:header",
+              "id": "native-claude-session"
+            },
+            "clientTurn": "bb-claude-t3",
+            "response": {
+              "issuer": "anthropic:message",
+              "id": "msg_actual_http"
+            },
+            "providerRequest": null,
+            "phase": "message_start",
+            "aborted": null,
+            "supersedesSdkUuids": []
+          },
+          {
+            "kind": "native_response_id",
+            "conversation": "thread-claude",
+            "eventId": "response-claude-68",
+            "sequence": 68,
+            "session": {
+              "issuer": "claude-code:header",
+              "id": "native-claude-session"
+            },
+            "clientTurn": "bb-claude-t3",
+            "response": {
+              "issuer": "anthropic:message",
+              "id": "msg_actual_http"
+            },
+            "providerRequest": {
+              "issuer": "anthropic:request",
+              "id": "req_actual_http"
+            },
+            "phase": "assistant",
+            "aborted": null,
+            "supersedesSdkUuids": []
+          }
+        ],
+        "cursors": [
+          {
+            "conversation": "thread-claude",
+            "cursor": {
+              "sequence": 68,
+              "eventId": "response-claude-68",
+              "eventType": "item/completed",
+              "disposition": "fact"
+            },
+            "pageExhausted": true,
+            "scannedRows": 3,
+            "projectedRows": 3,
+            "outsideProjectionRows": 0
+          }
+        ],
+        "discovery": null,
+        "coverage": {
+          "complete": false,
+          "reasons": [
+            "historical_parentage_unknown",
+            "mutable_discovery",
+            "source_reset_not_fully_detectable"
+          ],
+          "claudeHttpTurn": "response_identity_partial"
+        },
+        "budget": {
+          "calls": 2,
+          "workRows": 126,
+          "receivedBytes": 1000
+        }
+      },
+      "request": {
+        "version": 2,
+        "expectedSource": {
+          "namespace": "fixture-client",
+          "epoch": "fixture-epoch"
+        },
+        "conversations": [
+          {
+            "id": "thread-claude",
+            "cursor": null
+          }
+        ],
+        "discovery": null
+      }
+    },
+    {
+      "id": "fact-outside-requested-conversation",
+      "target": "pair",
+      "valid": false,
+      "rejectAt": "pair",
+      "value": {
+        "version": 2,
+        "dataset": "client-conversation-v2",
+        "source": {
+          "namespace": "fixture-client",
+          "epoch": "fixture-epoch"
+        },
+        "state": "partial",
+        "resetReason": null,
+        "facts": [
+          {
+            "kind": "conversation",
+            "conversation": "thread-claude",
+            "provider": "claude-code",
+            "displayParent": null,
+            "sourceFork": null,
+            "lifecycleOwner": null,
+            "relationshipRevision": null
+          },
+          {
+            "kind": "turn_input",
+            "conversation": "thread-claude",
+            "eventId": "accepted-claude-66",
+            "sequence": 66,
+            "clientTurn": "bb-claude-t3",
+            "clientRequest": "canonical-claude-request",
+            "session": {
+              "issuer": "claude-code:header",
+              "id": "native-claude-session"
+            }
+          },
+          {
+            "kind": "native_response_id",
+            "conversation": "another-thread",
+            "eventId": "response-claude-67",
+            "sequence": 67,
+            "session": {
+              "issuer": "claude-code:header",
+              "id": "native-claude-session"
+            },
+            "clientTurn": "bb-claude-t3",
+            "response": {
+              "issuer": "anthropic:message",
+              "id": "msg_escaped_conversation"
+            },
+            "providerRequest": null,
+            "phase": "message_start",
+            "aborted": null,
+            "supersedesSdkUuids": []
+          },
+          {
+            "kind": "native_response_id",
+            "conversation": "thread-claude",
+            "eventId": "response-claude-68",
+            "sequence": 68,
+            "session": {
+              "issuer": "claude-code:header",
+              "id": "native-claude-session"
+            },
+            "clientTurn": "bb-claude-t3",
+            "response": {
+              "issuer": "anthropic:message",
+              "id": "msg_actual_http"
+            },
+            "providerRequest": {
+              "issuer": "anthropic:request",
+              "id": "req_actual_http"
+            },
+            "phase": "assistant",
+            "aborted": null,
+            "supersedesSdkUuids": []
+          }
+        ],
+        "cursors": [
+          {
+            "conversation": "thread-claude",
+            "cursor": {
+              "sequence": 68,
+              "eventId": "response-claude-68",
+              "eventType": "item/completed",
+              "disposition": "fact"
+            },
+            "pageExhausted": true,
+            "scannedRows": 3,
+            "projectedRows": 3,
+            "outsideProjectionRows": 0
+          }
+        ],
+        "discovery": null,
+        "coverage": {
+          "complete": false,
+          "reasons": [
+            "historical_parentage_unknown",
+            "mutable_discovery",
+            "source_reset_not_fully_detectable"
+          ],
+          "claudeHttpTurn": "response_identity_partial"
+        },
+        "budget": {
+          "calls": 2,
+          "workRows": 126,
+          "receivedBytes": 1000
+        }
+      },
+      "request": {
+        "version": 2,
+        "expectedSource": {
+          "namespace": "fixture-client",
+          "epoch": "fixture-epoch"
+        },
+        "conversations": [
+          {
+            "id": "thread-claude",
+            "cursor": null
+          }
+        ],
+        "discovery": null
+      }
+    },
+    {
+      "id": "forward-projection-count-mismatch",
+      "target": "pair",
+      "valid": false,
+      "rejectAt": "pair",
+      "value": {
+        "version": 2,
+        "dataset": "client-conversation-v2",
+        "source": {
+          "namespace": "fixture-client",
+          "epoch": "fixture-epoch"
+        },
+        "state": "partial",
+        "resetReason": null,
+        "facts": [
+          {
+            "kind": "conversation",
+            "conversation": "thread-claude",
+            "provider": "claude-code",
+            "displayParent": null,
+            "sourceFork": null,
+            "lifecycleOwner": null,
+            "relationshipRevision": null
+          },
+          {
+            "kind": "turn_input",
+            "conversation": "thread-claude",
+            "eventId": "accepted-claude-66",
+            "sequence": 66,
+            "clientTurn": "bb-claude-t3",
+            "clientRequest": "canonical-claude-request",
+            "session": {
+              "issuer": "claude-code:header",
+              "id": "native-claude-session"
+            }
+          },
+          {
+            "kind": "native_response_id",
+            "conversation": "thread-claude",
+            "eventId": "response-claude-67",
+            "sequence": 67,
+            "session": {
+              "issuer": "claude-code:header",
+              "id": "native-claude-session"
+            },
+            "clientTurn": "bb-claude-t3",
+            "response": {
+              "issuer": "anthropic:message",
+              "id": "msg_actual_http"
+            },
+            "providerRequest": null,
+            "phase": "message_start",
+            "aborted": null,
+            "supersedesSdkUuids": []
+          },
+          {
+            "kind": "native_response_id",
+            "conversation": "thread-claude",
+            "eventId": "response-claude-68",
+            "sequence": 68,
+            "session": {
+              "issuer": "claude-code:header",
+              "id": "native-claude-session"
+            },
+            "clientTurn": "bb-claude-t3",
+            "response": {
+              "issuer": "anthropic:message",
+              "id": "msg_actual_http"
+            },
+            "providerRequest": {
+              "issuer": "anthropic:request",
+              "id": "req_actual_http"
+            },
+            "phase": "assistant",
+            "aborted": null,
+            "supersedesSdkUuids": []
+          }
+        ],
+        "cursors": [
+          {
+            "conversation": "thread-claude",
+            "cursor": {
+              "sequence": 68,
+              "eventId": "response-claude-68",
+              "eventType": "item/completed",
+              "disposition": "fact"
+            },
+            "pageExhausted": true,
+            "scannedRows": 2,
+            "projectedRows": 2,
+            "outsideProjectionRows": 0
+          }
+        ],
+        "discovery": null,
+        "coverage": {
+          "complete": false,
+          "reasons": [
+            "historical_parentage_unknown",
+            "mutable_discovery",
+            "source_reset_not_fully_detectable"
+          ],
+          "claudeHttpTurn": "response_identity_partial"
+        },
+        "budget": {
+          "calls": 2,
+          "workRows": 126,
+          "receivedBytes": 1000
+        }
+      },
+      "request": {
+        "version": 2,
+        "expectedSource": {
+          "namespace": "fixture-client",
+          "epoch": "fixture-epoch"
+        },
+        "conversations": [
+          {
+            "id": "thread-claude",
+            "cursor": null
+          }
+        ],
+        "discovery": null
+      }
+    },
+    {
+      "id": "provider-session-contradiction",
+      "target": "pair",
+      "valid": false,
+      "rejectAt": "pair",
+      "value": {
+        "version": 2,
+        "dataset": "client-conversation-v2",
+        "source": {
+          "namespace": "fixture-client",
+          "epoch": "fixture-epoch"
+        },
+        "state": "partial",
+        "resetReason": null,
+        "facts": [
+          {
+            "kind": "conversation",
+            "conversation": "thread-claude",
+            "provider": "codex",
+            "displayParent": null,
+            "sourceFork": null,
+            "lifecycleOwner": null,
+            "relationshipRevision": null
+          },
+          {
+            "kind": "turn_input",
+            "conversation": "thread-claude",
+            "eventId": "accepted-claude-66",
+            "sequence": 66,
+            "clientTurn": "bb-claude-t3",
+            "clientRequest": "canonical-claude-request",
+            "session": {
+              "issuer": "claude-code:header",
+              "id": "native-claude-session"
+            }
+          },
+          {
+            "kind": "native_response_id",
+            "conversation": "thread-claude",
+            "eventId": "response-claude-67",
+            "sequence": 67,
+            "session": {
+              "issuer": "claude-code:header",
+              "id": "native-claude-session"
+            },
+            "clientTurn": "bb-claude-t3",
+            "response": {
+              "issuer": "anthropic:message",
+              "id": "msg_actual_http"
+            },
+            "providerRequest": null,
+            "phase": "message_start",
+            "aborted": null,
+            "supersedesSdkUuids": []
+          },
+          {
+            "kind": "native_response_id",
+            "conversation": "thread-claude",
+            "eventId": "response-claude-68",
+            "sequence": 68,
+            "session": {
+              "issuer": "claude-code:header",
+              "id": "native-claude-session"
+            },
+            "clientTurn": "bb-claude-t3",
+            "response": {
+              "issuer": "anthropic:message",
+              "id": "msg_actual_http"
+            },
+            "providerRequest": {
+              "issuer": "anthropic:request",
+              "id": "req_actual_http"
+            },
+            "phase": "assistant",
+            "aborted": null,
+            "supersedesSdkUuids": []
+          }
+        ],
+        "cursors": [
+          {
+            "conversation": "thread-claude",
+            "cursor": {
+              "sequence": 68,
+              "eventId": "response-claude-68",
+              "eventType": "item/completed",
+              "disposition": "fact"
+            },
+            "pageExhausted": true,
+            "scannedRows": 3,
+            "projectedRows": 3,
+            "outsideProjectionRows": 0
+          }
+        ],
+        "discovery": null,
+        "coverage": {
+          "complete": false,
+          "reasons": [
+            "historical_parentage_unknown",
+            "mutable_discovery",
+            "source_reset_not_fully_detectable"
+          ],
+          "claudeHttpTurn": "response_identity_partial"
+        },
+        "budget": {
+          "calls": 2,
+          "workRows": 126,
+          "receivedBytes": 1000
+        }
+      },
+      "request": {
+        "version": 2,
+        "expectedSource": {
+          "namespace": "fixture-client",
+          "epoch": "fixture-epoch"
+        },
+        "conversations": [
+          {
+            "id": "thread-claude",
+            "cursor": null
+          }
+        ],
+        "discovery": null
+      }
+    },
+    {
+      "id": "error-source_unconfigured",
+      "target": "error",
+      "valid": true,
+      "value": {
+        "version": 2,
+        "error": {
+          "code": "source_unconfigured",
+          "message": "Finite diagnostic without raw source body.",
+          "conversation": null
+        }
+      },
+      "httpStatus": 503,
+      "request": {
+        "version": 2,
+        "expectedSource": {
+          "namespace": "fixture-client",
+          "epoch": "fixture-epoch"
+        },
+        "conversations": [
+          {
+            "id": "thread-claude",
+            "cursor": null
+          }
+        ],
+        "discovery": null
+      }
+    },
+    {
+      "id": "error-source_unavailable",
+      "target": "error",
+      "valid": true,
+      "value": {
+        "version": 2,
+        "error": {
+          "code": "source_unavailable",
+          "message": "Finite diagnostic without raw source body.",
+          "conversation": "thread-claude"
+        }
+      },
+      "httpStatus": 502,
+      "request": {
+        "version": 2,
+        "expectedSource": {
+          "namespace": "fixture-client",
+          "epoch": "fixture-epoch"
+        },
+        "conversations": [
+          {
+            "id": "thread-claude",
+            "cursor": null
+          }
+        ],
+        "discovery": null
+      }
+    },
+    {
+      "id": "error-read_busy",
+      "target": "error",
+      "valid": true,
+      "value": {
+        "version": 2,
+        "error": {
+          "code": "read_busy",
+          "message": "Finite diagnostic without raw source body.",
+          "conversation": null
+        }
+      },
+      "httpStatus": 429,
+      "request": {
+        "version": 2,
+        "expectedSource": {
+          "namespace": "fixture-client",
+          "epoch": "fixture-epoch"
+        },
+        "conversations": [
+          {
+            "id": "thread-claude",
+            "cursor": null
+          }
+        ],
+        "discovery": null
+      }
+    },
+    {
+      "id": "error-request_too_large",
+      "target": "error",
+      "valid": true,
+      "value": {
+        "version": 2,
+        "error": {
+          "code": "request_too_large",
+          "message": "Finite diagnostic without raw source body.",
+          "conversation": null
+        }
+      },
+      "httpStatus": 413,
+      "request": {
+        "version": 2,
+        "expectedSource": {
+          "namespace": "fixture-client",
+          "epoch": "fixture-epoch"
+        },
+        "conversations": [
+          {
+            "id": "thread-claude",
+            "cursor": null
+          }
+        ],
+        "discovery": null
+      }
+    },
+    {
+      "id": "error-unsupported_media_type",
+      "target": "error",
+      "valid": true,
+      "value": {
+        "version": 2,
+        "error": {
+          "code": "unsupported_media_type",
+          "message": "Finite diagnostic without raw source body.",
+          "conversation": null
+        }
+      },
+      "httpStatus": 415,
+      "request": {
+        "version": 2,
+        "expectedSource": {
+          "namespace": "fixture-client",
+          "epoch": "fixture-epoch"
+        },
+        "conversations": [
+          {
+            "id": "thread-claude",
+            "cursor": null
+          }
+        ],
+        "discovery": null
+      }
+    },
+    {
+      "id": "error-invalid_json",
+      "target": "error",
+      "valid": true,
+      "value": {
+        "version": 2,
+        "error": {
+          "code": "invalid_json",
+          "message": "Finite diagnostic without raw source body.",
+          "conversation": null
+        }
+      },
+      "httpStatus": 400,
+      "request": {
+        "version": 2,
+        "expectedSource": {
+          "namespace": "fixture-client",
+          "epoch": "fixture-epoch"
+        },
+        "conversations": [
+          {
+            "id": "thread-claude",
+            "cursor": null
+          }
+        ],
+        "discovery": null
+      }
+    },
+    {
+      "id": "error-invalid_request",
+      "target": "error",
+      "valid": true,
+      "value": {
+        "version": 2,
+        "error": {
+          "code": "invalid_request",
+          "message": "Finite diagnostic without raw source body.",
+          "conversation": null
+        }
+      },
+      "httpStatus": 400,
+      "request": {
+        "version": 2,
+        "expectedSource": {
+          "namespace": "fixture-client",
+          "epoch": "fixture-epoch"
+        },
+        "conversations": [
+          {
+            "id": "thread-claude",
+            "cursor": null
+          }
+        ],
+        "discovery": null
+      }
+    },
+    {
+      "id": "error-invalid_source",
+      "target": "error",
+      "valid": true,
+      "value": {
+        "version": 2,
+        "error": {
+          "code": "invalid_source",
+          "message": "Finite diagnostic without raw source body.",
+          "conversation": "thread-claude"
+        }
+      },
+      "httpStatus": 502,
+      "request": {
+        "version": 2,
+        "expectedSource": {
+          "namespace": "fixture-client",
+          "epoch": "fixture-epoch"
+        },
+        "conversations": [
+          {
+            "id": "thread-claude",
+            "cursor": null
+          }
+        ],
+        "discovery": null
+      }
+    },
+    {
+      "id": "error-source_conflict",
+      "target": "error",
+      "valid": true,
+      "value": {
+        "version": 2,
+        "error": {
+          "code": "source_conflict",
+          "message": "Finite diagnostic without raw source body.",
+          "conversation": "thread-claude"
+        }
+      },
+      "httpStatus": 409,
+      "request": {
+        "version": 2,
+        "expectedSource": {
+          "namespace": "fixture-client",
+          "epoch": "fixture-epoch"
+        },
+        "conversations": [
+          {
+            "id": "thread-claude",
+            "cursor": null
+          }
+        ],
+        "discovery": null
+      }
+    },
+    {
+      "id": "error-read_budget",
+      "target": "error",
+      "valid": true,
+      "value": {
+        "version": 2,
+        "error": {
+          "code": "read_budget",
+          "message": "Finite diagnostic without raw source body.",
+          "conversation": "thread-claude"
+        }
+      },
+      "httpStatus": 503,
+      "request": {
+        "version": 2,
+        "expectedSource": {
+          "namespace": "fixture-client",
+          "epoch": "fixture-epoch"
+        },
+        "conversations": [
+          {
+            "id": "thread-claude",
+            "cursor": null
+          }
+        ],
+        "discovery": null
+      }
+    },
+    {
+      "id": "error-cancelled",
+      "target": "error",
+      "valid": true,
+      "value": {
+        "version": 2,
+        "error": {
+          "code": "cancelled",
+          "message": "Finite diagnostic without raw source body.",
+          "conversation": null
+        }
+      },
+      "httpStatus": 499,
+      "request": {
+        "version": 2,
+        "expectedSource": {
+          "namespace": "fixture-client",
+          "epoch": "fixture-epoch"
+        },
+        "conversations": [
+          {
+            "id": "thread-claude",
+            "cursor": null
+          }
+        ],
+        "discovery": null
+      }
+    },
+    {
+      "id": "error-deadline_exceeded",
+      "target": "error",
+      "valid": true,
+      "value": {
+        "version": 2,
+        "error": {
+          "code": "deadline_exceeded",
+          "message": "Finite diagnostic without raw source body.",
+          "conversation": null
+        }
+      },
+      "httpStatus": 504,
+      "request": {
+        "version": 2,
+        "expectedSource": {
+          "namespace": "fixture-client",
+          "epoch": "fixture-epoch"
+        },
+        "conversations": [
+          {
+            "id": "thread-claude",
+            "cursor": null
+          }
+        ],
+        "discovery": null
+      }
+    },
+    {
+      "id": "global-error-must-not-name-conversation",
+      "target": "error",
+      "valid": false,
+      "rejectAt": "schema",
+      "value": {
+        "version": 2,
+        "error": {
+          "code": "source_unconfigured",
+          "message": "Configuration missing.",
+          "conversation": "thread-claude"
+        }
+      },
+      "httpStatus": 503
+    },
+    {
+      "id": "error-context-must-be-requested",
+      "target": "error",
+      "valid": false,
+      "rejectAt": "pair",
+      "value": {
+        "version": 2,
+        "error": {
+          "code": "invalid_source",
+          "message": "Metadata invalid.",
+          "conversation": "unrequested"
+        }
+      },
+      "httpStatus": 502,
+      "request": {
+        "version": 2,
+        "expectedSource": {
+          "namespace": "fixture-client",
+          "epoch": "fixture-epoch"
+        },
+        "conversations": [
+          {
+            "id": "thread-claude",
+            "cursor": null
+          }
+        ],
+        "discovery": null
+      }
+    },
+    {
+      "id": "error-status-must-match-code",
+      "target": "error",
+      "valid": false,
+      "rejectAt": "pair",
+      "value": {
+        "version": 2,
+        "error": {
+          "code": "invalid_source",
+          "message": "Metadata invalid.",
+          "conversation": "thread-claude"
+        }
+      },
+      "httpStatus": 500,
+      "request": {
+        "version": 2,
+        "expectedSource": {
+          "namespace": "fixture-client",
+          "epoch": "fixture-epoch"
+        },
+        "conversations": [
+          {
+            "id": "thread-claude",
+            "cursor": null
+          }
+        ],
+        "discovery": null
+      }
+    },
+    {
+      "id": "duplicate-wire-key",
+      "target": "request",
+      "valid": false,
+      "rejectAt": "wire",
+      "raw": "{\"version\":2,\"version\":2,\"expectedSource\":{\"namespace\":\"fixture-client\",\"epoch\":\"fixture-epoch\"},\"conversations\":[{\"id\":\"thread-claude\",\"cursor\":null}],\"discovery\":null}"
+    },
+    {
+      "id": "wire-request-size-before-json",
+      "target": "request",
+      "valid": false,
+      "rejectAt": "wire",
+      "raw": "                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 {\"version\":2,\"expectedSource\":{\"namespace\":\"fixture-client\",\"epoch\":\"fixture-epoch\"},\"conversations\":[{\"id\":\"thread-claude\",\"cursor\":null}],\"discovery\":null}"
+    },
+    {
+      "id": "trailing-json",
+      "target": "request",
+      "valid": false,
+      "rejectAt": "wire",
+      "raw": "{\"version\":2,\"expectedSource\":{\"namespace\":\"fixture-client\",\"epoch\":\"fixture-epoch\"},\"conversations\":[{\"id\":\"thread-claude\",\"cursor\":null}],\"discovery\":null} {}"
+    },
+    {
+      "id": "invalid-utf8-wire",
+      "target": "request",
+      "valid": false,
+      "rejectAt": "wire",
+      "rawHex": "ff"
+    },
+    {
+      "id": "project-actual-native-event-1",
+      "target": "projection",
+      "valid": true,
+      "provider": "claude-code",
+      "conversation": "thread-claude",
+      "value": {
+        "id": "actual-native-event-1",
+        "threadId": "thread-claude",
+        "seq": 68,
+        "type": "item/completed",
+        "scope": {
+          "kind": "turn",
+          "turnId": "cl-test-t1"
+        },
+        "data": {
+          "providerThreadId": "",
+          "item": {
+            "type": "extension",
+            "id": "cl-test-i1",
+            "kind": "provider-claude-code/response-identity",
+            "payload": {
+              "version": 1,
+              "binding": "turn_scope",
+              "reason": null,
+              "phase": "message_start",
+              "nativeSessionId": "native-claude-session",
+              "messageId": "msg_actual_http",
+              "providerRequestId": null,
+              "parentToolUseId": null,
+              "aborted": null,
+              "supersedesSdkUuids": []
+            },
+            "status": "completed",
+            "presentation": {
+              "label": {
+                "pending": "Provider response identity",
+                "completed": "Provider response identity"
+              },
+              "icon": {
+                "glyph": "activity"
+              },
+              "suppress": true
+            }
+          }
+        }
+      },
+      "expected": {
+        "kind": "native_response_id",
+        "conversation": "thread-claude",
+        "eventId": "actual-native-event-1",
+        "sequence": 68,
+        "session": {
+          "issuer": "claude-code:header",
+          "id": "native-claude-session"
+        },
+        "response": {
+          "issuer": "anthropic:message",
+          "id": "msg_actual_http"
+        },
+        "providerRequest": null,
+        "phase": "message_start",
+        "aborted": null,
+        "supersedesSdkUuids": [],
+        "clientTurn": "cl-test-t1"
+      },
+      "origin": "data and scope captured from actual native translator/public assembler; storage envelope fields authored"
+    },
+    {
+      "id": "declared-item-with-thread-scope",
+      "target": "projection",
+      "valid": false,
+      "provider": "claude-code",
+      "conversation": "thread-claude",
+      "value": {
+        "id": "actual-native-event-1",
+        "threadId": "thread-claude",
+        "seq": 68,
+        "type": "item/completed",
+        "scope": {
+          "kind": "thread"
+        },
+        "data": {
+          "providerThreadId": "",
+          "item": {
+            "type": "extension",
+            "id": "cl-test-i1",
+            "kind": "provider-claude-code/response-identity",
+            "payload": {
+              "version": 1,
+              "binding": "turn_scope",
+              "reason": null,
+              "phase": "message_start",
+              "nativeSessionId": "native-claude-session",
+              "messageId": "msg_actual_http",
+              "providerRequestId": null,
+              "parentToolUseId": null,
+              "aborted": null,
+              "supersedesSdkUuids": []
+            },
+            "status": "completed",
+            "presentation": {
+              "label": {
+                "pending": "Provider response identity",
+                "completed": "Provider response identity"
+              },
+              "icon": {
+                "glyph": "activity"
+              },
+              "suppress": true
+            }
+          }
+        }
+      },
+      "expected": {
+        "kind": "native_response_id",
+        "conversation": "thread-claude",
+        "eventId": "actual-native-event-1",
+        "sequence": 68,
+        "session": {
+          "issuer": "claude-code:header",
+          "id": "native-claude-session"
+        },
+        "response": {
+          "issuer": "anthropic:message",
+          "id": "msg_actual_http"
+        },
+        "providerRequest": null,
+        "phase": "message_start",
+        "aborted": null,
+        "supersedesSdkUuids": [],
+        "clientTurn": "cl-test-t1"
+      },
+      "origin": "data and scope captured from actual native translator/public assembler; storage envelope fields authored",
+      "rejectAt": "projection"
+    },
+    {
+      "id": "declared-item-with-unknown-payload-key",
+      "target": "projection",
+      "valid": false,
+      "provider": "claude-code",
+      "conversation": "thread-claude",
+      "value": {
+        "id": "actual-native-event-1",
+        "threadId": "thread-claude",
+        "seq": 68,
+        "type": "item/completed",
+        "scope": {
+          "kind": "turn",
+          "turnId": "cl-test-t1"
+        },
+        "data": {
+          "providerThreadId": "",
+          "item": {
+            "type": "extension",
+            "id": "cl-test-i1",
+            "kind": "provider-claude-code/response-identity",
+            "payload": {
+              "version": 1,
+              "binding": "turn_scope",
+              "reason": null,
+              "phase": "message_start",
+              "nativeSessionId": "native-claude-session",
+              "messageId": "msg_actual_http",
+              "providerRequestId": null,
+              "parentToolUseId": null,
+              "aborted": null,
+              "supersedesSdkUuids": [],
+              "extra": true
+            },
+            "status": "completed",
+            "presentation": {
+              "label": {
+                "pending": "Provider response identity",
+                "completed": "Provider response identity"
+              },
+              "icon": {
+                "glyph": "activity"
+              },
+              "suppress": true
+            }
+          }
+        }
+      },
+      "expected": {
+        "kind": "native_response_id",
+        "conversation": "thread-claude",
+        "eventId": "actual-native-event-1",
+        "sequence": 68,
+        "session": {
+          "issuer": "claude-code:header",
+          "id": "native-claude-session"
+        },
+        "response": {
+          "issuer": "anthropic:message",
+          "id": "msg_actual_http"
+        },
+        "providerRequest": null,
+        "phase": "message_start",
+        "aborted": null,
+        "supersedesSdkUuids": [],
+        "clientTurn": "cl-test-t1"
+      },
+      "origin": "data and scope captured from actual native translator/public assembler; storage envelope fields authored",
+      "rejectAt": "projection"
+    },
+    {
+      "id": "claude-response-on-codex-conversation",
+      "target": "projection",
+      "valid": false,
+      "provider": "codex",
+      "conversation": "thread-claude",
+      "value": {
+        "id": "actual-native-event-1",
+        "threadId": "thread-claude",
+        "seq": 68,
+        "type": "item/completed",
+        "scope": {
+          "kind": "turn",
+          "turnId": "cl-test-t1"
+        },
+        "data": {
+          "providerThreadId": "",
+          "item": {
+            "type": "extension",
+            "id": "cl-test-i1",
+            "kind": "provider-claude-code/response-identity",
+            "payload": {
+              "version": 1,
+              "binding": "turn_scope",
+              "reason": null,
+              "phase": "message_start",
+              "nativeSessionId": "native-claude-session",
+              "messageId": "msg_actual_http",
+              "providerRequestId": null,
+              "parentToolUseId": null,
+              "aborted": null,
+              "supersedesSdkUuids": []
+            },
+            "status": "completed",
+            "presentation": {
+              "label": {
+                "pending": "Provider response identity",
+                "completed": "Provider response identity"
+              },
+              "icon": {
+                "glyph": "activity"
+              },
+              "suppress": true
+            }
+          }
+        }
+      },
+      "expected": {
+        "kind": "native_response_id",
+        "conversation": "thread-claude",
+        "eventId": "actual-native-event-1",
+        "sequence": 68,
+        "session": {
+          "issuer": "claude-code:header",
+          "id": "native-claude-session"
+        },
+        "response": {
+          "issuer": "anthropic:message",
+          "id": "msg_actual_http"
+        },
+        "providerRequest": null,
+        "phase": "message_start",
+        "aborted": null,
+        "supersedesSdkUuids": [],
+        "clientTurn": "cl-test-t1"
+      },
+      "origin": "data and scope captured from actual native translator/public assembler; storage envelope fields authored",
+      "rejectAt": "projection"
+    },
+    {
+      "id": "project-actual-native-event-2",
+      "target": "projection",
+      "valid": true,
+      "provider": "claude-code",
+      "conversation": "thread-claude",
+      "value": {
+        "id": "actual-native-event-2",
+        "threadId": "thread-claude",
+        "seq": 69,
+        "type": "item/completed",
+        "scope": {
+          "kind": "turn",
+          "turnId": "cl-test-t1"
+        },
+        "data": {
+          "providerThreadId": "",
+          "item": {
+            "type": "extension",
+            "id": "cl-test-i2",
+            "kind": "provider-claude-code/response-identity",
+            "payload": {
+              "version": 1,
+              "binding": "turn_scope",
+              "reason": null,
+              "phase": "assistant",
+              "nativeSessionId": "native-claude-session",
+              "messageId": "msg_actual_http",
+              "providerRequestId": "req_actual_http",
+              "parentToolUseId": null,
+              "aborted": null,
+              "supersedesSdkUuids": []
+            },
+            "status": "completed",
+            "presentation": {
+              "label": {
+                "pending": "Provider response identity",
+                "completed": "Provider response identity"
+              },
+              "icon": {
+                "glyph": "activity"
+              },
+              "suppress": true
+            }
+          }
+        }
+      },
+      "expected": {
+        "kind": "native_response_id",
+        "conversation": "thread-claude",
+        "eventId": "actual-native-event-2",
+        "sequence": 69,
+        "session": {
+          "issuer": "claude-code:header",
+          "id": "native-claude-session"
+        },
+        "response": {
+          "issuer": "anthropic:message",
+          "id": "msg_actual_http"
+        },
+        "providerRequest": {
+          "issuer": "anthropic:request",
+          "id": "req_actual_http"
+        },
+        "phase": "assistant",
+        "aborted": null,
+        "supersedesSdkUuids": [],
+        "clientTurn": "cl-test-t1"
+      },
+      "origin": "data and scope captured from actual native translator/public assembler; storage envelope fields authored"
+    },
+    {
+      "id": "project-actual-native-event-3",
+      "target": "projection",
+      "valid": true,
+      "provider": "claude-code",
+      "conversation": "thread-claude",
+      "value": {
+        "id": "actual-native-event-3",
+        "threadId": "thread-claude",
+        "seq": 70,
+        "type": "thread/extensionState/updated",
+        "scope": {
+          "kind": "thread"
+        },
+        "data": {
+          "providerThreadId": "",
+          "kind": "provider-claude-code/response-identity",
+          "payload": {
+            "version": 1,
+            "binding": "unbound",
+            "reason": "subagent_response",
+            "phase": "assistant",
+            "nativeSessionId": "native-claude-session",
+            "messageId": "msg_subagent",
+            "providerRequestId": "req_actual_http",
+            "parentToolUseId": "subagent-parent",
+            "aborted": null,
+            "supersedesSdkUuids": []
+          }
+        }
+      },
+      "expected": {
+        "kind": "native_response_coverage",
+        "conversation": "thread-claude",
+        "eventId": "actual-native-event-3",
+        "sequence": 70,
+        "session": {
+          "issuer": "claude-code:header",
+          "id": "native-claude-session"
+        },
+        "response": {
+          "issuer": "anthropic:message",
+          "id": "msg_subagent"
+        },
+        "providerRequest": {
+          "issuer": "anthropic:request",
+          "id": "req_actual_http"
+        },
+        "phase": "assistant",
+        "aborted": null,
+        "supersedesSdkUuids": [],
+        "reason": "subagent_response",
+        "parentToolUseId": "subagent-parent"
+      },
+      "origin": "data and scope captured from actual native translator/public assembler; storage envelope fields authored"
+    },
+    {
+      "id": "ignore-unrelated-tool-without-projecting-body",
+      "target": "projection",
+      "valid": true,
+      "provider": "claude-code",
+      "conversation": "thread-claude",
+      "value": {
+        "id": "tool-event",
+        "threadId": "thread-claude",
+        "seq": 90,
+        "type": "item/completed",
+        "scope": {
+          "kind": "turn",
+          "turnId": "not-used-for-identity"
+        },
+        "data": {
+          "item": {
+            "type": "commandExecution",
+            "resultText": "Synthetic unrelated tool content: outside projection."
+          }
+        }
+      },
+      "expected": null,
+      "origin": "Authored ordinary native item counterexample"
+    },
+    {
+      "id": "common-v1-replay-preserves-event-owner",
+      "target": "history",
+      "valid": true,
+      "value": {
+        "version": 2,
+        "dataset": "client-conversation-v2",
+        "source": {
+          "namespace": "fixture-client",
+          "epoch": "fixture-epoch"
+        },
+        "state": "partial",
+        "resetReason": null,
+        "facts": [
+          {
+            "kind": "conversation",
+            "conversation": "thread-claude",
+            "provider": "claude-code",
+            "displayParent": null,
+            "sourceFork": null,
+            "lifecycleOwner": null,
+            "relationshipRevision": null
+          },
+          {
+            "kind": "turn_input",
+            "conversation": "thread-claude",
+            "eventId": "accepted-claude-66",
+            "sequence": 66,
+            "clientTurn": "bb-claude-t3",
+            "clientRequest": "canonical-claude-request",
+            "session": {
+              "issuer": "claude-code:header",
+              "id": "native-claude-session"
+            }
+          },
+          {
+            "kind": "native_response_id",
+            "conversation": "thread-claude",
+            "eventId": "response-claude-67",
+            "sequence": 67,
+            "session": {
+              "issuer": "claude-code:header",
+              "id": "native-claude-session"
+            },
+            "clientTurn": "bb-claude-t3",
+            "response": {
+              "issuer": "anthropic:message",
+              "id": "msg_actual_http"
+            },
+            "providerRequest": null,
+            "phase": "message_start",
+            "aborted": null,
+            "supersedesSdkUuids": []
+          },
+          {
+            "kind": "native_response_id",
+            "conversation": "thread-claude",
+            "eventId": "response-claude-68",
+            "sequence": 68,
+            "session": {
+              "issuer": "claude-code:header",
+              "id": "native-claude-session"
+            },
+            "clientTurn": "bb-claude-t3",
+            "response": {
+              "issuer": "anthropic:message",
+              "id": "msg_actual_http"
+            },
+            "providerRequest": {
+              "issuer": "anthropic:request",
+              "id": "req_actual_http"
+            },
+            "phase": "assistant",
+            "aborted": null,
+            "supersedesSdkUuids": []
+          }
+        ],
+        "cursors": [
+          {
+            "conversation": "thread-claude",
+            "cursor": {
+              "sequence": 68,
+              "eventId": "response-claude-68",
+              "eventType": "item/completed",
+              "disposition": "fact"
+            },
+            "pageExhausted": true,
+            "scannedRows": 3,
+            "projectedRows": 3,
+            "outsideProjectionRows": 0
+          }
+        ],
+        "discovery": null,
+        "coverage": {
+          "complete": false,
+          "reasons": [
+            "historical_parentage_unknown",
+            "mutable_discovery",
+            "source_reset_not_fully_detectable"
+          ],
+          "claudeHttpTurn": "response_identity_partial"
+        },
+        "budget": {
+          "calls": 2,
+          "workRows": 126,
+          "receivedBytes": 1000
+        }
+      },
+      "retainedFacts": [
+        {
+          "kind": "turn_input",
+          "conversation": "thread-claude",
+          "eventId": "accepted-claude-66",
+          "sequence": 66,
+          "clientTurn": "bb-claude-t3",
+          "clientRequest": "canonical-claude-request",
+          "session": {
+            "issuer": "claude-code:header",
+            "id": "native-claude-session"
+          }
+        }
+      ],
+      "currentAnchors": [],
+      "origin": "Authored repository invariant vector; not a SQLite migration/ingestion proof."
+    },
+    {
+      "id": "changed-common-v1-payload-conflicts",
+      "target": "history",
+      "valid": false,
+      "rejectAt": "history",
+      "value": {
+        "version": 2,
+        "dataset": "client-conversation-v2",
+        "source": {
+          "namespace": "fixture-client",
+          "epoch": "fixture-epoch"
+        },
+        "state": "partial",
+        "resetReason": null,
+        "facts": [
+          {
+            "kind": "conversation",
+            "conversation": "thread-claude",
+            "provider": "claude-code",
+            "displayParent": null,
+            "sourceFork": null,
+            "lifecycleOwner": null,
+            "relationshipRevision": null
+          },
+          {
+            "kind": "turn_input",
+            "conversation": "thread-claude",
+            "eventId": "accepted-claude-66",
+            "sequence": 66,
+            "clientTurn": "bb-claude-t3",
+            "clientRequest": "rewritten-v1-request",
+            "session": {
+              "issuer": "claude-code:header",
+              "id": "native-claude-session"
+            }
+          },
+          {
+            "kind": "native_response_id",
+            "conversation": "thread-claude",
+            "eventId": "response-claude-67",
+            "sequence": 67,
+            "session": {
+              "issuer": "claude-code:header",
+              "id": "native-claude-session"
+            },
+            "clientTurn": "bb-claude-t3",
+            "response": {
+              "issuer": "anthropic:message",
+              "id": "msg_actual_http"
+            },
+            "providerRequest": null,
+            "phase": "message_start",
+            "aborted": null,
+            "supersedesSdkUuids": []
+          },
+          {
+            "kind": "native_response_id",
+            "conversation": "thread-claude",
+            "eventId": "response-claude-68",
+            "sequence": 68,
+            "session": {
+              "issuer": "claude-code:header",
+              "id": "native-claude-session"
+            },
+            "clientTurn": "bb-claude-t3",
+            "response": {
+              "issuer": "anthropic:message",
+              "id": "msg_actual_http"
+            },
+            "providerRequest": {
+              "issuer": "anthropic:request",
+              "id": "req_actual_http"
+            },
+            "phase": "assistant",
+            "aborted": null,
+            "supersedesSdkUuids": []
+          }
+        ],
+        "cursors": [
+          {
+            "conversation": "thread-claude",
+            "cursor": {
+              "sequence": 68,
+              "eventId": "response-claude-68",
+              "eventType": "item/completed",
+              "disposition": "fact"
+            },
+            "pageExhausted": true,
+            "scannedRows": 3,
+            "projectedRows": 3,
+            "outsideProjectionRows": 0
+          }
+        ],
+        "discovery": null,
+        "coverage": {
+          "complete": false,
+          "reasons": [
+            "historical_parentage_unknown",
+            "mutable_discovery",
+            "source_reset_not_fully_detectable"
+          ],
+          "claudeHttpTurn": "response_identity_partial"
+        },
+        "budget": {
+          "calls": 2,
+          "workRows": 126,
+          "receivedBytes": 1000
+        }
+      },
+      "retainedFacts": [
+        {
+          "kind": "turn_input",
+          "conversation": "thread-claude",
+          "eventId": "accepted-claude-66",
+          "sequence": 66,
+          "clientTurn": "bb-claude-t3",
+          "clientRequest": "canonical-claude-request",
+          "session": {
+            "issuer": "claude-code:header",
+            "id": "native-claude-session"
+          }
+        }
+      ],
+      "currentAnchors": [],
+      "origin": "Authored repository invariant vector; not a SQLite migration/ingestion proof."
+    },
+    {
+      "id": "outside-anchor-cannot-collide-with-global-owned-id",
+      "target": "history",
+      "valid": false,
+      "rejectAt": "history",
+      "value": {
+        "version": 2,
+        "dataset": "client-conversation-v2",
+        "source": {
+          "namespace": "fixture-client",
+          "epoch": "fixture-epoch"
+        },
+        "state": "partial",
+        "resetReason": null,
+        "facts": [
+          {
+            "kind": "conversation",
+            "conversation": "thread-claude",
+            "provider": "claude-code",
+            "displayParent": null,
+            "sourceFork": null,
+            "lifecycleOwner": null,
+            "relationshipRevision": null
+          },
+          {
+            "kind": "turn_input",
+            "conversation": "thread-claude",
+            "eventId": "accepted-claude-66",
+            "sequence": 66,
+            "clientTurn": "bb-claude-t3",
+            "clientRequest": "canonical-claude-request",
+            "session": {
+              "issuer": "claude-code:header",
+              "id": "native-claude-session"
+            }
+          }
+        ],
+        "cursors": [
+          {
+            "conversation": "thread-claude",
+            "cursor": {
+              "sequence": 91,
+              "eventId": "ordinary-tool-91",
+              "eventType": "item/completed",
+              "disposition": "outside_projection"
+            },
+            "pageExhausted": false,
+            "scannedRows": 25,
+            "projectedRows": 0,
+            "outsideProjectionRows": 25
+          }
+        ],
+        "discovery": null,
+        "coverage": {
+          "complete": false,
+          "reasons": [
+            "historical_parentage_unknown",
+            "mutable_discovery",
+            "source_reset_not_fully_detectable"
+          ],
+          "claudeHttpTurn": "response_identity_partial"
+        },
+        "budget": {
+          "calls": 3,
+          "workRows": 126,
+          "receivedBytes": 1000
+        }
+      },
+      "retainedFacts": [
+        {
+          "kind": "turn_input",
+          "conversation": "another-conversation",
+          "eventId": "ordinary-tool-91",
+          "sequence": 91,
+          "clientTurn": "bb-claude-t3",
+          "clientRequest": "canonical-claude-request",
+          "session": {
+            "issuer": "claude-code:header",
+            "id": "native-claude-session"
+          }
+        }
+      ],
+      "currentAnchors": [],
+      "origin": "Authored repository invariant vector; not a SQLite migration/ingestion proof."
+    },
+    {
+      "id": "outside-anchor-cannot-collide-with-owned-conversation-sequence",
+      "target": "history",
+      "valid": false,
+      "rejectAt": "history",
+      "value": {
+        "version": 2,
+        "dataset": "client-conversation-v2",
+        "source": {
+          "namespace": "fixture-client",
+          "epoch": "fixture-epoch"
+        },
+        "state": "partial",
+        "resetReason": null,
+        "facts": [
+          {
+            "kind": "conversation",
+            "conversation": "thread-claude",
+            "provider": "claude-code",
+            "displayParent": null,
+            "sourceFork": null,
+            "lifecycleOwner": null,
+            "relationshipRevision": null
+          },
+          {
+            "kind": "turn_input",
+            "conversation": "thread-claude",
+            "eventId": "accepted-claude-66",
+            "sequence": 66,
+            "clientTurn": "bb-claude-t3",
+            "clientRequest": "canonical-claude-request",
+            "session": {
+              "issuer": "claude-code:header",
+              "id": "native-claude-session"
+            }
+          }
+        ],
+        "cursors": [
+          {
+            "conversation": "thread-claude",
+            "cursor": {
+              "sequence": 91,
+              "eventId": "ordinary-tool-91",
+              "eventType": "item/completed",
+              "disposition": "outside_projection"
+            },
+            "pageExhausted": false,
+            "scannedRows": 25,
+            "projectedRows": 0,
+            "outsideProjectionRows": 25
+          }
+        ],
+        "discovery": null,
+        "coverage": {
+          "complete": false,
+          "reasons": [
+            "historical_parentage_unknown",
+            "mutable_discovery",
+            "source_reset_not_fully_detectable"
+          ],
+          "claudeHttpTurn": "response_identity_partial"
+        },
+        "budget": {
+          "calls": 3,
+          "workRows": 126,
+          "receivedBytes": 1000
+        }
+      },
+      "retainedFacts": [
+        {
+          "kind": "turn_input",
+          "conversation": "thread-claude",
+          "eventId": "another-owned-id",
+          "sequence": 91,
+          "clientTurn": "bb-claude-t3",
+          "clientRequest": "canonical-claude-request",
+          "session": {
+            "issuer": "claude-code:header",
+            "id": "native-claude-session"
+          }
+        }
+      ],
+      "currentAnchors": [],
+      "origin": "Authored repository invariant vector; not a SQLite migration/ingestion proof."
+    },
+    {
+      "id": "new-fact-cannot-collide-with-current-outside-anchor",
+      "target": "history",
+      "valid": false,
+      "rejectAt": "history",
+      "value": {
+        "version": 2,
+        "dataset": "client-conversation-v2",
+        "source": {
+          "namespace": "fixture-client",
+          "epoch": "fixture-epoch"
+        },
+        "state": "partial",
+        "resetReason": null,
+        "facts": [
+          {
+            "kind": "conversation",
+            "conversation": "thread-claude",
+            "provider": "claude-code",
+            "displayParent": null,
+            "sourceFork": null,
+            "lifecycleOwner": null,
+            "relationshipRevision": null
+          },
+          {
+            "kind": "turn_input",
+            "conversation": "thread-claude",
+            "eventId": "accepted-claude-66",
+            "sequence": 66,
+            "clientTurn": "bb-claude-t3",
+            "clientRequest": "canonical-claude-request",
+            "session": {
+              "issuer": "claude-code:header",
+              "id": "native-claude-session"
+            }
+          },
+          {
+            "kind": "native_response_id",
+            "conversation": "thread-claude",
+            "eventId": "response-claude-67",
+            "sequence": 67,
+            "session": {
+              "issuer": "claude-code:header",
+              "id": "native-claude-session"
+            },
+            "clientTurn": "bb-claude-t3",
+            "response": {
+              "issuer": "anthropic:message",
+              "id": "msg_actual_http"
+            },
+            "providerRequest": null,
+            "phase": "message_start",
+            "aborted": null,
+            "supersedesSdkUuids": []
+          },
+          {
+            "kind": "native_response_id",
+            "conversation": "thread-claude",
+            "eventId": "response-claude-68",
+            "sequence": 68,
+            "session": {
+              "issuer": "claude-code:header",
+              "id": "native-claude-session"
+            },
+            "clientTurn": "bb-claude-t3",
+            "response": {
+              "issuer": "anthropic:message",
+              "id": "msg_actual_http"
+            },
+            "providerRequest": {
+              "issuer": "anthropic:request",
+              "id": "req_actual_http"
+            },
+            "phase": "assistant",
+            "aborted": null,
+            "supersedesSdkUuids": []
+          }
+        ],
+        "cursors": [
+          {
+            "conversation": "thread-claude",
+            "cursor": {
+              "sequence": 68,
+              "eventId": "response-claude-68",
+              "eventType": "item/completed",
+              "disposition": "fact"
+            },
+            "pageExhausted": true,
+            "scannedRows": 3,
+            "projectedRows": 3,
+            "outsideProjectionRows": 0
+          }
+        ],
+        "discovery": null,
+        "coverage": {
+          "complete": false,
+          "reasons": [
+            "historical_parentage_unknown",
+            "mutable_discovery",
+            "source_reset_not_fully_detectable"
+          ],
+          "claudeHttpTurn": "response_identity_partial"
+        },
+        "budget": {
+          "calls": 2,
+          "workRows": 126,
+          "receivedBytes": 1000
+        }
+      },
+      "retainedFacts": [],
+      "currentAnchors": [
+        {
+          "conversation": "thread-claude",
+          "cursor": {
+            "sequence": 67,
+            "eventId": "response-claude-67",
+            "eventType": "item/completed",
+            "disposition": "outside_projection"
+          }
+        }
+      ],
+      "origin": "Authored repository invariant vector; not a SQLite migration/ingestion proof."
+    },
+    {
+      "id": "current-outside-anchor-global-id-conflict",
+      "target": "history",
+      "valid": false,
+      "rejectAt": "history",
+      "value": {
+        "version": 2,
+        "dataset": "client-conversation-v2",
+        "source": {
+          "namespace": "fixture-client",
+          "epoch": "fixture-epoch"
+        },
+        "state": "partial",
+        "resetReason": null,
+        "facts": [
+          {
+            "kind": "conversation",
+            "conversation": "thread-claude",
+            "provider": "claude-code",
+            "displayParent": null,
+            "sourceFork": null,
+            "lifecycleOwner": null,
+            "relationshipRevision": null
+          },
+          {
+            "kind": "turn_input",
+            "conversation": "thread-claude",
+            "eventId": "accepted-claude-66",
+            "sequence": 66,
+            "clientTurn": "bb-claude-t3",
+            "clientRequest": "canonical-claude-request",
+            "session": {
+              "issuer": "claude-code:header",
+              "id": "native-claude-session"
+            }
+          }
+        ],
+        "cursors": [
+          {
+            "conversation": "thread-claude",
+            "cursor": {
+              "sequence": 91,
+              "eventId": "ordinary-tool-91",
+              "eventType": "item/completed",
+              "disposition": "outside_projection"
+            },
+            "pageExhausted": false,
+            "scannedRows": 25,
+            "projectedRows": 0,
+            "outsideProjectionRows": 25
+          }
+        ],
+        "discovery": null,
+        "coverage": {
+          "complete": false,
+          "reasons": [
+            "historical_parentage_unknown",
+            "mutable_discovery",
+            "source_reset_not_fully_detectable"
+          ],
+          "claudeHttpTurn": "response_identity_partial"
+        },
+        "budget": {
+          "calls": 3,
+          "workRows": 126,
+          "receivedBytes": 1000
+        }
+      },
+      "retainedFacts": [],
+      "currentAnchors": [
+        {
+          "conversation": "another-conversation",
+          "cursor": {
+            "sequence": 91,
+            "eventId": "ordinary-tool-91",
+            "eventType": "item/completed",
+            "disposition": "outside_projection"
+          }
+        }
+      ],
+      "origin": "Authored repository invariant vector; not a SQLite migration/ingestion proof."
+    },
+    {
+      "id": "current-outside-anchor-equal-replay",
+      "target": "history",
+      "valid": true,
+      "value": {
+        "version": 2,
+        "dataset": "client-conversation-v2",
+        "source": {
+          "namespace": "fixture-client",
+          "epoch": "fixture-epoch"
+        },
+        "state": "partial",
+        "resetReason": null,
+        "facts": [
+          {
+            "kind": "conversation",
+            "conversation": "thread-claude",
+            "provider": "claude-code",
+            "displayParent": null,
+            "sourceFork": null,
+            "lifecycleOwner": null,
+            "relationshipRevision": null
+          },
+          {
+            "kind": "turn_input",
+            "conversation": "thread-claude",
+            "eventId": "accepted-claude-66",
+            "sequence": 66,
+            "clientTurn": "bb-claude-t3",
+            "clientRequest": "canonical-claude-request",
+            "session": {
+              "issuer": "claude-code:header",
+              "id": "native-claude-session"
+            }
+          }
+        ],
+        "cursors": [
+          {
+            "conversation": "thread-claude",
+            "cursor": {
+              "sequence": 91,
+              "eventId": "ordinary-tool-91",
+              "eventType": "item/completed",
+              "disposition": "outside_projection"
+            },
+            "pageExhausted": false,
+            "scannedRows": 25,
+            "projectedRows": 0,
+            "outsideProjectionRows": 25
+          }
+        ],
+        "discovery": null,
+        "coverage": {
+          "complete": false,
+          "reasons": [
+            "historical_parentage_unknown",
+            "mutable_discovery",
+            "source_reset_not_fully_detectable"
+          ],
+          "claudeHttpTurn": "response_identity_partial"
+        },
+        "budget": {
+          "calls": 3,
+          "workRows": 126,
+          "receivedBytes": 1000
+        }
+      },
+      "retainedFacts": [],
+      "currentAnchors": [
+        {
+          "conversation": "thread-claude",
+          "cursor": {
+            "sequence": 91,
+            "eventId": "ordinary-tool-91",
+            "eventType": "item/completed",
+            "disposition": "outside_projection"
+          }
+        }
+      ],
+      "origin": "Authored repository invariant vector; not a SQLite migration/ingestion proof."
+    },
+    {
+      "id": "same-response-cannot-bind-two-turns",
+      "target": "ambiguity",
+      "valid": true,
+      "value": {
+        "version": 2,
+        "dataset": "client-conversation-v2",
+        "source": {
+          "namespace": "fixture-client",
+          "epoch": "fixture-epoch"
+        },
+        "state": "partial",
+        "resetReason": null,
+        "facts": [
+          {
+            "kind": "conversation",
+            "conversation": "thread-claude",
+            "provider": "claude-code",
+            "displayParent": null,
+            "sourceFork": null,
+            "lifecycleOwner": null,
+            "relationshipRevision": null
+          },
+          {
+            "kind": "turn_input",
+            "conversation": "thread-claude",
+            "eventId": "accepted-claude-66",
+            "sequence": 66,
+            "clientTurn": "bb-claude-t3",
+            "clientRequest": "canonical-claude-request",
+            "session": {
+              "issuer": "claude-code:header",
+              "id": "native-claude-session"
+            }
+          },
+          {
+            "kind": "native_response_id",
+            "conversation": "thread-claude",
+            "eventId": "response-claude-67",
+            "sequence": 67,
+            "session": {
+              "issuer": "claude-code:header",
+              "id": "native-claude-session"
+            },
+            "clientTurn": "bb-claude-t3",
+            "response": {
+              "issuer": "anthropic:message",
+              "id": "msg_actual_http"
+            },
+            "providerRequest": null,
+            "phase": "message_start",
+            "aborted": null,
+            "supersedesSdkUuids": []
+          },
+          {
+            "kind": "native_response_id",
+            "conversation": "thread-claude",
+            "eventId": "response-claude-68",
+            "sequence": 68,
+            "session": {
+              "issuer": "claude-code:header",
+              "id": "native-claude-session"
+            },
+            "clientTurn": "another-turn",
+            "response": {
+              "issuer": "anthropic:message",
+              "id": "msg_actual_http"
+            },
+            "providerRequest": {
+              "issuer": "anthropic:request",
+              "id": "req_actual_http"
+            },
+            "phase": "assistant",
+            "aborted": null,
+            "supersedesSdkUuids": []
+          }
+        ],
+        "cursors": [
+          {
+            "conversation": "thread-claude",
+            "cursor": {
+              "sequence": 68,
+              "eventId": "response-claude-68",
+              "eventType": "item/completed",
+              "disposition": "fact"
+            },
+            "pageExhausted": true,
+            "scannedRows": 3,
+            "projectedRows": 3,
+            "outsideProjectionRows": 0
+          }
+        ],
+        "discovery": null,
+        "coverage": {
+          "complete": false,
+          "reasons": [
+            "historical_parentage_unknown",
+            "mutable_discovery",
+            "source_reset_not_fully_detectable"
+          ],
+          "claudeHttpTurn": "response_identity_partial"
+        },
+        "budget": {
+          "calls": 2,
+          "workRows": 126,
+          "receivedBytes": 1000
+        }
+      },
+      "expectedAmbiguity": [
+        "multiple_client_owners"
+      ],
+      "origin": "Authored qualification vector: preserve immutable facts; withhold exact response join, no collection quarantine."
+    },
+    {
+      "id": "same-response-conflicting-known-request-ids",
+      "target": "ambiguity",
+      "valid": true,
+      "value": {
+        "version": 2,
+        "dataset": "client-conversation-v2",
+        "source": {
+          "namespace": "fixture-client",
+          "epoch": "fixture-epoch"
+        },
+        "state": "partial",
+        "resetReason": null,
+        "facts": [
+          {
+            "kind": "conversation",
+            "conversation": "thread-claude",
+            "provider": "claude-code",
+            "displayParent": null,
+            "sourceFork": null,
+            "lifecycleOwner": null,
+            "relationshipRevision": null
+          },
+          {
+            "kind": "turn_input",
+            "conversation": "thread-claude",
+            "eventId": "accepted-claude-66",
+            "sequence": 66,
+            "clientTurn": "bb-claude-t3",
+            "clientRequest": "canonical-claude-request",
+            "session": {
+              "issuer": "claude-code:header",
+              "id": "native-claude-session"
+            }
+          },
+          {
+            "kind": "native_response_id",
+            "conversation": "thread-claude",
+            "eventId": "response-claude-67",
+            "sequence": 67,
+            "session": {
+              "issuer": "claude-code:header",
+              "id": "native-claude-session"
+            },
+            "clientTurn": "bb-claude-t3",
+            "response": {
+              "issuer": "anthropic:message",
+              "id": "msg_actual_http"
+            },
+            "providerRequest": {
+              "issuer": "anthropic:request",
+              "id": "req_conflicting"
+            },
+            "phase": "message_start",
+            "aborted": null,
+            "supersedesSdkUuids": []
+          },
+          {
+            "kind": "native_response_id",
+            "conversation": "thread-claude",
+            "eventId": "response-claude-68",
+            "sequence": 68,
+            "session": {
+              "issuer": "claude-code:header",
+              "id": "native-claude-session"
+            },
+            "clientTurn": "bb-claude-t3",
+            "response": {
+              "issuer": "anthropic:message",
+              "id": "msg_actual_http"
+            },
+            "providerRequest": {
+              "issuer": "anthropic:request",
+              "id": "req_actual_http"
+            },
+            "phase": "assistant",
+            "aborted": null,
+            "supersedesSdkUuids": []
+          }
+        ],
+        "cursors": [
+          {
+            "conversation": "thread-claude",
+            "cursor": {
+              "sequence": 68,
+              "eventId": "response-claude-68",
+              "eventType": "item/completed",
+              "disposition": "fact"
+            },
+            "pageExhausted": true,
+            "scannedRows": 3,
+            "projectedRows": 3,
+            "outsideProjectionRows": 0
+          }
+        ],
+        "discovery": null,
+        "coverage": {
+          "complete": false,
+          "reasons": [
+            "historical_parentage_unknown",
+            "mutable_discovery",
+            "source_reset_not_fully_detectable"
+          ],
+          "claudeHttpTurn": "response_identity_partial"
+        },
+        "budget": {
+          "calls": 2,
+          "workRows": 126,
+          "receivedBytes": 1000
+        }
+      },
+      "expectedAmbiguity": [
+        "provider_request_conflict"
+      ],
+      "origin": "Authored qualification vector: preserve immutable facts; contradictory corroboration is unjoinable, not latest-wins."
+    },
+    {
+      "id": "historical-response-owner-cannot-be-reassigned",
+      "target": "ambiguity",
+      "valid": true,
+      "value": {
+        "version": 2,
+        "dataset": "client-conversation-v2",
+        "source": {
+          "namespace": "fixture-client",
+          "epoch": "fixture-epoch"
+        },
+        "state": "partial",
+        "resetReason": null,
+        "facts": [
+          {
+            "kind": "conversation",
+            "conversation": "thread-claude",
+            "provider": "claude-code",
+            "displayParent": null,
+            "sourceFork": null,
+            "lifecycleOwner": null,
+            "relationshipRevision": null
+          },
+          {
+            "kind": "turn_input",
+            "conversation": "thread-claude",
+            "eventId": "accepted-claude-66",
+            "sequence": 66,
+            "clientTurn": "bb-claude-t3",
+            "clientRequest": "canonical-claude-request",
+            "session": {
+              "issuer": "claude-code:header",
+              "id": "native-claude-session"
+            }
+          },
+          {
+            "kind": "native_response_id",
+            "conversation": "thread-claude",
+            "eventId": "response-claude-67",
+            "sequence": 67,
+            "session": {
+              "issuer": "claude-code:header",
+              "id": "native-claude-session"
+            },
+            "clientTurn": "bb-claude-t3",
+            "response": {
+              "issuer": "anthropic:message",
+              "id": "msg_actual_http"
+            },
+            "providerRequest": null,
+            "phase": "message_start",
+            "aborted": null,
+            "supersedesSdkUuids": []
+          },
+          {
+            "kind": "native_response_id",
+            "conversation": "thread-claude",
+            "eventId": "response-claude-68",
+            "sequence": 68,
+            "session": {
+              "issuer": "claude-code:header",
+              "id": "native-claude-session"
+            },
+            "clientTurn": "bb-claude-t3",
+            "response": {
+              "issuer": "anthropic:message",
+              "id": "msg_actual_http"
+            },
+            "providerRequest": {
+              "issuer": "anthropic:request",
+              "id": "req_actual_http"
+            },
+            "phase": "assistant",
+            "aborted": null,
+            "supersedesSdkUuids": []
+          }
+        ],
+        "cursors": [
+          {
+            "conversation": "thread-claude",
+            "cursor": {
+              "sequence": 68,
+              "eventId": "response-claude-68",
+              "eventType": "item/completed",
+              "disposition": "fact"
+            },
+            "pageExhausted": true,
+            "scannedRows": 3,
+            "projectedRows": 3,
+            "outsideProjectionRows": 0
+          }
+        ],
+        "discovery": null,
+        "coverage": {
+          "complete": false,
+          "reasons": [
+            "historical_parentage_unknown",
+            "mutable_discovery",
+            "source_reset_not_fully_detectable"
+          ],
+          "claudeHttpTurn": "response_identity_partial"
+        },
+        "budget": {
+          "calls": 2,
+          "workRows": 126,
+          "receivedBytes": 1000
+        }
+      },
+      "retainedFacts": [
+        {
+          "kind": "native_response_id",
+          "conversation": "thread-claude",
+          "eventId": "historical-response",
+          "sequence": 50,
+          "session": {
+            "issuer": "claude-code:header",
+            "id": "native-claude-session"
+          },
+          "clientTurn": "earlier-turn",
+          "response": {
+            "issuer": "anthropic:message",
+            "id": "msg_actual_http"
+          },
+          "providerRequest": {
+            "issuer": "anthropic:request",
+            "id": "req_actual_http"
+          },
+          "phase": "assistant",
+          "aborted": null,
+          "supersedesSdkUuids": []
+        }
+      ],
+      "currentAnchors": [],
+      "origin": "Authored qualification vector: preserve immutable facts; withhold exact response join, no collection quarantine.",
+      "expectedAmbiguity": [
+        "multiple_client_owners"
+      ]
+    },
+    {
+      "id": "historical-response-request-id-conflict",
+      "target": "ambiguity",
+      "valid": true,
+      "value": {
+        "version": 2,
+        "dataset": "client-conversation-v2",
+        "source": {
+          "namespace": "fixture-client",
+          "epoch": "fixture-epoch"
+        },
+        "state": "partial",
+        "resetReason": null,
+        "facts": [
+          {
+            "kind": "conversation",
+            "conversation": "thread-claude",
+            "provider": "claude-code",
+            "displayParent": null,
+            "sourceFork": null,
+            "lifecycleOwner": null,
+            "relationshipRevision": null
+          },
+          {
+            "kind": "turn_input",
+            "conversation": "thread-claude",
+            "eventId": "accepted-claude-66",
+            "sequence": 66,
+            "clientTurn": "bb-claude-t3",
+            "clientRequest": "canonical-claude-request",
+            "session": {
+              "issuer": "claude-code:header",
+              "id": "native-claude-session"
+            }
+          },
+          {
+            "kind": "native_response_id",
+            "conversation": "thread-claude",
+            "eventId": "response-claude-67",
+            "sequence": 67,
+            "session": {
+              "issuer": "claude-code:header",
+              "id": "native-claude-session"
+            },
+            "clientTurn": "bb-claude-t3",
+            "response": {
+              "issuer": "anthropic:message",
+              "id": "msg_actual_http"
+            },
+            "providerRequest": null,
+            "phase": "message_start",
+            "aborted": null,
+            "supersedesSdkUuids": []
+          },
+          {
+            "kind": "native_response_id",
+            "conversation": "thread-claude",
+            "eventId": "response-claude-68",
+            "sequence": 68,
+            "session": {
+              "issuer": "claude-code:header",
+              "id": "native-claude-session"
+            },
+            "clientTurn": "bb-claude-t3",
+            "response": {
+              "issuer": "anthropic:message",
+              "id": "msg_actual_http"
+            },
+            "providerRequest": {
+              "issuer": "anthropic:request",
+              "id": "req_actual_http"
+            },
+            "phase": "assistant",
+            "aborted": null,
+            "supersedesSdkUuids": []
+          }
+        ],
+        "cursors": [
+          {
+            "conversation": "thread-claude",
+            "cursor": {
+              "sequence": 68,
+              "eventId": "response-claude-68",
+              "eventType": "item/completed",
+              "disposition": "fact"
+            },
+            "pageExhausted": true,
+            "scannedRows": 3,
+            "projectedRows": 3,
+            "outsideProjectionRows": 0
+          }
+        ],
+        "discovery": null,
+        "coverage": {
+          "complete": false,
+          "reasons": [
+            "historical_parentage_unknown",
+            "mutable_discovery",
+            "source_reset_not_fully_detectable"
+          ],
+          "claudeHttpTurn": "response_identity_partial"
+        },
+        "budget": {
+          "calls": 2,
+          "workRows": 126,
+          "receivedBytes": 1000
+        }
+      },
+      "retainedFacts": [
+        {
+          "kind": "native_response_id",
+          "conversation": "thread-claude",
+          "eventId": "historical-response",
+          "sequence": 50,
+          "session": {
+            "issuer": "claude-code:header",
+            "id": "native-claude-session"
+          },
+          "clientTurn": "bb-claude-t3",
+          "response": {
+            "issuer": "anthropic:message",
+            "id": "msg_actual_http"
+          },
+          "providerRequest": {
+            "issuer": "anthropic:request",
+            "id": "req_historical_conflict"
+          },
+          "phase": "assistant",
+          "aborted": null,
+          "supersedesSdkUuids": []
+        }
+      ],
+      "currentAnchors": [],
+      "origin": "Authored qualification vector: preserve immutable facts; contradictory corroboration is unjoinable, not latest-wins.",
+      "expectedAmbiguity": [
+        "provider_request_conflict"
+      ]
+    },
+    {
+      "id": "native-session-shared-by-conversations-is-ambiguous",
+      "target": "ambiguity",
+      "valid": true,
+      "value": {
+        "version": 2,
+        "dataset": "client-conversation-v2",
+        "source": {
+          "namespace": "fixture-client",
+          "epoch": "fixture-epoch"
+        },
+        "state": "partial",
+        "resetReason": null,
+        "facts": [
+          {
+            "kind": "conversation",
+            "conversation": "conversation-a",
+            "provider": "claude-code",
+            "displayParent": null,
+            "sourceFork": null,
+            "lifecycleOwner": null,
+            "relationshipRevision": null
+          },
+          {
+            "kind": "conversation",
+            "conversation": "conversation-b",
+            "provider": "claude-code",
+            "displayParent": null,
+            "sourceFork": null,
+            "lifecycleOwner": null,
+            "relationshipRevision": null
+          },
+          {
+            "kind": "native_session",
+            "conversation": "conversation-a",
+            "eventId": "shared-session-event-a",
+            "sequence": 1,
+            "session": {
+              "issuer": "claude-code:header",
+              "id": "native-claude-session"
+            }
+          },
+          {
+            "kind": "native_session",
+            "conversation": "conversation-b",
+            "eventId": "shared-session-event-b",
+            "sequence": 1,
+            "session": {
+              "issuer": "claude-code:header",
+              "id": "native-claude-session"
+            }
+          }
+        ],
+        "cursors": [
+          {
+            "conversation": "conversation-a",
+            "cursor": {
+              "sequence": 1,
+              "eventId": "shared-session-event-a",
+              "eventType": "thread/identity",
+              "disposition": "fact"
+            },
+            "pageExhausted": true,
+            "scannedRows": 1,
+            "projectedRows": 1,
+            "outsideProjectionRows": 0
+          },
+          {
+            "conversation": "conversation-b",
+            "cursor": {
+              "sequence": 1,
+              "eventId": "shared-session-event-b",
+              "eventType": "thread/identity",
+              "disposition": "fact"
+            },
+            "pageExhausted": true,
+            "scannedRows": 1,
+            "projectedRows": 1,
+            "outsideProjectionRows": 0
+          }
+        ],
+        "discovery": null,
+        "coverage": {
+          "complete": false,
+          "reasons": [
+            "historical_parentage_unknown",
+            "mutable_discovery",
+            "source_reset_not_fully_detectable"
+          ],
+          "claudeHttpTurn": "response_identity_partial"
+        },
+        "budget": {
+          "calls": 4,
+          "workRows": 126,
+          "receivedBytes": 1000
+        }
+      },
+      "retainedFacts": [],
+      "currentAnchors": [],
+      "expectedAmbiguity": [
+        "multiple_session_conversations"
+      ],
+      "origin": "Authored positive fact/ambiguity invariant; preserve both facts and exclude ambiguous positive session."
+    },
+    {
+      "id": "unbound-session-does-not-poison-positive-binding",
+      "target": "ambiguity",
+      "valid": true,
+      "value": {
+        "version": 2,
+        "dataset": "client-conversation-v2",
+        "source": {
+          "namespace": "fixture-client",
+          "epoch": "fixture-epoch"
+        },
+        "state": "partial",
+        "resetReason": null,
+        "facts": [
+          {
+            "kind": "conversation",
+            "conversation": "conversation-a",
+            "provider": "claude-code",
+            "displayParent": null,
+            "sourceFork": null,
+            "lifecycleOwner": null,
+            "relationshipRevision": null
+          },
+          {
+            "kind": "conversation",
+            "conversation": "conversation-b",
+            "provider": "claude-code",
+            "displayParent": null,
+            "sourceFork": null,
+            "lifecycleOwner": null,
+            "relationshipRevision": null
+          },
+          {
+            "kind": "native_session",
+            "conversation": "conversation-a",
+            "eventId": "shared-session-event-a",
+            "sequence": 1,
+            "session": {
+              "issuer": "claude-code:header",
+              "id": "native-claude-session"
+            }
+          },
+          {
+            "kind": "native_response_coverage",
+            "conversation": "conversation-b",
+            "eventId": "unbound-shared-session",
+            "sequence": 2,
+            "session": {
+              "issuer": "claude-code:header",
+              "id": "native-claude-session"
+            },
+            "response": {
+              "issuer": "anthropic:message",
+              "id": "msg_unbound"
+            },
+            "providerRequest": null,
+            "reason": "prior_turn_response",
+            "phase": "assistant",
+            "parentToolUseId": null,
+            "aborted": true,
+            "supersedesSdkUuids": []
+          }
+        ],
+        "cursors": [
+          {
+            "conversation": "conversation-a",
+            "cursor": {
+              "sequence": 1,
+              "eventId": "shared-session-event-a",
+              "eventType": "thread/identity",
+              "disposition": "fact"
+            },
+            "pageExhausted": true,
+            "scannedRows": 1,
+            "projectedRows": 1,
+            "outsideProjectionRows": 0
+          },
+          {
+            "conversation": "conversation-b",
+            "cursor": {
+              "sequence": 2,
+              "eventId": "unbound-shared-session",
+              "eventType": "thread/extensionState/updated",
+              "disposition": "fact"
+            },
+            "pageExhausted": true,
+            "scannedRows": 1,
+            "projectedRows": 1,
+            "outsideProjectionRows": 0
+          }
+        ],
+        "discovery": null,
+        "coverage": {
+          "complete": false,
+          "reasons": [
+            "historical_parentage_unknown",
+            "mutable_discovery",
+            "source_reset_not_fully_detectable"
+          ],
+          "claudeHttpTurn": "response_identity_partial"
+        },
+        "budget": {
+          "calls": 4,
+          "workRows": 126,
+          "receivedBytes": 1000
+        }
+      },
+      "retainedFacts": [],
+      "currentAnchors": [],
+      "expectedAmbiguity": [],
+      "origin": "Authored qualification invariant: unbound coverage excluded from selected and global ambiguity positives."
+    }
+  ]
+}

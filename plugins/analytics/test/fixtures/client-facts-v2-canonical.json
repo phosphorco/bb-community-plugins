@@ -1,0 +1,331 @@
+{
+  "version": 1,
+  "algorithm": "Existing Foundation fact MarshalJSON: outer fact keys sorted; nested issuer reference fields issuer then id; encoding/json default HTML escaping, no trailing newline.",
+  "v1SourceFixtureSha256": "1c33ce8faeffb78c171a0934de6a777ba99ed407dea112d9c20a1b60ec70c8a0",
+  "vectors": [
+    {
+      "id": "fact-1",
+      "commonV1Kind": true,
+      "fact": {
+        "kind": "conversation",
+        "conversation": "thread-claude",
+        "provider": "claude-code",
+        "displayParent": null,
+        "sourceFork": null,
+        "lifecycleOwner": null,
+        "relationshipRevision": null
+      },
+      "canonicalUtf8": "{\"conversation\":\"thread-claude\",\"displayParent\":null,\"kind\":\"conversation\",\"lifecycleOwner\":null,\"provider\":\"claude-code\",\"relationshipRevision\":null,\"sourceFork\":null}",
+      "sha256": "ee211b778963dc02b3350fa55f9cc7bba5ad5e2a7d63ff4fb10e618bdf33c6e4"
+    },
+    {
+      "id": "fact-2",
+      "commonV1Kind": true,
+      "fact": {
+        "kind": "native_session",
+        "conversation": "thread-\ud83e\uddea",
+        "eventId": "identity<&>",
+        "sequence": 1,
+        "session": {
+          "issuer": "claude-code:header",
+          "id": "native-\u2028-\ud83e\uddea"
+        }
+      },
+      "canonicalUtf8": "{\"conversation\":\"thread-\ud83e\uddea\",\"eventId\":\"identity\\u003c\\u0026\\u003e\",\"kind\":\"native_session\",\"sequence\":1,\"session\":{\"issuer\":\"claude-code:header\",\"id\":\"native-\\u2028-\ud83e\uddea\"}}",
+      "sha256": "b2ec209b7197ce9bad6438e4b2195ef93bbdeb2ae8063cd64c988aa9a0bcbca1"
+    },
+    {
+      "id": "fact-3",
+      "commonV1Kind": true,
+      "fact": {
+        "conversation": "thread-claude",
+        "eventId": "accepted-claude-66",
+        "sequence": 66,
+        "kind": "turn_input",
+        "clientTurn": "bb-claude-t3",
+        "clientRequest": "canonical-claude-request",
+        "session": {
+          "issuer": "claude-code:header",
+          "id": "native-claude-session"
+        }
+      },
+      "canonicalUtf8": "{\"clientRequest\":\"canonical-claude-request\",\"clientTurn\":\"bb-claude-t3\",\"conversation\":\"thread-claude\",\"eventId\":\"accepted-claude-66\",\"kind\":\"turn_input\",\"sequence\":66,\"session\":{\"issuer\":\"claude-code:header\",\"id\":\"native-claude-session\"}}",
+      "sha256": "6615921f15182e566408d0336e7525e908decc49b6f13731cf1237814a2ea08f"
+    },
+    {
+      "id": "fact-4",
+      "commonV1Kind": true,
+      "fact": {
+        "kind": "turn_checkpoint",
+        "conversation": "thread-codex",
+        "eventId": "completed-62",
+        "sequence": 62,
+        "session": {
+          "issuer": "codex:header",
+          "id": "native-codex-session"
+        },
+        "clientTurn": "bb-codex-t4",
+        "checkpoint": {
+          "issuer": "codex:turn",
+          "id": "native-codex-turn"
+        }
+      },
+      "canonicalUtf8": "{\"checkpoint\":{\"issuer\":\"codex:turn\",\"id\":\"native-codex-turn\"},\"clientTurn\":\"bb-codex-t4\",\"conversation\":\"thread-codex\",\"eventId\":\"completed-62\",\"kind\":\"turn_checkpoint\",\"sequence\":62,\"session\":{\"issuer\":\"codex:header\",\"id\":\"native-codex-session\"}}",
+      "sha256": "754f87b5be3e6e3f758cfecfa915e6683be02a8b6318e70c27f46bdd7f78a44b"
+    },
+    {
+      "id": "fact-5",
+      "commonV1Kind": true,
+      "fact": {
+        "kind": "turn_checkpoint",
+        "conversation": "thread-claude",
+        "eventId": "completed-70",
+        "sequence": 70,
+        "session": null,
+        "clientTurn": "bb-claude-t3",
+        "checkpoint": {
+          "issuer": "claude-code:message",
+          "id": "sdk-wrapper-uuid"
+        }
+      },
+      "canonicalUtf8": "{\"checkpoint\":{\"issuer\":\"claude-code:message\",\"id\":\"sdk-wrapper-uuid\"},\"clientTurn\":\"bb-claude-t3\",\"conversation\":\"thread-claude\",\"eventId\":\"completed-70\",\"kind\":\"turn_checkpoint\",\"sequence\":70,\"session\":null}",
+      "sha256": "4c3adc64659a671f90402015ba20d19458472fd65c0a785bfe83edf3459c9535"
+    },
+    {
+      "id": "fact-6",
+      "commonV1Kind": false,
+      "fact": {
+        "kind": "native_response_id",
+        "conversation": "thread-claude",
+        "eventId": "response-claude-67",
+        "sequence": 67,
+        "session": {
+          "issuer": "claude-code:header",
+          "id": "native-claude-session"
+        },
+        "clientTurn": "bb-claude-t3",
+        "response": {
+          "issuer": "anthropic:message",
+          "id": "msg_actual_http"
+        },
+        "providerRequest": null,
+        "phase": "message_start",
+        "aborted": null,
+        "supersedesSdkUuids": []
+      },
+      "canonicalUtf8": "{\"aborted\":null,\"clientTurn\":\"bb-claude-t3\",\"conversation\":\"thread-claude\",\"eventId\":\"response-claude-67\",\"kind\":\"native_response_id\",\"phase\":\"message_start\",\"providerRequest\":null,\"response\":{\"issuer\":\"anthropic:message\",\"id\":\"msg_actual_http\"},\"sequence\":67,\"session\":{\"issuer\":\"claude-code:header\",\"id\":\"native-claude-session\"},\"supersedesSdkUuids\":[]}",
+      "sha256": "0f14924a50adc4222725d52c8a459a8865a3b616c6ebc6a0faf427efc4a5c537"
+    },
+    {
+      "id": "fact-7",
+      "commonV1Kind": false,
+      "fact": {
+        "kind": "native_response_coverage",
+        "conversation": "thread-claude",
+        "eventId": "unbound-claude-72",
+        "sequence": 72,
+        "session": {
+          "issuer": "claude-code:header",
+          "id": "native-claude-session"
+        },
+        "response": {
+          "issuer": "anthropic:message",
+          "id": "msg_unbound"
+        },
+        "providerRequest": null,
+        "reason": "prior_turn_response",
+        "phase": "assistant",
+        "parentToolUseId": null,
+        "aborted": true,
+        "supersedesSdkUuids": []
+      },
+      "canonicalUtf8": "{\"aborted\":true,\"conversation\":\"thread-claude\",\"eventId\":\"unbound-claude-72\",\"kind\":\"native_response_coverage\",\"parentToolUseId\":null,\"phase\":\"assistant\",\"providerRequest\":null,\"reason\":\"prior_turn_response\",\"response\":{\"issuer\":\"anthropic:message\",\"id\":\"msg_unbound\"},\"sequence\":72,\"session\":{\"issuer\":\"claude-code:header\",\"id\":\"native-claude-session\"},\"supersedesSdkUuids\":[]}",
+      "sha256": "1aa031206fcb614298423cf3c77e7018d4b2151e63efa6fabd4940d08ddfcba3"
+    }
+  ],
+  "batches": [
+    {
+      "id": "normal-claude-start-and-enrichment",
+      "origin": "Authored V2 contract vector, not an implemented Manager batch.",
+      "batch": {
+        "version": 2,
+        "dataset": "client-conversation-v2",
+        "source": {
+          "namespace": "fixture-client",
+          "epoch": "fixture-epoch"
+        },
+        "state": "partial",
+        "resetReason": null,
+        "facts": [
+          {
+            "kind": "conversation",
+            "conversation": "thread-claude",
+            "provider": "claude-code",
+            "displayParent": null,
+            "sourceFork": null,
+            "lifecycleOwner": null,
+            "relationshipRevision": null
+          },
+          {
+            "kind": "turn_input",
+            "conversation": "thread-claude",
+            "eventId": "accepted-claude-66",
+            "sequence": 66,
+            "clientTurn": "bb-claude-t3",
+            "clientRequest": "canonical-claude-request",
+            "session": {
+              "issuer": "claude-code:header",
+              "id": "native-claude-session"
+            }
+          },
+          {
+            "kind": "native_response_id",
+            "conversation": "thread-claude",
+            "eventId": "response-claude-67",
+            "sequence": 67,
+            "session": {
+              "issuer": "claude-code:header",
+              "id": "native-claude-session"
+            },
+            "clientTurn": "bb-claude-t3",
+            "response": {
+              "issuer": "anthropic:message",
+              "id": "msg_actual_http"
+            },
+            "providerRequest": null,
+            "phase": "message_start",
+            "aborted": null,
+            "supersedesSdkUuids": []
+          },
+          {
+            "kind": "native_response_id",
+            "conversation": "thread-claude",
+            "eventId": "response-claude-68",
+            "sequence": 68,
+            "session": {
+              "issuer": "claude-code:header",
+              "id": "native-claude-session"
+            },
+            "clientTurn": "bb-claude-t3",
+            "response": {
+              "issuer": "anthropic:message",
+              "id": "msg_actual_http"
+            },
+            "providerRequest": {
+              "issuer": "anthropic:request",
+              "id": "req_actual_http"
+            },
+            "phase": "assistant",
+            "aborted": null,
+            "supersedesSdkUuids": []
+          }
+        ],
+        "cursors": [
+          {
+            "conversation": "thread-claude",
+            "cursor": {
+              "sequence": 68,
+              "eventId": "response-claude-68",
+              "eventType": "item/completed",
+              "disposition": "fact"
+            },
+            "pageExhausted": true,
+            "scannedRows": 3,
+            "projectedRows": 3,
+            "outsideProjectionRows": 0
+          }
+        ],
+        "discovery": null,
+        "coverage": {
+          "complete": false,
+          "reasons": [
+            "historical_parentage_unknown",
+            "mutable_discovery",
+            "source_reset_not_fully_detectable"
+          ],
+          "claudeHttpTurn": "response_identity_partial"
+        },
+        "budget": {
+          "calls": 2,
+          "workRows": 126,
+          "receivedBytes": 1000
+        }
+      },
+      "canonicalUtf8": "{\"version\":2,\"dataset\":\"client-conversation-v2\",\"source\":{\"namespace\":\"fixture-client\",\"epoch\":\"fixture-epoch\"},\"state\":\"partial\",\"resetReason\":null,\"facts\":[{\"conversation\":\"thread-claude\",\"displayParent\":null,\"kind\":\"conversation\",\"lifecycleOwner\":null,\"provider\":\"claude-code\",\"relationshipRevision\":null,\"sourceFork\":null},{\"clientRequest\":\"canonical-claude-request\",\"clientTurn\":\"bb-claude-t3\",\"conversation\":\"thread-claude\",\"eventId\":\"accepted-claude-66\",\"kind\":\"turn_input\",\"sequence\":66,\"session\":{\"issuer\":\"claude-code:header\",\"id\":\"native-claude-session\"}},{\"aborted\":null,\"clientTurn\":\"bb-claude-t3\",\"conversation\":\"thread-claude\",\"eventId\":\"response-claude-67\",\"kind\":\"native_response_id\",\"phase\":\"message_start\",\"providerRequest\":null,\"response\":{\"issuer\":\"anthropic:message\",\"id\":\"msg_actual_http\"},\"sequence\":67,\"session\":{\"issuer\":\"claude-code:header\",\"id\":\"native-claude-session\"},\"supersedesSdkUuids\":[]},{\"aborted\":null,\"clientTurn\":\"bb-claude-t3\",\"conversation\":\"thread-claude\",\"eventId\":\"response-claude-68\",\"kind\":\"native_response_id\",\"phase\":\"assistant\",\"providerRequest\":{\"issuer\":\"anthropic:request\",\"id\":\"req_actual_http\"},\"response\":{\"issuer\":\"anthropic:message\",\"id\":\"msg_actual_http\"},\"sequence\":68,\"session\":{\"issuer\":\"claude-code:header\",\"id\":\"native-claude-session\"},\"supersedesSdkUuids\":[]}],\"cursors\":[{\"conversation\":\"thread-claude\",\"cursor\":{\"sequence\":68,\"eventId\":\"response-claude-68\",\"eventType\":\"item/completed\",\"disposition\":\"fact\"},\"pageExhausted\":true,\"scannedRows\":3,\"projectedRows\":3,\"outsideProjectionRows\":0}],\"discovery\":null,\"coverage\":{\"complete\":false,\"reasons\":[\"historical_parentage_unknown\",\"mutable_discovery\",\"source_reset_not_fully_detectable\"],\"claudeHttpTurn\":\"response_identity_partial\"},\"budget\":{\"calls\":2,\"workRows\":126,\"receivedBytes\":1000}}",
+      "canonicalSha256": "4fb49bcc62d9767dc117b6dcdf16241563b36d1a5a996e6a37d1dba1b3ace20e",
+      "semanticUtf8": "{\"version\":2,\"dataset\":\"client-conversation-v2\",\"source\":{\"namespace\":\"fixture-client\",\"epoch\":\"fixture-epoch\"},\"state\":\"partial\",\"resetReason\":null,\"facts\":[{\"conversation\":\"thread-claude\",\"displayParent\":null,\"kind\":\"conversation\",\"lifecycleOwner\":null,\"provider\":\"claude-code\",\"relationshipRevision\":null,\"sourceFork\":null},{\"clientRequest\":\"canonical-claude-request\",\"clientTurn\":\"bb-claude-t3\",\"conversation\":\"thread-claude\",\"eventId\":\"accepted-claude-66\",\"kind\":\"turn_input\",\"sequence\":66,\"session\":{\"issuer\":\"claude-code:header\",\"id\":\"native-claude-session\"}},{\"aborted\":null,\"clientTurn\":\"bb-claude-t3\",\"conversation\":\"thread-claude\",\"eventId\":\"response-claude-67\",\"kind\":\"native_response_id\",\"phase\":\"message_start\",\"providerRequest\":null,\"response\":{\"issuer\":\"anthropic:message\",\"id\":\"msg_actual_http\"},\"sequence\":67,\"session\":{\"issuer\":\"claude-code:header\",\"id\":\"native-claude-session\"},\"supersedesSdkUuids\":[]},{\"aborted\":null,\"clientTurn\":\"bb-claude-t3\",\"conversation\":\"thread-claude\",\"eventId\":\"response-claude-68\",\"kind\":\"native_response_id\",\"phase\":\"assistant\",\"providerRequest\":{\"issuer\":\"anthropic:request\",\"id\":\"req_actual_http\"},\"response\":{\"issuer\":\"anthropic:message\",\"id\":\"msg_actual_http\"},\"sequence\":68,\"session\":{\"issuer\":\"claude-code:header\",\"id\":\"native-claude-session\"},\"supersedesSdkUuids\":[]}],\"cursors\":[{\"conversation\":\"thread-claude\",\"cursor\":{\"sequence\":68,\"eventId\":\"response-claude-68\",\"eventType\":\"item/completed\",\"disposition\":\"fact\"},\"pageExhausted\":true,\"scannedRows\":3,\"projectedRows\":3,\"outsideProjectionRows\":0}],\"discovery\":null,\"coverage\":{\"complete\":false,\"reasons\":[\"historical_parentage_unknown\",\"mutable_discovery\",\"source_reset_not_fully_detectable\"],\"claudeHttpTurn\":\"response_identity_partial\"},\"budget\":{\"calls\":0,\"workRows\":0,\"receivedBytes\":0}}",
+      "semanticSha256": "cc44f401210ee20aa4b05382971e007e5985fae96a8b9ac55753caf535bb48a7"
+    },
+    {
+      "id": "all-ignored-forward-page-retains-common-anchor",
+      "origin": "Authored V2 contract vector, not an implemented Manager batch.",
+      "batch": {
+        "version": 2,
+        "dataset": "client-conversation-v2",
+        "source": {
+          "namespace": "fixture-client",
+          "epoch": "fixture-epoch"
+        },
+        "state": "partial",
+        "resetReason": null,
+        "facts": [
+          {
+            "kind": "conversation",
+            "conversation": "thread-claude",
+            "provider": "claude-code",
+            "displayParent": null,
+            "sourceFork": null,
+            "lifecycleOwner": null,
+            "relationshipRevision": null
+          },
+          {
+            "kind": "turn_input",
+            "conversation": "thread-claude",
+            "eventId": "accepted-claude-66",
+            "sequence": 66,
+            "clientTurn": "bb-claude-t3",
+            "clientRequest": "canonical-claude-request",
+            "session": {
+              "issuer": "claude-code:header",
+              "id": "native-claude-session"
+            }
+          }
+        ],
+        "cursors": [
+          {
+            "conversation": "thread-claude",
+            "cursor": {
+              "sequence": 91,
+              "eventId": "ordinary-tool-91",
+              "eventType": "item/completed",
+              "disposition": "outside_projection"
+            },
+            "pageExhausted": false,
+            "scannedRows": 25,
+            "projectedRows": 0,
+            "outsideProjectionRows": 25
+          }
+        ],
+        "discovery": null,
+        "coverage": {
+          "complete": false,
+          "reasons": [
+            "historical_parentage_unknown",
+            "mutable_discovery",
+            "source_reset_not_fully_detectable"
+          ],
+          "claudeHttpTurn": "response_identity_partial"
+        },
+        "budget": {
+          "calls": 3,
+          "workRows": 126,
+          "receivedBytes": 1000
+        }
+      },
+      "canonicalUtf8": "{\"version\":2,\"dataset\":\"client-conversation-v2\",\"source\":{\"namespace\":\"fixture-client\",\"epoch\":\"fixture-epoch\"},\"state\":\"partial\",\"resetReason\":null,\"facts\":[{\"conversation\":\"thread-claude\",\"displayParent\":null,\"kind\":\"conversation\",\"lifecycleOwner\":null,\"provider\":\"claude-code\",\"relationshipRevision\":null,\"sourceFork\":null},{\"clientRequest\":\"canonical-claude-request\",\"clientTurn\":\"bb-claude-t3\",\"conversation\":\"thread-claude\",\"eventId\":\"accepted-claude-66\",\"kind\":\"turn_input\",\"sequence\":66,\"session\":{\"issuer\":\"claude-code:header\",\"id\":\"native-claude-session\"}}],\"cursors\":[{\"conversation\":\"thread-claude\",\"cursor\":{\"sequence\":91,\"eventId\":\"ordinary-tool-91\",\"eventType\":\"item/completed\",\"disposition\":\"outside_projection\"},\"pageExhausted\":false,\"scannedRows\":25,\"projectedRows\":0,\"outsideProjectionRows\":25}],\"discovery\":null,\"coverage\":{\"complete\":false,\"reasons\":[\"historical_parentage_unknown\",\"mutable_discovery\",\"source_reset_not_fully_detectable\"],\"claudeHttpTurn\":\"response_identity_partial\"},\"budget\":{\"calls\":3,\"workRows\":126,\"receivedBytes\":1000}}",
+      "canonicalSha256": "0ae922857000feeba10942764e6e2be9da2ab13bb0d166245e2120e03b07bc0a",
+      "semanticUtf8": "{\"version\":2,\"dataset\":\"client-conversation-v2\",\"source\":{\"namespace\":\"fixture-client\",\"epoch\":\"fixture-epoch\"},\"state\":\"partial\",\"resetReason\":null,\"facts\":[{\"conversation\":\"thread-claude\",\"displayParent\":null,\"kind\":\"conversation\",\"lifecycleOwner\":null,\"provider\":\"claude-code\",\"relationshipRevision\":null,\"sourceFork\":null},{\"clientRequest\":\"canonical-claude-request\",\"clientTurn\":\"bb-claude-t3\",\"conversation\":\"thread-claude\",\"eventId\":\"accepted-claude-66\",\"kind\":\"turn_input\",\"sequence\":66,\"session\":{\"issuer\":\"claude-code:header\",\"id\":\"native-claude-session\"}}],\"cursors\":[{\"conversation\":\"thread-claude\",\"cursor\":{\"sequence\":91,\"eventId\":\"ordinary-tool-91\",\"eventType\":\"item/completed\",\"disposition\":\"outside_projection\"},\"pageExhausted\":false,\"scannedRows\":25,\"projectedRows\":0,\"outsideProjectionRows\":25}],\"discovery\":null,\"coverage\":{\"complete\":false,\"reasons\":[\"historical_parentage_unknown\",\"mutable_discovery\",\"source_reset_not_fully_detectable\"],\"claudeHttpTurn\":\"response_identity_partial\"},\"budget\":{\"calls\":0,\"workRows\":0,\"receivedBytes\":0}}",
+      "semanticSha256": "f9b8fb839fb94256fd5f7ba5c6e105ed7e2706ef1583476fbc1d0507353823fe"
+    }
+  ]
+}

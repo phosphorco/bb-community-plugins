@@ -20,6 +20,35 @@ agent capabilities are slow, unreliable, or repeatedly attempted. It ships three
 useful dashboards and a small code-authored bundle format that agents and people
 can extend.
 
+## Client conversation source
+
+The separate, fixed `POST /client-facts/v2/read` source operation lets Manager's
+shared collector read curated conversation metadata through BB's native
+token-protected plugin transport. Configure the explicit `sourceNamespace` and
+`sourceEpoch` Analytics settings first; an unconfigured source returns a clear
+503. Installation identity is never inferred. V2 is the only live protocol;
+there is no V1 fallback.
+
+Each request reads at most two conversations and one 25-row discovery page, with
+eight SDK calls, 600 charged work rows, 8 MiB of received JSON, 256 KiB of curated
+output and a cooperative two-second deadline. A cancelled SDK call keeps the
+single occupied read slot until it actually settles. These are source-operation
+bounds, not a hard limit on native database work or proof of host isolation.
+
+The fixed projection retains explicit conversation relationships, native
+sessions, accepted client requests, checkpoints, and declared Claude response
+identity metadata. Unbound response observations remain diagnostic evidence;
+they never become a client-turn binding. Other item bodies can be returned by
+the public SDK inside this BB process and are charged to the same budgets, but
+are neither inspected for content nor exported or stored by this adapter. A
+typed cursor distinguishes projected facts from ignored events so backfill
+does not repeatedly scan ordinary items.
+
+Manager owns source admission, polling, cursor verification, atomic persistence
+and the one-time V1 evidence migration. This adapter adds no observer, scheduler,
+cache, database, query-triggered collection or thread lifecycle capture. Component
+tests are not a live deployment or collection-budget qualification receipt.
+
 The first slice deliberately measures **tool reliability**, not whether a tool
 or skill caused a better task outcome. Historic events do not consistently
 identify a canonical tool version or prove that skill content was read.

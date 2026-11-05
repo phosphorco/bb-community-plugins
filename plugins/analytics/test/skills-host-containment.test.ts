@@ -57,13 +57,13 @@ test("production registration and cold Skills queries perform no source capture"
       sdk: { skills: { list: forbiddenSkills, listFiles: forbiddenSkills, getContent: forbiddenSkills }, threads: { list: forbidden, get: forbidden, events: { list: forbidden } } },
       http: { route: (method: string, path: string, handler: (input: any) => any, options?: { auth?: string }) => {
         routes.set(path, handler);
-        if (path === "/client-facts/v1/read") sourceRoutes.push({ method, path, auth: options?.auth });
+        if (path === "/client-facts/v2/read") sourceRoutes.push({ method, path, auth: options?.auth });
       } }, ui: { registerMentionProvider() {} }, cli: { register: (definition: typeof cli) => { cli = definition; } },
       agents: { registerTool() {}, configure() {} }, realtime: { publish() {} },
       onDispose: (callback: () => void) => { dispose = callback; },
       log: { info() {}, warn() {}, error() {} },
     } as unknown as BbPluginApi);
-    assert.deepEqual(sourceRoutes, [{ method: "POST", path: "/client-facts/v1/read", auth: "token" }]);
+    assert.deepEqual(sourceRoutes, [{ method: "POST", path: "/client-facts/v2/read", auth: "token" }]);
     assert.equal(sdkCalls, 0, "registering the protected source route performs no SDK work");
     assert.equal(sourceSettingsReads, 0, "source identity is read only inside an admitted source request");
     assert.deepEqual(events, [], "Analytics has no feature-owned lifecycle capture");
