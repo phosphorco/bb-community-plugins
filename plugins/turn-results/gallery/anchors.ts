@@ -56,6 +56,8 @@ export interface GalleryTimelinePort {
   timeline(input: { threadId: string; includeNestedRows: 'false'; segmentLimit: string;
     beforeAnchorId?: string; beforeAnchorSeq?: string; deferContent: 'true'; signal: AbortSignal }): Promise<GalleryTimelinePage | { state: 'capacity' }>;
 }
+interface GalleryAnchorRead { anchors: GalleryAnchor[]; continued: boolean; unplaced: string[]; checked: string[];
+  capacity: boolean; pages: number; exhausted: boolean; automatic: boolean }
 /** Only live pane demand advances this public backward cursor, in two finite slices. No native ID
  * parsing, outline/transcript scan, latest-page restart loop, or detached work.
  * A bounded boundary window witnesses complete turns; a very large turn stays
@@ -77,8 +79,26 @@ export function createGalleryAnchorReader(port: GalleryTimelinePort, threadId: s
     // targets get only the same bounded two-slice chain, never an automatic sweep.
     reset();
   }
-  return { invalidate,
-    async read(targets: readonly string[], signal: AbortSignal, restart = false, pageBudget: number = GALLERY_HISTORY_LIMITS.pages) {
+  const api = { invalidate,
+    // Only a continuously owned NEW chain may use this one-time app handoff.
+    // Token equality is never consulted as a content/freshness validator.
+    adopt(targets: readonly string[], nextPort: GalleryTimelinePort) {
+      if (!started || targets.length > GALLERY_HISTORY_LIMITS.targets || targets.some(id => !window.some(row => row.id === id))) return false;
+      const anchors = galleryAnchors(window, threadId, snapshot!, exhausted);
+      lastTargets = new Set(targets); matched.clear(); ineligible.clear();
+      for (const anchor of anchors) if (lastTargets.has(anchor.rowId)) matched.set(anchor.rowId, anchor);
+      const complete = new Set(anchors.map(anchor => anchor.turnId));
+      for (const row of window) if (lastTargets.has(row.id) && !matched.has(row.id)
+        && (row.role === 'user' || row.turnId === null || row.status === 'pending' || row.turnId && complete.has(row.turnId))) ineligible.add(row.id);
+      port = nextPort; return true;
+    },
+    scopeRows: () => window.map(row => ({ id: row.id, turnId: row.turnId })),
+    nearby(sequence: number | null, signal: AbortSignal, restart = true): Promise<GalleryAnchorRead> {
+      return api.read([], signal, restart, GALLERY_HISTORY_LIMITS.pages, sequence);
+    },
+    async read(inputTargets: readonly string[], signal: AbortSignal, restart = false, pageBudget: number = GALLERY_HISTORY_LIMITS.pages, nearby?: number | null): Promise<GalleryAnchorRead> {
+      let targets = inputTargets;
+      if (nearby !== undefined && nearby !== null && (!Number.isSafeInteger(nearby) || nearby < 0)) throw Error('Invalid nearby history hint.');
       if (!Number.isSafeInteger(pageBudget) || pageBudget < 1 || pageBudget > GALLERY_HISTORY_LIMITS.pages
         || targets.length > GALLERY_HISTORY_LIMITS.targets || targets.some(id => !id || id.length > 1024)
         || new Set(targets).size !== targets.length) throw Error('Invalid gallery history demand.');
@@ -88,7 +108,8 @@ export function createGalleryAnchorReader(port: GalleryTimelinePort, threadId: s
       for (const id of ineligible) if (!lastTargets.has(id)) ineligible.delete(id);
       const readGeneration = generation;
       let pages = 0, limited = false;
-      while (targets.length && !exhausted && targets.some(unresolved) && pages < pageBudget && chainPages < GALLERY_HISTORY_LIMITS.chainPages) {
+      const seeking = () => nearby !== undefined && !targets.length || targets.some(unresolved);
+      while ((targets.length || nearby !== undefined) && !exhausted && seeking() && pages < pageBudget && chainPages < GALLERY_HISTORY_LIMITS.chainPages) {
         signal.throwIfAborted();
         const before = started ? cursor : null;
         const page = await port.timeline({ threadId, includeNestedRows: 'false', segmentLimit: String(GALLERY_HISTORY_LIMITS.segments), deferContent: 'true',
@@ -135,16 +156,24 @@ export function createGalleryAnchorReader(port: GalleryTimelinePort, threadId: s
         }
         started = true; cursor = next ? { ...next } : null; exhausted = next === null;
         const anchors = galleryAnchors(window, threadId, snapshot, exhausted);
+        if (nearby !== undefined && !targets.length && anchors.length) {
+          const primary = nearby === null ? anchors.at(-1) : anchors.find(anchor => anchor.turnSeqStart <= nearby! && anchor.turnSeqEnd >= nearby!);
+          if (primary) {
+            const nearest = [...anchors].sort((a, b) => Math.abs(a.turnSeqEnd - primary.turnSeqEnd) - Math.abs(b.turnSeqEnd - primary.turnSeqEnd)).slice(0, 2);
+            targets = nearest.map(anchor => anchor.rowId); lastTargets = new Set(targets);
+          }
+        }
         for (const anchor of anchors) if (lastTargets.has(anchor.rowId)) matched.set(anchor.rowId, anchor);
         const completeTurns = new Set(anchors.map(anchor => anchor.turnId));
         for (const row of window) if (lastTargets.has(row.id) && !matched.has(row.id)
           && (row.role === 'user' || row.turnId === null || row.status === 'pending' || (row.turnId && completeTurns.has(row.turnId)))) ineligible.add(row.id);
       }
       return { anchors: targets.flatMap(id => matched.has(id) ? [matched.get(id)!] : []),
-        continued: targets.some(unresolved) && !exhausted,
+        continued: seeking() && !exhausted,
         unplaced: targets.filter(unresolved), checked: targets.filter(id => !unresolved(id) || exhausted), capacity: limited || chainPages >= GALLERY_HISTORY_LIMITS.chainPages && targets.some(unresolved) && !exhausted,
         pages, exhausted, automatic: !limited && chainPages === GALLERY_HISTORY_LIMITS.pages && pages === GALLERY_HISTORY_LIMITS.pages
-          && targets.some(unresolved) && !exhausted };
+          && seeking() && !exhausted };
     },
   };
+  return api;
 }

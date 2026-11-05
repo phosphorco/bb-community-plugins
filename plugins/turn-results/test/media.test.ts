@@ -75,3 +75,68 @@ test('late abort-ignoring fetch response is cancelled after retirement without d
   release(new Response(new ReadableStream({ cancel() { cancels++; } }), { headers: { 'content-type': 'image/png' } }));
   await tick(); assert.equal(cancels, 1); assert.equal(resource.store.state.url, null); owner.dispose(); assert.equal(cancels, 1);
 });
+
+test('two speculative images share the existing pool; foreground visibility promotes their dynamic acquisition policy', async () => {
+  const h = harness(); const policies: (() => boolean)[] = [];
+  const request = { ...h.request, async acquire(_signal: AbortSignal, policy?: () => boolean) { policies.push(policy!); return lease; } };
+  const warm = h.owner.retain(request, true, true), second = h.owner.retain({ ...request, key: 'second' }, true, true);
+  try {
+    assert.throws(() => h.owner.retain({ ...request, key: 'third' }, true, true), /Nearby media capacity/);
+    await settled(warm.store); assert.equal(policies.length, 2); assert.equal(policies[0]!(), true);
+    warm.promote(); assert.equal(policies[0]!(), false); assert.equal(policies[1]!(), true);
+    warm.promote(); assert.equal(policies.length, 2, 'promotion neither reacquires nor duplicates an entry');
+    const visible = h.owner.retain(request, true);
+    try { assert.equal(warm.store, visible.store); assert.equal(warm.store.state.state, 'ready'); }
+    finally { visible.dispose(); }
+    assert.ok(h.owner.stats().bytes <= 33554432); assert.ok(h.owner.stats().running <= 2);
+  } finally { warm.dispose(); second.dispose(); h.owner.dispose(); }
+});
+
+
+test('settled speculative-only failure leaves one genuine foreground attempt and verified warm reuse', async () => {
+  const h = harness(); let attempts = 0;
+  const request = { ...h.request, async acquire() { if (++attempts === 1) throw Error('optional source timeout'); return lease; } };
+  const warm = h.owner.retain(request, true, true);
+  let foreground: ReturnType<typeof h.owner.retain> | null = null;
+  try {
+    await settled(warm.store, 'error'); await tick(); assert.equal(attempts, 1); assert.equal(h.owner.stats().running, 0);
+    await tick(); assert.equal(attempts, 1, 'optional failure stays parked while idle');
+    foreground = h.owner.retain(request, false);
+    await tick(); assert.equal(attempts, 1, 'nonvisible retention does not spend actual foreground eligibility');
+    foreground.visible(true); await settled(foreground.store, 'ready');
+    assert.equal(foreground.store.state.state, 'ready', 'first real foreground demand must get one fresh verification attempt');
+    assert.equal(attempts, 2); assert.equal(foreground.store.state.error, null); assert.equal(h.counts().fetches, 1);
+    const url = foreground.store.state.url; foreground.dispose(); foreground = null; warm.dispose();
+    const remount = h.owner.retain(request);
+    try { assert.equal(remount.store.state.url, url); await tick(); assert.equal(attempts, 2); }
+    finally { remount.dispose(); }
+  } finally { foreground?.dispose(); warm.dispose(); h.owner.dispose(); }
+});
+
+test('foreground failure consumes speculative eligibility once; toggles and remounts do not retry', async () => {
+  const h = harness(); let attempts = 0;
+  const request = { ...h.request, async acquire() { attempts++; throw Error('still unavailable'); } };
+  const warm = h.owner.retain(request, true, true);
+  try {
+    await settled(warm.store, 'error'); await tick(); assert.equal(attempts, 1);
+    warm.promote(); await tick(); assert.equal(attempts, 2); assert.equal(warm.store.state.state, 'error');
+    warm.promote(); warm.visible(false); warm.visible(true); await tick(); assert.equal(attempts, 2);
+    warm.dispose();
+    for (let i = 0; i < 3; i++) { const visible = h.owner.retain(request); await tick(); assert.equal(attempts, 2); visible.dispose(); }
+    assert.equal(h.counts().fetches, 0); assert.equal(h.owner.stats().running, 0);
+  } finally { warm.dispose(); h.owner.dispose(); }
+});
+
+test('running speculative response promoted to foreground stays owned and its eventual failure has no automatic retry', async () => {
+  const h = harness(); let attempts = 0, reject!: (error: Error) => void, signal!: AbortSignal;
+  const request = { ...h.request, acquire(value: AbortSignal) { attempts++; signal = value; return new Promise<typeof lease>((_resolve, fail) => { reject = fail; }); } };
+  const warm = h.owner.retain(request, true, true);
+  try {
+    await tick(); warm.promote(); await tick();
+    assert.equal(attempts, 1); assert.equal(signal.aborted, false); assert.equal(h.owner.stats().running, 1);
+    reject(Error('foreground source failure')); await settled(warm.store, 'error'); await tick();
+    assert.equal(attempts, 1); warm.visible(false); warm.visible(true); await tick(); assert.equal(attempts, 1);
+    const another = h.owner.retain(request); await tick(); assert.equal(attempts, 1); another.dispose();
+    assert.equal(h.owner.stats().running, 0); assert.equal(h.counts().fetches, 0);
+  } finally { warm.dispose(); h.owner.dispose(); }
+});

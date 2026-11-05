@@ -160,6 +160,30 @@ a completed turn, history invitation or collection. One concise event caption
 accompanies content, and only meaningful file/URL destinations offer Open.
 Source clocks/provenance remain in facts without permanent diagnostic footers.
 
+Once the frontend is already loaded, its committed current-thread header and
+strict project/thread message-jump route may start one bounded fresh history
+chain before a source row arrives. An independent proximity hint selects at most
+two actual offscreen rows within one viewport; leaving that horizon retires that
+hint without cancelling the separate route intent. These jobs share the existing
+turn snapshots and image owner, with at most two warm turns and two warm images.
+They never mount hidden custom canvases or enumerate suppliers speculatively.
+Open and foreground work precede queued speculative work. An already-dispatched
+Media response keeps its lane until settlement; a foreground owner promotes the
+same queued request instead of aborting and reissuing it.
+
+Only a continuously live semantic generation with both transports connected may
+hand its fresh history chain to one exact first physical arrival. Unknown or
+structural mutations, removal/replacement, scope changes, semantic events,
+connection loss and hiding permanently retire that adoption. Verified data and
+Blob bytes may remain, but new foreground public proof and retained collection
+are required before actions or custom admission. Native message jumps commonly
+replace existing rows, so that path can benefit from bytes without reusing
+placement proof. No equal snapshot token validates cached history. Initial host
+loading of the plugin executable is an independent floor: this scheduling does
+not run before its frontend exists and does not promise cross-session preloading.
+Speculative reads can spend existing lane time and deadlines on content the
+reader ultimately skips; they do not increase any read, byte or lease budget.
+
 ## Verification limits
 
 Source tests cover registered suppliers and real SQLite, retained history,

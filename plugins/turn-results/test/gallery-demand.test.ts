@@ -408,3 +408,21 @@ test('physical display witness survives same-turn sibling proof suspension but o
     } finally { await handle.dispose(); f.restore(); }
   });
 });
+
+
+test('nearby demand is at most two actual offscreen rows within one viewport, and positive empty proximity retires the hint', async () => {
+  const f = fixture(4), nearby: (readonly string[])[] = [];
+  const tops = [20, 650, 800, 1400];
+  f.rows.forEach((row, i) => { row.getBoundingClientRect = () => ({ top: tops[i]!, bottom: tops[i]! + 80,
+    left: 0, right: 800, width: 800, height: 80, x: 0, y: tops[i]!, toJSON() {} }); });
+  const stop = observeGalleryDemand(f.sentinel, () => {}, ids => nearby.push(ids));
+  try {
+    await tick(); assert.deepEqual(nearby.at(-1), ['opaque-row-1', 'opaque-row-2']);
+    const near = f.observers[1]!;
+    tops[1] = 100; tops[2] = 1600;
+    near.callback([{ target: f.rows[1]!, isIntersecting: true }, { target: f.rows[2]!, isIntersecting: false }]);
+    await tick(); assert.deepEqual(nearby.at(-1), []);
+    const idle = nearby.length; await tick(); assert.equal(nearby.length, idle);
+    f.rows[3]!.remove(); await tick(); assert.deepEqual(nearby.at(-1), []);
+  } finally { stop(); assert.ok(f.observers.every(observer => observer.targets.size === 0)); f.restore(); }
+});

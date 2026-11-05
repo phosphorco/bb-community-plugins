@@ -114,7 +114,9 @@ async function fixture(count = 6, mount = true, contribution = {}) {
   const structuralRows = contribution.structuralRows ?? [];
   const nativeMarkup = Array.from({ length: count }, (_, i) => `<div data-timeline-row-id="opaque-${i}"><button>Native ${i}</button></div>`).join('')
     + structuralRows.map(row => `<div data-timeline-row-id="${row.id}"><button>Native public row</button></div>`).join('');
-  const dom = new JSDOM(`<body><section data-split-pane-id="left"><header><div data-thread-header-workflow-actions><div data-bb-plugin-root data-bb-plugin="turn-results" class="contents"><span role="group" data-fixture-header></span></div></div></header><section data-thread-window>${contribution.nativeItems ? '<div data-native-chrome><div></div></div>' : ''}<div data-timeline-row-list="top-level">${structuralRows.length || contribution.nativeItems ? `<div data-timeline-items class="relative w-full">${nativeMarkup}</div>` : nativeMarkup}</div></section></section></body>`, { pretendToBeVisual: true });
+  const dom = new JSDOM(`<body><section data-split-pane-id="left"><header><div data-thread-header-workflow-actions><div data-bb-plugin-root data-bb-plugin="turn-results" class="contents"><span role="group" data-fixture-header></span></div></div></header><section data-thread-window>${contribution.nativeItems ? '<div data-native-chrome><div></div></div>' : ''}<div data-timeline-row-list="top-level">${structuralRows.length || contribution.nativeItems ? `<div data-timeline-items class="relative w-full">${nativeMarkup}</div>` : nativeMarkup}</div></section></section></body>`, { pretendToBeVisual: true, ...(contribution.url ? { url: contribution.url } : {}) });
+  const arrivingPane = contribution.deferNative ? dom.window.document.querySelector('[data-thread-window]') : null;
+  arrivingPane?.remove();
   const keys = ['window','document','Element','HTMLElement','MutationObserver','ResizeObserver','IntersectionObserver','IS_REACT_ACT_ENVIRONMENT','fetch'];
   const saved = Object.fromEntries(keys.map(key => [key, globalThis[key]]));
   const changes = new Map(), eventPrototype = EventTarget.prototype, addEvent = eventPrototype.addEventListener, removeEvent = eventPrototype.removeEventListener;
@@ -130,18 +132,21 @@ async function fixture(count = 6, mount = true, contribution = {}) {
     if (type === 'change' && changes.get(this)?.delete(listener)) { subscriptions--; if (!changes.get(this).size) changes.delete(this); }
     return removeEvent.call(this, type, listener, options);
   };
-  const imageObservers = new Set();
-  class Observer { constructor(callback) { this.callback = callback; this.targets = new Set(); } observe(target) {
+  const imageObservers = new Set(), nativeObservers = new Set(), positions = { ...contribution.positions };
+  class Observer { constructor(callback, options) { this.callback = callback; this.options = options; this.targets = new Set(); nativeObservers.add(this); } observe(target) {
     this.targets.add(target);
     if (contribution.loadedImage && target.classList.contains('tr-canvas')) {
       imageObservers.add(this);
       if (!contribution.manualImageVisibility) this.callback([{ target, isIntersecting: true }]);
     }
-  } unobserve(target) { this.targets.delete(target); } disconnect() { this.targets.clear(); imageObservers.delete(this); } }
+  } unobserve(target) { this.targets.delete(target); } disconnect() { this.targets.clear(); imageObservers.delete(this); nativeObservers.delete(this); } }
   Object.assign(globalThis, { window: dom.window, document: dom.window.document, Element: dom.window.Element, HTMLElement: dom.window.HTMLElement,
     MutationObserver: dom.window.MutationObserver, ResizeObserver: Observer, IntersectionObserver: Observer, IS_REACT_ACT_ENVIRONMENT: true });
   const box = { top: 0, bottom: 600, left: 0, right: 800, width: 800, height: 600, x: 0, y: 0, toJSON() {} };
-  dom.window.HTMLElement.prototype.getBoundingClientRect = function () { return this.hasAttribute('data-thread-window') ? box : { ...box, width: contribution.width ?? 400, right: contribution.width ?? 400, height: 216, bottom: 216 }; };
+  dom.window.HTMLElement.prototype.getBoundingClientRect = function () {
+    const top = positions[this.getAttribute('data-timeline-row-id')] ?? 0;
+    return this.hasAttribute('data-thread-window') ? box : { ...box, top, y: top, width: contribution.width ?? 400, right: contribution.width ?? 400, height: 216, bottom: top + 216 };
+  };
   let rows = Array.from({ length: count }, (_, i) => record(i)), enabled = true, listCalls = 0, rpc = 0, live = 0, peak = 0, setups = 0, cleanups = 0, full = 0, fullPeak = 0;
   if (contribution.sameTurnClaims) rows = Array.from({ length: contribution.sameTurnClaims }, (_, i) => {
     const row = structuredClone(rows[0]); row.key = `claim-${i}`; row.identity.ref.member = `fixture-member-${i}`;
@@ -167,6 +172,7 @@ async function fixture(count = 6, mount = true, contribution = {}) {
           observedAt: 1, basis: 'explicit-host-read', sha256: mediaSha } } } }; });
     globalThis.fetch = async () => { mediaFetches++; return new Response(mediaBytes, { headers: { 'content-type': 'image/png' } }); };
   }
+  if (contribution.mixedWarm) { const index = contribution.warmImageLast ? 0 : 1; const custom = record(index); custom.owner = registeredOwner; rows[index] = custom; }
   const fileOpenCalls = []; let fileOpenAccepted = true;
   const captured = [], navigation = [], registrations = [], nativeCalls = [], handlers = new Map();
   const bb = { rpc: { register(_contract, value) { for (const [method, handler] of Object.entries(value)) handlers.set(method, handler); } } };
@@ -207,6 +213,14 @@ async function fixture(count = 6, mount = true, contribution = {}) {
       return args.outputSchema.parse(value);
     },
   } };
+  const coreSubscriptions = new Set();
+  if (contribution.deferNative || contribution.preloadNearby) sdk.subscribe = input => {
+    coreSubscriptions.add(input);
+    if (input.event === 'realtime:connection') queueMicrotask(() => {
+      if (coreSubscriptions.has(input)) input.callback({ state: 'connected', reconnected: false, reconnectDelayMs: null });
+    });
+    return () => coreSubscriptions.delete(input);
+  };
   function View(props) {
     captured.push(props);
     useEffect(() => { live++; setups++; peak = Math.max(peak, live); if (props.mode === 'full') { full++; fullPeak = Math.max(fullPeak, full); }
@@ -237,6 +251,20 @@ async function fixture(count = 6, mount = true, contribution = {}) {
     openUrl(url) { navigation.push(url); return true; }, realtimeConnectionState: 'connected' });
   let rendered = null; if (mount) act(() => { rendered = renderBanner(); }); const slots = [];
   return { dom, sdk, app, controller, captured, navigation, nativeCalls, register, renderer: View, slot: () => rendered,
+    arrive: () => act(async () => { if (arrivingPane && !arrivingPane.isConnected) document.querySelector('[data-split-pane-id]').append(arrivingPane); await tick(); }),
+    coreSubscriptions: () => [...coreSubscriptions],
+    coreChanged: (event, channel = 'thread:changed') => act(async () => { for (const subscription of [...coreSubscriptions]) if (subscription.event === channel) subscription.callback(event); await tick(); }),
+    rowPosition: (id, top) => act(async () => {
+      positions[id] = top;
+      for (const observer of [...nativeObservers]) {
+        const entries = [...observer.targets].filter(target => target.hasAttribute('data-timeline-row-id')).map(target => {
+          const rect = target.getBoundingClientRect(), margin = observer.options?.rootMargin ? 600 : 0;
+          return { target, isIntersecting: rect.top < 600 + margin && rect.bottom > -margin };
+        });
+        if (entries.length) observer.callback(entries);
+      }
+      await tick();
+    }),
     fileOpenCalls, fileOpenAccepted(value) { fileOpenAccepted = value; },
     runtime: () => runtimeProbe.at(-1), element: () => h(banner.component, { ...headerProps }),
     mediaCounts: () => ({ calls: mediaCalls, fetches: mediaFetches }),
@@ -279,6 +307,7 @@ async function fixture(count = 6, mount = true, contribution = {}) {
       if (globalThis.__turnResultsRuntimeFixture === runtimeProbe) delete globalThis.__turnResultsRuntimeFixture;
       console.log('CUSTOM_HOST_COUNTERS', JSON.stringify(counters));
       assert.equal(live, 0); assert.equal(setups, cleanups); assert.equal(subscriptions, 0); assert.ok(subscriptionPeak <= 132);
+      assert.equal(coreSubscriptions.size, 0);
     },
   };
 }
@@ -2429,4 +2458,157 @@ test('visible native demand negotiates generic readiness before held older proof
     assert.equal(live, 0); assert.equal(runtime.stats().running, 0); assert.equal(runtime.stats().queued, 0);
     assert.equal(runtime.stats().leases, 0); assert.equal(runtime.canvases.counts().occupied, 0);
   }
+});
+
+test('current-generation header jump warms fresh nearby retained and verified media before physical arrival, without a speculative canvas', async () => {
+  const f = await fixture(2, true, { captureRuntime: true, deferNative: true, nativeItems: true,
+    url: 'https://bb.invalid/projects/project/threads/thread#msg=3', loadedImage: true, mixedWarm: true, owner: 'turn-result-images', fileRoute: true });
+  try {
+    // This starts at the actual executable/header lifecycle, not before plugin
+    // JavaScript exists. It is source proof, never a native startup benchmark.
+    await settle(80);
+    console.log('NAVIGATION_PRELOAD_BEFORE_ARRIVAL', JSON.stringify({ nativeReads: f.nativeCalls.length, media: f.mediaCounts(),
+      roots: document.querySelectorAll('[data-turn-results-gallery]').length, canvases: f.stats().live }));
+    assert.ok(f.nativeCalls.length > 0, 'the current-thread header jump must begin genuine history before native source attachment');
+    await until(() => f.mediaCounts().fetches === 1 && f.runtime().stats().running === 0 && f.runtime().stats().queued === 0);
+    assert.equal(document.querySelectorAll('[data-turn-results-gallery]').length, 0);
+    assert.equal(f.stats().live, 0); assert.equal(f.runtime().canvases.counts().occupied, 0);
+    const before = { history: f.nativeCalls.length, media: f.mediaCounts() }, facts = JSON.stringify(f.rows());
+    await f.arrive();
+    await until(() => document.querySelector('[data-result-key="row-0"] img[src^="blob:"]') && f.stats().live === 1);
+    assert.equal(f.nativeCalls.length, before.history, 'arrival adopts only its still-owned fresh semantic-generation chain');
+    assert.deepEqual(f.mediaCounts(), before.media, 'same existing verified Blob is reused without another Media/GET');
+    await act(async () => document.querySelector('[data-result-key="row-0"] .tr-image-action').click());
+    await act(async () => document.querySelector('[data-result-key="row-1"] .tr-open-icon').click());
+    assert.equal(f.fileOpenCalls.length, 1); assert.deepEqual(f.navigation, ['https://fixture.invalid/1']);
+    assert.equal(JSON.stringify(f.rows()), facts); assert.ok(f.stats().peak <= 4);
+    await until(() => f.runtime().stats().running === 0 && f.runtime().stats().queued === 0);
+    const idle = { history: f.nativeCalls.length, media: f.mediaCounts() }; await settle(40);
+    assert.deepEqual({ history: f.nativeCalls.length, media: f.mediaCounts() }, idle);
+  } finally { await f.dispose(); }
+});
+
+test('existing pane warms only the actual next one-viewport image before intersection and promotes its queued Media without duplication', async () => {
+  let rawRelease, rawHeld = false, mediaStarted = false, mediaRelease;
+  const rawGate = new Promise(done => { rawRelease = done; }), mediaGate = new Promise(done => { mediaRelease = done; });
+  const calls = [];
+  const f = await fixture(2, true, { captureRuntime: true, preloadNearby: true, nativeItems: true,
+    url: 'https://bb.invalid/projects/project/threads/thread#msg=3', positions: { 'opaque-0': 20, 'opaque-1': 1600 },
+    loadedImage: true, mixedWarm: true, warmImageLast: true, owner: 'turn-result-images', fileRoute: true,
+    configureSdk(sdk) {
+      const rpc = sdk.plugins.callRpc;
+      sdk.plugins.callRpc = async args => {
+        calls.push(args.method);
+        if (args.method === 'turnResultImagesV1Media') { mediaStarted = true; await mediaGate; }
+        return rpc(args);
+      };
+    } });
+  const runtime = f.runtime();
+  let foreground, speculative;
+  try {
+    await until(() => f.stats().live === 1 && runtime.stats().running === 0 && runtime.stats().queued === 0);
+    assert.equal(f.mediaCounts().calls, 0, 'sequence-nearest but beyond one viewport is not warmed');
+    assert.equal(document.querySelector('[data-result-key="row-1"]'), null);
+    // Genuine other retained raw work holds this thread's physical lane. It
+    // ignores abort, so foreground promotion cannot pretend it was cancelled.
+    const blocker = new AbortController();
+    const held = runtime.readScope('thread', blocker.signal, async () => { rawHeld = true; await rawGate; });
+    await until(() => rawHeld);
+    await f.rowPosition('opaque-1', 800);
+    // Let actual nearby history finish, then hold the later warm Media rather
+    // than manufacturing a private cache or bypassing the native proof.
+    rawRelease(); await held;
+    await until(() => mediaStarted);
+    assert.equal(f.mediaCounts().fetches, 0); assert.equal(document.querySelector('[data-result-key="row-1"]'), null);
+    await f.rowPosition('opaque-1', 100);
+    await settle(25);
+    assert.equal(calls.filter(method => method === 'turnResultImagesV1Media').length, 1, 'a dispatched promoted Media is never aborted/reissued');
+    assert.equal(runtime.stats().running, 1);
+    await act(async () => { mediaRelease(); await tick(); });
+    await until(() => document.querySelector('[data-result-key="row-1"] img[src^="blob:"]') && runtime.stats().running === 0 && runtime.stats().queued === 0);
+    assert.deepEqual(f.mediaCounts(), { calls: 1, fetches: 1 });
+    await act(async () => document.querySelector('[data-result-key="row-1"] .tr-image-action').click());
+    assert.equal(f.fileOpenCalls.length, 1); assert.ok(f.stats().peak <= 4);
+    const count = calls.length; await settle(40); assert.equal(calls.length, count);
+  } finally { rawRelease(); mediaRelease(); await f.dispose(); await runtime.whenDrained(); assert.equal(runtime.stats().running, 0); }
+});
+
+
+test('existing-pane replacement retires preload placement and requires new foreground proof while reusing only verified bytes', async () => {
+  const f = await fixture(2, true, { captureRuntime: true, preloadNearby: true, nativeItems: true,
+    url: 'https://bb.invalid/projects/project/threads/thread#msg=3', positions: { 'opaque-0': 20, 'opaque-1': 800 },
+    loadedImage: true, mixedWarm: true, warmImageLast: true, owner: 'turn-result-images', fileRoute: true });
+  let release = () => {};
+  try {
+    await until(() => f.mediaCounts().fetches === 1 && f.runtime().stats().running === 0 && f.runtime().stats().queued === 0);
+    const before = f.nativeCalls.length, facts = JSON.stringify(f.rows()), original = f.sdk.threads.timeline;
+    let fresh = 0; const gate = new Promise(done => { release = done; });
+    f.sdk.threads.timeline = async input => { fresh++; await gate; return original(input); };
+    await act(async () => {
+      const old = document.querySelector('[data-timeline-row-id="opaque-1"]');
+      old.replaceWith(old.cloneNode(true)); await tick();
+    });
+    await f.rowPosition('opaque-1', 100); await until(() => fresh > 0);
+    assert.equal(document.querySelector('[data-result-key="row-1"]'), null, 'cached bytes never fabricate replacement-row authority');
+    await act(async () => { release(); await tick(); });
+    await until(() => document.querySelector('[data-result-key="row-1"] img[src^="blob:"]') && f.runtime().stats().running === 0 && f.runtime().stats().queued === 0);
+    assert.ok(f.nativeCalls.length > before, 'replacement requires genuine foreground public history');
+    assert.deepEqual(f.mediaCounts(), { calls: 1, fetches: 1 }, 'only verified passive bytes survive retirement');
+    await act(async () => document.querySelector('[data-result-key="row-1"] .tr-image-action').click());
+    assert.equal(f.fileOpenCalls.length, 1); assert.equal(JSON.stringify(f.rows()), facts);
+  } finally { release(); await f.dispose(); }
+});
+
+test('retired header callbacks cannot stop a new committed transport generation or publish an ignored old history result', async () => {
+  let release, first = true, started = false;
+  const gate = new Promise(done => { release = done; });
+  const f = await fixture(1, true, { captureRuntime: true, deferNative: true, nativeItems: true,
+    url: 'https://bb.invalid/projects/project/threads/thread#msg=3', loadedImage: true, owner: 'turn-result-images', fileRoute: true,
+    configureSdk(sdk) { const timeline = sdk.threads.timeline; sdk.threads.timeline = async input => {
+      if (first) { first = false; started = true; await gate; } return timeline(input);
+    }; } });
+  try {
+    await until(() => started); const oldCallbacks = f.coreSubscriptions();
+    await f.reconnect();
+    await act(async () => { for (const sub of oldCallbacks) sub.callback(sub.event === 'realtime:connection'
+      ? { state: 'disconnected', reconnected: false } : { reason: 'history-rewrite' }); await tick(); });
+    assert.equal(f.runtime().stats().running, 1, 'ignored old history still owns actual lane credit');
+    assert.equal(f.mediaCounts().calls, 0); assert.equal(f.stats().live, 0);
+    await act(async () => { release(); await tick(); });
+    await until(() => f.mediaCounts().fetches === 1 && f.runtime().stats().running === 0 && f.runtime().stats().queued === 0);
+    assert.equal(f.runtime().canvases.counts().occupied, 0);
+    const reads = f.nativeCalls.length; await f.arrive();
+    await until(() => document.querySelector('[data-result-key="row-0"] img[src^="blob:"]'));
+    assert.equal(f.nativeCalls.length, reads, 'only the continuously live NEW chain adopts its exact first physical arrival');
+    assert.deepEqual(f.mediaCounts(), { calls: 1, fetches: 1 });
+    await act(async () => document.querySelector('.tr-image-action').click()); assert.equal(f.fileOpenCalls.length, 1);
+  } finally { release(); await f.dispose(); }
+});
+
+
+test('semantic retirement and hide refuse late warm Media; wrong project never schedules and fresh current demand recovers', async () => {
+  let release, started = false, first = true;
+  const gate = new Promise(done => { release = done; });
+  const f = await fixture(1, true, { captureRuntime: true, deferNative: true, nativeItems: true,
+    url: 'https://bb.invalid/projects/project/threads/thread#msg=3', loadedImage: true, owner: 'turn-result-images', fileRoute: true,
+    configureSdk(sdk) { const rpc = sdk.plugins.callRpc; sdk.plugins.callRpc = async args => {
+      if (args.method === 'turnResultImagesV1Media' && first) { first = false; started = true; await gate; }
+      return rpc(args);
+    }; } });
+  try {
+    await until(() => started);
+    await f.coreChanged({ reason: 'events-appended', timelineSequence: 1 });
+    await f.hidden(true); assert.equal(f.runtime().stats().running, 1, 'retired raw Media response remains owned');
+    await act(async () => { release(); await tick(); });
+    await until(() => f.runtime().stats().running === 0 && f.runtime().stats().queued === 0);
+    assert.equal(f.mediaCounts().fetches, 0); assert.equal(f.runtime().canvases.counts().occupied, 0);
+    await act(async () => { window.history.pushState(null, '', '/projects/foreign/threads/thread#msg=3'); window.dispatchEvent(new f.dom.window.PopStateEvent('popstate')); });
+    await f.hidden(false); const reads = f.nativeCalls.length; await settle(30); assert.equal(f.nativeCalls.length, reads);
+    await act(async () => { window.history.pushState(null, '', '/projects/project/threads/thread#msg=3'); window.dispatchEvent(new f.dom.window.PopStateEvent('popstate')); });
+    await until(() => f.mediaCounts().fetches === 1 && f.runtime().stats().running === 0 && f.runtime().stats().queued === 0);
+    await f.arrive(); await until(() => document.querySelector('[data-result-key="row-0"] img[src^="blob:"]'));
+    await act(async () => document.querySelector('.tr-image-action').click()); assert.equal(f.fileOpenCalls.length, 1);
+    assert.equal(f.mediaCounts().calls, 2, 'retired serving response is not a reusable lease; fresh verification is required');
+    const idle = f.nativeCalls.length; await settle(30); assert.equal(f.nativeCalls.length, idle);
+  } finally { release(); await f.dispose(); }
 });

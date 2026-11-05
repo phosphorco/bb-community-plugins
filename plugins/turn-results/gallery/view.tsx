@@ -1,8 +1,7 @@
 import type { BbNavigate, useSdk } from '@get-bb/plugin-sdk/app';
 import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { useSelector } from '@tanstack/react-store';
-import { z } from 'zod';
-import { canonicalByteLength, canonicalJson, sha256Canonical } from '@phosphorco/bb-turn-results';
+import { canonicalByteLength, canonicalJson } from '@phosphorco/bb-turn-results';
 import { navigateResult } from '@phosphorco/bb-turn-results/bb';
 import type { GalleryObservation } from './index.ts';
 import type { GalleryAnchor } from './anchors.ts';
@@ -15,16 +14,6 @@ import { paneColumns, packResults } from './packing.ts';
 import { projectResults } from './projection.ts';
 
 type Sdk = ReturnType<typeof useSdk>;
-const mediaRaw = z.unknown().transform(value => { canonicalByteLength(value, 16384); return value; });
-const mediaOutput = z.discriminatedUnion('state', [
-  z.object({ version: z.literal(1), state: z.literal('unavailable'), reason: z.string().max(128) }),
-  z.object({ version: z.literal(1), state: z.literal('ready'), lease: z.object({
-    targetFingerprint: z.string().regex(/^[a-f0-9]{64}$/), leaseGeneration: z.string().max(128),
-    baseUrl: z.string().regex(/^\/api\/v1\/file-previews\/[A-Za-z0-9-]{1,128}$/), url: z.string().max(4096),
-    expiresAtMs: z.number().int().nonnegative(), resolvedAt: z.number().int().nonnegative(),
-  }), image: z.object({ mimeType: z.literal('image/png'), sha256: z.string().regex(/^[a-f0-9]{64}$/),
-    width: z.number().int().min(1).max(32768), height: z.number().int().min(1).max(32768), sizeBytes: z.number().int().min(1).max(8388608) }) }),
-]);
 type MediaHandle = ReturnType<GalleryRuntime['media']['retain']>;
 function LoadedImage({ handle, alt, open, actionsReady }: { handle: MediaHandle; alt: string; open: OpenClick; actionsReady: boolean }) {
   const state = useSelector(handle.store);
@@ -49,27 +38,10 @@ function ImageCanvas({ row, runtime, sdk, open, lifetime, actionsReady }: { row:
     let live = !lifetime.aborted, resource: MediaHandle | null = null;
     const abort = () => { live = false; resource?.dispose(); };
     lifetime.addEventListener('abort', abort, { once: true });
-    const target = route.target;
-    void sha256Canonical({ target, sha256 }).then(fingerprint => {
-      if (!live) return;
-      resource = runtime.media.retain({ key: row.key, fingerprint, sha256, async acquire(signal) {
-        const read = await runtime.readScope(row.identity.ref.source.threadId, signal, bounded => {
-          bounded.throwIfAborted();
-          // Local retirement must not abort the HTTP promise and release its
-          // lane while the supplier's independent verification still runs.
-          // Own the dispatched response; caller fences prohibit a late GET.
-          return sdk.plugins.callRpc({ pluginId: row.owner, method: 'turnResultImagesV1Media',
-            input: { version: 1, identity: JSON.parse(canonicalJson(row.identity)) }, outputSchema: mediaRaw });
-        });
-        signal.throwIfAborted();
-        if (read.state === 'capacity') throw Error('Image verification capacity reached.');
-        const output = mediaOutput.parse(read.value);
-        if (output.state !== 'ready') throw Error(output.reason);
-        if (output.image.sha256 !== sha256 || output.image.width * output.image.height > 16777216
-          || output.lease.targetFingerprint !== fingerprint || !output.lease.url.startsWith(`${output.lease.baseUrl}/`)
-          || output.lease.expiresAtMs - output.lease.resolvedAt > 120000 || output.lease.expiresAtMs <= output.lease.resolvedAt) throw Error('Image binding changed.');
-        return output.lease;
-      } }, false);
+    void runtime.image(row, false, false, lifetime, sdk.plugins).then(next => {
+      if (!live) { next?.dispose(); return; }
+      resource = next;
+      if (!resource) return;
       setHandle(resource);
       observer.observe(host.current!);
     }).catch(() => { /* Data fallback and native open action remain accessible. */ });

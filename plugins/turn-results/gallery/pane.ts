@@ -72,7 +72,8 @@ export function mountGalleryNotice(sentinel: HTMLElement, ids: readonly string[]
     dispose() { element.remove(); } };
 }
 
-export function observeGalleryDemand(sentinel: HTMLElement, changed: (ids: string[], capacity: boolean, reason: 'demand' | 'mutation' | 'hydration' | 'visibility', changedRows: readonly string[] | null) => void) {
+export function observeGalleryDemand(sentinel: HTMLElement, changed: (ids: string[], capacity: boolean, reason: 'demand' | 'mutation' | 'hydration' | 'visibility', changedRows: readonly string[] | null) => void,
+  nearby?: (ids: readonly string[]) => void) {
   const pane = sentinel.closest('[data-thread-window]');
   if (!pane) return () => {};
   const paneToken = domToken(pane)!;
@@ -81,6 +82,24 @@ export function observeGalleryDemand(sentinel: HTMLElement, changed: (ids: strin
   let broad = false;
   const changedRows = new Set<string>();
   const visible = new Set<Element>();
+  const near = new Set<HTMLElement>(); let priorNearby = '';
+  function distance(row: HTMLElement) {
+    const box = row.getBoundingClientRect(), scope = pane!.getBoundingClientRect();
+    const top = Math.max(0, scope.top), bottom = Math.min(window.innerHeight, scope.bottom), height = bottom - top;
+    if (height <= 0 || box.height <= 0 || box.width <= 0 || box.right <= 0 || box.left >= window.innerWidth) return null;
+    const gap = box.top >= bottom ? box.top - bottom : box.bottom <= top ? top - box.bottom : null;
+    return gap !== null && gap <= height ? gap : null;
+  }
+  function publishNearby() {
+    if (!nearby || document.hidden || near.size > GALLERY_PANE_LIMITS.rows) return;
+    const ids = [...near].flatMap(row => {
+      const witness = rowWitnesses.get(row), id = row.dataset.timelineRowId;
+      if (!row.isConnected || !witness || witness.id !== id || witness.parent !== row.parentElement
+        || witness.list !== row.closest('[data-timeline-row-list]') || row.closest('[data-thread-window]') !== pane || priorIds.get(id!) !== row) return [];
+      const gap = distance(row); return gap === null ? [] : [{ id: id!, gap }];
+    }).sort((a, b) => a.gap - b.gap).slice(0, 2).map(row => row.id);
+    const key = JSON.stringify(ids); if (key !== priorNearby) { priorNearby = key; nearby(ids); }
+  }
   // Only the last bounded mounted-row snapshot is retained. A removed row has
   // lost closest()/parent information by delivery time; its prior DOM witness
   // is necessary to distinguish windowing from a move, replacement or reuse.
@@ -105,20 +124,24 @@ export function observeGalleryDemand(sentinel: HTMLElement, changed: (ids: strin
     if (focused && admitted.includes(focused)) { admitted.splice(admitted.indexOf(focused), 1); admitted.unshift(focused); }
     const ids = [...new Set(admitted.map(row => row.dataset.timelineRowId!))].slice(0, GALLERY_PANE_LIMITS.targets);
     const capacity = admitted.length > GALLERY_PANE_LIMITS.targets || rows.length > GALLERY_PANE_LIMITS.rows;
-    const key = JSON.stringify([ids, capacity]); if (key === prior && reason === 'demand') return;
+    const key = JSON.stringify([ids, capacity]); if (key === prior && reason === 'demand') { publishNearby(); return; }
     prior = key; const cause = reason, affected = broad ? null : [...changedRows];
-    reason = 'demand'; broad = false; changedRows.clear(); changed(ids, capacity, cause, affected);
+    reason = 'demand'; broad = false; changedRows.clear(); changed(ids, capacity, cause, affected); publishNearby();
   }
   function schedule() { if (!queued && active && !document.hidden) { queued = true; queueMicrotask(publish); } }
   const observer = new IntersectionObserver(entries => {
     for (const entry of entries) if (entry.isIntersecting) visible.add(entry.target); else visible.delete(entry.target);
     schedule();
   });
+  const nearObserver = nearby ? new IntersectionObserver(entries => {
+    for (const entry of entries) if (entry.isIntersecting) near.add(entry.target as HTMLElement); else near.delete(entry.target as HTMLElement);
+    schedule();
+  }, { root: pane, rootMargin: '100% 0px' }) : null;
   function scan(next?: HTMLElement[]) {
     if (!active || document.hidden) return;
     next ??= nativeRows(pane!);
     const retained = new Set(next);
-    for (const row of rows) if (!retained.has(row)) { observer.unobserve(row); visible.delete(row); }
+    for (const row of rows) if (!retained.has(row)) { observer.unobserve(row); nearObserver?.unobserve(row); visible.delete(row); near.delete(row); }
     const old = new Set(rows); rows = next;
     rowWitnesses = new Map(); priorIds = new Map();
     placement = null;
@@ -142,6 +165,7 @@ export function observeGalleryDemand(sentinel: HTMLElement, changed: (ids: strin
     }
     for (const row of rows.slice(0, GALLERY_PANE_LIMITS.rows)) if (!old.has(row)) {
       if (intersects(row, pane!)) visible.add(row); observer.observe(row);
+      if (nearby) { if (distance(row) !== null) near.add(row); nearObserver?.observe(row); }
     }
     schedule();
   }
@@ -312,7 +336,7 @@ export function observeGalleryDemand(sentinel: HTMLElement, changed: (ids: strin
   mutations.observe(pane, { subtree: true, childList: true, characterData: true, attributes: true, attributeFilter: ['data-timeline-row-id', 'data-timeline-row-list', 'data-timeline-items', 'data-thread-window'] });
   pane.addEventListener('focusin', schedule); pane.addEventListener('focusout', schedule);
   document.addEventListener('visibilitychange', visibility); scan();
-  return () => { active = false; placement = null; rows = []; visible.clear(); changedRows.clear(); rowWitnesses.clear(); priorIds.clear(); observer.disconnect(); mutations.disconnect(); pane.removeEventListener('focusin', schedule);
+  return () => { active = false; placement = null; rows = []; visible.clear(); near.clear(); changedRows.clear(); rowWitnesses.clear(); priorIds.clear(); observer.disconnect(); nearObserver?.disconnect(); mutations.disconnect(); pane.removeEventListener('focusin', schedule);
     pane.removeEventListener('focusout', schedule); document.removeEventListener('visibilitychange', visibility); };
 }
 /** Native owns scrolling/windowing/pins. A finite set of roots is backed by

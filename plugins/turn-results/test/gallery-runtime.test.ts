@@ -881,3 +881,87 @@ test('prefix union and incomplete collection obey existing row/byte/page limits 
     const count = reads; await tick(); await tick(); assert.equal(reads, count, 'finite capacity stays parked without polling');
   } finally { lease.dispose(); h.dispose(); }
 });
+
+test('queued warm Media promotes through its shared entry; Open and raw ownership stay ahead of speculative work', async () => {
+  const h = setup(), row = prefixRow(0), original = h.sdk.plugins.callRpc;
+  const data = new Uint8Array([137, 80, 78, 71]), sha = [...new Uint8Array(await crypto.subtle.digest('SHA-256', data))].map(v => v.toString(16).padStart(2, '0')).join('');
+  const target = { kind: 'host' as const, hostId: 'recorded-host', path: '/saved/result.png' };
+  row.owner = 'turn-result-images'; row.resolution!.route = { kind: 'file', target };
+  row.resolution!.fallback = { kind: 'image', title: 'Verified image', alt: 'Verified scene' };
+  row.resolution!.provenance.artifactLocation = { state: 'verified', target, observedAt: 1, basis: 'explicit-host-read', sha256: sha };
+  let releaseRaw!: () => void, releaseMedia!: () => void, rawStarted = false, mediaCalls = 0;
+  const raw = new Promise<void>(done => { releaseRaw = done; }), media = new Promise<void>(done => { releaseMedia = done; });
+  const calls: string[] = [], controller = new AbortController(), queued = new AbortController();
+  const fetch = mock.method(globalThis, 'fetch', async () => new Response(data, { headers: { 'content-type': 'image/png' } }));
+  h.sdk.plugins.callRpc = async args => {
+    if (args.method !== 'turnResultImagesV1Media') return original(args);
+    calls.push('media'); mediaCalls++; assert.equal(args.signal, undefined, 'dispatched response is owned, not locally aborted/reissued');
+    await media;
+    const { sha256Canonical } = await import('@phosphorco/bb-turn-results');
+    const now = Date.now(); return args.outputSchema.parse({ version: 1, state: 'ready',
+      image: { mimeType: 'image/png', sha256: sha, width: 1, height: 1, sizeBytes: data.length },
+      lease: { targetFingerprint: await sha256Canonical({ target, sha256: sha }), leaseGeneration: 'test', baseUrl: '/api/v1/file-previews/test',
+        url: '/api/v1/file-previews/test/image.png', resolvedAt: now, expiresAtMs: now + 60000 } });
+  };
+  type ImageResource = Awaited<ReturnType<typeof h.runtime.image>>;
+  let warm: ImageResource = null, foreground: ImageResource = null, remount: ImageResource = null;
+  try {
+    const blocked = h.runtime.readScope('prefix', controller.signal, async () => { rawStarted = true; await raw; }).catch(() => null);
+    await until(() => rawStarted);
+    warm = await h.runtime.image(row, true, true); assert.ok(warm);
+    await until(() => h.runtime.stats().historyReads === 2);
+    const laterSpec = h.runtime.readScope('prefix', queued.signal, async () => { calls.push('speculative'); }, false, true);
+    const ordinary = h.runtime.readScope('prefix', queued.signal, async () => { calls.push('foreground'); });
+    foreground = await h.runtime.image(row, true); assert.ok(foreground); assert.equal(warm.store, foreground.store);
+    const open = h.runtime.readScope('prefix', queued.signal, async () => { calls.push('Open'); }, true);
+    controller.abort(); await blocked; await tick();
+    assert.equal(h.runtime.stats().running, 1); assert.equal(calls.length, 0, 'ignored raw read still owns this thread');
+    await h.runtime.readScope('other', queued.signal, async () => { calls.push('other-thread'); });
+    assert.deepEqual(calls, ['other-thread']);
+    releaseRaw(); await until(() => mediaCalls === 1);
+    assert.deepEqual(calls, ['other-thread', 'Open', 'media'], 'queued shared Media is promoted, not recreated behind later foreground work');
+    warm.dispose(); warm = null;
+    assert.equal(h.runtime.stats().running, 1); assert.equal(mediaCalls, 1);
+    releaseMedia(); await Promise.all([open, ordinary, laterSpec]); await until(() => foreground!.store.state.state === 'ready' && h.runtime.stats().running === 0);
+    assert.deepEqual(calls, ['other-thread', 'Open', 'media', 'foreground', 'speculative']);
+    assert.equal(fetch.mock.callCount(), 1);
+    remount = await h.runtime.image(row, true); assert.equal(remount!.store.state.url, foreground.store.state.url); assert.equal(mediaCalls, 1);
+    const quiet = calls.length; await tick(); assert.equal(calls.length, quiet);
+  } finally { releaseRaw(); releaseMedia(); warm?.dispose(); foreground?.dispose(); remount?.dispose(); h.dispose(); await h.runtime.whenDrained(); fetch.mock.restore(); }
+});
+
+test('nearby retains at most two existing turn entries and retirement keeps data provisional until a fresh foreground read', async () => {
+  const h = setup(); const a = h.runtime.retain(anchor('a'), true, undefined, true), b = h.runtime.retain(anchor('b'), true, undefined, true);
+  const c = h.runtime.retain(anchor('c'), true, undefined, true);
+  try {
+    assert.equal(c.capacity, true); await until(() => h.runtime.stats().running === 0 && h.runtime.stats().queued === 0);
+    assert.equal(a.store.state.loaded, true); a.passive(); assert.equal(a.store.state.loaded, false);
+    const before = h.reads.length, visible = h.runtime.retain(anchor('a'));
+    try { await until(() => a.store.state.loaded === true && h.runtime.stats().running === 0); assert.ok(h.reads.length > before); }
+    finally { visible.dispose(); }
+    const count = h.reads.length; await tick(); assert.equal(h.reads.length, count);
+  } finally { a.dispose(); b.dispose(); c.dispose(); h.dispose(); }
+});
+
+
+test('passive visible image admission remains distinct from conservative speculative availability hints', async () => {
+  const h = setup(), base = prefixRow(0), target = { kind: 'host' as const, hostId: 'recorded-host', path: '/saved/result.png' };
+  base.owner = 'turn-result-images'; base.resolution!.route = { kind: 'file', target };
+  base.resolution!.fallback = { kind: 'image', title: 'Saved image', alt: 'Retained scene' };
+  base.resolution!.provenance.artifactLocation = { state: 'verified', target, observedAt: 1, basis: 'explicit-host-read', sha256: 'a'.repeat(64) };
+  try {
+    for (const kind of ['saved-unavailable', 'current-unavailable', 'expired', 'retracted'] as const) {
+      const row = structuredClone(base); row.key = kind;
+      if (kind === 'saved-unavailable') row.resolution!.availability = { state: 'unavailable', asOf: 1, expiresAt: null, reason: 'source-refused' };
+      if (kind === 'current-unavailable') row.currentAvailability = { state: 'unavailable', asOf: 1, expiresAt: null, reason: 'source-refused' };
+      if (kind === 'expired') row.sourceExpired = { epoch: 'fixture', sequence: 2 };
+      if (kind === 'retracted') row.retracted = { revision: { epoch: 'fixture', sequence: 2 }, supersedesEvidenceDigest: 'b'.repeat(64), reason: 'source-retracted' };
+      const facts = JSON.stringify(row), entries = h.runtime.media.stats().entries;
+      assert.equal(await h.runtime.image(row, true, true), null, kind);
+      assert.equal(h.runtime.media.stats().entries, entries, 'refused hint creates no media lease');
+      const visible = await h.runtime.image(row, false); assert.ok(visible, kind);
+      visible.dispose(); assert.equal(JSON.stringify(row), facts);
+    }
+    assert.equal(h.runtime.stats().running, 0); assert.equal(h.runtime.stats().historyReads, 0);
+  } finally { h.dispose(); await h.runtime.whenDrained(); }
+});

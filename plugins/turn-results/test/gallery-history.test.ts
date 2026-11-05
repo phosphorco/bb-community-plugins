@@ -179,3 +179,16 @@ test('invalidation discards unresolved old cursor and fences ignored late prior 
  for(let i=0;i<3;i++){const stopped=await reader.read([target],signal());assert.equal(stopped.pages,0);assert.equal(stopped.capacity,true);assert.equal(stopped.automatic,false);}assert.equal(f.calls.length,8);
  reader.invalidate();const fresh=await reader.read([target],signal());assert.equal(fresh.pages,4);assert.equal(f.calls[8]!.beforeAnchorId,undefined);
  });
+
+test('nearby hints use only complete public ranges and issued cursors; handoff is bounded to the actual acquired window', async () => {
+  const f = pages(rows(750)), reader = createGalleryAnchorReader(f.port, 'thread');
+  const target = f.all[20]!;
+  const first = await reader.nearby(target.sourceSeqEnd, signal()); assert.equal(first.automatic, true); assert.equal(first.pages, 4);
+  const complete = await reader.nearby(target.sourceSeqEnd, signal(), false); assert.equal(complete.anchors.length, 2);
+  assert.equal(complete.anchors[0]!.rowId, target.id); assert.equal(f.calls.length, 8);
+  assert.equal(reader.adopt(['absent-physical-row'], f.port), false);
+  assert.equal(reader.adopt([target.id], f.port), true);
+  assert.equal((await reader.read([target.id], signal())).anchors[0]!.rowId, target.id); assert.equal(f.calls.length, 8);
+  reader.invalidate(); assert.equal(reader.adopt([target.id], f.port), false, 'a retired window cannot be restored by token or ID equality');
+  await assert.rejects(reader.nearby(-1, signal()), /Invalid nearby/);
+});

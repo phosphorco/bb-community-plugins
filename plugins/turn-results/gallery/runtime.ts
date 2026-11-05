@@ -9,7 +9,7 @@ import { GALLERY_METHODS, GalleryRawSchema, KnownGalleryOutputSchema, PendingGal
 import type { GalleryBackend, GalleryRead } from './rpc.ts';
 import { consumeTurnSource, consumerSource } from './consume.ts';
 import type { ConsumerSource } from './consume.ts';
-import { createGalleryMedia } from './media.ts';
+import { createGalleryMedia, imageMediaRequest } from './media.ts';
 import { createWindowCanvasOwner } from './canvas-owner.ts';
 import type { CanvasPriority } from './canvas-owner.ts';
 import { createPresentationLifetime } from './presentation-lifetime.ts';
@@ -34,6 +34,8 @@ interface TurnEntry {
   dirty: boolean; phase: 'read' | 'source'; controller: AbortController | null; afterOwner: string | null;
   debts: Set<string>; enumerateRetries: Set<string>; debtBudget: number; bytes: number; cursorCharge: number;
   collection: TurnCollection | null; collectionBytes: number;
+  speculative: number;
+  passive: boolean;
 }
 interface TurnCollection {
   anchor: GalleryAnchor; after: { seq: number; key: string } | undefined;
@@ -41,7 +43,7 @@ interface TurnCollection {
   seen: Set<string>; cursors: Set<string>; pages: number; charged: number;
   coverage: string; limited: boolean; done: boolean; retired: boolean; deadline: number;
 }
-interface HistoryRead { threadId: string; priority: boolean; live(): boolean; start(): void; cancel(): void }
+interface HistoryRead { threadId: string; priority: boolean; speculative: boolean; interruptible: boolean; live(): boolean; start(): void; cancel(): void }
 type Work = TurnEntry | HistoryRead;
 export const GALLERY_RUNTIME_LIMITS = Object.freeze({ leases: 128, cached: 64, lanes: 2,
   historyQueue: 128, cursorBytes: 4096, cursorHistory: 64, collectionRows: 64, collectionPages: 8,
@@ -68,6 +70,8 @@ export function createGalleryRuntime(sdk: Sdk) {
   // Open checks precede queued optional work; otherwise FIFO threads/turns.
   // A busy thread never occupies both lanes.
   const queue = new Map<string, Set<Work>>(), runningThreads = new Map<string, () => boolean>();
+  const speculativeThreads = new Set<string>();
+  let warmLeases = 0;
   // A yielded retained read still owns its lane until the actual public call
   // settles. An abort-aware wrapper alone is not a cancellation receipt.
   const retainedCalls = new WeakMap<AbortSignal, Set<Promise<unknown>>>();
@@ -88,7 +92,7 @@ export function createGalleryRuntime(sdk: Sdk) {
   let discoveryDemands = 0, visibleDiscoveryDemands = 0;
   const lifetime = new AbortController();
   const media = createGalleryMedia({ fetch: (url, signal) => fetch(url, { signal }),
-    createUrl: blob => URL.createObjectURL(blob), revokeUrl: url => URL.revokeObjectURL(url) });
+    createUrl: blob => URL.createObjectURL(blob), revokeUrl: url => URL.revokeObjectURL(url), demand: schedule });
   const canvases = createWindowCanvasOwner();
   const readyOwners = new Store<ReadonlySet<string>>(new Set<string>());
   // Display labels have no readiness authority. Already-admitted descriptors
@@ -480,17 +484,20 @@ export function createGalleryRuntime(sdk: Sdk) {
     // Open is first; retained pages/history/Media then share FIFO ahead of
     // optional source work. A short turn's enrichment cannot consume the
     // original deadline of a sibling's still-incomplete retained collection.
-    const useful = (entry: Work) => 'start' in entry || entry.phase === 'read';
+    const speculative = (entry: Work) => 'start' in entry ? entry.speculative : entry.visible <= entry.speculative;
+    const useful = (entry: Work) => !speculative(entry) && ('start' in entry || entry.phase === 'read');
     const usefulThread = ([, entries]: typeof threads[number]) => [...entries].some(entry => useful(entry)
       && ('start' in entry ? entry.live() : entry.refs && entry.visible && entry.dirty && !entry.controller));
+    const foreground = ([, entries]: typeof threads[number]) => [...entries].some(entry => !speculative(entry));
     for (const [threadId, entries] of [...threads.filter(urgent), ...threads.filter(entry => !urgent(entry) && usefulThread(entry)),
-      ...threads.filter(entry => !urgent(entry) && !usefulThread(entry))]) {
+      ...threads.filter(entry => !urgent(entry) && !usefulThread(entry) && foreground(entry)),
+      ...threads.filter(entry => !urgent(entry) && !foreground(entry))]) {
       if (runningThreads.has(threadId)) continue;
       queue.delete(threadId);
       let next: Work | null = null;
       const priority = [...entries].find(entry => 'start' in entry && entry.priority && entry.live());
       for (const entry of priority ? [priority, ...[...entries].filter(entry => entry !== priority)]
-        : [...[...entries].filter(useful), ...[...entries].filter(entry => !useful(entry))]) {
+        : [...[...entries].filter(useful), ...[...entries].filter(entry => !useful(entry) && !speculative(entry)), ...[...entries].filter(speculative)]) {
         entries.delete(entry);
         if ('start' in entry ? entry.live() : entry.refs && entry.visible && entry.dirty && !entry.controller) { next = entry; break; }
       }
@@ -507,10 +514,13 @@ export function createGalleryRuntime(sdk: Sdk) {
     if (!active || !visible) return;
     while (running < GALLERY_RUNTIME_LIMITS.lanes) {
       const entry = dequeue(); if (!entry) break;
-      if ('start' in entry) { running++; runningThreads.set(entry.threadId, () => false); entry.start(); continue; }
+      if ('start' in entry) { running++; if (entry.speculative) speculativeThreads.add(entry.threadId); runningThreads.set(entry.threadId, () => {
+        if (!entry.speculative || !entry.interruptible) return false; entry.cancel(); return true;
+      }); entry.start(); continue; }
       entry.dirty = false;
       const controller = new AbortController(); entry.controller = controller; running++;
       const collecting = entry.phase === 'read'; let yielded = false;
+      if (entry.visible <= entry.speculative) speculativeThreads.add(entry.threadId);
       const collection = collecting ? entry.collection ??= newCollection(entry.anchor, entry.after, performance.now() + GALLERY_RUNTIME_LIMITS.sliceMs) : null;
       runningThreads.set(entry.anchor.threadId, () => {
         // Source operations may have their own nested transport lifetimes.
@@ -538,14 +548,14 @@ export function createGalleryRuntime(sdk: Sdk) {
           }
           const cached = { rows: pass.rows, bindings: pass.bindings, limited: pass.limited, coverage: pass.coverage };
           dropCollection(entry); // Transfer into the sole store before charging its completed snapshot.
-          if (cached.limited) {
+          if (cached.limited || entry.passive && entry.visible <= entry.speculative) {
             publishPrefix(entry, cached.rows, cached.bindings, cached.coverage, true);
-            publish(entry, { ...entry.store.state, continued: true, limited: true, error: null });
+            publish(entry, { ...entry.store.state, continued: true, limited: cached.limited, error: null });
           } else publish(entry, { ...entry.store.state, ...cached, loaded: true, next: null, continued: false, error: null }, true);
           // Release this lane before optional discovery/source work. Other
           // proved turns get their own retained read instead of waiting behind
           // a sibling's enrichment. The same entry/cursors/debt resume FIFO.
-          entry.phase = 'source'; entry.dirty = true; return;
+          entry.phase = 'source'; entry.dirty = entry.visible > entry.speculative; return;
         }
         const cached = entry.store.state;
         const available = await discover(signal, () => { if (!entry.debtBudget) return false; entry.debtBudget--; return true; }); signal.throwIfAborted();
@@ -624,14 +634,14 @@ export function createGalleryRuntime(sdk: Sdk) {
         await Promise.allSettled([...(retainedCalls.get(signal) ?? [])]);
         if (collection?.retired && entry.collection === collection) dropCollection(entry);
         clearTimeout(timer); if (entry.controller === controller) entry.controller = null;
-        running--; runningThreads.delete(anchor.threadId);
+        running--; runningThreads.delete(anchor.threadId); speculativeThreads.delete(anchor.threadId);
         drainedWork();
         if (active && entry.store.state.busy) publish(entry, { ...entry.store.state, busy: false });
         collect(); if (entry.dirty) enqueue(entry); schedule();
       });
     }
   }
-  function readScope<T>(threadId: string, signal: AbortSignal, read: (signal: AbortSignal) => Promise<T>, priority = false): Promise<{ state: 'ready'; value: T } | { state: 'capacity' }> {
+  function readScope<T>(threadId: string, signal: AbortSignal, read: (signal: AbortSignal) => Promise<T>, priority = false, speculative: boolean | (() => boolean) = false, interruptible = true): Promise<{ state: 'ready'; value: T } | { state: 'capacity' }> {
     signal.throwIfAborted();
     if (!active || !visible) return Promise.reject(Error('Gallery read retired.'));
     if (historyReads.size >= GALLERY_RUNTIME_LIMITS.historyQueue) return Promise.resolve({ state: 'capacity' });
@@ -639,7 +649,7 @@ export function createGalleryRuntime(sdk: Sdk) {
       const controller = new AbortController(); let started = false;
       const cleanup = () => { signal.removeEventListener('abort', callerAbort); controller.signal.removeEventListener('abort', cancelled); };
       const callerAbort = () => controller.abort(signal.reason);
-      const work: HistoryRead = { threadId, priority, live: () => !controller.signal.aborted,
+      const work: HistoryRead = { threadId, priority, interruptible, get speculative() { return typeof speculative === 'function' ? speculative() : speculative; }, live: () => !controller.signal.aborted,
         cancel: () => controller.abort(), start() {
           started = true;
           const call = Promise.resolve().then(() => { controller.signal.throwIfAborted(); return read(controller.signal); });
@@ -649,7 +659,7 @@ export function createGalleryRuntime(sdk: Sdk) {
               // backend.read may reject its abort-aware wrapper before the
               // underlying SDK promise acknowledges cancellation.
               await Promise.allSettled([...(retainedCalls.get(controller.signal) ?? [])]);
-              cleanup(); historyReads.delete(work); running--; runningThreads.delete(threadId); drainedWork(); schedule();
+              cleanup(); historyReads.delete(work); running--; runningThreads.delete(threadId); speculativeThreads.delete(threadId); drainedWork(); schedule();
             });
         } };
       const cancelled = () => {
@@ -658,11 +668,11 @@ export function createGalleryRuntime(sdk: Sdk) {
       signal.addEventListener('abort', callerAbort, { once: true }); controller.signal.addEventListener('abort', cancelled, { once: true });
       historyReads.add(work);
       const pending = queue.get(threadId) ?? new Set<Work>(); pending.add(work); queue.set(threadId, pending); schedule();
-      if (priority) {
+      if (priority || !work.speculative) {
         const sameThread = runningThreads.get(threadId);
-        if (sameThread) sameThread();
+        if (sameThread && (priority || speculativeThreads.has(threadId))) sameThread();
         else if (running >= GALLERY_RUNTIME_LIMITS.lanes) {
-          for (const yieldRead of runningThreads.values()) if (yieldRead()) break;
+          for (const [id, yieldRead] of runningThreads) if ((priority || speculativeThreads.has(id)) && yieldRead()) break;
         }
       }
     });
@@ -681,6 +691,16 @@ export function createGalleryRuntime(sdk: Sdk) {
   }
   document.addEventListener('visibilitychange', visibility);
   const api = { media, canvases, backend, readScope, readyOwners, captionLabels, presentationStatus, dialogSites, presentationRoot, invalidateReadiness,
+    async image(row: GalleryObservation, shown: boolean, speculative = false, signal?: AbortSignal, plugins = sdk.plugins) {
+      signal?.throwIfAborted();
+      // Optional nearby work may decline stale/unavailable hints. Visible
+      // passive bytes retain their archived admission; actions guard separately.
+      if (speculative && (row.sourceExpired || row.retracted || row.resolution?.availability.state === 'unavailable'
+        || row.currentAvailability?.state === 'unavailable')) return null;
+      const request = await imageMediaRequest(row, (signal, read, speculative) => readScope(row.identity.ref.source.threadId, signal, read, false, speculative, false), plugins);
+      signal?.throwIfAborted();
+      return request && active ? media.retain(request, shown, speculative) : null;
+    },
     retainDiscoveryDemand() {
       if (!active || discoveryDemands >= GALLERY_RUNTIME_LIMITS.leases) return null;
       discoveryDemands++;
@@ -691,7 +711,7 @@ export function createGalleryRuntime(sdk: Sdk) {
           shown = next; visibleDiscoveryDemands += next ? 1 : -1;
           if (!next) { work?.abort('demand-retired'); stopUnusedDiscovery(); }
         },
-        warm(threadId: string) {
+        warm(threadId: string, speculative = false) {
           if (!live || !shown || !active || !visible || sources !== null || discovering || earlyDiscoveryGeneration === discoveryGeneration) return;
           const generation = discoveryGeneration;
           earlyDiscoveryGeneration = generation;
@@ -703,7 +723,7 @@ export function createGalleryRuntime(sdk: Sdk) {
             signal.throwIfAborted();
             if (!live || !shown || generation !== discoveryGeneration || !active || !visible || sources !== null || discovering) return;
             await discover(signal);
-          }).catch(() => {}); // Optional readiness failure leaves native proof/retained reads usable.
+          }, false, speculative).catch(() => {}); // Optional readiness failure leaves native proof/retained reads usable.
         },
         dispose() {
           if (!live) return; live = false;
@@ -746,12 +766,12 @@ export function createGalleryRuntime(sdk: Sdk) {
       for (const entry of turns.values()) if (entry.refs && (!threadId || entry.anchor.threadId === threadId)
         && (!turnIds || turnIds.has(entry.anchor.turnId))) { reset(entry); enqueue(entry); }
     },
-    retain(anchor: GalleryAnchor, initiallyVisible = true, after?: { seq: number; key: string }) {
+    retain(anchor: GalleryAnchor, initiallyVisible = true, after?: { seq: number; key: string }, speculative = false) {
       if (after) canonicalByteLength(after, 4096);
       if (!active) throw Error('Gallery generation retired.');
-      if (leases >= GALLERY_RUNTIME_LIMITS.leases) return {
+      if (leases >= GALLERY_RUNTIME_LIMITS.leases || speculative && warmLeases >= 2) return {
         after, capacity: true, store: new Store<TurnSnapshot>({ rows: [], busy: false, continued: true, error: null, coverage: 'view-capacity' }),
-        visible(_next: boolean) {}, more() {}, dispose() {},
+        readComplete: false, passive() {}, visible(_next: boolean) {}, more() {}, dispose() {},
       };
       const key = canonicalJson([anchor.threadId, anchor.turnId, anchor.turnSeqStart, anchor.turnSeqEnd, ...(after ? [after] : [])]);
       let entry = turns.get(key);
@@ -763,27 +783,41 @@ export function createGalleryRuntime(sdk: Sdk) {
         const initialBytes = canonicalByteLength(initial) + cursorCharge;
         if (bytes + initialBytes > GALLERY_RUNTIME_LIMITS.totalSnapshotBytes - GALLERY_RUNTIME_LIMITS.leases * (GALLERY_RUNTIME_LIMITS.cursorBytes + 1024)) return {
           after, capacity: true, store: new Store<TurnSnapshot>({ rows: [], busy: false, continued: true, error: null, coverage: 'view-capacity' }),
-          visible(_next: boolean) {}, more() {}, dispose() {},
+          readComplete: false, passive() {}, visible(_next: boolean) {}, more() {}, dispose() {},
         };
         entry = { key, threadId: anchor.threadId, anchor: { ...anchor }, after, store: new Store(initial), refs: 0, visible: 0, dirty: true, phase: 'read',
-          controller: null, afterOwner: null, debts: new Set(), enumerateRetries: new Set(), debtBudget: GALLERY_RUNTIME_LIMITS.automaticDebtUnits, bytes: initialBytes, cursorCharge, collection: null, collectionBytes: 0 };
+          controller: null, afterOwner: null, debts: new Set(), enumerateRetries: new Set(), debtBudget: GALLERY_RUNTIME_LIMITS.automaticDebtUnits, bytes: initialBytes, cursorCharge, collection: null, collectionBytes: 0, speculative: 0, passive: false };
         turns.set(key, entry); bytes += entry.bytes;
       }
       const owned = entry;
+      if (!speculative && owned.passive) { owned.passive = false; reset(owned); }
       if (!owned.refs) { demandDescriptors(); reset(owned); }
       if (owned.anchor.turnSeqStart !== anchor.turnSeqStart || owned.anchor.turnSeqEnd !== anchor.turnSeqEnd) {
         owned.controller?.abort(); reset(owned);
       }
       owned.anchor = { ...anchor }; owned.refs++; leases++; if (initiallyVisible) owned.visible++;
+      if (speculative) { warmLeases++; if (initiallyVisible) owned.speculative++; }
+      else if (owned.phase === 'source' && !owned.dirty && !owned.controller) owned.dirty = true;
       let live = true, shown = initiallyVisible;
       enqueue(owned);
+      const passive = () => {
+        if (owned.refs > owned.speculative) return;
+        owned.passive = true;
+        publish(owned, { ...owned.store.state, loaded: false, continued: true });
+      };
       return { after, capacity: false, store: owned.store,
+        get readComplete() { return owned.phase === 'source' && !owned.store.state.limited; }, passive,
         visible(next: boolean) { if (!live || shown === next) return; shown = next; owned.visible += next ? 1 : -1;
+          if (speculative) owned.speculative += next ? 1 : -1;
           if (!owned.visible) { retireCollection(owned); owned.controller?.abort(); unqueue(owned); stopUnusedDiscovery(); }
           else { demandDescriptors(); reset(owned); enqueue(owned); } },
         more() { if (!live) return; demandDescriptors(); reset(owned); enqueue(owned); },
         dispose() {
           if (!live) return; live = false; if (!active) return; owned.refs--; leases--; if (shown) owned.visible--;
+          if (speculative) { warmLeases--; if (shown) owned.speculative--;
+            // Unadopted speculative values have no last-good display lifetime.
+            passive();
+          }
           if (!owned.refs || !owned.visible) { retireCollection(owned); owned.controller?.abort(); unqueue(owned); stopUnusedDiscovery(); }
           // Refresh LRU position only on lease retirement, never on idle ticks.
           turns.delete(key); turns.set(key, owned); collect();
