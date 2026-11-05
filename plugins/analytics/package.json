@@ -34,7 +34,7 @@
     "name": "Analytics",
     "description": "Understand which agent capabilities are slow, unreliable, or repeatedly attempted.",
     "branding": {
-      "icon": "ChartNoAxesColumnIncreasing"
+      "icon": "./icons/explore.svg"
     },
     "server": "./server.ts",
     "app": "./app.tsx",
@@ -83,7 +83,8 @@
     "fact-projection.ts",
     "fact-schema.ts",
     "rpc-contract.ts",
-    "store.ts"
+    "store.ts",
+    "icons/"
   ],
   "dependencies": {
     "@duckdb/duckdb-wasm": "1.33.1-dev57.0",

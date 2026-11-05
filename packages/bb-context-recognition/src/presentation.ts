@@ -28,7 +28,7 @@ export type PresentationEntryV1 = Readonly<{
  pluginId: string; schema: string; generation: number; token: symbol;
  load: () => Promise<PresentationComponent>;
  decode: (data: unknown) => unknown | null;
- methods: readonly string[]; label?: string;
+ methods: readonly string[]; label?: string; supportsExpansion?: boolean;
 }>;
 export interface PresentationRegistration<D> {
  schema: string;
@@ -36,6 +36,9 @@ export interface PresentationRegistration<D> {
  decode: (data: unknown) => D | null;
  methods: readonly string[];
  label?: string;
+ /** Whether a separate expanded card offers more content. Omitted preserves legacy expansion.
+  * This hint does not restrict the consumer layout mode or grant action authority. */
+ supportsExpansion?: boolean;
 }
 type RegistryV1 = { entries: Map<string, PresentationEntryV1>; events: EventTarget; revision: number };
 type Realm = { v1?: RegistryV1 };
@@ -54,11 +57,11 @@ function changed(r: RegistryV1): void {r.revision++; r.events.dispatchEvent(new 
 export function registerPresentation<D>(ctx: Pick<PluginContentScriptContext, 'pluginId'|'generation'|'signal'>, registration: PresentationRegistration<D>): () => void {
  if (!ctx || typeof ctx.pluginId !== 'string' || !/^[a-z][a-z0-9-]{0,63}$/.test(ctx.pluginId) || !Number.isSafeInteger(ctx.generation) || ctx.generation < 1 || !ctx.signal?.addEventListener)
   throw new PresentationRegistrationError('Expected a host content-script context.');
- if (typeof registration?.schema !== 'string' || registration.schema.length > 100 || !schemaPattern.test(registration.schema) || typeof registration.load !== 'function' || typeof registration.decode !== 'function' || !Array.isArray(registration.methods) || registration.methods.length < 1 || registration.methods.length > 16 || registration.methods.some(m => typeof m !== 'string' || m.length < 1 || m.length > 256 || /\p{Cc}/u.test(m)) || new Set(registration.methods).size !== registration.methods.length || (registration.label !== undefined && (typeof registration.label !== 'string' || registration.label.length > 64)))
+ if (typeof registration?.schema !== 'string' || registration.schema.length > 100 || !schemaPattern.test(registration.schema) || typeof registration.load !== 'function' || typeof registration.decode !== 'function' || !Array.isArray(registration.methods) || registration.methods.length > 16 || registration.methods.some(m => typeof m !== 'string' || m.length < 1 || m.length > 256 || /\p{Cc}/u.test(m)) || new Set(registration.methods).size !== registration.methods.length || (registration.label !== undefined && (typeof registration.label !== 'string' || registration.label.length > 64)) || (registration.supportsExpansion !== undefined && typeof registration.supportsExpansion !== 'boolean'))
   throw new PresentationRegistrationError('Invalid presentation registration.');
  const r = registry(), entryKey = ctx.pluginId + '\0' + registration.schema;
  if (ctx.signal.aborted || (r.entries.get(entryKey)?.generation ?? 0) > ctx.generation) return () => {};
- const entry: PresentationEntryV1 = Object.freeze({pluginId: ctx.pluginId, schema: registration.schema, generation: ctx.generation, token: Symbol(), load: registration.load as () => Promise<PresentationComponent>, decode: registration.decode, methods: Object.freeze([...registration.methods]), ...(registration.label === undefined ? {} : {label: registration.label})});
+ const entry: PresentationEntryV1 = Object.freeze({pluginId: ctx.pluginId, schema: registration.schema, generation: ctx.generation, token: Symbol(), load: registration.load as () => Promise<PresentationComponent>, decode: registration.decode, methods: Object.freeze([...registration.methods]), ...(registration.label === undefined ? {} : {label: registration.label}), ...(registration.supportsExpansion === undefined ? {} : {supportsExpansion: registration.supportsExpansion})});
  let disposed = false;
  const dispose = () => {
   if (disposed) return;

@@ -49,7 +49,7 @@ test('PresentationHost late registration, Suspense first card, owner scope, cras
   let dispose;await act(async()=>{dispose=registerPresentation(ctx(),{...registration,load:()=>{loaded++;return new Promise(r=>complete=r);}});});assert.match(m.dom.window.document.body.textContent,/Card fallback/);
   await act(async()=>complete(()=>React.createElement('p',null,'Real hosted graph')));assert.match(m.dom.window.document.body.textContent,/Real hosted graph/);assert.ok(m.dom.window.document.querySelector('[data-bb-plugin="plan-graph"][data-bb-plugin-root]'));
   await act(async()=>m.root.render(React.createElement(PresentationHost,{...hostProps,mode:'full',revision:'new'})));assert.equal(loaded,1);
-  await act(async()=>registerPresentation({...ctx(),generation:2},{...registration,load:async()=>()=>{throw new Error('Hosted fault');}}));await act(async()=>new Promise(r=>setTimeout(r,10)));assert.match(m.dom.window.document.body.textContent,/Plan view failed/);assert.match(m.dom.window.document.body.textContent,/Card fallback/);
+  await act(async()=>registerPresentation({...ctx(),generation:2},{...registration,load:async()=>()=>{throw new Error('Hosted fault');}}));await act(async()=>new Promise(r=>setTimeout(r,10)));assert.match(m.dom.window.document.body.textContent,/Hosted view failed/);assert.match(m.dom.window.document.body.textContent,/Card fallback/);
   await act(async()=>registerPresentation({...ctx(),generation:3},{...registration,load:async()=>()=>React.createElement('p',null,'Replacement graph')}));await act(async()=>new Promise(r=>setTimeout(r,10)));assert.match(m.dom.window.document.body.textContent,/Replacement graph/);
   dispose(); // Stale generation disposal cannot remove replacement.
   assert.ok(lookupPresentation('plan-graph',ref.schema));
@@ -70,8 +70,8 @@ test('consumer retry remounts a failed renderer at the same revision and reports
  try{
   registerPresentation(ctx(),{...registration,load:async()=>()=>{if(broken)throw new Error('Temporary renderer fault');return React.createElement('p',null,'Recovered graph');}});
   const render=async retryKey=>{await act(async()=>m.root.render(React.createElement(PresentationHost,{...hostProps,revision:'unchanged',retryKey,onReady:()=>{ready++;}})));await act(async()=>new Promise(r=>setTimeout(r,10)));};
-  await render(0);assert.match(m.dom.window.document.body.textContent,/Plan view failed/);assert.equal(ready,0);
-  broken=false;await render(1);assert.match(m.dom.window.document.body.textContent,/Recovered graph/);assert.doesNotMatch(m.dom.window.document.body.textContent,/Plan view failed/);assert.equal(ready,1);
+  await render(0);assert.match(m.dom.window.document.body.textContent,/Hosted view failed/);assert.equal(ready,0);
+  broken=false;await render(1);assert.match(m.dom.window.document.body.textContent,/Recovered graph/);assert.doesNotMatch(m.dom.window.document.body.textContent,/Hosted view failed/);assert.equal(ready,1);
  }finally{await m.dispose();realm.restore();}
 });
 test('consumer retry can reload a rejected lazy import while Suspense does not report recovery',async()=>{
@@ -80,7 +80,7 @@ test('consumer retry can reload a rejected lazy import while Suspense does not r
   registerPresentation(ctx(),{...registration,load:()=>{loads++;if(loads===1)return Promise.reject(new Error('Disconnected chunk load'));return new Promise(r=>complete=r);}});
   const props={...hostProps,onReady:()=>{ready++;}};
   await act(async()=>m.root.render(React.createElement(PresentationHost,{...props,retryKey:0})));await act(async()=>new Promise(r=>setTimeout(r,10)));
-  assert.match(m.dom.window.document.body.textContent,/Plan view failed/);assert.equal(ready,0);
+  assert.match(m.dom.window.document.body.textContent,/Hosted view failed/);assert.equal(ready,0);
   await act(async()=>m.root.render(React.createElement(PresentationHost,{...props,retryKey:1})));
   assert.equal(loads,2);assert.equal(ready,0);assert.match(m.dom.window.document.body.textContent,/Card fallback/);
   await act(async()=>complete(()=>React.createElement('p',null,'Recovered lazy graph')));
@@ -92,7 +92,7 @@ test('consumer retry reloads a synchronously throwing loader',async()=>{
  try{
   registerPresentation(ctx(),{...registration,load:()=>{loads++;if(broken)throw new Error('Temporary loader failure');return Promise.resolve(()=>React.createElement('p',null,'Recovered sync loader'));}});
   await act(async()=>m.root.render(React.createElement(PresentationHost,{...hostProps,retryKey:0})));
-  assert.match(m.dom.window.document.body.textContent,/Plan view failed/);
+  assert.match(m.dom.window.document.body.textContent,/Hosted view failed/);
   const before=loads;broken=false;
   await act(async()=>m.root.render(React.createElement(PresentationHost,{...hostProps,retryKey:1})));
   assert.ok(loads>before);assert.match(m.dom.window.document.body.textContent,/Recovered sync loader/);
@@ -104,7 +104,7 @@ for(const [name,effect] of [['layout',useLayoutEffect],['passive',useEffect]])te
   registerPresentation(ctx(),{...registration,load:async()=>function View(){effect(()=>{if(broken)throw new Error('Temporary effect failure');},[]);return React.createElement('p',null,'Effect graph');}});
   const props={...hostProps,onReady:()=>ready++,onDiagnostic:d=>diagnostics.push(d)};
   await act(async()=>m.root.render(React.createElement(PresentationHost,{...props,retryKey:0})));
-  assert.equal(ready,0);assert.ok(diagnostics.length);assert.match(m.dom.window.document.body.textContent,/Plan view failed/);
+  assert.equal(ready,0);assert.ok(diagnostics.length);assert.match(m.dom.window.document.body.textContent,/Hosted view failed/);
   broken=false;await act(async()=>m.root.render(React.createElement(PresentationHost,{...props,retryKey:1})));
   assert.equal(ready,1);assert.match(m.dom.window.document.body.textContent,/Effect graph/);
  }finally{await m.dispose();realm.restore();}
@@ -117,7 +117,7 @@ test('staggered hosts retry rejected shared imports with independent attempt cou
   await act(async()=>m.root.render(host('a',0)));assert.equal(loads,1);
   await act(async()=>m.root.render(React.createElement(React.Fragment,null,host('a',0),host('b',1))));assert.equal(loads,2);
   await act(async()=>m.root.render(React.createElement(React.Fragment,null,host('a',1),host('b',1))));assert.equal(loads,3);assert.match(m.dom.window.document.body.textContent,/Shared recovered graph/);
-  await act(async()=>m.root.render(React.createElement(React.Fragment,null,host('a',1),host('b',2))));assert.equal(loads,3);assert.doesNotMatch(m.dom.window.document.body.textContent,/Plan view failed/);
+  await act(async()=>m.root.render(React.createElement(React.Fragment,null,host('a',1),host('b',2))));assert.equal(loads,3);assert.doesNotMatch(m.dom.window.document.body.textContent,/Hosted view failed/);
  }finally{await m.dispose();realm.restore();}
 });
 test('an import completing after unmount cannot acknowledge recovery',async()=>{
@@ -133,7 +133,7 @@ function server(bb){
  registerRecognitionSupplier(bb,{revision:'presentation/1',resolve:{providers:[{provider:'plan-graph',kinds:['plan']}],handler:input=>({resolutions:input.sources.map(source=>({source,state:'ready',reasons:[],card:{title:'Plan'},presentation:ref}))})}});
  bb.rpc.register({scene:{input:z.strictObject({id:z.string()}),output:z.unknown()}},{scene:input=>({id:input.id,title:'Owner scene'})});
 }
-function content(ctx){return registerPresentation(ctx,{...registration,load:async()=>function View({owner,data,mode}){const [value,setValue]=useState('loading');useEffect(()=>{owner.call('scene',{id:data.id}).then(v=>setValue(v.title),()=>{});},[owner,data.id]);return React.createElement('p',null,value+' '+mode);}});}
+function content(ctx){return registerPresentation(ctx,{...registration,label:'Plan graph',load:async()=>function View({owner,data,mode}){const [value,setValue]=useState('loading');useEffect(()=>{owner.call('scene',{id:data.id}).then(v=>setValue(v.title),()=>{});},[owner,data.id]);return React.createElement('p',null,value+' '+mode);}});}
 test('presentation React conformance drives real registered server/content script in both modes',async()=>{
  const report=await runPresentationConformance({pluginId:'plan-graph',register:server,mountContentScript:content,cases:[{identity:source,detail:'card',expect:{schema:ref.schema}}]});assert.equal(report.passed,true,JSON.stringify(report));assert.ok(report.checks.some(c=>c.name.endsWith('mode:full')));
 });
@@ -155,4 +155,14 @@ test('hook scan bundles full graph, rejects new slot hooks, namespace hooks and 
 test('label resolve rejects a presentation before consumer admission',async()=>{
  const sdk={plugins:{callRpc:async()=>({resolutions:[{source,state:'ready',card:{title:'Plan'},presentation:ref,reasons:[]}]})}};
  await assert.rejects(createSupplierClient(sdk,'plan-graph').resolve({version:1,context:{consumer:{pluginId:'thread-brief'}},sources:[source],detail:'label'}),e=>e.kind==='incompatible');
+});
+
+test('no-RPC hosted gallery denies every owner call and uses its registration label on failure',async()=>{
+ const realm=createIsolatedPresentationRealm(),m=await mount();let calls=0,denied=false;
+ try{
+  registerPresentation(ctx(),{...registration,methods:[],label:'Gallery',load:async()=>function Gallery({owner}){useEffect(()=>{void owner.call('anything',{}).catch(e=>{denied=e.kind==='not-allowed';});},[]);return React.createElement('p',null,'No-RPC gallery');}});
+  await act(async()=>m.root.render(React.createElement(PresentationHost,{...hostProps,sdk:{plugins:{callRpc:async()=>{calls++;throw Error('must not call');}}}})));await act(async()=>new Promise(r=>setTimeout(r,10)));assert.match(m.dom.window.document.body.textContent,/No-RPC gallery/);assert.equal(denied,true);assert.equal(calls,0);
+  registerPresentation({...ctx(),generation:2},{...registration,methods:[],label:'Gallery',load:async()=>()=>{throw Error('controlled gallery failure');}});
+  await act(async()=>m.root.render(React.createElement(PresentationHost,{...hostProps})));await act(async()=>new Promise(r=>setTimeout(r,10)));assert.match(m.dom.window.document.body.textContent,/Card fallback/);assert.match(m.dom.window.document.body.textContent,/Gallery view failed/);assert.doesNotMatch(m.dom.window.document.body.textContent,/Plan view failed/);
+ }finally{await m.dispose();realm.restore();}
 });

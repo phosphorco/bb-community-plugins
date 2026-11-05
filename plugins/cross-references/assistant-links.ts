@@ -7,7 +7,7 @@ export type LinkCandidate = { url: string; label: string; lastSeenAt: number };
 const ID = /^[A-Za-z0-9_-]{1,128}$/;
 
 export function assistantLinkLabel(value: string, fallback: string): string {
-  const cleaned = value.normalize("NFC").replace(/\bhttps?:\/\/[^\s<>()]+/giu, "link").replace(/\p{Cc}/gu, " ").replace(/[`*_~]/g, "").trim() || fallback;
+  const cleaned = value.normalize("NFC").replace(/\bhttps?:\/\/[^\s<>()]+/giu, "link").replace(/\p{Cc}/gu, " ").replace(/[`*~]/g, "").trim() || fallback;
   const encoder = new TextEncoder();
   let result = "";
   for (const character of cleaned) {

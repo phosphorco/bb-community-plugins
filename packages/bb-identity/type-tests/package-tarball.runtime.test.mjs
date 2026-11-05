@@ -27,7 +27,10 @@ test("packed library isolates generic entries and resolves public peer entries",
 
     for (const entry of [
       "package/index.d.ts", "package/model.d.ts", "package/host.d.ts", "package/server.d.ts",
-      "package/testing.d.ts", "package/client.d.ts", "package/state.d.ts", "package/bb.d.ts", "package/react.d.ts",
+      "package/editing.d.ts", "package/EDITING.md", "package/dist/editing-runtime.js",
+      "package/native.d.ts", "package/native-testing.d.ts", "package/dist/native-runtime.js", "package/dist/native-testing-runtime.js",
+      "package/testing.d.ts", "package/client.d.ts", "package/state.d.ts", "package/bb.d.ts", "package/react.d.ts", "package/react-core.d.ts",
+      "package/dist/react-core-entry-runtime.js", "package/dist/react-core-shared.js",
       "package/dist/index-runtime.js", "package/dist/model-runtime.js", "package/dist/host-runtime.js",
       "package/dist/server-runtime.js", "package/dist/testing-runtime.js", "package/dist/state-runtime.js",
       "package/dist/state-service-runtime.js", "package/dist/state-controller-runtime.js",
@@ -63,7 +66,8 @@ test("packed library isolates generic entries and resolves public peer entries",
       'import * as testing from "@phosphorco/bb-identity/testing";',
       'import * as state from "@phosphorco/bb-identity/state";',
       'import * as client from "@phosphorco/bb-identity/client";',
-      'void [root, model, host, server, testing, state, client];',
+      'import * as editing from "@phosphorco/bb-identity/editing";',
+      'void [root, model, host, server, testing, state, client, editing];',
       '',
     ].join("\n"));
     const tsc = join(packageRoot, "..", "..", "node_modules", ".bin", "tsc");
@@ -85,7 +89,8 @@ test("packed library isolates generic entries and resolves public peer entries",
       'import * as testing from "@phosphorco/bb-identity/testing";',
       'import * as state from "@phosphorco/bb-identity/state";',
       'import * as client from "@phosphorco/bb-identity/client";',
-      'const entries = [root, model, host, server, testing, state, client];',
+      'import * as editing from "@phosphorco/bb-identity/editing";',
+      'const entries = [root, model, host, server, testing, state, client, editing];',
       'if (entries.some((entry) => Object.keys(entry).length === 0)) process.exitCode = 1;',
       'const clock = testing.createManualClock();',
       'const connection = testing.createConnectionHarness();',
@@ -106,12 +111,24 @@ test("packed library isolates generic entries and resolves public peer entries",
       await mkdir(destinationDirectory, { recursive: true });
       await symlink(join(workspaceModules, ...destinationParts), join(destinationDirectory, destinationParts.at(-1)));
     }
-    for (const hostDependency of ["react", "@get-bb/plugin-sdk", "@types/react", "zod"]) {
+    for (const hostDependency of ["react", "@types/react", "zod"]) {
       await linkHost(hostDependency);
       // The packed module remains extracted outside this consumer's source
       // tree, so TypeScript resolves its peer declarations from its real path.
       await linkHost(hostDependency, packageDirectory);
     }
+
+    // Actual extracted core imports and declarations work before the optional SDK is linked.
+    await assert.rejects(access(join(consumer, "node_modules", "@get-bb", "plugin-sdk")));
+    const coreRuntime = join(consumer, "core-without-sdk.mjs");
+    await writeFile(coreRuntime, 'import * as core from "@phosphorco/bb-identity/react-core"; if (typeof core.BbIdentity.Provider !== "function" || "useBbIdentityClient" in core) throw new Error("Bad core boundary");');
+    const loadedCore = Bun.spawnSync({cmd:["bun",coreRuntime],cwd:consumer,stdout:"pipe",stderr:"pipe"});
+    assert.equal(loadedCore.exitCode,0,new TextDecoder().decode(loadedCore.stderr));
+    const coreTypes = join(consumer,"core-without-sdk.ts");
+    await writeFile(coreTypes,'import * as core from "@phosphorco/bb-identity/react-core"; void [core.BbIdentity,core.useBorrowedIdentityClient,core.useIdentityEditingBinding];');
+    const typedCore = Bun.spawnSync({cmd:[tsc,"--noEmit","--strict","--module","nodenext","--moduleResolution","nodenext","--target","es2023",coreTypes],cwd:consumer,stdout:"pipe",stderr:"pipe"});
+    assert.equal(typedCore.exitCode,0,new TextDecoder().decode(typedCore.stdout)+new TextDecoder().decode(typedCore.stderr));
+    await linkHost("@get-bb/plugin-sdk"); await linkHost("@get-bb/plugin-sdk",packageDirectory);
 
     const publicEntryDeclarations = join(consumer, "public-entry-consumer.ts");
     await writeFile(publicEntryDeclarations, [
@@ -123,8 +140,17 @@ test("packed library isolates generic entries and resolves public peer entries",
       'import * as state from "@phosphorco/bb-identity/state";',
       'import * as bb from "@phosphorco/bb-identity/bb";',
       'import * as client from "@phosphorco/bb-identity/client";',
+      'import * as editing from "@phosphorco/bb-identity/editing";',
       'import * as react from "@phosphorco/bb-identity/react";',
-      'void [root, model, host, server, testing, state, bb, client, react];',
+      'import * as reactCore from "@phosphorco/bb-identity/react-core";',
+      'import { createNativeSourceAdapter } from "@phosphorco/bb-identity/native";',
+      'import { defineNativeSourceConformance } from "@phosphorco/bb-identity/native/testing";',
+      'const native = createNativeSourceAdapter();',
+      'void [editing.createIdentityEditingState, editing.bindIdentityEditingState, editing.editingCodecs, editing.EDITING_PROTOCOL, editing.EDITING_LIMITS];',
+      'void [react.useIdentityEditingBinding, react.useIdentityEditingSnapshot, react.useIdentityEditingPreservationFailures, react.useAcknowledgeIdentityEditingPreservationFailure];',
+      'native.resolve({ source: { kind: "assistant-terminal", threadId: "thread", terminalEventId: "terminal", scope: { turnId: "turn" } }, events: [] });',
+      'void defineNativeSourceConformance;',
+      'void [root, model, host, server, testing, state, bb, client, react, reactCore];',
       '',
     ].join("\n"));
     const publicDeclarations = Bun.spawnSync({
@@ -143,6 +169,15 @@ test("packed library isolates generic entries and resolves public peer entries",
     await writeFile(reactWitness, [
       'import * as hostReact from "react";',
       'import { BbIdentity, IdentityAvatar, IdentityLabel, IdentityViewPicker, IdentityViewStatus, useBbIdentityClient, useBbIdentityConnection } from "@phosphorco/bb-identity/react";',
+      'import * as editing from "@phosphorco/bb-identity/editing";',
+      'import * as editingReact from "@phosphorco/bb-identity/react";',
+      'import * as reactCore from "@phosphorco/bb-identity/react-core";',
+      'for (const [key,value] of Object.entries(reactCore)) if (editingReact[key] !== value) throw new Error(`Mixed-entry singleton mismatch: ${key}`);',
+      'if ([editing.createIdentityEditingState, editing.bindIdentityEditingState, editing.editingCodecs, editingReact.useIdentityEditingBinding, editingReact.useIdentityEditingSnapshot, editingReact.useIdentityEditingPreservationFailures, editingReact.useAcknowledgeIdentityEditingPreservationFailure].some(value => typeof value !== "function")) process.exitCode = 1;',
+      'if (editing.EDITING_PROTOCOL !== "bb-identity.editing/v1") process.exitCode = 1;',
+      'import { createNativeSourceAdapter } from "@phosphorco/bb-identity/native";',
+      'import { defineNativeSourceConformance } from "@phosphorco/bb-identity/native/testing";',
+      'if (typeof createNativeSourceAdapter().resolve !== "function" || typeof defineNativeSourceConformance !== "function") process.exitCode = 1;',
       'if (typeof hostReact.createElement !== "function" || typeof BbIdentity.Provider !== "function" || typeof BbIdentity.Context !== "function" || typeof IdentityAvatar !== "function" || typeof IdentityLabel !== "function" || typeof IdentityViewPicker !== "function" || typeof IdentityViewStatus !== "function" || typeof useBbIdentityClient !== "function" || typeof useBbIdentityConnection !== "function") process.exitCode = 1;',
       '',
     ].join("\n"));

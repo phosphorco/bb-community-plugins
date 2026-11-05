@@ -69,6 +69,7 @@ export async function runPresentationConformance(opts:PresentationConformanceOpt
    const entry=lookupPresentation(opts.pluginId,ref.schema);
    await check(`presentation:${index}:registration`,()=>require(entry,'Content script did not register the presentation'));
    if(!entry)continue;
+   const failureText=`${entry.label ?? 'Hosted'} view failed`;
    const fallback=createElement('span',null,'Data card fallback');
    const props={sdk,consumer:{pluginId:'conformance-consumer',surface:'conformance'},stamp:{pluginId:opts.pluginId,...ref},identity:resolution.source,readyPlugins:new Set([opts.pluginId]),mode:'docked' as const,size:{maxWidth:600,maxHeight:400,preferredHeight:240},navigate:noopNavigate,fallback,...(resolution.revision?{revision:resolution.revision}:{})};
    for(const mode of opts.modes??['docked','full'])await check(`presentation:${index}:mode:${mode}`,async()=>{
@@ -76,8 +77,8 @@ export async function runPresentationConformance(opts:PresentationConformanceOpt
     root=createRoot(dom.window.document.getElementById('root')!);
     await act(async()=>{root!.render(createElement(PresentationHost,{...props,mode}));});
     const end=performance.now()+2000;
-    while(dom.window.document.body.textContent?.includes('Data card fallback')&&!dom.window.document.body.textContent?.includes('Plan view failed')&&performance.now()<end)await act(async()=>{await new Promise(r=>setTimeout(r,10));});
-    require(!dom.window.document.body.textContent?.includes('Plan view failed'),'Hosted component crashed (including a forbidden slot hook)');
+    while(dom.window.document.body.textContent?.includes('Data card fallback')&&!dom.window.document.body.textContent?.includes(failureText)&&performance.now()<end)await act(async()=>{await new Promise(r=>setTimeout(r,10));});
+    require(!dom.window.document.body.textContent?.includes(failureText),'Hosted component crashed (including a forbidden slot hook)');
     require(dom.window.document.querySelector(`[data-bb-plugin="${opts.pluginId}"]`),'No owner-scoped root');
     require(!dom.window.document.body.textContent?.includes('Data card fallback'),'Hosted view never replaced fallback');
     if(c.expect.text)require(dom.window.document.body.textContent?.includes(c.expect.text),'Expected hosted content');
@@ -98,7 +99,7 @@ export async function runPresentationConformance(opts:PresentationConformanceOpt
     root=createRoot(dom.window.document.getElementById('root')!);
     await act(async()=>{root!.render(createElement(PresentationHost,props));});
     await act(async()=>{await new Promise(r=>setTimeout(r,20));});
-    require(dom.window.document.body.textContent?.includes('Data card fallback')&&dom.window.document.body.textContent.includes('Plan view failed'),'Crash escaped fallback boundary');
+    require(dom.window.document.body.textContent?.includes('Data card fallback')&&dom.window.document.body.textContent.includes(failureText),'Crash escaped fallback boundary');
     await act(async()=>{root!.unmount();});root=undefined;dispose();
    });
    // Restore the real registration for subsequent cases.

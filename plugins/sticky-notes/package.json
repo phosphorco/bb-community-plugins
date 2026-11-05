@@ -34,9 +34,12 @@
     "name": "Sticky Notes",
     "description": "Leave shared, movable sticky notes on bb threads for asynchronous collaboration.",
     "branding": {
-      "icon": "Note",
+      "icon": "./icons/note.svg",
       "logo": {
         "light": "./assets/icon-32.png"
+      },
+      "experimental_icons": {
+        "note": "./icons/note.svg"
       }
     },
     "server": "./server.ts",
@@ -59,7 +62,8 @@
     "notes.ts",
     "overlay-bounds.ts",
     "save-queue.ts",
-    "typography.ts"
+    "typography.ts",
+    "icons/"
   ],
   "dependencies": {
     "zod": "4.6.7"

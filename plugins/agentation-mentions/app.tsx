@@ -32,7 +32,7 @@ export default definePluginApp((app) => {
   app.slots.navPanel({
     id: "annotations",
     title: "Agentation → Mentions",
-    icon: "ChatFeedback",
+    icon: "agentation-mentions/annotate",
     path: "annotations",
     component: AnnotationPanel,
   });

@@ -3,8 +3,10 @@
   "schemaVersion": 1,
   "name": "phosphor-bb-plugins",
   "plugins": [
+    { "name": "bb-subscribe-to-anything", "source": "./plugins/bb-subscribe-to-anything" },
     { "name": "compact-display", "source": "./plugins/compact-display" },
     { "name": "message-timings-nerd", "source": "./plugins/message-timings-nerd" },
+    { "name": "people-accounts", "source": "./plugins/people-accounts" },
     { "name": "cross-references", "source": "./plugins/cross-references" },
     { "name": "agentation-mentions", "source": "./plugins/agentation-mentions" },
     { "name": "perspectives", "source": "./plugins/perspectives" },
@@ -13,6 +15,9 @@
     { "name": "bb-ui-reference", "source": "./plugins/bb-ui-reference" },
     { "name": "attach-text-snippets", "source": "./plugins/attach-text-snippets" },
     { "name": "figma", "source": "./plugins/figma" },
-    { "name": "sentry", "source": "./plugins/sentry" }
+    { "name": "sentry", "source": "./plugins/sentry" },
+    { "name": "new-thread-templates", "source": "./plugins/new-thread-templates" },
+    { "name": "turn-results", "source": "./plugins/turn-results" },
+    { "name": "turn-result-images", "source": "./plugins/turn-result-images" }
   ]
 }

@@ -99,10 +99,17 @@ export interface ContributionReference {
   readonly threadId: ThreadId;
   readonly contributionId: ContributionId;
 }
+/** Frozen integration assertion; V1 supports canonical people, not default-user. */
+export type ExternalPersonSnapshotV1 = ActorSnapshot & {
+  readonly identity: Extract<IdentityReference, { kind: 'person' }>;
+  readonly evidence: 'integration-asserted';
+};
+export declare const externalPersonSnapshotCodec: Codec<ExternalPersonSnapshotV1>;
 /** A contribution is independent of delivery grouping and execution attempts. */
 export interface Contribution {
   readonly reference: ContributionReference;
   readonly author: Origin;
+  readonly personAttribution?: ExternalPersonSnapshotV1;
   readonly latestEditor: ActorSnapshot | null;
   readonly acceptedAt: string;
   readonly mentionedPeople: readonly PersonReference[];
@@ -188,8 +195,13 @@ export interface Participant {
   readonly presentation: ProfilePresentation;
   readonly roles: readonly ('author' | 'editor' | 'mentioned' | 'interaction-resolver')[];
 }
-/** Deduplicated people/external identities from retained visible durable history; aggregates roles.
- * Excludes queue-only drafts. Mentioned-only identities need no fabricated authorship evidence.
+/** Deduplicated people, machines and external identities from retained durable history.
+ * Aggregates recorded roles; excludes queue-only drafts. Mentioned-only identities need no
+ * fabricated authorship. /bb orders by author, then editor, then mentioned priority; within
+ * that role, by its first retained occurrence. Presentation uses stored full snapshots, without live resolution.
+ * Coverage is independent of pagination: a final page can still describe partial history.
+ * Native reads use a request-sequence cutoff, not an atomic cross-source snapshot. Changes
+ * to the observed projection invalidate continuation cursors with conflict; restart the query.
  */
 export interface ParticipantReader {
   list(input: ParticipantQuery, options?: ReadOptions): Promise<Result<Page<Participant> & { readonly coverage: 'complete-history' | 'partial-history' }>>;

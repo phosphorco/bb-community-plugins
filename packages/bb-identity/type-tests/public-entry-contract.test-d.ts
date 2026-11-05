@@ -88,3 +88,19 @@ void publicBinding.http.route('POST', '/identity', {
     return context.json(profile);
   },
 }, { auth: 'local' });
+
+// Additive editing entry and React hooks remain explicit public exports.
+import { createIdentityEditingState, bindIdentityEditingState, editingCodecs, EDITING_PROTOCOL } from '../editing.js';
+import { useIdentityEditingBinding, useIdentityEditingSnapshot, useIdentityEditingPreservationFailures, useAcknowledgeIdentityEditingPreservationFailure } from '../react.js';
+type _EditingBinding = Assert<Equal<ReturnType<typeof useIdentityEditingBinding<string, string>>, import('../editing.js').IdentityEditingBinding<string, string> | null>>;
+void [createIdentityEditingState, bindIdentityEditingState, editingCodecs, EDITING_PROTOCOL, useIdentityEditingSnapshot, useIdentityEditingPreservationFailures, useAcknowledgeIdentityEditingPreservationFailure];
+
+// Borrowed core is exactly the shared contract, with no native acquisition exports.
+import * as coreReact from '../react-core.js';
+import * as nativeReact from '../react.js';
+type _CoreProvider = Assert<Equal<typeof coreReact.BbIdentity, typeof nativeReact.BbIdentity>>;
+type _CoreEditing = Assert<Equal<typeof coreReact.useIdentityEditingBinding, typeof nativeReact.useIdentityEditingBinding>>;
+// @ts-expect-error native slot acquisition is excluded from the borrowed core
+coreReact.useBbIdentityClient;
+// @ts-expect-error native slot acquisition is excluded from the borrowed core
+coreReact.useBbIdentityConnection;

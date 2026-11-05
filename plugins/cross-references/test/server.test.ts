@@ -1,3 +1,4 @@
+import {crossReferencesV2RpcContract} from '@phosphorco/bb-cross-references/bb';
 import assert from "node:assert/strict";
 import test from "node:test";
 
@@ -8,7 +9,7 @@ import {
   projectionPayloadDigest,
   type Resource,
 } from "../canonical.ts";
-import { runCrossReferencesConformance } from "@phosphorco/bb-cross-references/testing";
+import { runCrossReferencesV2Conformance, runCrossReferencesConformance } from "@phosphorco/bb-cross-references/testing";
 import { rpcContract } from "../rpc-contract.ts";
 import crossReferencesPlugin from "../server.ts";
 
@@ -63,6 +64,7 @@ test("registers the typed RPCs, verifies FK-backed storage, and publishes commit
   const events = new Map<string, (event: any) => void>();
   const services: string[] = [];
   const bb = {
+    sdk:{subscribe:()=>()=>{}},onDispose:()=>{},
     events: { on: (name: string, handler: (event: any) => void) => events.set(name, handler) },
     background: { service: (name: string) => services.push(name) },
     storage: {
@@ -70,7 +72,7 @@ test("registers the typed RPCs, verifies FK-backed storage, and publishes commit
       migrate: (_database: Database.Database, migrations: string[]) => migrations.forEach((migration) => db.exec(migration)),
     },
     rpc: {
-      register: (_contract: unknown, registeredHandlers: Record<string, (input: any) => unknown>) => { handlers = registeredHandlers; },
+      register: (_contract: unknown, registeredHandlers: Record<string, (input: any) => unknown>) => { handlers = {...handlers,...registeredHandlers}; },
     },
     realtime: {
       publish: (channel: string, payload: unknown) => signals.push({ channel, payload }),
@@ -86,9 +88,9 @@ test("registers the typed RPCs, verifies FK-backed storage, and publishes commit
   const parsed = await rpcContract.applyProjection.input["~standard"].validate(input);
   assert.equal("issues" in parsed, false);
 
-  assert.deepEqual(Object.keys(handlers ?? {}), ["crossReferences.describe", "applyProjection", "getProjection", "listBacklinks", "listForwardReferences", "checkForwardReferences"]);
+  assert.deepEqual(Object.keys(handlers ?? {}), ["crossReferencesV2ListMentions", "crossReferencesV2ResolveLookup", "crossReferencesProducer.describe", "crossReferencesProducerV1GetState", "crossReferencesProducerV1Apply", "crossReferencesProducerV1ReportStatus", "crossReferences.describe", "applyProjection", "getProjection", "listBacklinks", "listForwardReferences", "checkForwardReferences"]);
   assert.equal((await handlers!.applyProjection(input) as { outcome: string }).outcome, "applied");
-  assert.equal(signals.length, 1);
+  assert.equal(signals.length, 2);
   assert.equal(signals[0]?.channel, "cross-references-changed");
   const signal = signals[0]?.payload as { affectedIdentityDigests: string[]; revision: number };
   assert.equal(signal.revision, 1);
@@ -123,7 +125,7 @@ test("registers the typed RPCs, verifies FK-backed storage, and publishes commit
 
   const conformance = await runCrossReferencesConformance({
     sdk: { plugins: { callRpc: async ({ method, input, outputSchema }: any) => {
-      const methodContract = (rpcContract as any)[method];
+      const methodContract = (rpcContract as any)[method]??(crossReferencesV2RpcContract as any)[method];
       if (!methodContract || !handlers?.[method]) throw Object.assign(new Error("Unknown method"), { code: "unknown_method" });
       const parsedInput = await methodContract.input["~standard"].validate(input);
       if ("issues" in parsedInput) throw new Error("Invalid input");
@@ -136,5 +138,182 @@ test("registers the typed RPCs, verifies FK-backed storage, and publishes commit
   });
   assert.equal(conformance.level, "source-conformance");
   assert.ok(conformance.checks.includes("backlinks-acceptance"));
+  const jobsBefore=db.prepare('SELECT * FROM assistant_link_jobs ORDER BY thread_id').all();
+  const v2=await runCrossReferencesV2Conformance({sdk:{plugins:{callRpc:async({method,input,outputSchema}:any)=>{
+    const contract=(rpcContract as any)[method]??(crossReferencesV2RpcContract as any)[method];
+    const parsed=await contract.input['~standard'].validate(input);if('issues' in parsed)throw new Error('Invalid input');
+    return outputSchema.parse(await handlers![method]!(parsed.value));
+  }}} as any,input:{version:2,query:{kind:'resource',target:{provider:target.provider,keys:target.keys},relation:'self'}},lookup:{version:2,mode:'exact-url',text:'https://example.test/forward'},
+  assertPage(page){assert.equal(page.counts.producerClaims,1);assert.equal(page.items[0]!.kind,'claim-without-evidence');}});
+  assert.equal(v2.level,'source-conformance');assert.deepEqual(db.prepare('SELECT * FROM assistant_link_jobs ORDER BY thread_id').all(),jobsBefore,'V2 reads do not enqueue');
 
+
+});
+
+// The runtime's staged discard closes databases and invalidates the API without
+// starting services or running dispose hooks. Normal disposal aborts services,
+// waits for them, runs hooks LIFO, then closes databases. Keep those seams distinct.
+function lifecycleFixture(t: any) {
+  const db = new Database(":memory:");
+  t.after(() => { if (db.open) db.close(); });
+  let invalidated = false, sdkReads = 0, unsubscribes = 0;
+  const hooks: Array<() => void> = [];
+  const services: Array<{ start(signal: AbortSignal): Promise<void> }> = [];
+  const subscriptions = new Set<any>(), captured: any[] = [];
+  const events = new Map<string, (event: any) => void>();
+  const warnings: string[] = [], published: unknown[] = [];
+  let handlers: any;
+  const sdk: any = {
+    subscribe(args: any) {
+      subscriptions.add(args); captured.push(args);
+      return () => { if (subscriptions.delete(args)) unsubscribes++; };
+    },
+    plugins: { list: async () => ({ plugins: [] }) },
+  };
+  const bb: any = {
+    storage: { database: () => db, migrate: (_: unknown, sql: string[]) => sql.forEach(s => db.exec(s)) },
+    events: { on: (name: string, handler: (event: any) => void) => events.set(name, handler) },
+    background: { service: (_: string, service: any) => services.push(service) },
+    onDispose: (hook: () => void) => hooks.push(hook),
+    rpc: { register: (_: unknown, registered: any) => { handlers = {...handlers,...registered}; } },
+    realtime: { publish: (_: string, signal: unknown) => published.push(signal) },
+    log: { warn: (message: string) => warnings.push(message) },
+    get sdk() { assert.equal(invalidated, false, "stale runtime API handle"); sdkReads++; return sdk; },
+  };
+  crossReferencesPlugin(bb);
+  const queuedCallbacks = () => {
+    for (let n = 0; n < 3; n++) for (const {event, callback} of captured) {
+      callback(event === "system:changed" ? {changes: ["plugins-changed"]} : {reconnected: true});
+    }
+    for (const handler of events.values()) handler({thread: {projectId: "proj_event", id: "thr_event"}});
+  };
+  return {db, sdk, hooks, services, subscriptions, captured, events, warnings, published,
+    handlers: () => handlers, queuedCallbacks, sdkReads: () => sdkReads, unsubscribes: () => unsubscribes,
+    close: () => { db.close(); invalidated = true; }};
+}
+
+test("actual factory discarded before service start creates no SDK subscriptions and stale thread callbacks cannot reach closed SQLite", async t => {
+  const f = lifecycleFixture(t);
+  assert.equal(f.services.length, 1);
+  assert.equal(f.sdkReads(), 0);
+  assert.equal(f.subscriptions.size, 0);
+  // No dispose hooks: this is candidate rollback, not ordinary plugin disposal.
+  f.close();
+  assert.doesNotThrow(f.queuedCallbacks);
+  await f.services[0]!.start(new AbortController().signal);
+  assert.equal(f.sdkReads(), 0);
+  assert.equal(f.subscriptions.size, 0);
+  assert.deepEqual(f.warnings, []);
+  assert.deepEqual(f.published, []);
+});
+
+test("active service owns plugin/reconnect subscriptions; abort removes them before hooks/close and queued callbacks are inert", {timeout: 2000}, async t => {
+  const f = lifecycleFixture(t);
+  let entered!: () => void;
+  const listing = new Promise<void>(resolve => { entered = resolve; });
+  f.sdk.plugins.list = () => { entered(); return new Promise(() => {}); };
+  const controller = new AbortController();
+  t.after(() => controller.abort());
+  const running = f.services[0]!.start(controller.signal);
+  await listing;
+  assert.equal(f.subscriptions.size, 2);
+  const nativeSource = {provider: "bb", keys: {project: "proj_event", thread: "thr_event"}, presentation: {label: "Seed"}};
+  const seed = {...input, producerPluginId: "cross-references", source: nativeSource, targets: [],
+    payloadDigest: projectionPayloadDigest("cross-references", canonicalizeResource(nativeSource), false, [])};
+  f.handlers().applyProjection(seed);
+  const plugin = f.captured.find(s => s.event === "system:changed");
+  const reconnect = f.captured.find(s => s.event === "realtime:connection");
+  plugin.callback({changes: ["unrelated"]});
+  reconnect.callback({reconnected: false});
+  assert.equal((f.db.prepare("SELECT COUNT(*) AS n FROM assistant_link_jobs").get() as any).n, 0);
+  plugin.callback({changes: ["plugins-changed"]});
+  assert.equal((f.db.prepare("SELECT version FROM assistant_link_jobs").get() as any).version, 1);
+  reconnect.callback({reconnected: true});
+  assert.equal((f.db.prepare("SELECT version FROM assistant_link_jobs").get() as any).version, 1, "reconciliation preserves pending source generation");
+  for (const event of ["thread.idle", "thread.failed", "thread.deleted"]) {
+    f.events.get(event)!({thread: {projectId: "proj_event", id: "thr_event"}});
+  }
+  assert.equal((f.db.prepare("SELECT deleted FROM assistant_link_jobs").get() as any).deleted, 1);
+  controller.abort();
+  assert.equal(f.subscriptions.size, 0, "abort unregisters synchronously, before any stop wait");
+  await running;
+  const jobs = f.db.prepare("SELECT * FROM assistant_link_jobs").all();
+  for (const s of f.captured) s.callback(s.event === "system:changed" ? {changes: ["plugins-changed"]} : {reconnected: true});
+  assert.deepEqual(f.db.prepare("SELECT * FROM assistant_link_jobs").all(), jobs, "exited-run callbacks cannot invalidate later work");
+  for (const hook of [...f.hooks].reverse()) hook();
+  f.close();
+  assert.doesNotThrow(f.queuedCallbacks);
+  await f.services[0]!.start(new AbortController().signal); // Disposed collector cannot restart.
+  assert.equal(f.subscriptions.size, 0);
+  assert.equal(f.unsubscribes(), 2);
+  assert.deepEqual(f.warnings, []);
+});
+
+test("service subscription setup failure cleans earlier registration and fences captured callbacks", async t => {
+  const f = lifecycleFixture(t);
+  const subscribe = f.sdk.subscribe;
+  f.sdk.subscribe = (args: any) => {
+    if (args.event === "realtime:connection") throw new Error("subscription unavailable");
+    return subscribe(args);
+  };
+  await assert.rejects(f.services[0]!.start(new AbortController().signal), /subscription unavailable/);
+  assert.equal(f.subscriptions.size, 0);
+  f.close();
+  assert.doesNotThrow(f.queuedCallbacks);
+  assert.equal(f.unsubscribes(), 1);
+});
+
+test("pre-aborted service never subscribes; synchronous abort during setup leaves no registration behind", async t => {
+  const f = lifecycleFixture(t);
+  const controller = new AbortController();controller.abort();
+  await f.services[0]!.start(controller.signal);
+  assert.equal(f.sdkReads(), 0);
+  const next = new AbortController();
+  const subscribe = f.sdk.subscribe;
+  f.sdk.subscribe = (args: any) => { const off = subscribe(args); next.abort(); return off; };
+  await f.services[0]!.start(next.signal);
+  assert.equal(f.subscriptions.size, 0);
+  assert.equal(f.captured.length, 1);
+  assert.equal(f.unsubscribes(), 1);
+  f.close();
+  assert.doesNotThrow(f.queuedCallbacks);
+});
+
+test("factory admits settled/deleted event rank1 and forward demand rank2 without priority promotion changing backoff or generation", t => {
+  const f = lifecycleFixture(t);
+  for (const [event, thread] of [["thread.idle", "thr_idle"], ["thread.failed", "thr_failed"], ["thread.deleted", "thr_deleted"]]) {
+    f.events.get(event)!({thread: {projectId: "proj_event", id: thread}});
+    const row = f.db.prepare("SELECT * FROM assistant_link_jobs WHERE thread_id=?").get(thread) as any;
+    assert.equal(row.priority, 1);assert.equal(row.deleted, event === "thread.deleted" ? 1 : 0);
+  }
+  f.db.prepare("UPDATE assistant_link_jobs SET retry_at=900000, attempts=3 WHERE thread_id='thr_idle'").run();
+  const before = f.db.prepare("SELECT * FROM assistant_link_jobs WHERE thread_id='thr_idle'").get() as any;
+  f.handlers().listForwardReferences({source: {provider: "bb", keys: {project: "proj_event", thread: "thr_idle"}}});
+  assert.deepEqual(f.db.prepare("SELECT * FROM assistant_link_jobs WHERE thread_id='thr_idle'").get(), {...before, priority: 2});
+  // A genuine new thread event still advances the source generation. Its rank
+  // cannot downgrade an already viewed pending job.
+  f.events.get("thread.idle")!({thread: {projectId: "proj_event", id: "thr_idle"}});
+  const next = f.db.prepare("SELECT * FROM assistant_link_jobs WHERE thread_id='thr_idle'").get() as any;
+  assert.equal(next.version, before.version+1);assert.equal(next.priority, 2);
+  assert.equal(next.retry_at, 0);assert.equal(next.attempts, 0);
+});
+
+import {crossReferencesProducerRpcContract} from '@phosphorco/bb-cross-references/bb';
+import {runCrossReferencesProducerConformance} from '@phosphorco/bb-cross-references/testing';
+import {briefFixture,briefStatus} from './brief-evidence.test.ts';
+import {PRODUCER_METHODS,type ProducerApplyOutput,type ProducerState} from '@phosphorco/bb-cross-references';
+test('ACTUAL registered producer handlers: atomic graph/evidence, status-only V2 signal, delayed apply fence and readback kit',async t=>{
+ const db=new Database(':memory:');t.after(()=>db.close());const signals:{channel:string;payload:unknown}[]=[];const handlers:Record<string,(input:unknown)=>unknown>={};
+ crossReferencesPlugin({sdk:{subscribe:()=>()=>{}},onDispose:()=>{},events:{on:()=>{}},background:{service:()=>{}},storage:{database:()=>db,migrate:(_db:unknown,migrations:readonly string[])=>migrations.forEach(m=>db.exec(m))},rpc:{register:(_schema:unknown,h:Record<string,(input:unknown)=>unknown>)=>Object.assign(handlers,h)},realtime:{publish:(channel:string,payload:unknown)=>signals.push({channel,payload})}} as never);
+ const sdk={plugins:{callRpc:async(request:{method:string;input:unknown;outputSchema:{parse(value:unknown):unknown}})=>{
+  const schema=crossReferencesProducerRpcContract[request.method as keyof typeof crossReferencesProducerRpcContract];assert.ok(schema);const input=await schema.input['~standard'].validate(request.input);assert.ok(!('issues' in input));if('issues' in input)throw Error('Invalid input');const output=await handlers[request.method]!(input.value);const checked=await schema.output['~standard'].validate(output);assert.ok(!('issues' in checked));if('issues' in checked)throw Error('Invalid output');return request.outputSchema.parse(checked.value);
+ }}};
+ const first=briefFixture(),blocked=briefStatus(first);const kit=await runCrossReferencesProducerConformance({sdk:sdk as never,command:first,blocked});assert.ok(kit.checks.includes('replay-preserves-newer-status'));
+ assert.deepEqual(signals.map(s=>s.channel),['cross-references-changed','cross-references-mentions-v2-changed','cross-references-mentions-v2-changed']);const count=signals.length;
+ for(const revision of [9,10]){const delayed=await handlers[PRODUCER_METHODS.apply]!(briefFixture(revision,8)) as ProducerApplyOutput;assert.equal(delayed.outcome,'stale');assert.equal(delayed.currentRevision,8);assert.equal(signals.length,count);}
+ const state=await handlers[PRODUCER_METHODS.getState]!({version:1,producerPluginId:'thread-brief',source:blocked.source}) as ProducerState;assert.equal(state.evidence?.state,'bound');assert.equal(state.status?.attemptRevision,10);
+ const read=await handlers.crossReferencesV2ListMentions!({version:2,query:{kind:'authored-url',href:'https://example.test/brief-target'}}) as {status:string;items:{kind:string}[]};assert.equal(read.status,'page');assert.equal(read.items[0]?.kind,'brief-occurrence');
+ const installed=await handlers[PRODUCER_METHODS.apply]!(briefFixture(11,8)) as ProducerApplyOutput;assert.equal(installed.state.status,null);assert.equal(installed.state.evidence?.state,'bound');assert.equal(signals.length,count+2);
+ await handlers[PRODUCER_METHODS.reportStatus]!(briefStatus(first,12,11));const beforeFailure=signals.length;db.exec("CREATE TEMP TRIGGER reject_registered_brief BEFORE INSERT ON brief_evidence_occurrences BEGIN SELECT RAISE(ABORT,'registered child failure'); END");
+ await assert.rejects(async()=>handlers[PRODUCER_METHODS.apply]!(briefFixture(13,11)),/registered child failure/);assert.equal(signals.length,beforeFailure);const retained=await handlers[PRODUCER_METHODS.getState]!({version:1,producerPluginId:'thread-brief',source:blocked.source}) as ProducerState;assert.equal(retained.projection?.revision,11);assert.equal(retained.evidence?.graphRevision,11);assert.equal(retained.status?.attemptRevision,12);
 });

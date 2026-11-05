@@ -1,16 +1,17 @@
+import { normalizeExternalPersonOutput, normalizeContributionOutput, normalizeProvenanceOutput, normalizeEvidencePageOutput } from './external-person-output-runtime.js';
 /** Portable host adapter runtime. Enhanced-host values are decoded before normalization. */
 import type {
   AcceptanceOutcome, Codec, Contribution, ExecutionProvenance, IdentityError,
   IdentityProfile, Json, OperationLookup, PersonReference, Result, SendInput, Wire,
 } from './model.js';
 import {
-  err, idCodec, identityKeyCodec, ok, profileCodec, provenanceCodec,
+  err, idCodec, identityKeyCodec, ok, profileCodec, provenanceCodec, externalPersonSnapshotCodec,
 } from './model-runtime.js';
 import type {
-  Directory, Participant, ParticipantReader, ReadOptions, RequestExpectation, Unsubscribe,
+  Directory, ParticipantReader, ReadOptions, RequestExpectation, Unsubscribe,
 } from './model.js';
 import type {
-  ExternalAuthorInput, ExtensionDiscovery, ForkIdentityProtocolV1, ForkIdentityProvider, ForkProviderRegistration, HostInvalidation,
+  ExternalAuthorInput, ExternalContributionV1, ExternalContributionOutcomeV1, ExternalContributionProtocolV1, ExtensionDiscovery, ForkIdentityProtocolV1, ForkIdentityProvider, ForkProviderRegistration, HostInvalidation,
   ForkRequestHandle, ForkInvocationScope, HostRequestHandle, IdentityCapabilities, IdentityHost, IdentityProvider, ProviderDirectorySource,
   LiveRequest, ProviderRegistrationV1, ServerSession, UpstreamDriver,
 } from './host.js';
@@ -206,32 +207,6 @@ function isExternalIdentity(value: unknown): boolean {
     && idCodec('plugin').decode(value.pluginId).ok && idCodec('subject').decode(value.subject).ok;
 }
 
-function isParticipant(value: unknown): boolean {
-  if (!isRecord(value)) return false;
-  const roles = value.roles;
-  return (isActorIdentity(value.identity) || isExternalIdentity(value.identity)) && isProfilePresentation(value.presentation)
-    && Array.isArray(roles) && roles.length > 0 && new Set(roles).size === roles.length
-    && roles.every((role) => role === 'author' || role === 'editor' || role === 'mentioned' || role === 'interaction-resolver');
-}
-
-function decodeParticipantPage(value: unknown): Result<Awaited<ReturnType<ParticipantReader['list']>> extends Result<infer Page> ? Page : never> {
-  if (!isRecord(value) || !Array.isArray(value.items) || (value.nextCursor !== null && !idCodec('cursor').decode(value.nextCursor).ok)
-    || !idCodec('revision').decode(value.revision).ok || (value.coverage !== 'complete-history' && value.coverage !== 'partial-history')) {
-    return err('incompatible', 'Host returned a malformed participant page.');
-  }
-  const items: Participant[] = [];
-  for (const item of value.items) {
-    if (!isParticipant(item) || !isRecord(item) || !Array.isArray(item.roles)) return err('incompatible', 'Host returned a malformed participant item.');
-    const identity = profileCodec.decode({ identity: item.identity, presentation: item.presentation, revision: 'participant', status: 'current' });
-    if (!identity.ok) return err('incompatible', 'Host returned a malformed participant identity.');
-    items.push({ identity: identity.value.identity, presentation: identity.value.presentation, roles: [...item.roles] as Participant['roles'] });
-  }
-  const cursor = value.nextCursor === null ? null : idCodec('cursor').decode(value.nextCursor);
-  const revision = idCodec('revision').decode(value.revision);
-  if ((cursor !== null && !cursor.ok) || !revision.ok) return err('incompatible', 'Host returned malformed participant identifiers.');
-  return ok({ items, nextCursor: cursor === null ? null : cursor.value, revision: revision.value, coverage: value.coverage });
-}
-
 function isContribution(value: unknown): boolean {
   if (!isRecord(value) || !isReference(value.reference) || typeof value.acceptedAt !== 'string' || value.acceptedAt.length === 0 || value.acceptedAt.length > 256
     || !Array.isArray(value.mentionedPeople) || !value.mentionedPeople.every(isPersonIdentity)) return false;
@@ -250,7 +225,8 @@ function isContribution(value: unknown): boolean {
       : origin.kind === 'agent' ? origin.agentId === null || idCodec('agent').decode(origin.agentId).ok
         : origin.kind === 'system' ? typeof origin.reason === 'string' && origin.reason.length > 0 && origin.reason.length <= 1_024
           : origin.kind === 'unknown' && (origin.reason === 'legacy' || origin.reason === 'upstream-unattributed' || origin.reason === 'missing-source');
-  return validOrigin && (value.latestEditor === null || snapshot(value.latestEditor));
+  return (value.personAttribution === undefined || externalPersonSnapshotCodec.decode(value.personAttribution).ok)
+    && validOrigin && (value.latestEditor === null || snapshot(value.latestEditor));
 }
 
 function decodeEvidencePage<T>(value: unknown, decodeItem: (item: unknown) => boolean): Result<EvidencePage<T>> {
@@ -541,6 +517,7 @@ export function createHostAdapter<R, T, I>(options: {
     const subscriptions = upstream.subscribe((event) => { for (const listener of listeners) listener(event); });
     const contexts = new WeakMap<LiveRequest, R>();
     return {
+      ...externalContributionMethods(upstream, extension, () => disposed),
       pluginId: upstream.pluginId,
       instanceId: upstream.instanceId,
       session: (context) => upstream.session(context),
@@ -577,6 +554,7 @@ export function createHostAdapter<R, T, I>(options: {
     const error = protocolError(extension);
     const unavailableResult = async <V>(): Promise<Result<V>> => ({ ok: false, error });
     return {
+      ...externalContributionMethods(upstream, extension, () => disposed),
       pluginId: upstream.pluginId, instanceId: upstream.instanceId,
       session: async () => ({ status: error.code === 'incompatible' ? 'incompatible' : 'unavailable', instanceId: upstream.instanceId, error }),
       selfProfile: unavailableResult,
@@ -592,18 +570,6 @@ export function createHostAdapter<R, T, I>(options: {
 
   const protocol = extension.protocol;
   const enhancedDirectory = createEnhancedDirectory(protocol);
-  const enhancedParticipants: ParticipantReader = {
-    async list(input, readOptions) {
-      if (!Number.isInteger(input.limit) || input.limit < 1 || input.limit > 100 || !idCodec('thread').decode(input.threadId).ok
-        || input.cursor !== undefined && !idCodec('cursor').decode(input.cursor).ok) return err('invalid-input', 'Invalid participant request.');
-      if (disposed) return err('disposed', 'Identity host is disposed.');
-      let result: Result<unknown>;
-      try { result = asResult(await protocol.participants(input, readOptions)); }
-      catch { return err('unavailable', 'Participant history is unavailable.', 'after-reconnect'); }
-      return result.ok ? decodeParticipantPage(result.value) : result;
-    },
-    previews: async () => err('unsupported', 'Participant previews are unavailable from this enhanced protocol.'),
-  };
   const enhancedHistory = {
     async contributions(query: ContributionQuery, readOptions?: ReadOptions): Promise<Result<EvidencePage<Contribution>>> {
       if (!validContributionQuery(query)) return err('invalid-input', 'Invalid contribution history request.');
@@ -611,7 +577,7 @@ export function createHostAdapter<R, T, I>(options: {
       let result: Result<unknown>;
       try { result = asResult(await protocol.historyContributions(query, readOptions)); }
       catch { return err('unavailable', 'Contribution history is unavailable.', 'after-reconnect'); }
-      return result.ok ? decodeEvidencePage<Contribution>(result.value, isContribution) : result;
+      return result.ok ? decodeEvidencePage<Contribution>(normalizeEvidencePageOutput(result.value, normalizeContributionOutput), isContribution) : result;
     },
     async attempts(query: AttemptQuery, readOptions?: ReadOptions): Promise<Result<EvidencePage<ExecutionProvenance>>> {
       if (!validAttemptQuery(query)) return err('invalid-input', 'Invalid execution history request.');
@@ -619,12 +585,13 @@ export function createHostAdapter<R, T, I>(options: {
       let result: Result<unknown>;
       try { result = asResult(await protocol.historyAttempts(query, readOptions)); }
       catch { return err('unavailable', 'Execution history is unavailable.', 'after-reconnect'); }
-      return result.ok ? decodeEvidencePage<ExecutionProvenance>(result.value, (item) => provenanceCodec.decode(item).ok) : result;
+      return result.ok ? decodeEvidencePage<ExecutionProvenance>(normalizeEvidencePageOutput(result.value, normalizeProvenanceOutput), (item) => provenanceCodec.decode(item).ok) : result;
     },
   };
   const subscription = protocol.subscribe((event) => { for (const listener of listeners) listener(event); });
   const scopes = new WeakMap<LiveRequest, ForkInvocationScope>();
   return {
+    ...externalContributionMethods(upstream, extension, () => disposed),
     pluginId: upstream.pluginId, instanceId: protocol.instanceId as typeof upstream.instanceId,
     async session(context) {
       const decoded = serverSessionCodec.decode(await protocol.session(context));
@@ -657,7 +624,7 @@ export function createHostAdapter<R, T, I>(options: {
       getMany: (input, readOptions) => disposed ? Promise.resolve(err('disposed', 'Identity host is disposed.')) : enhancedDirectory.getMany(input, readOptions),
       subscribe: enhancedDirectory.subscribe,
     },
-    participants: enhancedParticipants,
+    participants,
     history: enhancedHistory,
     async send(request, input, readOptions) {
       const scope = scopes.get(request);
@@ -691,6 +658,114 @@ export function createHostAdapter<R, T, I>(options: {
   };
 }
 
+/** Versioned input decoder. Output reads tolerate additive fields but still
+ * validate every V1 field; inputs reject unknown fields before dispatch. */
+function decodeExternalContribution(value: unknown, strict = true): Result<ExternalContributionV1> {
+  if (!isRecord(value) || value.version !== 1 || !isRecord(value.author)
+    || strict && Object.keys(value).some(key => !['version', 'author', 'personAttribution'].includes(key))
+    || strict && Object.keys(value.author).some(key => !['subject', 'presentation'].includes(key))
+    || strict && isRecord(value.author.presentation) && Object.keys(value.author.presentation).some(key => !['displayName', 'handle', 'avatarUrl'].includes(key))
+    || (typeof value.author.subject !== 'string' || value.author.subject.length === 0 || value.author.subject.length > 256) || !isProfilePresentation(value.author.presentation)) {
+    return err('invalid-input', 'Invalid V1 external contribution.');
+  }
+  let person: unknown = value.personAttribution;
+  if (!strict) person = normalizeExternalPersonOutput(person);
+  if (strict && isRecord(person) && isRecord(person.presentation) && Object.keys(person.presentation).some(key => !['displayName', 'handle', 'avatarUrl'].includes(key))) return err('invalid-input', 'Unexpected presentation field.');
+  const decoded = person === undefined ? null : externalPersonSnapshotCodec.decode(person);
+  if (decoded && !decoded.ok) return decoded;
+  return ok({ version: 1, author: { subject: value.author.subject as string, presentation: { displayName: (value.author.presentation as ExternalAuthorInput['presentation']).displayName, handle: (value.author.presentation as ExternalAuthorInput['presentation']).handle, avatarUrl: (value.author.presentation as ExternalAuthorInput['presentation']).avatarUrl } },
+    ...(decoded?.ok ? { personAttribution: decoded.value } : {}) });
+}
+
+export const externalContributionV1Codec: Codec<ExternalContributionV1> = {
+  decode: value => decodeExternalContribution(value),
+  encode: value => value as unknown as Json,
+};
+function canonicalExternal(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonicalExternal).join(',')}]`;
+  if (isRecord(value)) return `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${canonicalExternal(value[key])}`).join(',')}}`;
+  return JSON.stringify(value);
+}
+
+function decodeExternalContributionOutcomeV1(raw: unknown): Result<ExternalContributionOutcomeV1> {
+    const decoded = decodeAcceptance(raw);
+    if (!decoded.ok || decoded.value.status !== 'submitted') return decoded as Result<ExternalContributionOutcomeV1>;
+    if (decoded.value.receipt.evidence !== 'host-accepted') return err('incompatible', 'V1 needs durable native acceptance.');
+    const receipt = decoded.value.receipt as unknown as Record<string, unknown>;
+    const contribution = decodeExternalContribution(receipt.externalContribution, false);
+    return contribution.ok ? ok({ status: 'submitted', receipt: { ...decoded.value.receipt, externalContribution: contribution.value } })
+      : err('incompatible', 'Host receipt omitted or changed V1 attribution.');
+  }
+
+export const externalContributionOutcomeV1Codec: Codec<ExternalContributionOutcomeV1> = {
+  decode: decodeExternalContributionOutcomeV1,
+  encode: value => value as unknown as Json,
+};
+
+function externalContributionMethods<R, T, I>(upstream: UpstreamDriver<R, T, I>, extension: ExtensionDiscovery<R, T, I>, disposed: () => boolean):
+  Pick<IdentityHost<R, T, I>, 'externalContributionCapabilities' | 'sendExternalContribution' | 'lookupExternalContribution'> {
+  const support = (): Result<ExternalContributionProtocolV1<I> | null> => {
+    if (disposed()) return err('disposed', 'Identity host is disposed.');
+    if (extension.status === 'absent') return ok(null);
+    if (extension.status !== 'supported') return { ok: false, error: protocolError(extension) };
+    const value: unknown = extension.protocol.externalContributions;
+    if (value === undefined) return ok(null);
+    if (!isRecord(value) || !Array.isArray(value.versions) || !value.versions.length
+      || !value.versions.every(version => Number.isInteger(version) && version > 0)) return err('incompatible', 'Malformed external contribution capability.');
+    if (!value.versions.includes(1)) return ok(null);
+    if (!Array.isArray(value.personKinds) || value.personKinds.length !== 1 || value.personKinds[0] !== 'person'
+      || value.history !== 'accepted-and-queued' || value.rollback !== 'requires-capable-host'
+      || typeof value.acceptV1 !== 'function' || typeof value.lookupV1 !== 'function') return err('incompatible', 'Malformed V1 external contribution capability.');
+    return ok(value as unknown as ExternalContributionProtocolV1<I>);
+  };
+  return {
+    externalContributionCapabilities() {
+      const negotiated = support();
+      return !negotiated.ok ? negotiated : ok(negotiated.value ? { version: 1, personKinds: ['person'], history: 'accepted-and-queued', rollback: 'requires-capable-host' } : null);
+    },
+    async sendExternalContribution(contribution, input, options) {
+      const operationId = input.operationId;
+      const decoded = decodeExternalContribution(contribution);
+      if (!decoded.ok) return { status: 'rejected', error: decoded.error };
+      const negotiated = support();
+      if (!negotiated.ok) return { status: 'rejected', error: negotiated.error };
+      if (!negotiated.value) return { status: 'rejected', error: { code: 'unsupported', message: 'Native external-person attribution V1 is unavailable.', retry: 'never' } };
+      if (options?.signal?.aborted) return { status: 'rejected', error: { code: 'expired', message: 'The send was cancelled before dispatch.', retry: 'never' } };
+      // Capture caller-owned objects before the first await, including input.
+      const frozen = JSON.parse(JSON.stringify(decoded.value)) as ExternalContributionV1;
+      const wire = JSON.parse(JSON.stringify(wireInput(input, upstream.inputCodec))) as Wire<SendInput<I>>;
+      try {
+        const result = decodeExternalContributionOutcomeV1(await negotiated.value.acceptV1({ contribution: frozen, input: wire }, options));
+        if (!result.ok) return { status: 'indeterminate', operationId, message: result.error.message };
+        if (result.value.status === 'submitted' && (result.value.receipt.operationId !== operationId
+          || canonicalExternal(result.value.receipt.externalContribution) !== canonicalExternal(frozen))) {
+          return { status: 'indeterminate', operationId, message: 'Host receipt did not confirm the reserved attribution.' };
+        }
+        return result.value;
+      } catch {
+        return { status: 'indeterminate', operationId, message: 'External contribution dispatch outcome is unknown; reconcile this operation.' };
+      }
+    },
+    async lookupExternalContribution(operationId, options) {
+      const negotiated = support();
+      if (!negotiated.ok) return negotiated;
+      if (!negotiated.value) return ok({ status: 'unknown', reason: 'unsupported' });
+      try {
+        const result = asResult<unknown>(await negotiated.value.lookupV1(operationId, options));
+        if (!result.ok) return result;
+        if (isRecord(result.value) && result.value.status === 'final') {
+          const decoded = decodeExternalContributionOutcomeV1(result.value.outcome);
+          if (decoded.ok && decoded.value.status === 'submitted' && decoded.value.receipt.operationId !== operationId) {
+            return err('incompatible', 'Host lookup returned a receipt for another operation.');
+          }
+          return decoded.ok ? ok({ status: 'final', outcome: decoded.value }) : decoded;
+        }
+        return decodeLookup(result.value) as Result<OperationLookup<ExternalContributionOutcomeV1>>;
+      } catch { return err('unavailable', 'External contribution lookup is unavailable.', 'after-reconnect'); }
+    },
+  };
+}
+
 /** Reads only the trusted optional host member and distinguishes absence from a broken extension. */
 export function inspectForkExtension<R, T, I>(value: unknown): ExtensionDiscovery<R, T, I> {
   if (value === undefined) return { status: 'absent' };
@@ -698,7 +773,7 @@ export function inspectForkExtension<R, T, I>(value: unknown): ExtensionDiscover
     || typeof value.session !== 'function' || typeof value.openRequest !== 'function'
     || typeof value.selfProfile !== 'function' || typeof value.accept !== 'function' || typeof value.lookup !== 'function'
     || typeof value.provenance !== 'function' || typeof value.historyContributions !== 'function' || typeof value.historyAttempts !== 'function'
-    || typeof value.directorySources !== 'function' || typeof value.participants !== 'function' || typeof value.forwardRpc !== 'function'
+    || typeof value.directorySources !== 'function' || typeof value.forwardRpc !== 'function'
     || typeof value.registerProvider !== 'function' || typeof value.subscribe !== 'function') {
     const version = isRecord(value) && typeof value.version === 'number' ? value.version : null;
     return version === null

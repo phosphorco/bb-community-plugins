@@ -2,7 +2,7 @@
 import type { AcceptanceOutcome, ActorReference, ActorSnapshot, Codec, Directory, Disposable, ExecutionProvenance,
   IdentityKey, InstanceId, OperationId, OperationLookup, ParticipantReader, PersonReference,
   PersonSendInput, ReadOptions, RequestExpectation, Result, SendInput, TargetSelection, Unsubscribe } from './model.js';
-import type { ExternalAuthorInput, IdentityHost, IdentityCapabilities, ServerSession, HostInvalidation } from './host.js';
+import type { ExternalAuthorInput, ExternalContributionV1, ExternalContributionOutcomeV1, ExternalContributionCapabilityV1, IdentityHost, IdentityCapabilities, ServerSession, HostInvalidation } from './host.js';
 
 declare const resolvedTarget: unique symbol;
 export interface TargetSnapshot {
@@ -61,6 +61,10 @@ export interface IdentityServer<RequestContext, ToolContext, Input> extends Disp
   personRequest(context: RequestContext, options?: ReadOptions): Promise<Result<PersonRequest<Input>>>;
   toolProvenance(context: ToolContext): Promise<Result<ExecutionProvenance>>;
   sendExternal(author: ExternalAuthorInput, input: SendInput<Input>, options?: ReadOptions): Promise<AcceptanceOutcome>;
+  externalContributionCapabilities(): Result<ExternalContributionCapabilityV1 | null>;
+  sendExternalContribution(contribution: ExternalContributionV1, input: SendInput<Input>, options?: ReadOptions): Promise<ExternalContributionOutcomeV1>;
+  lookupExternalContribution(operationId: SendInput<Input>['operationId'], options?: ReadOptions): Promise<Result<OperationLookup<ExternalContributionOutcomeV1>>>;
+
   /** Lookup reports retained operation outcomes; IDs are scoped to this instance/plugin. */
   lookupOperation(operationId: OperationId, options?: ReadOptions): Promise<Result<OperationLookup<AcceptanceOutcome>>>;
 }

@@ -1,0 +1,1 @@
+{"extends":"./tsconfig.json","include":["test/public-types.mts","dist/types/**/*.d.ts"]}

@@ -232,3 +232,14 @@ test('malformed and unavailable enhanced hosts never select the singleton fallba
     assert.equal(db.prepare('SELECT COUNT(*) AS count FROM p6r_proof_state_receipts').get().count, 0);
   } finally { outageBinding.value.dispose(); db.close(); }
 });
+
+
+test('public binding rejects malformed V1 contribution before rendering or dispatch', async () => {
+  const host = installedSdkHost(undefined);
+  const bound = createBbIdentityServerBinding({bb:host.bb});
+  assert.equal(bound.ok,true);
+  try {
+    const outcome=await bound.value.server.sendExternalContribution(null,{operationId:'operation-1',threadId:'thread-1',mode:'start',input:[]});
+    assert.equal(outcome.status,'rejected');assert.equal(outcome.error.code,'invalid-input');
+  } finally {bound.value.dispose();}
+});

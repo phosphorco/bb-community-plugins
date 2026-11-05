@@ -215,6 +215,98 @@ An adapter cannot manufacture exact correlation or transactional deduplication
 from the selected baseline. Runtime compatibility tests must preserve native
 messages/provider sessions while verifying additive fork provenance.
 
+## Retained participants
+
+Use the shared binding, including for background evidence reads:
+
+```ts
+const participants = await binding.background(invocation =>
+  binding.endpoint.participants(invocation, { threadId, limit: 100 }),
+);
+// Preserve coverage, nextCursor and revision. Follow nextCursor with the same
+// thread and limit; on conflict restart the query rather than mixing pages.
+```
+
+On enhanced hosts `/bb` requires public `threads.facetParticipants` and
+`threads.events.list`. Missing required methods return `unsupported`; a source
+outage returns `unavailable`. It never delegates to the obsolete host
+`protocol.participants` implementation. Direct low-level `/host` adapters do
+not own SDK reads and report participant history unsupported. Portable hosts
+without the enhanced identity extension retain their documented singleton
+identity/state behavior and unsupported participant history.
+
+The reader exhausts paged native facet membership and retained
+`client/turn/requested` snapshots in ascending native sequence through an initial
+latest-request cutoff. It reuses the native-source actor decoder, preserves exact
+canonical member keys and full stored identity/presentation, and accumulates
+recorded author, editor and mentioned roles. Machines remain machines. No live
+provider lookup, generation admission, text inference or display-name matching
+occurs. Native mentions retain their old provider source without re-resolution.
+Facet-only records have neither full identity nor roles, so they cannot fabricate
+an author. Known native snapshots remain useful when facets or contribution
+history have partial coverage; an unexplained native member is retained with
+partial coverage.
+
+Participants sort globally by their highest recorded role: author, then editor,
+then mentioned. Within that role they sort by its first retained occurrence. This order is independent of facet order and an earlier
+mention of a later author or editor. Roles deduplicate in author/editor/mentioned order.
+Presentation uses the latest snapshot encountered in that ordered source
+traversal. This is historical evidence, not a current-directory profile.
+
+The same reader enriches requests through public `server.history.contributions`
+when native authors are absent/null/asserted, or when any external or otherwise
+unexplained facet member needs contribution evidence. In the latter case it
+examines every retained request because facets provide no request correlation;
+it does not guess which native author accompanied an external editor. Every
+contribution continuation is followed within the read budget, preserving external
+and person author/editor snapshots. A stored external person assertion is retained
+even when its human key is absent from facets; that mismatch lowers coverage. Contribution mentions without any full
+presentation snapshot remain an explicit coverage gap. Native-only threads whose
+members are already explained make no per-prompt history probes. Those reads
+remain `partial-history`: skipping an independent contribution source does not
+prove that source exhausted. Pending/missing/unavailable contribution evidence
+also leaves known native participants present with partial coverage. Malformed
+snapshots and contradictory identity fields fail clearly.
+
+Each list call makes one bounded traversal, with no retries, background tasks,
+polling or cache. Bounds are 64 native event pages of 100 requests, 64 facet pages
+of 100 members, 256 entries per native actor/mention array, 16,384 contribution
+page reads of up to 200 items, and 8 MiB of retained attribution evidence. Exceeding
+a bound returns `limit-exceeded`, never a falsely complete truncated page. Preview
+queries accept up to 64 threads and use the same reader; `hasMore` describes
+participant pagination separately from source coverage.
+
+The public ports provide no atomic revision spanning facets, events and
+contributions. A final latest-request check downgrades coverage on observed append
+or rewind while preserving known authors; it does not trigger a full reread or
+retry. `complete-history` requires all selected retained source sets exhausted,
+all facet members explained by full role snapshots, no missing authorship and no
+observed concurrent change. It describes retained evidence, not deleted history
+or transactional snapshot isolation. Independent source changes that leave no
+public revision witness cannot be detected atomically.
+
+Output revisions hash the exact normalized evidence, membership, cutoff,
+coverage and projection. Continuations bind thread, instance, limit, cutoff,
+offset and revision, and recompute that bounded projection on each page. Changed
+evidence returns `conflict`; a busy thread still yields its known authors on a
+fresh query. Appends beyond the cutoff are excluded from the current traversal.
+An append that changes observed membership or coverage invalidates continuation;
+there is no promise of a frozen server snapshot across calls. The invocation
+signal and binding disposal abort in-flight reads and prevent subsequent work,
+even when a supplied port ignores its cancellation signal.
+
+The public `/bb` regression uses synthetic structural SDK ports, including
+129 retained requests with Cole only in native snapshots and no contributions,
+405 requests/205 facet members, independent machine/editor/mention actors,
+external history pagination, malformed sources, append/rewind, cursor invalidation
+and cancellation. Its measured call count is five SDK reads and zero history
+reads for the native-only 129-request case. A mixed 129-request fixture records
+five SDK reads plus 129 sequential contribution reads; cancellation stops further
+probes. Public events transfer full request payloads even though the reader retains
+only attribution fields. Synthetic fixture byte/latency measurements do not bound
+real prompt transfer cost or establish live performance. This establishes package composition
+and bounded calls, not a live-host latency or deployment claim.
+
 ## Bring your own IdP
 
 The operator selects one boundary plugin with `ProviderBoundaryConfigurationV1`

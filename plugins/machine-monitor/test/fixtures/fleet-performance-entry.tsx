@@ -103,11 +103,11 @@ function emit(channel: string, payload: unknown): void {
   for (const callback of listeners.get(channel) ?? []) callback(payload);
 }
 
-const navPanel = (plugin as unknown as { panels: readonly [{ component: typeof import("react").Component }] }).panels[0];
+const navPanel = (plugin as unknown as { panels: readonly [{ component: import("react").ComponentType<{ subPath?: string }> }] }).panels[0];
 if (navPanel == null) throw new Error("Machine Monitor did not register a nav panel for the latency witness.");
 const root = document.getElementById("root");
 if (root == null) throw new Error("Latency witness root is absent.");
-createRoot(root).render(<FleetPerformanceRuntimeProvider runtime={runtime}><navPanel.component /></FleetPerformanceRuntimeProvider>);
+createRoot(root).render(<FleetPerformanceRuntimeProvider runtime={runtime}><navPanel.component subPath="machine" /></FleetPerformanceRuntimeProvider>);
 
 Object.assign(globalThis, {
   __fleetPerformanceControl: {

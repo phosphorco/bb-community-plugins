@@ -35,6 +35,9 @@ export type BbIdentityApi = Pick<BbPluginApi, 'pluginId' | 'onDispose'> & {
     /** Only the acknowledgement is common to supported 0.4 and 0.5 SDKs. */
     readonly threads: {
       readonly send: (args: Parameters<BbPluginApi['sdk']['threads']['send']>[0]) => Promise<{ readonly ok: true }>;
+      /** Required by enhanced retained participants; absent on portable singleton hosts. */
+      readonly events?: Pick<BbPluginApi['sdk']['threads']['events'], 'list'>;
+      readonly facetParticipants?: BbPluginApi['sdk']['threads'] extends { facetParticipants: infer Method } ? Method : never;
     };
     readonly plugins: Pick<BbPluginApi['sdk']['plugins'], 'callRpc'>;
   };
@@ -76,6 +79,9 @@ export interface BbInvocationServer {
   selfProfile(invocation: BbInvocation): Promise<Result<import('./model.js').IdentityProfile>>;
   personRequest(invocation: BbInvocation): Promise<Result<PersonRequest<BbPromptInput>>>;
   readonly sendExternal: IdentityServer<unknown, unknown, BbPromptInput>['sendExternal'];
+  readonly externalContributionCapabilities: IdentityServer<unknown, unknown, BbPromptInput>['externalContributionCapabilities'];
+  readonly sendExternalContribution: IdentityServer<unknown, unknown, BbPromptInput>['sendExternalContribution'];
+  readonly lookupExternalContribution: IdentityServer<unknown, unknown, BbPromptInput>['lookupExternalContribution'];
   readonly lookupOperation: IdentityServer<unknown, unknown, BbPromptInput>['lookupOperation'];
   /** Bounded, validated provenance reads; disposal fences new raw history calls. */
   readonly history: IdentityServer<unknown, unknown, BbPromptInput>['history'];

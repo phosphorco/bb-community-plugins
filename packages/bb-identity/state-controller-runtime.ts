@@ -1,11 +1,11 @@
-import type { Codec, ConflictToken, ReadOptions, RequestExpectation, Result, Scheduler, Unsubscribe } from './model.js';
+import type { IdentityError, Json, OperationLookup, Codec, ConflictToken, ReadOptions, RequestExpectation, Result, Scheduler, Unsubscribe } from './model.js';
 import { err, newConflictToken, newOperationId, ok } from './model-runtime.js';
 import type { ServerSession } from './host.js';
 import type { ConflictContext, ConflictDecision, DraftCheckpoint, DraftStorage, IdentityState, PendingDraft, StateAddress, StateDefinition, StateMutation, StateOutcome, StateRead, StateTransport, SyncSnapshot } from './state.js';
 import { stateAddressKey, stateCodecs } from './state-service-runtime.js';
 
 type Readable<T> = Exclude<StateRead<T>, { status: 'migration-required' }>;
-type Block<T> = { reason: Extract<SyncSnapshot<T>, { status: 'blocked' }>['reason']; message: string; conflict: ConflictContext<T> | null };
+type Block<T> = { reason: Extract<SyncSnapshot<T>, { status: 'blocked' }>['reason'] | 'rejected'; message: string; conflict: ConflictContext<T> | null };
 type Flight<T> = { mutation: StateMutation<T>; base: Readable<T>; generation: number };
 const defaultScheduler: Scheduler = { now: Date.now, schedule(delay, callback) { const timer = setTimeout(callback, delay); return () => clearTimeout(timer); } };
 function frozen<T>(value: T): T { if (value !== null && typeof value === 'object') { for (const child of Object.values(value)) frozen(child); Object.freeze(value); } return value; }
@@ -13,13 +13,39 @@ function valueClone<T>(codec: Codec<T>, value: T): T { const result = codec.deco
 function version<T>(read: Readable<T>) { return read.status === 'present' ? read.envelope.version : read.version; }
 function sameVersion<T>(a: Readable<T>, b: Readable<T>) { return a.status === b.status && version(a).epoch === version(b).epoch && version(a).sequence === version(b).sequence; }
 
-export function createIdentityState<T>(options: {
+/** Internal opt-in protocol seam. Legacy construction never configures editing. */
+export interface CoreRejected { readonly status: 'rejected'; readonly operationId: StateMutation<unknown>['operationId']; readonly evidence: Json; }
+export type CoreOutcome<T> = StateOutcome<T> | CoreRejected;
+export interface CoreDraft<T> extends PendingDraft<T> { readonly rejection?: Json | null; readonly rejectedGeneration?: number; }
+export type CoreSnapshot<T> = Exclude<SyncSnapshot<T>, { status: 'blocked' }> | {
+  readonly status: 'blocked'; readonly address: StateAddress; readonly reason: Block<T>['reason'];
+  readonly draft: CoreDraft<T> | null; readonly conflict: ConflictContext<T> | null; readonly message: string;
+};
+export type CoreTransport<T> = Omit<StateTransport<T>, 'save' | 'reconcile'> & {
+  save(input: StateMutation<T>, options?: ReadOptions): Promise<Result<CoreOutcome<T> | { status: 'indeterminate'; operationId: StateMutation<T>['operationId'] }>>;
+  reconcile(input: import('./state.js').StateLookupRequest & { readonly mutation: StateMutation<T> }, options?: ReadOptions): Promise<Result<OperationLookup<CoreOutcome<T>>>>;
+};
+export interface CoreState<T> extends Omit<IdentityState<T>, 'getSnapshot' | 'recover' | 'checkpoint' | 'detach'> {
+  getSnapshot(): CoreSnapshot<T>;
+  recover(checkpoint: DraftCheckpoint<T>): Promise<Result<void>>;
+  checkpoint(): Promise<Result<DraftCheckpoint<T> | null>>;
+  detach(reason?: 'identity-invalidated' | 'view-change' | 'unmount'): CoreDraft<T> | null;
+  inspect(): { readonly draft: CoreDraft<T> | null; readonly base: Readable<T> | null; readonly desired: T | undefined;
+    readonly generation: number; readonly pending: StateMutation<T> | null; readonly saving: boolean; readonly dirty: boolean;
+    readonly editable: boolean; readonly saveEligible: boolean; readonly checkpoint: { readonly status: 'disabled' | 'local-only' | 'writing' | 'backed-up' | 'failed'; readonly generation: number | null; readonly revision: number | null; readonly error: IdentityError | null } };
+}
+export type StateControllerOptions<T> = {
   readonly address: StateAddress; readonly expected: RequestExpectation; readonly ownerSession: import('./model.js').OwnerSessionId;
-  readonly definition: StateDefinition<T>; readonly transport: StateTransport<T>; readonly drafts?: DraftStorage<T>;
+  readonly definition: StateDefinition<T>; readonly transport: CoreTransport<T>; readonly drafts?: DraftStorage<T>;
   readonly scheduler?: Scheduler; readonly debounceMs?: number; readonly retryLimit?: number;
   readonly onConflict: (context: ConflictContext<T>) => ConflictDecision<T>; readonly initializeEmpty: boolean;
   readonly currentSession: () => Result<ServerSession>;
-}): IdentityState<T> {
+};
+export function createIdentityState<T>(options: Parameters<typeof import('./state.js').createIdentityState<T>>[0]): IdentityState<T> {
+  // The legacy constructor cannot receive the opt-in protocol or its new outcomes.
+  return createStateController(options) as IdentityState<T>;
+}
+export function createStateController<T>(options: StateControllerOptions<T>, editing = false): CoreState<T> {
   const address = frozen({ ...options.address }); const expected = frozen({ ...options.expected });
   const definition = options.definition; const codec = definition.codec; const codecs = stateCodecs(codec);
   const drafts = options.drafts;
@@ -33,16 +59,18 @@ export function createIdentityState<T>(options: {
   let activeLoad: Promise<Result<void>> | null = null; let timer: Unsubscribe | null = null; let subscription: Unsubscribe | null = null;
   let remotePending = false; let remoteSerial = 0; let remoteHint: { epoch: string; sequence: number } | null = null; let closing = false;
   let checkpoint: DraftCheckpoint<T> | null = null; let recoverySource: DraftCheckpoint<T> | null = null;
+  let checkpointError: IdentityError | null = null; let checkpointWriting = 0;
+  let lastRejection: Json | null = null; let rejectedGeneration = -1; let ownerFenced = false; let loadFailed = false;
   let automaticSuspensions = 0; let automaticEpoch = 0;
   let persistQueue: Promise<unknown> = Promise.resolve(); let persistSerial = 0;
   const abort = new AbortController(); const listeners = new Set<() => void>();
-  let snapshot: SyncSnapshot<T> = { status: 'loading', address };
+  let snapshot: CoreSnapshot<T> = { status: 'loading', address };
   const currentValue = (read: Readable<T>) => read.status === 'present' ? read.envelope.value : initial;
   const dirty = () => base !== null && desired !== null && !definition.equal(currentValue(base), desired.value);
   const needsSave = () => dirty() || (base?.status === 'empty' && options.initializeEmpty);
   const active = (captured = epoch) => lifecycle === 'active' && captured === epoch;
   const clearTimer = () => { timer?.(); timer = null; };
-  const draft = (): PendingDraft<T> | null => base === null || desired === null ? null : frozen({ formatVersion: 1, key: { address, actor: expected.actor, ownerSession: options.ownerSession }, schemaVersion: definition.schemaVersion, acknowledged: base, desired: desired.value, localGeneration, inFlight: pending?.mutation ?? null });
+  const draft = (): CoreDraft<T> | null => base === null || desired === null ? null : frozen({ formatVersion: 1, key: { address, actor: expected.actor, ownerSession: options.ownerSession }, schemaVersion: definition.schemaVersion, acknowledged: base, desired: desired.value, localGeneration, inFlight: pending?.mutation ?? null, ...(editing ? { rejection: lastRejection, rejectedGeneration } : {}) });
   function emit() {
     if (lifecycle === 'detached' || lifecycle === 'disposed') snapshot = { status: 'detached', address, draft: draft() };
     else if (blocked) snapshot = { status: 'blocked', address, ...blocked, draft: draft() };
@@ -53,28 +81,34 @@ export function createIdentityState<T>(options: {
   function block(reason: Block<T>['reason'], message: string, conflict: ConflictContext<T> | null = null) { clearTimer(); blocked = { reason, message, conflict }; emit(); }
   function sessionCheck(): Result<void> {
     if (!active()) return err('disposed', 'This state controller is no longer active.');
+    if (editing && ownerFenced) return err('stale-context', 'This editing owner was retired.');
     const result = options.currentSession();
     if (!result.ok) { block('identity-unavailable', result.error.message); return result; }
     const session = result.value;
     if (session.status !== 'ready') { block('identity-unavailable', session.error.message); return { ok: false, error: session.error }; }
-    if (session.instanceId !== address.instanceId || session.actor.identity.key !== expected.actor || session.stamp !== expected.session) { block('owner-changed', 'The identity session changed.'); return err('stale-context', 'The identity session changed.', 'after-refresh'); }
+    if (session.instanceId !== address.instanceId || session.actor.identity.key !== expected.actor || session.stamp !== expected.session) { if (editing) ownerFenced = true; block('owner-changed', 'The identity session changed.'); return err('stale-context', 'The identity session changed.', 'after-refresh'); }
     return ok(undefined);
   }
   async function safe<V>(run: () => Promise<Result<V>>): Promise<Result<V>> { try { return await run(); } catch (error) { return err('unavailable', error instanceof Error ? error.message : 'State operation failed.', 'after-reconnect'); } }
-  function persist(captured = draft()): Promise<Result<DraftCheckpoint<T> | null>> {
+  function persist(captured: CoreDraft<T> | null = draft()): Promise<Result<DraftCheckpoint<T> | null>> {
     if (!drafts) return Promise.resolve(ok(null));
     if (!captured) return Promise.resolve(ok(null));
     const capturedEpoch = epoch; const serial = ++persistSerial;
     const work = persistQueue.then(async () => {
+      checkpointWriting++; if (editing) emit();
       const result = await safe(() => drafts.write(captured, checkpoint?.revision ?? null));
-      if (result.ok) checkpoint = result.value;
-      else if (active(capturedEpoch) && serial === persistSerial) block('storage-error', result.error.message);
+      checkpointWriting--;
+      if (result.ok) { checkpoint = result.value; if (editing) checkpointError = null; }
+      else if (active(capturedEpoch) && serial === persistSerial) {
+        if (editing) checkpointError = result.error; else block('storage-error', result.error.message);
+      }
+      if (editing) emit();
       return result;
     });
     persistQueue = work.then(() => undefined); return work;
   }
   function schedule() {
-    clearTimer(); if (!active() || automaticSuspensions || closing || blocked || pending || !needsSave()) return;
+    clearTimer(); if (editing || !active() || automaticSuspensions || closing || blocked || pending || !needsSave()) return;
     timer = scheduler.schedule(debounce, () => { timer = null; void sendNew(true); });
   }
   function readClone(read: StateRead<T>): Result<StateRead<T>> {
@@ -104,10 +138,10 @@ export function createIdentityState<T>(options: {
     if (pending) { remotePending = true; emit(); return ok(undefined); }
     if (base && version(base).epoch === version(read).epoch && version(read).sequence < version(base).sequence) return ok(undefined);
     if (base && dirty()) {
-      if (sameVersion(base, read)) { if (!blocked?.conflict) blocked = null; emit(); schedule(); return ok(undefined); }
+      if (sameVersion(base, read)) { if (!blocked?.conflict && (!editing || blocked?.reason !== 'rejected')) blocked = null; emit(); schedule(); return ok(undefined); }
       return conflict(cause, read, base);
     }
-    base = read; desired = { value: valueClone(codec, currentValue(read)) }; blocked = null; emit(); schedule(); return ok(undefined);
+    base = read; desired = { value: valueClone(codec, currentValue(read)) }; if (!editing || blocked?.reason !== 'rejected') blocked = null; emit(); schedule(); return ok(undefined);
   }
   function queueRemote() {
     if (!active() || activeLoad || pending) return;
@@ -120,24 +154,33 @@ export function createIdentityState<T>(options: {
       const loaded = await safe(() => options.transport.load({ address, expected }, { signal: abort.signal }));
       if (!active(capturedEpoch) || id !== loadId || serial !== remoteSerial) return err('cancelled', 'State load was superseded.');
       const live = sessionCheck(); if (!live.ok) return live;
-      if (!loaded.ok) { block('storage-error', loaded.error.message); return loaded; }
-      const parsed = readClone(loaded.value); if (!parsed.ok) { block('storage-error', parsed.error.message); return parsed; }
-      return applyRemote(parsed.value, cause);
+      if (!loaded.ok) { loadFailed = true; block('storage-error', loaded.error.message); return loaded; }
+      const parsed = readClone(loaded.value); if (!parsed.ok) { loadFailed = true; block('storage-error', parsed.error.message); return parsed; }
+      loadFailed = false; return applyRemote(parsed.value, cause);
     })();
     activeLoad = work;
     void work.then(() => { if (activeLoad === work) { activeLoad = null; if (active(capturedEpoch) && remoteSerial !== serial) queueRemote(); } });
     return work;
   }
-  function outcomeCheck(outcome: StateOutcome<T>, operationId: StateMutation<T>['operationId']): Result<StateOutcome<T>> {
+  function outcomeCheck(outcome: CoreOutcome<T>, operationId: StateMutation<T>['operationId']): Result<CoreOutcome<T>> {
+    if (editing && outcome.status === 'rejected') return outcome.operationId === operationId ? ok(frozen(outcome)) : err('incompatible', 'Rejected receipt has another operation.');
+    if (outcome.status === 'rejected') return err('incompatible', 'Rejection is not a legacy state outcome.');
     const parsed = codecs.save.decode(structuredClone(codecs.save.encode(outcome)));
     if (!parsed.ok) return parsed;
     if (parsed.value.operationId !== operationId || parsed.value.status === 'indeterminate') return err('incompatible', 'State receipt has a different operation.');
     const read = 'envelope' in parsed.value ? { status: 'present' as const, envelope: parsed.value.envelope } : parsed.value.current;
     const checked = readClone(read); return checked.ok ? ok(frozen(parsed.value)) : checked;
   }
-  async function applyOutcome(captured: Flight<T>, raw: StateOutcome<T>): Promise<Result<void>> {
+  async function applyOutcome(captured: Flight<T>, raw: CoreOutcome<T>): Promise<Result<void>> {
     const checked = outcomeCheck(raw, captured.mutation.operationId); if (!checked.ok) { block('indeterminate', checked.error.message); return checked; }
     const outcome = checked.value; pending = null; loadId++; blocked = null;
+    if (outcome.status === 'rejected') {
+      lastRejection = outcome.evidence; rejectedGeneration = captured.generation;
+      block('rejected', 'The submitted edit was definitively rejected.');
+      const saved = await persist();
+      return saved.ok ? err('invalid-input', 'The submitted edit was definitively rejected.') : saved;
+    }
+    if (editing && (outcome.status === 'saved' || outcome.status === 'unchanged')) { lastRejection = null; rejectedGeneration = -1; }
     if (outcome.status === 'saved' || outcome.status === 'unchanged') {
       base = { status: 'present', envelope: outcome.envelope }; acknowledgedGeneration = Math.max(acknowledgedGeneration, captured.generation);
       if (localGeneration === captured.generation) desired = { value: valueClone(codec, outcome.envelope.value) };
@@ -150,6 +193,7 @@ export function createIdentityState<T>(options: {
     }
     const capturedEpoch = epoch; const saved = await persist(); if (!saved.ok) return saved;
     if (active(capturedEpoch)) { if (remotePending) return reload('reconnect'); schedule(); }
+    if (editing && snapshot.status === 'blocked' && snapshot.reason === 'conflict') return err('conflict', snapshot.message);
     return ok(undefined);
   }
   function transmit(captured: Flight<T>, automatic = false): Promise<Result<void>> {
@@ -178,11 +222,13 @@ export function createIdentityState<T>(options: {
   function sendNew(automatic = false): Promise<Result<void>> {
     if (automatic && automaticSuspensions) return Promise.resolve(ok(undefined));
     const valid = sessionCheck(); if (!valid.ok) return Promise.resolve(valid);
-    if (blocked) return Promise.resolve(err('conflict', blocked.message));
+    if (editing && lastRejection && localGeneration <= rejectedGeneration) return Promise.resolve(err('invalid-input', 'Correct the rejected draft before submitting a new operation.'));
+    if (blocked && !(editing && blocked.reason === 'rejected' && localGeneration > rejectedGeneration)) return Promise.resolve(err('conflict', blocked.message));
     if (activeSave) return activeSave;
     if (pending) return Promise.resolve(err('unavailable', 'An earlier save needs reconciliation.', 'same-operation'));
     if (!base || !desired || !needsSave()) return Promise.resolve(ok(undefined));
     const mutation: StateMutation<T> = frozen({ kind: base.status === 'empty' ? 'initialize' : 'replace', address, expectedVersion: { ...version(base) }, expected, ownerSession: options.ownerSession, localGeneration, operationId: newOperationId(), schemaVersion: definition.schemaVersion, value: valueClone(codec, desired.value) });
+    if (editing && blocked?.reason === 'rejected') blocked = null;
     pending = { mutation, base, generation: localGeneration }; return transmit(pending, automatic);
   }
   let activeReconcile: Promise<Result<void>> | null = null;
@@ -196,12 +242,12 @@ export function createIdentityState<T>(options: {
   async function performReconcile(allowReplay: boolean): Promise<Result<void>> {
     const captured = pending; if (!captured) return ok(undefined);
     const capturedEpoch = epoch; const valid = sessionCheck(); if (!valid.ok) return valid;
-    const result = await safe(() => options.transport.reconcile({ address, expected, operationId: captured.mutation.operationId }, { signal: abort.signal }));
+    const result = await safe(() => options.transport.reconcile({ address, expected, operationId: captured.mutation.operationId, mutation: captured.mutation }, { signal: abort.signal }));
     if (!active(capturedEpoch) || pending !== captured) return err('cancelled', 'State reconciliation was superseded.');
     const live = sessionCheck(); if (!live.ok) return live;
     if (!result.ok) { block('indeterminate', result.error.message); return result; }
     if (result.value.status === 'final') return applyOutcome(captured, result.value.outcome);
-    if (result.value.status === 'absent-final' && allowReplay) {
+    if (result.value.status === 'absent-final' && allowReplay && !editing) {
       if (captured.mutation.expected.actor !== expected.actor || captured.mutation.expected.session !== expected.session) { block('draft-recovery', 'The original operation cannot be re-authored under a new session.'); return err('stale-context', 'The original operation requires its original session.'); }
       blocked = null; return transmit(captured);
     }
@@ -209,6 +255,12 @@ export function createIdentityState<T>(options: {
   }
   async function performFlush(): Promise<Result<void>> {
     clearTimer(); const valid = sessionCheck(); if (!valid.ok) return valid;
+    if (editing) {
+      // One explicit action reconciles A OR submits current B, never both.
+      if (activeSave) return activeSave;
+      if (pending) return reconcile(false);
+      return sendNew();
+    }
     const goal = localGeneration; let retries = 0;
     if (activeSave) { const result = await activeSave; if (!result.ok) return result; }
     while (active()) {
@@ -229,12 +281,25 @@ export function createIdentityState<T>(options: {
     });
     try { return await Promise.race([performFlush(), timeout]); } finally { cancel(); }
   }
-  function detach(): PendingDraft<T> | null {
+  function detach(): CoreDraft<T> | null {
     if (lifecycle === 'detached' || lifecycle === 'disposed') return draft();
     lifecycle = 'detached'; epoch++; loadId++; clearTimer(); abort.abort(); subscription?.(); subscription = null; emit(); return draft();
   }
   return {
     getSnapshot: () => snapshot,
+    inspect() {
+      const retained = draft();
+      const checkpointMatches = checkpoint !== null && retained !== null
+        && checkpoint.draft.localGeneration === retained.localGeneration
+        && JSON.stringify(checkpoint.draft.inFlight ? codecs.mutation.encode(checkpoint.draft.inFlight) : null) === JSON.stringify(retained.inFlight ? codecs.mutation.encode(retained.inFlight) : null)
+        && JSON.stringify((checkpoint.draft as CoreDraft<T>).rejection ?? null) === JSON.stringify(retained.rejection ?? null)
+        && JSON.stringify(codecs.read.encode(checkpoint.draft.acknowledged)) === JSON.stringify(codecs.read.encode(retained.acknowledged));
+      return { draft: retained, base, desired: desired?.value, generation: localGeneration, pending: pending?.mutation ?? null,
+        saving: networkActive, dirty: dirty(), saveEligible: needsSave() && (!lastRejection || localGeneration > rejectedGeneration), editable: active() && !closing && !ownerFenced && !loadFailed && base !== null && desired !== null
+          && (!blocked || ['conflict', 'indeterminate', 'rejected', 'draft-recovery'].includes(blocked.reason)),
+        checkpoint: { status: !drafts ? 'disabled' : checkpointWriting ? 'writing' : checkpointError ? 'failed' : checkpointMatches ? 'backed-up' : 'local-only',
+          generation: checkpoint?.draft.localGeneration ?? null, revision: checkpoint?.revision ?? null, error: checkpointError } };
+    },
     subscribe(listener) { if (lifecycle === 'disposed') return () => {}; listeners.add(listener); return () => listeners.delete(listener); },
     start() {
       if (lifecycle === 'detached' || lifecycle === 'disposed') return Promise.resolve(err('disposed', 'Create a new state controller after detach.'));
@@ -253,9 +318,11 @@ export function createIdentityState<T>(options: {
     },
     edit(value) {
       const valid = sessionCheck(); if (!valid.ok) return valid;
-      if (closing || blocked || snapshot.status !== 'ready') return err('unavailable', 'State is not editable.');
+      if (closing || (editing ? ownerFenced || loadFailed || !base || !desired || !!blocked && !['conflict', 'indeterminate', 'rejected', 'draft-recovery'].includes(blocked.reason) : blocked || snapshot.status !== 'ready')) return err('unavailable', 'State is not editable.');
       try { desired = { value: valueClone(codec, value) }; } catch (error) { return err('invalid-input', error instanceof Error ? error.message : 'Invalid state.'); }
-      localGeneration++; emit(); schedule(); return ok(undefined);
+      localGeneration++;
+      if (editing && blocked?.conflict) blocked = { ...blocked, conflict: frozen({ ...blocked.conflict, token: newConflictToken(), local: desired.value }) };
+      emit(); schedule(); return ok(undefined);
     },
     suspendAutomaticDispatch() {
       automaticSuspensions++; automaticEpoch++; clearTimer(); let released = false;
@@ -273,6 +340,7 @@ export function createIdentityState<T>(options: {
       const parsed = readClone(source.acknowledged); if (!parsed.ok || parsed.value.status === 'migration-required') return err('invalid-input', 'Draft base is invalid.');
       let mutation: StateMutation<T> | null = null;
       if (source.inFlight) { const result = codecs.mutation.decode(structuredClone(codecs.mutation.encode(source.inFlight))); if (!result.ok || stateAddressKey(result.value.address) !== stateAddressKey(address) || result.value.schemaVersion !== definition.schemaVersion || result.value.expected.actor !== expected.actor || result.value.localGeneration > source.localGeneration) return err('invalid-input', 'Draft operation does not match its owner or generation.'); mutation = frozen(result.value); }
+      if (editing) { lastRejection = (source as CoreDraft<T>).rejection ?? null; rejectedGeneration = (source as CoreDraft<T>).rejectedGeneration ?? -1; }
       clearTimer(); base = parsed.value; desired = { value: valueClone(codec, source.desired) }; localGeneration = source.localGeneration;
       recoverySource = frozen(structuredClone(candidate)); checkpoint = source.key.ownerSession === options.ownerSession ? recoverySource : null;
       if (mutation) { pending = { mutation, base, generation: mutation.localGeneration }; block('draft-recovery', 'Reconciling the original operation.'); const result = await reconcile(false); if (!result.ok) return result; }

@@ -1,0 +1,110 @@
+{
+  "proof": "registered-handler-source-fixture",
+  "owner": "github-review",
+  "resolution": {
+    "identity": {
+      "version": 1,
+      "ref": {
+        "source": {
+          "threadId": "thr_actualinvoker",
+          "turnId": "turn_original",
+          "eventId": "evt_3",
+          "seq": 3,
+          "itemId": "call_original",
+          "eventType": "item/completed"
+        },
+        "member": "operation:2d79f44b-6b9d-4235-aa66-4b77c5c5d2a5",
+        "kind": "github/pull-opened"
+      },
+      "artifact": {
+        "provider": "github",
+        "id": "a/b/pull/12",
+        "kind": "pull-request"
+      },
+      "equivalence": {
+        "namespace": "github.operation",
+        "operationId": "2d79f44b-6b9d-4235-aa66-4b77c5c5d2a5",
+        "member": "pull-opened"
+      },
+      "specificity": "typed",
+      "evidence": {
+        "basis": "typed-receipt",
+        "sites": [],
+        "targetUrls": [],
+        "selectedDigest": "1fdef63ce5fcb3d374d84f3eaa20c5150f1c18fe146de90638f1d6e1a7a3c8c8"
+      },
+      "lookup": {
+        "operationId": "2d79f44b-6b9d-4235-aa66-4b77c5c5d2a5",
+        "receiptId": "6b4efb42-5878-4fa2-987a-ae098b551255",
+        "receiptDigest": "47d865e41b46efd6ee06298ed41eaa3be13eed51c826e2c629d026d751a489c2"
+      }
+    },
+    "proof": {
+      "kind": "initial-operation",
+      "source": {
+        "threadId": "thr_actualinvoker",
+        "turnId": "turn_original",
+        "eventId": "evt_3",
+        "seq": 3,
+        "itemId": "call_original",
+        "eventType": "item/completed"
+      },
+      "receiptId": "6b4efb42-5878-4fa2-987a-ae098b551255",
+      "receiptDigest": "47d865e41b46efd6ee06298ed41eaa3be13eed51c826e2c629d026d751a489c2",
+      "operationId": "2d79f44b-6b9d-4235-aa66-4b77c5c5d2a5",
+      "binderVersion": "github-named/1",
+      "tool": {
+        "pluginId": "github-review",
+        "name": "github_pr_open"
+      }
+    },
+    "revision": {
+      "epoch": "2e171f2e-e30e-48fb-938c-951be1eddee4",
+      "sequence": 1
+    },
+    "knowledge": "confirmed",
+    "outcomeEvidence": {
+      "kind": "external-success",
+      "id": "6b4efb42-5878-4fa2-987a-ae098b551255",
+      "digest": "47d865e41b46efd6ee06298ed41eaa3be13eed51c826e2c629d026d751a489c2",
+      "recordedAt": 1793426738257
+    },
+    "availability": {
+      "state": "unknown",
+      "asOf": 1793426738257,
+      "expiresAt": null,
+      "reason": "remote-resource-not-rechecked"
+    },
+    "route": {
+      "kind": "url",
+      "href": "https://github.com/a/b/pull/12"
+    },
+    "provenance": {
+      "originHost": {
+        "state": "unknown",
+        "reason": "not-recorded"
+      },
+      "artifactLocation": {
+        "state": "unknown",
+        "reason": "remote-resource"
+      }
+    },
+    "fallback": {
+      "kind": "card",
+      "title": "a/b#12",
+      "description": "Pull request"
+    },
+    "presentation": {
+      "schema": "github-review/artifact-card@1",
+      "data": {
+        "href": "https://github.com/a/b/pull/12",
+        "pullNumber": 12,
+        "repository": "a/b"
+      }
+    },
+    "spans": {
+      "width": 2,
+      "height": 1
+    }
+  }
+}

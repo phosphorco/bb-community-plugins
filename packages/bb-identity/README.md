@@ -106,6 +106,47 @@ Notifications as a third consumer. Offline fixtures establish specific safety
 properties but do not replace those migrations or the master plan's
 upstream → fork → upstream → fork authored-session compatibility proof.
 
+## Native source evidence (0.4.0 candidate)
+
+The additive `/native` entry normalizes retained public SDK event/group/item/terminal
+snapshots into evidence distinct from Contribution history. It preserves independent
+source, attribution, execution and lineage coverage. See [NATIVE-SOURCES.md](NATIVE-SOURCES.md)
+for API, ownership, public joins, bounds and proof limits; `/native/testing` supplies
+the caller-driven semantic conformance kit. This source candidate is not evidence
+of registry publication or installed consumer adoption.
+
+The combined 0.4.0 source candidate also adds opt-in `/editing` and explicit React
+hooks for continued local typing across unknown publication, conflicts and backup
+failures. See [EDITING.md](EDITING.md) for the independent editing/v1 contract and
+proof limits; existing state protocol and default behavior remain unchanged.
+
+## Borrowed React core (0.5.0)
+
+`@phosphorco/bb-identity/react-core` provides the same `BbIdentity.Provider`,
+`BbIdentity.Context`, view-as controls, presentation, state/editing hooks and
+preservation-failure hooks as `/react`. Supply the feature owner's stable
+`IdentityClient` to the Provider; it borrows that client and never acquires the
+current BB plugin slot. Native `useBbIdentityConnection` and `useBbIdentityClient`
+remain available only from `/react`.
+
+The full emitted core graph imports React and framework-neutral identity code,
+with no SDK value hooks. Both entries reexport the exact same components and
+hooks. They are built together as browser ESM with one `react-core-shared.js`
+chunk, so a Provider/Context imported from either entry works with borrowed
+hooks imported from the other. Do not rebuild the two React entrypoints as
+independent standalone bundles or omit the shared chunk when packaging.
+
+Existing `/react` names, native hook acquisition, controller/draft ownership,
+view-as read-only behavior and recovery semantics are unchanged. Separate
+independently installed copies of this package still require ordinary React
+package/module deduplication; there is no global or cross-plugin context registry.
+
+Version0.5.0 adds this entry while retaining the published0.4.1 native-person
+reader and0.4.2-native-marker.0 opaque-snapshot fix. Consumers adopt an exact
+release explicitly; older installed versions do not gain the entry implicitly.
+Packed mixed-entry/browser/source checks remain distinct from actual hosted
+Inbox/product and registry acceptance.
+
 ## Entry points
 
 | Import suffix | Runtime/declaration status | Responsibility |
@@ -463,3 +504,21 @@ lookup decoding. Later conformance must use a packed artifact with two
 independently bundled UI consumers and real upstream→fork→upstream→fork
 sessions. Preserve native content, provider references and upstream grouped-edit
 restrictions in that proof.
+
+## External person attribution V1 (0.3)
+
+`binding.server.externalContributionCapabilities()` synchronously distinguishes an absent capability (`ok(null)`) from a malformed or incompatible host (`ok: false`). A capable host advertises V1, canonical `person` identities, accepted/queued history, and `rollback: 'requires-capable-host'`. This optional subprotocol fits inside outer protocol 1; legacy `sendExternal` and `lookupOperation` retain their existing wire format and hashes.
+
+For a new operation, `sendExternalContribution({version: 1, author, personAttribution}, input)` retains the external Slack/integration origin and an optional canonical person snapshot. The person snapshot contains `identity`, `presentation`, and `evidence: 'integration-asserted'`. It attributes a contribution in a trusted workspace; it conveys no authentication or authorization. Local `default-user` identities are not canonical people.
+
+Persist the exact contribution, operation ID, prompt bytes, and selected transport before dispatch. Capability absence may select legacy external-only attribution for a **new** operation. Never upgrade, downgrade, or rebuild an existing operation from a current directory or mapping. A malformed capability is an incompatibility, not permission to fall back.
+
+V1 receipts confirm the frozen `externalContribution`. Reconcile V1 exclusively through `lookupExternalContribution`, checking its returned attribution against the reservation. Wrong-operation receipts fail validation. Changed or malformed send receipts and exceptions after dispatch are indeterminate. Unknown/unsupported lookup does not authorize resend; only `absent-final` permits the same immutable operation to be retried. Legacy final receipts remain unchanged.
+
+The default host rendering policy adds the integration sender envelope once. A producer such as Rosetta must select `externalMessageRendering: 'producer'` at binding construction; its prompt bytes remain unchanged. A capable native host projects the person into the native timeline while contribution/attempt history keeps the external origin and optional `personAttribution`. This does not add native-message history queries.
+
+Native history containing integration-asserted person authors requires a capable runtime even after queues drain or plugins are downgraded. Do not roll back to a host that only accepts provider-verified person authors. Package-only rollback retains the legacy external path; it does not make old native readers understand newer stored authorship.
+
+### 0.3.1 decoder corrections
+
+V1 external subjects are opaque nonempty strings of at most256 characters, including email-shaped or percent-encoded subjects. They are not BB resource IDs. Contribution and attempt-history output normalize additive person snapshot, identity, and presentation fields while preserving strict V1 input decoding. `externalContributionOutcomeV1Codec` from `/host` validates and normalizes persisted V1 outcomes; consumers must additionally compare submitted receipts with the reserved operation ID and frozen contribution. A stored final lacking that evidence remains uncertainty and must not trigger a resend.

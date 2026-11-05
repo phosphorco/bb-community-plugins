@@ -176,6 +176,12 @@ export function createIdentityServer<R, T, I>(options: { readonly host: Identity
     sendExternal: (author: ExternalAuthorInput, input: SendInput<I>, readOptions) => disposed
       ? Promise.resolve({ status: 'rejected' as const, error: { code: 'disposed' as const, message: 'Identity server is disposed.', retry: 'never' as const } })
       : host.sendExternal(author, input, readOptions),
+    externalContributionCapabilities: () => disposed ? err('disposed', 'Identity server is disposed.') : host.externalContributionCapabilities(),
+    sendExternalContribution: (contribution, input, readOptions) => disposed
+      ? Promise.resolve({ status: 'rejected' as const, error: { code: 'disposed' as const, message: 'Identity server is disposed.', retry: 'never' as const } })
+      : host.sendExternalContribution(contribution, input, readOptions),
+    lookupExternalContribution: (operationId, readOptions) => disposed
+      ? Promise.resolve(err('disposed', 'Identity server is disposed.')) : host.lookupExternalContribution(operationId, readOptions),
     lookupOperation: (operationId: OperationId, readOptions) => disposed
       ? Promise.resolve(err('disposed', 'Identity server is disposed.')) : host.lookupOperation(operationId, readOptions),
     dispose,

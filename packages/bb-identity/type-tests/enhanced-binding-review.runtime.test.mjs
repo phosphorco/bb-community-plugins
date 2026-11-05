@@ -49,11 +49,11 @@ function fixture({ producerRendering = 'supported' } = {}) {
     async participants() { counters.participants++; return ok({ items: [{ identity: actor.identity, presentation: actor.presentation, roles: ['author'] }], nextCursor: null, revision: 'participants-r1', coverage: 'complete-history' }); },
     async forwardRpc(_scope, _destination, input) { return input; }, async registerProvider() { counters.register++; return error('unsupported'); }, subscribe() { return () => {}; },
   };
-  const bb = { pluginId: 'feature', experimental_p6rIdentity: protocol, rpc: { register(contract, handlers) { for (const method of Object.keys(contract)) native.set(method, handlers[method]); } }, realtime: { publish() {} }, onDispose() {}, sdk: { threads: { async send() { return { ok: true }; } }, plugins: { async callRpc() { return {}; } } } };
+  const bb = { pluginId: 'feature', experimental_p6rIdentity: protocol, rpc: { register(contract, handlers) { for (const method of Object.keys(contract)) native.set(method, handlers[method]); } }, realtime: { publish() {} }, onDispose() {}, sdk: { threads: { async send() { return { ok: true }; }, async facetParticipants() { counters.nativeMembership = (counters.nativeMembership ?? 0) + 1; return { profiles: [{ p6rPrincipalKey: actor.identity.key, p6rIdentityKind: 'person', p6rDisplayName: actor.presentation.displayName, p6rImageUrl: null }], nextCursor: null, totalCount: 1 }; }, events: { async list() { counters.nativeEvents = (counters.nativeEvents ?? 0) + 1; return [{ id: 'native-request-r1', threadId: 'thread-r1', seq: 1, type: 'client/turn/requested', data: { requestId: 'request-r1', p6rAuthors: [actor] } }]; } } }, plugins: { async callRpc() { return {}; } } } };
   return { bb, counters, native, setLookupResult(value) { lookupResult = value; }, expireActiveScope() { activeScope?.abort(); }, setMalformedAttempt(value) { malformedAttempt = value; } };
 }
 
-test('public enhanced binding reaches normalized directory/participant callbacks and preserves collaborator read-only state', async () => {
+test('public enhanced binding reaches normalized directory callbacks and native participant SDK reads and preserves collaborator read-only state', async () => {
   const f = fixture(); const created = createBbIdentityServerBinding({ bb: f.bb });
   expect(created.ok).toBe(true); if (!created.ok) return;
   const binding = created.value;
@@ -72,7 +72,7 @@ test('public enhanced binding reaches normalized directory/participant callbacks
     expect(profiles).toMatchObject({ ok: true, value: [{ status: 'found', key: 'p6r-person:v1:issuer:collaborator' }] });
     const participants = await f.native.get(identityRpcMethods[identityRoutes.participants])({ threadId: 'thread-r1', limit: 10 });
     expect(participants).toMatchObject({ ok: true, value: { items: [{ identity: { key: 'person:actor' } }] } });
-    expect(f.counters).toMatchObject({ directory: 1, lookup: 2, participants: 1 });
+    expect(f.counters).toMatchObject({ directory: 1, lookup: 2, participants: 0, nativeMembership: 1, nativeEvents: 3 });
     const address = { instanceId: 'binding-review', pluginId: 'feature', collection: 'preferences', recordId: 'theme', owner: 'p6r-person:v1:issuer:collaborator' };
     const read = await f.native.get(identityStateRpcMethods[identityStateRoutes.load])({ address, expected });
     expect(read).toMatchObject({ ok: true, value: { status: 'empty', address } });
@@ -219,8 +219,10 @@ test('background evidence reads use a registered finite invocation with host att
     expect(await invocation.person()).toMatchObject({ ok: true, value: { actor: { identity: { kind: 'person' } } } });
     return binding.endpoint.participants(invocation, { threadId: 'thread-r1', limit: 10 });
   });
-  expect(result).toMatchObject({ ok: true, value: { coverage: 'complete-history' } });
-  expect(f.counters.participants).toBe(1);
+  // Native-only reads do not exhaust the independent contribution source.
+  expect(result).toMatchObject({ ok: true, value: { items: [{ identity: actor.identity, roles: ['author'] }], coverage: 'partial-history' } });
+  expect(f.counters.participants).toBe(0);
+  expect(f.counters.nativeMembership).toBe(1);
   expect(await binding.endpoint.participants(captured, { threadId: 'thread-r1', limit: 10 })).toMatchObject({ ok: false, error: { code: 'expired' } });
   binding.dispose();
 });

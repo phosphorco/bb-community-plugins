@@ -76,9 +76,15 @@ test("the bundled Agentation dependency preserves React 19 component paths in pr
   );
 });
 
-test("the manifest and package preserve the complete approved AM02-A receipt", () => {
+test("the package preserves AM02-A logos and the supported annotation icon", () => {
   const manifest = readJson(join(pluginRoot, "package.json"));
-  assert.equal(manifest.bb.branding.icon, "AtSign");
+  assert.equal(manifest.bb.branding.icon, "./icons/annotate.svg");
+  assert.equal(manifest.bb.branding.experimental_icons.annotate, "./icons/annotate.svg");
+  assert.equal(manifest.files.includes("icons/"), true);
+  assert.equal(
+    sha256(join(pluginRoot, "icons/annotate.svg")),
+    "f38f28028380fde361be7c6cb6abbe3dcfb142ee5df4611e039ebb44382683bc",
+  );
   assert.equal(manifest.bb.branding.logo.light, "./assets/icon-32.png");
   assert.deepEqual(
     Object.fromEntries(

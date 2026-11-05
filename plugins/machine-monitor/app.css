@@ -63,6 +63,49 @@
 .machine-monitor .machine-monitor__selected-machine-picker { display: block; width: fit-content; max-width: 100%; }
 .machine-monitor .machine-monitor__selected-machine-picker select { display: block; width: auto; min-width: 0; max-width: 100%; min-height: 40px; padding: 3px 28px 3px 8px; border: 1px solid var(--border); border-radius: 6px; color: var(--foreground); background: var(--background); font: inherit; font-size: clamp(20px, 3cqw, 28px); font-weight: 650; letter-spacing: -.035em; cursor: pointer; }
 .machine-monitor .machine-monitor__selected-machine-picker select:hover { background: var(--accent); color: var(--accent-foreground); }
+.machine-monitor__section { display: grid; gap: 8px; min-width: 0; margin-bottom: 10px; padding: 12px; border: 1px solid var(--border); border-radius: 9px; background: var(--card); color: var(--card-foreground); }
+.machine-monitor__section > header { display: flex; align-items: start; justify-content: space-between; gap: 12px; }
+.machine-monitor__section > header > div { min-width: 0; }
+.machine-monitor__section > header p { margin-top: 3px; color: var(--muted-foreground); font-size: 11px; overflow-wrap: anywhere; }
+.machine-monitor__section select:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+.machine-monitor__compact-table { min-width: 0; overflow-x: auto; border: 1px solid var(--border); border-radius: 6px; }
+.machine-monitor__compact-table table { width: 100%; min-width: 560px; border-collapse: collapse; font-size: 11px; font-variant-numeric: tabular-nums; }
+.machine-monitor__compact-table th, .machine-monitor__compact-table td { height: 26px; padding: 0 8px; border-bottom: 1px solid color-mix(in srgb, var(--border) 72%, transparent); text-align: start; white-space: nowrap; }
+.machine-monitor__compact-table tbody tr:last-child > * { border-bottom: 0; }
+.machine-monitor__compact-table thead th { height: 24px; color: var(--muted-foreground); font-size: 10px; font-weight: 650; }
+.machine-monitor__compact-table tbody tr:hover { background: color-mix(in srgb, var(--accent) 55%, transparent); }
+.machine-monitor__compact-table tbody th { font-weight: 600; }
+.machine-monitor__compact-table tbody th a { display: inline-flex; align-items: center; gap: 6px; color: inherit; text-decoration: none; }
+.machine-monitor__compact-table tbody th a:hover { text-decoration: underline; }
+.machine-monitor__compact-table tbody th a:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; border-radius: 3px; }
+.machine-monitor__compact-table tbody th b { width: 10px; color: var(--muted-foreground); text-align: center; }
+.machine-monitor__compact-table tr[data-anomalous] th b, .machine-monitor__compact-table tr[data-anomalous] .machine-monitor__compact-state { color: var(--primary); }
+.machine-monitor__compact-table tr[data-state="failure"] th b, .machine-monitor__compact-table tr[data-state="disconnected"] th b, .machine-monitor__compact-table tr[data-state="failure"] .machine-monitor__compact-state, .machine-monitor__compact-table tr[data-state="disconnected"] .machine-monitor__compact-state { color: var(--destructive); }
+.machine-monitor__compact-state, .machine-monitor__compact-seen { color: var(--muted-foreground); }
+.machine-monitor__compact-number { text-align: end; }
+.machine-monitor__compact-pressure { width: 110px; }
+.machine-monitor__compact-pressure > i { display: inline-block; width: 60px; height: 5px; margin-right: 6px; overflow: hidden; vertical-align: middle; border: 1px solid color-mix(in srgb, var(--border) 72%, transparent); border-radius: 999px; background: color-mix(in srgb, var(--muted) 60%, transparent); }
+.machine-monitor__compact-pressure > i > i { display: block; width: var(--machine-monitor-pressure); min-width: 2px; height: 100%; background: var(--primary); }
+.machine-monitor__compact-pressure[data-level="critical"] > i > i { background: var(--destructive); }
+.machine-monitor__compact-pressure[data-level="unavailable"] > i { border-style: dashed; }
+.machine-monitor__compact-pressure[data-level="unavailable"] > i > i { display: none; }
+.machine-monitor__compact-pressure > span { display: inline-block; min-width: 3ch; text-align: end; }
+.machine-monitor__sections-editor { font-size: 11px; }
+.machine-monitor__sections-editor > summary { cursor: pointer; color: var(--muted-foreground); font-weight: 600; }
+.machine-monitor__sections-editor > summary > span { margin-left: 6px; font-weight: 400; }
+.machine-monitor__sections-editor > div { display: grid; gap: 8px; margin-top: 8px; }
+.machine-monitor__sections-editor p { color: var(--muted-foreground); }
+.machine-monitor__sections-editor textarea { box-sizing: border-box; width: 100%; padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px; color: var(--foreground); background: var(--background); font-family: var(--font-mono, ui-monospace, monospace); font-size: 12px; resize: vertical; }
+.machine-monitor__sections-errors { margin: 0; padding-left: 16px; color: var(--destructive); }
+.machine-monitor__sections-preview { display: flex; flex-wrap: wrap; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.machine-monitor__sections-preview li { display: inline-flex; gap: 6px; align-items: baseline; padding: 2px 7px; border: 1px solid var(--border); border-radius: 999px; }
+.machine-monitor__sections-preview span { color: var(--muted-foreground); }
+.machine-monitor__sections-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.machine-monitor__sections-actions button { padding: 3px 9px; border: 1px solid var(--border); border-radius: 6px; color: var(--foreground); background: var(--background); font: inherit; cursor: pointer; }
+.machine-monitor__sections-actions button:hover:not(:disabled) { background: var(--accent); color: var(--accent-foreground); }
+.machine-monitor__sections-actions button:disabled { opacity: .5; cursor: default; }
+.machine-monitor__sections-actions span { color: var(--muted-foreground); }
+.machine-monitor__sections-actions span[data-error] { color: var(--destructive); }
 .machine-monitor__selected-controls { display: grid; justify-items: end; gap: 6px; flex: 0 0 auto; }
 .machine-monitor__selected-controls > label { min-width: 104px; }
 .machine-monitor__selected-status { max-width: 260px; padding: 4px 7px; border: 1px solid var(--border); border-radius: 999px; color: var(--muted-foreground); font-size: 10px; font-variant-numeric: tabular-nums; text-align: end; }
@@ -220,7 +263,7 @@
   .machine-monitor { padding: 14px; }
 }
 @container (max-width: 460px) {
-  .machine-monitor__page-header, .machine-monitor__fleet-picker > header, .machine-monitor__selected-machine > header { flex-direction: column; gap: 9px; }
+  .machine-monitor__page-header, .machine-monitor__fleet-picker > header, .machine-monitor__selected-machine > header, .machine-monitor__section > header { flex-direction: column; gap: 9px; }
   .machine-monitor__page-header > span { align-self: start; }
   .machine-monitor__fleet-generation { text-align: start; }
   .machine-monitor__fleet-picker > ol { grid-template-columns: repeat(2, minmax(0, 1fr)); }

@@ -12,6 +12,7 @@
 | [Sentry](plugins/sentry/) | Use official Sentry MCP tools through native agent tools, `bb sentry`, and shared sign-in settings. |
 | [Compact display](plugins/compact-display/) | Shared native UI overrides: responsive 760/1080/1440px thread columns, contained tables, and compact composers. |
 | [Message Timings Nerd](plugins/message-timings-nerd/) | Send times, agent turnaround, and waits between replies. |
+| [People Accounts](plugins/people-accounts/) | Configure your roster row, bot token and human attribution with explicit diagnostics. |
 | [Cross References](plugins/cross-references/) | Connect and discover related resources through authority-free multipart identities. |
 | [Machine Monitor](plugins/machine-monitor/) | Monitor the deployment machine and keep exact BB thread context attached locally and discoverable from those threads. |
 | [Agentation → Mentions](plugins/agentation-mentions/) | Based on Agentation by Scott Sunarto; adds native mentions, queued delivery, and verified identity tags. |
@@ -38,6 +39,12 @@ Plugins in this repository depend on their exact released versions; npm
 workspaces link them to the local `packages/` sources during development.
 
 ## Install directly
+
+People Accounts uses collection/marketplace ID `people-accounts`:
+
+```sh
+bb plugin install git:https://github.com/phosphorco/bb-community-plugins.git --plugin people-accounts
+```
 
 Install Figma or Sentry from this repository’s BB plugin collection on any supported BB deployment:
 

@@ -9,6 +9,7 @@ on:
         type: choice
         options:
           - message-timings-nerd
+          - people-accounts
           - cross-references
           - machine-monitor
           - agentation-mentions
@@ -17,18 +18,54 @@ on:
           - bb-ui-reference
           - plugin-guide-for-nerds
           - attach-text-snippets
+          - turn-results
+          - turn-result-images
           - bb-identity
           - bb-provider-settings
           - bb-context-recognition
+          - bb-turn-results
+          - bb-markdown
           - bb-cross-references
           - bb-agent-connection
+          - bb-people-accounts
+          - bb-usage-algebra
+          - bb-thread-metrics
+          - bb-thread-membership
+          - bb-thread-context
+          - bb-thread-filters
+          - bb-inbox-rows
+          - bb-thread-attachments
       dry_run:
         type: boolean
         default: false
         description: Verify the release and upload a receipt without publishing
+      dist_tag:
+        description: Reviewed tag; identity next only, membership first publish latest
+        type: choice
+        default: latest
+        options: [latest, next]
+      expected_sha:
+        description: Exact checked-out commit for a pinned reviewed release
+        type: string
+      expected_version:
+        description: Exact approved version (identity 0.4.0/0.4.1/0.4.2-native-marker.0/0.5.0, membership/Markdown 0.1.0 pinned; membership 0.1.1 uses the ordinary tagged route)
+        type: string
+      proof_run_id:
+        description: Reviewed successful dry-run ID; required for pinned reviewed publish
+        type: string
+      expected_payload_sha256:
+        description: Reviewed tgz SHA256; Markdown requires this for dry run and publication
+        type: string
+      expected_preflight_tags:
+        description: Exact owner-approved preflight dist-tags JSON for final publish
+        type: string
+      expected_receipt_sha256:
+        description: Reviewed dry-run receipt SHA256; required for pinned reviewed publish
+        type: string
   push:
     tags:
       - "message-timings-nerd/v*"
+      - "people-accounts/v*"
       - "cross-references/v*"
       - "machine-monitor/v*"
       - "agentation-mentions/v*"
@@ -37,14 +74,26 @@ on:
       - "bb-ui-reference/v*"
       - "plugin-guide-for-nerds/v*"
       - "attach-text-snippets/v*"
+      - "turn-results/v*"
+      - "turn-result-images/v*"
       - "bb-identity/v*"
       - "bb-provider-settings/v*"
       - "bb-context-recognition/v*"
+      - "bb-turn-results/v*"
       - "bb-cross-references/v*"
       - "bb-agent-connection/v*"
+      - "bb-people-accounts/v*"
+      - "bb-usage-algebra/v*"
+      - "bb-thread-metrics/v*"
+      - "bb-thread-membership/v*"
+      - "bb-thread-context/v*"
+      - "bb-thread-filters/v*"
+      - "bb-inbox-rows/v*"
+      - "bb-thread-attachments/v*"
 
 permissions:
   contents: read
+  actions: read
   id-token: write
 
 concurrency:
@@ -55,6 +104,14 @@ jobs:
   publish:
     if: github.repository == 'phosphorco/bb-community-plugins'
     runs-on: ubuntu-latest
+    env:
+      DRY_RUN: ${{ inputs.dry_run || false }}
+      EXPECTED_SHA: ${{ inputs.expected_sha }}
+      EXPECTED_VERSION: ${{ inputs.expected_version }}
+      PROOF_RUN_ID: ${{ inputs.proof_run_id }}
+      EXPECTED_PAYLOAD_SHA256: ${{ inputs.expected_payload_sha256 }}
+      EXPECTED_RECEIPT_SHA256: ${{ inputs.expected_receipt_sha256 }}
+      EXPECTED_PREFLIGHT_TAGS: ${{ inputs.expected_preflight_tags }}
     steps:
       - name: Check out the release
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
@@ -62,6 +119,7 @@ jobs:
           fetch-depth: 0
 
       - name: Acquire the exact fork SDK release artifact
+        if: ${{ !(github.event_name == 'workflow_dispatch' && !inputs.dry_run && ((inputs.plugin == 'bb-identity' && inputs.dist_tag == 'next') || inputs.plugin == 'bb-thread-membership' || inputs.plugin == 'bb-markdown')) }}
         # SDK archives are retained outside Git. Verify immutable selected bytes.
         shell: bash
         run: |
@@ -83,16 +141,27 @@ jobs:
       - name: Upgrade npm for trusted publishing
         run: npm install -g npm@^11.5.1
 
-      - name: Select and verify the tagged package
+      - name: Check release gates offline
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.plugin == 'bb-markdown' }}
+        run: |
+          python3 .github/scripts/test-pinned-release.py
+          python3 .github/scripts/test-context-recognition-publish.py
+          python3 .github/scripts/test-markdown-release.py
+
+      - name: Select and verify the release source
         id: release
         shell: bash
         env:
           REQUESTED_PLUGIN: ${{ inputs.plugin }}
+          REQUESTED_DIST_TAG: ${{ inputs.dist_tag || 'latest' }}
           DRY_RUN: ${{ inputs.dry_run || false }}
         run: |
+          dist_tag="${REQUESTED_DIST_TAG:-latest}"
+          case "$dist_tag" in latest|next) ;; *) echo "Unsupported npm dist-tag" >&2; exit 1 ;; esac
           plugin="${REQUESTED_PLUGIN:-${GITHUB_REF_NAME%%/*}}"
           case "$plugin" in
             message-timings-nerd) workspace="@phosphorco/bb-plugin-message-timings-nerd" ;;
+            people-accounts) workspace="@phosphorco/bb-plugin-people-accounts" ;;
             cross-references) workspace="@phosphorco/bb-plugin-cross-references" ;;
             machine-monitor) workspace="@phosphorco/bb-plugin-machine-monitor" ;;
             agentation-mentions) workspace="@phosphorco/bb-plugin-agentation-mentions" ;;
@@ -101,57 +170,213 @@ jobs:
             bb-ui-reference) workspace="@phosphorco/bb-plugin-bb-ui-reference" ;;
             plugin-guide-for-nerds) workspace="@phosphorco/bb-plugin-plugin-guide-for-nerds" ;;
             attach-text-snippets) workspace="@phosphorco/bb-plugin-attach-text-snippets" ;;
+            turn-results) workspace="@phosphorco/bb-plugin-turn-results" ;;
+            turn-result-images) workspace="@phosphorco/bb-plugin-turn-result-images" ;;
             bb-identity) workspace="@phosphorco/bb-identity" ;;
             bb-provider-settings) workspace="@phosphorco/bb-provider-settings" ;;
             bb-context-recognition) workspace="@phosphorco/bb-context-recognition" ;;
+            bb-turn-results) workspace="@phosphorco/bb-turn-results" ;;
+            bb-markdown) workspace="@phosphorco/bb-markdown" ;;
             bb-cross-references) workspace="@phosphorco/bb-cross-references" ;;
             bb-agent-connection) workspace="@phosphorco/bb-agent-connection" ;;
+            bb-people-accounts) workspace="@phosphorco/bb-people-accounts" ;;
+            bb-usage-algebra) workspace="@phosphorco/bb-usage-algebra" ;;
+            bb-thread-metrics) workspace="@phosphorco/bb-thread-metrics" ;;
+            bb-inbox-rows) workspace="@phosphorco/bb-inbox-rows" ;;
+            bb-thread-attachments) workspace="@phosphorco/bb-thread-attachments" ;;
+            bb-thread-filters) workspace="@phosphorco/bb-thread-filters" ;;
+            bb-thread-context) workspace="@phosphorco/bb-thread-context" ;;
+            bb-thread-membership) workspace="@phosphorco/bb-thread-membership" ;;
             *) echo "Unsupported release plugin: $plugin" >&2; exit 1 ;;
           esac
           case "$plugin" in
-            bb-identity|bb-provider-settings|bb-context-recognition|bb-cross-references|bb-agent-connection) path="packages/$plugin" ;;
+            bb-identity|bb-provider-settings|bb-context-recognition|bb-turn-results|bb-markdown|bb-cross-references|bb-agent-connection|bb-people-accounts|bb-usage-algebra|bb-thread-metrics|bb-thread-membership|bb-thread-context|bb-thread-filters|bb-inbox-rows|bb-thread-attachments) path="packages/$plugin" ;;
             *) path="plugins/$plugin" ;;
           esac
           package_version="$(npm pkg get version --workspace "$workspace" | node -e 'let input=""; process.stdin.on("data", chunk => input += chunk); process.stdin.on("end", () => console.log(Object.values(JSON.parse(input))[0]))')"
-          release_tag="$plugin/v$package_version"
-          test "$GITHUB_EVENT_NAME" = "workflow_dispatch" || test "$GITHUB_REF_NAME" = "$release_tag" || {
-            echo "Tag $GITHUB_REF_NAME does not match $workspace@$package_version" >&2
-            exit 1
-          }
-          if tag_commit="$(git rev-parse -q --verify "refs/tags/$release_tag^{commit}")"; then
-            git diff --quiet "$tag_commit" HEAD -- "$path" || {
-              echo "The tagged $plugin source differs from the requested workflow revision" >&2
+          # Attribution contract candidates publish under next until their stable release.
+          if [ "$plugin" = "bb-people-accounts" ] && [[ "$package_version" == *-* ]]; then
+            dist_tag=next
+          fi
+          if [ "$plugin" = bb-thread-membership ]; then
+            case "$package_version" in 0.1.0|0.1.1) ;; *) echo "Unapproved membership release version" >&2; exit 1 ;; esac
+          fi
+          if [ "$plugin" = bb-markdown ]; then
+            test "$GITHUB_EVENT_NAME" = workflow_dispatch || { echo "Markdown tag/default publication refused; manual proof required" >&2; exit 1; }
+            test "$package_version" = 0.1.0 && test "$dist_tag" = latest || { echo "Only reviewed Markdown 0.1.0/latest is supported" >&2; exit 1; }
+            [[ "$EXPECTED_PAYLOAD_SHA256" =~ ^[0-9a-f]{64}$ ]] || { echo "Markdown requires the reviewed local archive hash even for dry run" >&2; exit 1; }
+          fi
+          pinned_next=false
+          pinned_row=false
+          case "$plugin@$package_version" in
+            bb-identity@0.4.0|bb-identity@0.4.1|bb-identity@0.4.2-native-marker.0|bb-identity@0.5.0|bb-thread-membership@0.1.0|bb-markdown@0.1.0) pinned_row=true ;;
+          esac
+          case "$plugin@$package_version" in
+            bb-identity@0.5.0) test "$dist_tag" = next || { echo "Identity 0.5.0 requires next" >&2; exit 1; } ;;
+            bb-thread-membership@0.1.0) test "$dist_tag" = latest || { echo "First membership release requires latest" >&2; exit 1; } ;;
+          esac
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ] && { { [ "$plugin" = "bb-identity" ] && [ "$dist_tag" = "next" ]; } || [ "$plugin@$package_version" = "bb-thread-membership@0.1.0" ] || [ "$plugin@$package_version" = "bb-markdown@0.1.0" ]; }; then
+            [[ "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "Expected an exact lower-case source SHA" >&2; exit 1; }
+            test "$pinned_row" = true && test "$package_version" = "$EXPECTED_VERSION" || { echo "Pinned package version drift" >&2; exit 1; }
+            test "$(git rev-parse HEAD)" = "$EXPECTED_SHA" && test "$GITHUB_SHA" = "$EXPECTED_SHA" || { echo "Pinned checkout SHA drift" >&2; exit 1; }
+            if [ "$DRY_RUN" != "true" ]; then
+              [[ "$PROOF_RUN_ID" =~ ^[1-9][0-9]{0,19}$ ]] && [[ "$EXPECTED_PAYLOAD_SHA256" =~ ^[0-9a-f]{64}$ ]] && [[ "$EXPECTED_RECEIPT_SHA256" =~ ^[0-9a-f]{64}$ ]] || { echo "Reviewed dry-run ID and payload/receipt hashes required" >&2; exit 1; }
+            fi
+            pinned_next=true
+            echo "Pinned manual release: tag prerequisite bypassed for $plugin $EXPECTED_SHA@$EXPECTED_VERSION"
+          else
+            if [ "$pinned_row" = true ] && [ "$DRY_RUN" != "true" ]; then
+              echo "$plugin@$package_version requires its reviewed pinned manual release; automatic/default publication refused" >&2
+              exit 1
+            fi
+            release_tag="$plugin/v$package_version"
+            test "$GITHUB_EVENT_NAME" = "workflow_dispatch" || test "$GITHUB_REF_NAME" = "$release_tag" || {
+              echo "Tag $GITHUB_REF_NAME does not match $workspace@$package_version" >&2
               exit 1
             }
-          elif [ "$DRY_RUN" = "true" ]; then
-            # A dry run may prove a release before its tag exists; it verifies the dispatched revision and never publishes.
-            echo "dry run before tag $release_tag: verifying $path at $GITHUB_SHA"
-          else
-            echo "Release tag $release_tag does not exist" >&2
-            exit 1
+            if tag_commit="$(git rev-parse -q --verify "refs/tags/$release_tag^{commit}")"; then
+              git diff --quiet "$tag_commit" HEAD -- "$path" || {
+                echo "The tagged $plugin source differs from the requested workflow revision" >&2
+                exit 1
+              }
+            elif [ "$DRY_RUN" = "true" ]; then
+              # A dry run may prove a release before its tag exists; it verifies the dispatched revision and never publishes.
+              echo "dry run before tag $release_tag: verifying $path at $GITHUB_SHA"
+            else
+              echo "Release tag $release_tag does not exist" >&2
+              exit 1
+            fi
           fi
           echo "workspace=$workspace" >> "$GITHUB_OUTPUT"
           echo "path=$path" >> "$GITHUB_OUTPUT"
           echo "plugin=$plugin" >> "$GITHUB_OUTPUT"
+          echo "version=$package_version" >> "$GITHUB_OUTPUT"
+          echo "dist_tag=$dist_tag" >> "$GITHUB_OUTPUT"
+          echo "pinned_next=$pinned_next" >> "$GITHUB_OUTPUT"
+          # Preserve every existing identity hotfix artifact name.
+          case "$plugin@$package_version" in
+            bb-identity@0.4.0|bb-identity@0.4.1|bb-identity@0.4.2-native-marker.0)
+              echo "pinned_artifact=bb-identity-next-$EXPECTED_SHA" >> "$GITHUB_OUTPUT"
+              echo "pinned_publication=bb-identity-next-publication" >> "$GITHUB_OUTPUT" ;;
+            *)
+              echo "pinned_artifact=reviewed-$plugin-$package_version-$EXPECTED_SHA" >> "$GITHUB_OUTPUT"
+              echo "pinned_publication=reviewed-$plugin-$package_version-publication" >> "$GITHUB_OUTPUT" ;;
+          esac
+          if [ "$plugin@$package_version" = "bb-thread-membership@0.1.0" ]; then
+            echo "pinned_route=membership-bootstrap" >> "$GITHUB_OUTPUT"
+          elif [ "$plugin@$package_version" = "bb-markdown@0.1.0" ]; then
+            echo "pinned_route=markdown-bootstrap" >> "$GITHUB_OUTPUT"
+          else
+            echo "pinned_route=oidc" >> "$GITHUB_OUTPUT"
+          fi
+          echo "pinned_tgz=$(printf '%s' "$workspace" | sed 's#^@##; s#/#-#')-$package_version.tgz" >> "$GITHUB_OUTPUT"
+
+      - name: Check Turn Results artifact gates offline
+        if: ${{ steps.release.outputs.plugin == 'turn-results' || steps.release.outputs.plugin == 'turn-result-images' }}
+        run: node --test .github/scripts/check-turn-results-artifacts.test.mjs
 
       - name: Install locked dependencies
+        if: ${{ steps.release.outputs.pinned_next != 'true' || inputs.dry_run }}
         run: npm ci
 
       - name: Build shared packages for tests
+        if: ${{ steps.release.outputs.pinned_next != 'true' || inputs.dry_run }}
         # Packages test against their own dist, and plugins import the workspace-linked packages' dist.
-        run: npm run build --workspace packages/bb-identity --workspace packages/bb-provider-settings --workspace packages/bb-context-recognition --workspace packages/bb-cross-references --workspace packages/bb-agent-connection
+        shell: bash
+        run: |
+          if [ "${{ steps.release.outputs.plugin }}" = bb-markdown ]; then
+            # Its runtime dependencies are exact registry packages; no sibling draft emission is needed.
+            npm run build --workspace packages/bb-markdown
+          else
+            npm run build --workspace packages/bb-identity --workspace packages/bb-provider-settings --workspace packages/bb-context-recognition --workspace packages/bb-turn-results --workspace packages/bb-cross-references --workspace packages/bb-agent-connection --workspace packages/bb-people-accounts --workspace packages/bb-usage-algebra --workspace packages/bb-thread-metrics --workspace packages/bb-thread-membership --workspace packages/bb-thread-context --workspace packages/bb-thread-filters --workspace packages/bb-inbox-rows --workspace packages/bb-thread-attachments
+          fi
+
+      - name: Check out the selected Turn Results compiler
+        if: ${{ steps.release.outputs.plugin == 'turn-results' || steps.release.outputs.plugin == 'turn-result-images' }}
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          repository: phosphorco/bb-fork
+          ref: 3976be61002511a61ca07f0969ff5838772ed5c0
+          submodules: true
+          path: .bb-toolchain/fork
+
+      - name: Prepare the selected Turn Results compiler
+        if: ${{ steps.release.outputs.plugin == 'turn-results' || steps.release.outputs.plugin == 'turn-result-images' }}
+        run: bash .github/scripts/prepare-turn-results-toolchain.sh
+
+      - name: Install published Turn Results development inputs
+        if: ${{ steps.release.outputs.plugin == 'turn-results' || steps.release.outputs.plugin == 'turn-result-images' }}
+        shell: bash
+        run: |
+          sdk="$GITHUB_WORKSPACE/../sdk-artifacts/get-bb-plugin-sdk-0.6.52+phosphor.975e38f02f1a.sdk.12eb78c20820.tgz"
+          for plugin in turn-results turn-result-images; do
+            npm install --prefix "plugins/$plugin" --workspaces=false --include=dev --ignore-scripts --package-lock=false --no-save --no-audit --no-fund --registry=https://registry.npmjs.org "$sdk"
+          done
+          npm rebuild --prefix plugins/turn-result-images/node_modules/better-sqlite3 --workspaces=false
+          npm rebuild --prefix plugins/turn-result-images/node_modules/bun --workspaces=false
 
       - name: Test
+        if: ${{ steps.release.outputs.pinned_next != 'true' || inputs.dry_run }}
         run: npm run test --workspace "${{ steps.release.outputs.workspace }}"
 
       - name: Typecheck
+        if: ${{ steps.release.outputs.pinned_next != 'true' || inputs.dry_run }}
         run: npm run typecheck --workspace "${{ steps.release.outputs.workspace }}"
 
       - name: Build BB artifacts
+        if: ${{ steps.release.outputs.pinned_next != 'true' }}
         run: npm run build --workspace "${{ steps.release.outputs.workspace }}"
 
+      - name: Verify selected Turn Results artifacts
+        if: ${{ steps.release.outputs.plugin == 'turn-results' || steps.release.outputs.plugin == 'turn-result-images' }}
+        run: node .github/scripts/check-turn-results-artifacts.mjs "${{ steps.release.outputs.path }}" > turn-results-artifacts.json
+
       - name: Inspect package contents
+        if: ${{ steps.release.outputs.pinned_next != 'true' }}
         run: npm pack --dry-run --ignore-scripts --workspace "${{ steps.release.outputs.workspace }}"
+
+      - name: Verify turn-results archive and entry peers
+        if: ${{ steps.release.outputs.plugin == 'bb-turn-results' && steps.release.outputs.pinned_next != 'true' }}
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          npm run verify:packed --workspace @phosphorco/bb-turn-results
+          case "$RELEASE_VERSION" in
+            0.1.0) expected_sha='d4fe422fb67017fa01176ffc99647761eda3226533dbd67b75e2d2bf4a30e873' ;;
+            *) echo 'Turn Results reviewed payload hash required for this version' >&2; exit 1 ;;
+          esac
+          pack_dir="$(mktemp -d "$RUNNER_TEMP/turn-results-reviewed.XXXXXX")"
+          trap 'rm -rf -- "$pack_dir"' EXIT
+          npm pack --ignore-scripts --json --workspace @phosphorco/bb-turn-results --pack-destination "$pack_dir" > "$pack_dir/pack.json"
+          printf '%s  %s\n' "$expected_sha" "$pack_dir/phosphorco-bb-turn-results-$RELEASE_VERSION.tgz" | sha256sum --check
+
+      - name: Verify Markdown packed consumer and public SDK peers
+        if: ${{ steps.release.outputs.plugin == 'bb-markdown' && inputs.dry_run }}
+        run: npm run test:packed-consumer --workspace @phosphorco/bb-markdown
+
+      - name: Pack the pinned-next dry-run payload once
+        if: ${{ steps.release.outputs.pinned_next == 'true' && inputs.dry_run }}
+        shell: bash
+        env:
+          RELEASE_PLUGIN: ${{ steps.release.outputs.plugin }}
+          RELEASE_DIST_TAG: ${{ steps.release.outputs.dist_tag }}
+          RELEASE_WORKSPACE: ${{ steps.release.outputs.workspace }}
+        run: |
+          mkdir release-candidate
+          npm pack --ignore-scripts --json --workspace "$RELEASE_WORKSPACE" --pack-destination release-candidate > release-candidate/pack.json
+          python3 .github/scripts/bb-identity-next-release.py capture
+
+      - name: Upload exact pinned-next dry-run payload and receipt
+        if: ${{ steps.release.outputs.pinned_next == 'true' && inputs.dry_run }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ${{ steps.release.outputs.pinned_artifact }}-${{ github.run_id }}
+          path: |
+            release-candidate/${{ steps.release.outputs.pinned_tgz }}
+            release-candidate/package-receipt.json
+          if-no-files-found: error
+          retention-days: 14
 
       - name: Write release receipt
         if: ${{ always() }}
@@ -160,6 +385,8 @@ jobs:
           RELEASE_WORKSPACE: ${{ steps.release.outputs.workspace }}
           RELEASE_PATH: ${{ steps.release.outputs.path }}
           RELEASE_PLUGIN: ${{ steps.release.outputs.plugin }}
+          RELEASE_VERSION: ${{ steps.release.outputs.version }}
+          RELEASE_DIST_TAG: ${{ steps.release.outputs.dist_tag }}
         run: |
           node <<'NODE'
           const fs = require('node:fs');
@@ -171,6 +398,8 @@ jobs:
             path: process.env.RELEASE_PATH,
             sha: process.env.GITHUB_SHA,
             plugin: process.env.RELEASE_PLUGIN,
+            version: process.env.RELEASE_VERSION,
+            distTag: process.env.RELEASE_DIST_TAG,
           }) + '\n');
           if (dryRun) console.log(`dry run: ${workspace}`);
           NODE
@@ -183,11 +412,130 @@ jobs:
           path: release-receipt.json
           if-no-files-found: error
 
-      - name: Publish public package
-        if: ${{ !inputs.dry_run }}
-        # The repository is public, so every release carries SLSA provenance.
-        run: npm publish --ignore-scripts --access public --provenance --workspace "${{ steps.release.outputs.workspace }}"
+      - name: Retain selected Turn Results compiler and asset receipts
+        if: ${{ always() && (steps.release.outputs.plugin == 'turn-results' || steps.release.outputs.plugin == 'turn-result-images') }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: turn-results-compiler-${{ steps.release.outputs.plugin }}
+          path: |
+            turn-results-toolchain.json
+            turn-results-artifacts.json
+          if-no-files-found: warn
+
+      - name: Publish context recognition and cross references through trusted publishers
+        if: ${{ !inputs.dry_run && (steps.release.outputs.plugin == 'bb-context-recognition' || steps.release.outputs.plugin == 'bb-cross-references') && steps.release.outputs.pinned_next != 'true' }}
+        # These packages must fail closed if its configured GitHub OIDC trust is missing.
+        # Keep NPM_TOKEN available to other packages; never pass it to this step.
+        shell: bash
+        run: |
+          case "$RELEASE_WORKSPACE" in
+            @phosphorco/bb-context-recognition|@phosphorco/bb-cross-references) ;;
+            *) echo 'Unexpected trusted-publishing workspace' >&2; exit 1 ;;
+          esac
+          npm publish --ignore-scripts --access public --provenance --workspace "$RELEASE_WORKSPACE" --tag "$RELEASE_DIST_TAG"
         env:
+          RELEASE_WORKSPACE: ${{ steps.release.outputs.workspace }}
+          RELEASE_DIST_TAG: ${{ steps.release.outputs.dist_tag }}
+          NODE_AUTH_TOKEN: ''
+
+      - name: Publish public package
+        if: ${{ !inputs.dry_run && steps.release.outputs.plugin != 'bb-context-recognition' && steps.release.outputs.plugin != 'bb-cross-references' && steps.release.outputs.plugin != 'bb-markdown' && steps.release.outputs.pinned_next != 'true' }}
+        # The repository is public, so every release carries SLSA provenance.
+        run: npm publish --ignore-scripts --access public --provenance --workspace "$RELEASE_WORKSPACE" --tag "$RELEASE_DIST_TAG"
+        env:
+          RELEASE_WORKSPACE: ${{ steps.release.outputs.workspace }}
+          RELEASE_DIST_TAG: ${{ steps.release.outputs.dist_tag }}
           # Only needed for a package's first release. Once npm trusted publishing
           # is configured, npm uses GitHub OIDC before falling back to this token.
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Download and verify the exact reviewed pinned-next dry-run artifact
+        if: ${{ steps.release.outputs.pinned_next == 'true' && !inputs.dry_run }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_PLUGIN: ${{ steps.release.outputs.plugin }}
+          RELEASE_DIST_TAG: ${{ steps.release.outputs.dist_tag }}
+        run: python3 .github/scripts/bb-identity-next-release.py download
+
+      - name: Publish only the reviewed pinned-next tgz
+        if: ${{ steps.release.outputs.pinned_next == 'true' && steps.release.outputs.pinned_route == 'oidc' && !inputs.dry_run }}
+        env:
+          # Pinned release uses only the current GitHub OIDC exchange.
+          NODE_AUTH_TOKEN: ''
+          RELEASE_PLUGIN: ${{ steps.release.outputs.plugin }}
+          RELEASE_DIST_TAG: ${{ steps.release.outputs.dist_tag }}
+        shell: bash
+        run: |
+          python3 .github/scripts/bb-identity-next-release.py preflight
+          publish_status=0
+          python3 .github/scripts/bb-identity-next-release.py publish > publication-result.json 2> publication-error.log || publish_status=$?
+          printf '{"exitCode":%s}\n' "$publish_status" > publication-status.json
+          postflight_status=0
+          python3 .github/scripts/bb-identity-next-release.py postflight || postflight_status=$?
+          printf '{"exitCode":%s}\n' "$postflight_status" > postflight-status.json
+          if [ "$publish_status" -ne 0 ]; then
+            echo "Publish returned $publish_status; postflight ran once; inspect retained receipts before any retry" >&2
+            exit "$publish_status"
+          fi
+          exit "$postflight_status"
+
+      - name: Bootstrap membership from the reviewed tgz
+        if: ${{ steps.release.outputs.pinned_next == 'true' && steps.release.outputs.pinned_route == 'membership-bootstrap' && steps.release.outputs.plugin == 'bb-thread-membership' && !inputs.dry_run }}
+        env:
+          # First package publish only; missing repository credential fails closed.
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          RELEASE_PLUGIN: ${{ steps.release.outputs.plugin }}
+          RELEASE_DIST_TAG: ${{ steps.release.outputs.dist_tag }}
+        shell: bash
+        run: |
+          python3 .github/scripts/bb-identity-next-release.py preflight
+          publish_status=0
+          python3 .github/scripts/bb-identity-next-release.py publish > publication-result.json 2> publication-error.log || publish_status=$?
+          printf '{"exitCode":%s}\n' "$publish_status" > publication-status.json
+          postflight_status=0
+          python3 .github/scripts/bb-identity-next-release.py postflight || postflight_status=$?
+          printf '{"exitCode":%s}\n' "$postflight_status" > postflight-status.json
+          if [ "$publish_status" -ne 0 ]; then
+            echo "Publish returned $publish_status; postflight ran once; inspect retained receipts before any retry" >&2
+            exit "$publish_status"
+          fi
+          exit "$postflight_status"
+
+      - name: Bootstrap Markdown from the exact reviewed tgz
+        if: ${{ steps.release.outputs.pinned_next == 'true' && steps.release.outputs.pinned_route == 'markdown-bootstrap' && steps.release.outputs.plugin == 'bb-markdown' && !inputs.dry_run }}
+        env:
+          # First package publish only; missing repository credential fails closed.
+          GH_TOKEN: ${{ github.token }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          RELEASE_PLUGIN: ${{ steps.release.outputs.plugin }}
+          RELEASE_DIST_TAG: ${{ steps.release.outputs.dist_tag }}
+        shell: bash
+        run: |
+          python3 .github/scripts/bb-identity-next-release.py preflight
+          publish_status=0
+          python3 .github/scripts/bb-identity-next-release.py publish > publication-result.json 2> publication-error.log || publish_status=$?
+          printf '{"exitCode":%s}\n' "$publish_status" > publication-status.json
+          postflight_status=0
+          python3 .github/scripts/bb-identity-next-release.py postflight || postflight_status=$?
+          printf '{"exitCode":%s}\n' "$postflight_status" > postflight-status.json
+          if [ "$publish_status" -ne 0 ]; then
+            echo "Publish returned $publish_status; postflight ran once; inspect retained receipts before any retry" >&2
+            exit "$publish_status"
+          fi
+          exit "$postflight_status"
+
+      - name: Upload pinned-next publication selection and outcome
+        if: ${{ always() && steps.release.outputs.pinned_next == 'true' && !inputs.dry_run }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ${{ steps.release.outputs.pinned_publication }}-${{ github.run_id }}
+          path: |
+            artifact-selection.json
+            publication-result.json
+            publication-error.log
+            publication-status.json
+            postflight-status.json
+            registry-before.json
+            registry-after.json
+            release-candidate/package-receipt.json
+          if-no-files-found: warn

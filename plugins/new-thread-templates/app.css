@@ -1,0 +1,621 @@
+.ntt {
+  color: var(--foreground);
+  font-size: 14px;
+  line-height: 1.5;
+  width: 100%;
+  min-width: 0;
+}
+.ntt *,
+.ntt *::before,
+.ntt *::after {
+  box-sizing: border-box;
+}
+.ntt h2,
+.ntt h3,
+.ntt p {
+  margin: 0;
+}
+.ntt h2 {
+  font-size: 22px;
+  font-weight: 500;
+  letter-spacing: -0.025em;
+}
+.ntt h3 {
+  font-size: 16px;
+  font-weight: 550;
+}
+.ntt button,
+.ntt input,
+.ntt textarea,
+.ntt select {
+  font: inherit;
+}
+.ntt button {
+  cursor: pointer;
+}
+.ntt button:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+.ntt button:focus-visible,
+.ntt input:focus-visible,
+.ntt textarea:focus-visible,
+.ntt select:focus-visible,
+.ntt summary:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 3px;
+}
+.ntt .ntt-button {
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  padding: 7px 12px;
+  background: var(--background);
+  color: var(--foreground);
+  min-height: 36px;
+}
+.ntt .ntt-button:hover:not(:disabled),
+.ntt .ntt-card:hover {
+  background: var(--accent);
+}
+.ntt .ntt-primary {
+  background: var(--primary);
+  color: var(--primary-foreground);
+  border-color: var(--primary);
+}
+.ntt .ntt-primary:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--primary) 90%, var(--background));
+}
+.ntt .ntt-link {
+  background: none;
+  border: 0;
+  padding: 4px 0;
+  color: var(--muted-foreground);
+  min-height: 32px;
+}
+.ntt .ntt-link:hover {
+  color: var(--foreground);
+}
+.ntt .ntt-muted {
+  color: var(--muted-foreground);
+}
+.ntt .ntt-small {
+  font-size: 12px;
+}
+.ntt .ntt-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.ntt .ntt-between {
+  justify-content: space-between;
+}
+.ntt .ntt-stack,
+.ntt.ntt-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.ntt .ntt-heading {
+  margin-bottom: 18px;
+}
+.ntt .ntt-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+.ntt .ntt-card {
+  text-align: left;
+  display: flex;
+  gap: 13px;
+  border: 1px solid var(--border);
+  padding: 14px;
+  border-radius: 7px;
+  background: var(--card);
+  color: var(--card-foreground);
+  min-width: 0;
+}
+.ntt .ntt-card svg,
+.ntt .ntt-card .ntt-purpose-icon {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  margin-top: 2px;
+  color: var(--muted-foreground);
+}
+.ntt .ntt-card strong {
+  display: block;
+  font-weight: 550;
+  margin-bottom: 4px;
+}
+.ntt .ntt-card span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.ntt .ntt-card small {
+  color: var(--muted-foreground);
+  font-size: 12px;
+}
+.ntt .ntt-surface {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 20px;
+}
+.ntt .ntt-field {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  min-width: 0;
+}
+.ntt .ntt-field > label {
+  font-size: 13px;
+  font-weight: 500;
+}
+.ntt .ntt-input {
+  width: 100%;
+  min-height: 39px;
+  padding: 9px 11px;
+  border: 1px solid var(--input);
+  border-radius: 7px;
+  color: var(--foreground);
+  background: var(--background);
+}
+.ntt textarea.ntt-input {
+  min-height: 110px;
+  resize: vertical;
+}
+.ntt .ntt-input[aria-invalid="true"] {
+  border-color: var(--destructive);
+}
+.ntt .ntt-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.ntt .ntt-check input {
+  accent-color: var(--primary);
+  width: 16px;
+  height: 16px;
+}
+.ntt .ntt-help {
+  font-size: 12px;
+  color: var(--muted-foreground);
+}
+.ntt .ntt-error {
+  color: var(--destructive);
+  font-size: 13px;
+}
+.ntt .ntt-alert {
+  padding: 11px 13px;
+  border: 1px solid color-mix(in srgb, var(--destructive) 55%, var(--border));
+  border-radius: 7px;
+  color: var(--destructive);
+  overflow-wrap: anywhere;
+}
+.ntt .ntt-status {
+  padding: 10px 12px;
+  background: var(--muted);
+  border-radius: 7px;
+  color: var(--muted-foreground);
+  font-size: 13px;
+}
+.ntt .ntt-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  border-top: 1px solid var(--border);
+  padding-top: 14px;
+  font-size: 12px;
+  color: var(--muted-foreground);
+}
+.ntt .ntt-summary strong {
+  color: var(--foreground);
+  font-weight: 500;
+}
+.ntt .ntt-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-top: 4px;
+}
+.ntt .ntt-send {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 42px;
+  border-radius: 8px;
+}
+.ntt .ntt-send svg {
+  width: 24px;
+  height: 24px;
+}
+.ntt .ntt-preview {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font:
+    13px/1.65 ui-monospace,
+    monospace;
+  background: var(--background);
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  margin: 10px 0 0;
+  max-height: 380px;
+  overflow: auto;
+}
+.ntt .ntt-management {
+  max-width: 800px;
+  margin: 0 auto;
+  padding: 20px;
+}
+.ntt .ntt-tabs {
+  display: flex;
+  gap: 4px;
+  border-bottom: 1px solid var(--border);
+  overflow-x: auto;
+}
+.ntt .ntt-tab {
+  border: 0;
+  border-bottom: 2px solid transparent;
+  padding: 10px 15px;
+  background: none;
+  color: var(--muted-foreground);
+  white-space: nowrap;
+}
+.ntt .ntt-tab[aria-selected="true"] {
+  border-bottom-color: var(--primary);
+  color: var(--foreground);
+}
+.ntt .ntt-columns {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+.ntt .ntt-definition {
+  border: 1px solid var(--border);
+  padding: 16px;
+  border-radius: 8px;
+}
+.ntt .ntt-list-row {
+  border-bottom: 1px solid var(--border);
+  padding: 17px 0;
+}
+.ntt .ntt-list-row:last-child {
+  border-bottom: 0;
+}
+.ntt .ntt-dialog {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: color-mix(in srgb, var(--background) 75%, transparent);
+}
+.ntt .ntt-dialog > div {
+  width: min(440px, 100%);
+  padding: 24px;
+  background: var(--popover);
+  color: var(--popover-foreground);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 16px 50px color-mix(in srgb, var(--foreground) 12%, transparent);
+}
+.ntt .ntt-sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+@media (max-width: 600px) {
+  .ntt .ntt-grid,
+  .ntt .ntt-columns {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .ntt .ntt-management {
+    padding: 16px;
+  }
+  .ntt .ntt-surface {
+    padding: 16px;
+  }
+  .ntt .ntt-card {
+    padding: 16px;
+  }
+  .ntt h2 {
+    font-size: 20px;
+  }
+}
+.ntt .ntt-native-region[hidden],
+.ntt .ntt-direct-form[hidden] {
+  display: none;
+}
+
+.ntt.ntt-gallery {
+  gap: 12px;
+}
+.ntt .ntt-gallery-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+.ntt .ntt-gallery-toolbar .ntt-field {
+  flex: 1;
+}
+.ntt .ntt-card small {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+}
+.ntt .ntt-direct-form {
+  gap: 14px;
+}
+.ntt .ntt-footer {
+  justify-content: flex-end;
+}
+.ntt .ntt-footer > .ntt-stack {
+  margin-right: auto;
+  gap: 4px;
+}
+.ntt .ntt-footer .ntt-help {
+  max-width: 380px;
+}
+
+.ntt.ntt-panel {
+  height: 100%;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+  scrollbar-gutter: stable;
+}
+.ntt .ntt-definition {
+  padding: 0;
+  border-radius: 6px;
+  gap: 0;
+}
+.ntt .ntt-field-heading {
+  padding: 4px 12px;
+  flex-wrap: nowrap;
+  gap: 8px;
+}
+.ntt .ntt-field-heading > .ntt-row {
+  flex-wrap: nowrap;
+  gap: 8px;
+}
+.ntt .ntt-field-toggle {
+  display: flex;
+  flex: 1;
+  align-items: baseline;
+  gap: 12px;
+  padding: 9px 0;
+  min-width: 0;
+  color: var(--foreground);
+  background: none;
+  border: 0;
+  text-align: left;
+}
+.ntt .ntt-field-toggle strong {
+  font-size: 13px;
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+.ntt .ntt-field-toggle .ntt-help {
+  flex: none;
+}
+.ntt .ntt-field-config {
+  border-top: 1px solid var(--border);
+  padding: 12px;
+  gap: 12px;
+}
+.ntt .ntt-field-config .ntt-input {
+  min-height: 36px;
+  height: 36px;
+  padding: 6px 9px;
+}
+.ntt .ntt-field-config textarea.ntt-input {
+  height: auto;
+  min-height: 80px;
+}
+.ntt .ntt-required-control {
+  align-self: end;
+  min-height: 36px;
+}
+.ntt .ntt-field-options summary {
+  color: var(--muted-foreground);
+  cursor: pointer;
+  font-size: 12px;
+  padding: 4px 0;
+}
+.ntt .ntt-field-options[open] > .ntt-stack {
+  margin-top: 10px;
+}
+@media (max-width: 600px) {
+  .ntt .ntt-field-toggle {
+    flex-direction: column;
+    gap: 0;
+  }
+  .ntt .ntt-field-heading {
+    padding: 4px 10px;
+  }
+}
+
+.ntt .ntt-field-config[hidden] {
+  display: none;
+}
+
+/* Density belongs only to our controls; the complete native BB editor owns its chrome. */
+.ntt .ntt-input {
+  min-height: 32px;
+  padding: 5px 9px;
+  border-radius: 5px;
+}
+.ntt textarea.ntt-input {
+  min-height: 64px;
+  resize: vertical;
+}
+.ntt .ntt-button {
+  min-height: 32px;
+  padding: 5px 10px;
+  border-radius: 5px;
+}
+.ntt .ntt-field {
+  gap: 5px;
+}
+.ntt .ntt-field > label {
+  font-size: 12px;
+}
+.ntt .ntt-run,
+.ntt .ntt-direct-form {
+  gap: 12px;
+}
+.ntt .ntt-run > .ntt-row:first-child {
+  flex-wrap: nowrap;
+  gap: 12px;
+}
+.ntt .ntt-selected-name {
+  display: inline-flex;
+  align-items: center;
+  flex: 1;
+  gap: 8px;
+  font-weight: 500;
+  font-size: 14px;
+  min-width: 0;
+}
+.ntt .ntt-selected-name svg,
+.ntt .ntt-selected-name .ntt-purpose-icon {
+  width: 17px;
+  height: 17px;
+  flex: none;
+}
+.ntt .ntt-send {
+  width: 34px;
+  height: 32px;
+}
+.ntt .ntt-send svg {
+  width: 20px;
+  height: 20px;
+}
+.ntt .ntt-field-config .ntt-input {
+  height: 32px;
+  min-height: 32px;
+  padding: 5px 9px;
+}
+.ntt.ntt-settings .ntt-management {
+  margin: 0;
+  max-width: 760px;
+  padding: 0;
+}
+.ntt .ntt-list-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.ntt .ntt-list-name svg,
+.ntt .ntt-list-name .ntt-purpose-icon {
+  width: 18px;
+  height: 18px;
+  flex: none;
+}
+@media (max-width: 600px) {
+  .ntt .ntt-run > .ntt-row:first-child {
+    gap: 8px;
+  }
+  .ntt .ntt-selected-name {
+    font-size: 13px;
+    gap: 5px;
+  }
+}
+.ntt .ntt-placeholders {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.ntt .ntt-token {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 7px;
+  padding: 4px 7px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--background);
+  color: var(--foreground);
+  font-size: 12px;
+  text-align: left;
+}
+.ntt .ntt-token span {
+  color: var(--muted-foreground);
+  font-size: 11px;
+}
+.ntt .ntt-token:hover {
+  background: var(--accent);
+}
+
+/* Let the whole final homepage card/action row clear the native 6rem fade
+   with 1rem of breathing room at the ordinary mobile scroll end. */
+@media (max-width: 767px) {
+  .ntt.ntt-gallery[data-new-thread-templates-homepage] {
+    padding-bottom: 7rem;
+  }
+}
+
+/* Prompt source and its plain-text result remain visible together when there
+   is room. Each side keeps its own natural focus order and wraps on mobile. */
+.ntt .ntt-prompt-workbench {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  align-items: start;
+  gap: 20px;
+}
+.ntt .ntt-prompt-source,
+.ntt .ntt-prompt-preview {
+  min-width: 0;
+}
+.ntt .ntt-prompt-preview {
+  border-left: 1px solid var(--border);
+  padding-left: 20px;
+}
+.ntt .ntt-prompt-preview .ntt-preview {
+  padding: 10px;
+  margin-top: 5px;
+}
+.ntt .ntt-clock {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px 12px;
+}
+.ntt .ntt-template-help summary {
+  cursor: pointer;
+  color: var(--muted-foreground);
+  font-size: 12px;
+}
+.ntt .ntt-template-help p {
+  margin: 8px 0 0;
+  overflow-wrap: anywhere;
+}
+@media (max-width: 700px) {
+  .ntt .ntt-prompt-workbench {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .ntt .ntt-prompt-preview {
+    padding: 16px 0 0;
+    border-left: 0;
+    border-top: 1px solid var(--border);
+  }
+}
+/* Removed fields may contain long unbroken historic values or keys. Keep all
+   recovery text available without widening the preview or its scroll parent. */
+.ntt .ntt-prompt-preview .ntt-row > span,
+.ntt .ntt-prompt-preview .ntt-link {
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}

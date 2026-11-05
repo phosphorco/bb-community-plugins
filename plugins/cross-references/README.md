@@ -11,7 +11,7 @@ It is the shared navigation layer built from observed and authored references.
 
 ## Shared package
 
-`@phosphorco/bb-cross-references@0.1.0` provides the canonical resource/projection
+`@phosphorco/bb-cross-references@0.3.0` provides the canonical resource/projection
 contract, explicit SDK client, conformance kit, and `LinkedReferences` React
 editor. This plugin owns the graph service and persistence; Machine Monitor and
 Prompt Rules own their local attachments and delivery. See the
@@ -61,14 +61,75 @@ The direction preserves meaning. “This conversation cites that thread” is no
 the same claim as “that thread cites this conversation.” Both views are
 valuable, but one durable fact supplies them.
 
-### Assistant links and recency
+### Conversation mentions and recency
 
-Cross References collects HTTP(S) links directly from assistant messages using
-BB's public thread timeline API. A local thread route is verified before it
-becomes a native thread reference; other web links remain exact URL resources.
+Cross References collects settled user and assistant conversation rows through
+BB's public timeline API. Ordinary agent relays arriving as user text count;
+native system notifications, tool/work rows and nested transcripts do not.
+It walks positioned Markdown/GFM and calls the shared context-recognition
+linkify stage on eligible text and authored link destinations. Recognition
+suppliers own contextual PR and other typed grammars; collection never fetches
+PR metadata or calls card resolution. With no suppliers, native thread mentions,
+bare generated thread IDs, file candidates and safe web links remain available.
+Local thread targets are verified against an existing thread/project before
+becoming native `bb` references. No Brief or Linky collection runs in this phase.
+
+Fenced, indented and inline code, standalone images, **linked images (including
+the outer link destination)**, definitions and raw HTML are excluded. Excluding
+linked-image destinations is a behavior change from the earlier assistant-only
+Markdown walker. Ordinary reference-style links still count at each use, with
+spans at that use rather than at the definition. Offsets address original UTF-16
+source text. A location keeps row ID, actual role and `messageSeq`; its exact
+native route is `/projects/P/threads/T#msg=N`. Pagination/source-range metadata
+is not a substitute for `messageSeq`. Missing message sequences are disclosed
+as incomplete collection, with prior evidence retained.
+
+One source/target edge per producer supplies the existing distinct-resource
+counts and latest source-message time. Repeated mentions keep separate durable
+locations, up to the newest 100 per producer edge; they do not inflate v1
+counts. Locations and coverage have an independent evidence revision/digest,
+so source/span/provenance changes do not by themselves change the graph digest.
+There is no public occurrence read API or snippet display yet.
+
+Collection is limited to known sources: idle/failed/deleted events, forward
+reads and startup reconciliation of existing native/legacy sources. It does
+not enumerate every thread. Each scan stops at 50 timeline pages (100 segments
+per request), 5,000 messages or 2,097,152 UTF-16 units. Recognition shares 128
+supplier windows and a 10-second deadline across the whole source; a message
+is limited to 262,144 UTF-16 units, 16 positioned text windows and the shared
+per-call candidate/context bounds. A window, candidate or exclusion cap marks
+the message incomplete. The source retains at most 256 target identities and
+the newest 100 locations per producer edge, with deterministic message/offset
+ties. Coverage/cap reasons are stored with the evidence stream.
+
+Incomplete scans replace only fully observed messages and retain unvisited
+locations as unconfirmed within the caps. Transient supplier failures retain
+prior typed locations as unconfirmed; authoritative supplier removal allows
+the native fallback to replace the same observed location. A typed winner
+replaces the generic claim only at its occurrence; no historical URL aliases
+or external producer claims are merged. Existing legacy Thread Links claims
+remain until explicit source deletion, and may have no locations. These limits
+are disclosed in the References dialog. Counts and retained locations describe
+indexed facts, not a complete or all-time inventory.
+
+Supplier discovery uses package listing/probe helpers once per server lifecycle
+or plugin/reconnect event, with bounded calls and cancellation. Pure successful
+linkification is cached by text, context and supplier revision in a bounded
+server cache. Native candidates survive supplier absence/failure. The context
+includes the thread/environment IDs, eligible authored links and a sanitized
+project remote hint when available; it does not scan host repositories, invent
+branch/upstream metadata, or perform per-viewer supplier work. Collection jobs
+live in SQLite; reload resumes pending work, and the existing job generation
+fences the atomic graph/location transaction before publishing v1 changes.
+Among ready jobs, viewed sources run before newly settled/deleted event sources,
+then cold startup/reconnect backfill. Priority survives failure and reload;
+viewing a retry never resets its backoff, attempts or generation. Background
+sources remain runnable while higher-priority retries wait for their ready time.
+The migration recovers legacy fresh viewed intent, but failed legacy rows did
+not retain that fact; a new view request promotes those rows.
+
 Forward references and backlinks show the latest source-message time as a
 muted relative timestamp, with the full date on hover. Unknown times are omitted.
-Repeated links count once; their latest occurrence supplies recency.
 
 Opening Forward references performs a bounded URL status scan: one
 unauthenticated GET per unique destination, up to ten, with manual redirects,
@@ -76,7 +137,7 @@ a five-second timeout, body cancellation, and a one-minute in-memory cache.
 Status is ephemeral display data, never a graph fact.
 
 Thread Links is retired on bb-machine. Its installed registration and private
-data remain retained while Cross References owns new assistant-link collection.
+data remain retained while Cross References owns new conversation-mention collection.
 
 ### References should be present only when there is a relationship to show
 
@@ -159,3 +220,212 @@ npm run test --workspace @phosphorco/bb-plugin-cross-references
 npm run typecheck --workspace @phosphorco/bb-plugin-cross-references
 npm run build --workspace @phosphorco/bb-plugin-cross-references
 ```
+
+
+### Durable location caps
+
+`mention_edge_caps` is a producer/source/target child of the evidence stream.
+Rows record `capped` or `unknown`; an active edge without a row is `uncapped`.
+A later incomplete scan preserves prior cap truth even if it sees at most the
+retained 100 locations. Only sufficient complete observation, or that producer's
+source tombstone, clears the fact. Other sources and producers keep their own
+cap state. A pre-cap-migration global clipping flag cannot identify which edge
+was clipped, so migration marks its existing edges `unknown` until reconciliation.
+This does not claim an exact historical count.
+
+Per-edge caps participate in evidence digest/revision and source coverage. A
+cap-only change invalidates references through the existing strict changed-signal
+shape with the unchanged graph revision; it does not change the v1 projection
+digest, counts or resource identities. Cap rows, evidence and graph changes share
+the collector's existing fenced SQLite transaction. These internal facts prepare
+a future evidence read without extending any current public v1 DTO.
+
+
+Keyed cap rows are bounded by the retained graph's 256-target source limit. If a
+partial rotation drops a capped target, a durable source `cap_history_unknown`
+bit preserves clipping uncertainty instead of accumulating inactive rows. A
+returning target under partial coverage is conservatively `unknown` when its
+exact history was discarded. Complete authoritative observation or that owned
+source's tombstone clears this marker. It participates in evidence coverage and
+digest; it is not an exact historical occurrence count. An append-only migration
+compresses pre-existing inactive cap rows into the same bounded representation.
+
+
+### Verified native files
+
+Native `bb.file` candidates become graph claims only after targeted verification
+of an existing, contained regular file. The unchanged shared recognizer supplies
+the lexical candidate; the collector performs no bespoke file recognition.
+It resolves a fresh source thread through the public SDK, then uses that thread's
+storage location and environment. Included source host, environment ID/project
+and host are checked before a bounded owner-bound host call. The host checks
+opened file facts and realpath containment, closes the descriptor and reads no
+content. There are no recursive scans, filesystem watchers or card-resolution
+calls. Checks and source metadata are cached only within one source scan; repeated
+mentions do not multiply I/O. All waits share the 10-second recognition deadline
+and 500ms per-native-call bound, and aborted/late results cannot commit.
+
+Unframed files use thread storage, then the source environment after an
+authoritative absence. Explicit thread-storage/workspace frames pin that root
+and never fall back across it. Missing/unsafe candidates are dropped; transient
+verification keeps prior known evidence unconfirmed with incomplete coverage.
+
+A verified workspace file uses the shared `verifiedFileIdentity` tuple codec
+(environment ID plus canonical lexical relative path). A storage file uses its
+owning thread ID plus path. Both use bounded hashed `recognition` keys while
+resource mappings retain the full verified frame/path. Original lexical source
+IDs and authored locations stay in occurrence provenance; conversations sharing
+an environment coalesce without assigning an arbitrary source-thread identity
+to the shared resource. Paths preserve Unicode/case and authored symlink aliases;
+realpath proves containment and never renames identity. These are installation-
+local keys; phase 4 needs a separate portable codec. Phase 2 lookup and future
+Brief production must consume the same exported helper and filesystem frame rule.
+
+
+Conversation target admission also respects the unchanged 256KiB canonical v1
+projection payload bound. It selects deterministically by the existing recency/
+identity order, measuring canonical source overhead and incremental target bytes.
+Targets that cannot fit are omitted before the strict writer; locations and cap
+metadata follow the committed subset. `projection-payload-budget` and durable
+retention uncertainty disclose the loss. Incomplete scans preserve prior indexed
+truth within count/byte bounds; sufficient complete smaller observation or the
+owned tombstone clears uncertainty. This avoids a permanent retry of otherwise
+valid near-limit URLs without weakening any existing v1 validator or limit.
+
+### Bounded collection diagnostics
+
+Existing per-source incomplete/failed-job warnings include one plugin-private
+`Diagnostics:` JSON envelope, separate from stored coverage and public v1 data.
+Its groups contain only enumerated stage/reason/frame, a count, and integer
+elapsed/remaining milliseconds when known. Counts describe failure observations
+at actual boundaries; replaying a cached rejection is not another SDK request.
+Repeated observations share a group. No candidate identity, authored text, URL,
+filesystem root/path, raw error message or stack enters this envelope. Failed-job
+warnings use this safe detail instead of interpolating arbitrary exception text.
+
+The envelope admits at most 16 groups and 4096 UTF-8 bytes, including its version,
+`omittedCount` and `capped` fields. Counts saturate at 1,000,000; known times clamp
+to 0..60,000 milliseconds. Capping/clipping is disclosed; unknown/nonfinite times
+are absent. Omitted counts also saturate, so capped diagnostics are not an exact
+attempt inventory. Unknown or invalid optional host detail becomes safe unknown;
+an older host's retryable response without detail remains explicitly retryable.
+Only returned host fact detail can identify a host syscall stage/errno class.
+A transport timeout reports the last entered server/transport wait, never a
+presumed host syscall. Host close rejection still propagates as a failed call;
+without a returned host result its server diagnosis is transport failure.
+
+Outer source/timeline/project prefetch has its existing 1-second bound, before
+the 10-second recognition clock starts. Native verification races the whole
+verifier against the smaller of 500 milliseconds and the remaining shared
+recognition budget; it does not grant 500 milliseconds anew to each internal
+metadata/host await. Its own timer, source expiry, parent cancellation, arbitrary
+SDK rejection and successful cleanup abort remain distinct. Diagnostic state
+closes before late callbacks, and only existing lifetime-fenced collector sites
+log. Successful and authoritative-missing-only scans add no warning. No extra
+SDK calls, reads, timers, retries, scheduling or graph/coverage changes are made.
+
+These diagnostics classify subsequent observations. They do not explain the
+historical 41 warning-only sources, establish complete file coverage, or satisfy
+the later phase-2 evidence/snippet/referent UI work.
+
+## Stored evidence and V2 reads
+
+The evidence backend adds append-only primary excerpt, exact authored-destination
+and graph-binding storage. Existing graph identities, V1 strict APIs, projection
+counts/digests and producer ownership remain unchanged. Ordinary existing scans
+materialize bounded excerpts while the admitted original message is available;
+reads never enqueue collection, fetch source text/cards, or start a backfill.
+Historical original URLs stay unknown until an ordinary scan proves spelling.
+
+Excerpts retain one contiguous original UTF16 slice (at most320 Unicode code points
+and1280 UTF8 bytes), never bridge excluded inline/fenced/indented code, HTML or
+standalone/linked images, and retain exact messageSeq/full match span/navigation.
+An indivisible overlong word is labelled unavailable instead of silently cut.
+A partial scan retains valid unvisited child excerpts unconfirmed; source deletion
+removes only owned claims/evidence. Evidence-only edits advance evidence revision,
+not graph digest; observation clocks alone do not create semantic content revision.
+
+New wireV2 ListMentions and required ResolveLookup are independent of strictV1
+reads. They expose self/current supported PR-root family/literal original URL,
+page25/max100 under one1MiB response budget, exact retained facts and honest legacy,
+cap/unknown history/discovery coverage. Current GitHub supplier root-collapses
+comment/review URLs; there is no256-family query ceiling or alias claim. Literal
+URLs keep their authored query/fragment and use separate unknown-history coverage.
+Direct SQL uses existing active full producer/source/target membership; no derived
+posting graph/bootstrap/service. SQLite counts/sorts are synchronous: cooperative
+2s checks detect exhaustion but cannot preempt one blocking statement.
+
+These are backend/contract seams; snippet layout and the later three-visible-entry
+UI are separate work. Existing50-page scan, source-discovery limits, retained legacy
+claims and100-location/edge retention remain disclosed. Recognition remains exact
+0.5.0, no Brief/Linky integration. Source/private-emission checks are not live proof.
+
+## Mentions: resource lookup and original context
+
+Use **Mentions** beside a BB Browser tab's address bar to look up the current
+URL. The click snapshots that URL; later tab navigation does not silently
+change an open lookup. The **Mentions** navigation page also accepts pasted
+resources and URLs. **Recognize** uses the shared recognition service and
+supported PR-family codec. **Exact URL** searches the literal authored URL;
+it does not merge aliases. Ambiguous recognition asks you to choose, and
+incomplete recognition stays labelled. Shared lookup routes contain validated
+queries, never arbitrary pasted prose. Invalid, unsafe or oversized routes
+show the form and an explanation instead of claiming there are no matches.
+
+The existing References popover offers resource pivots and **Show context**
+beneath backlinks. Only one backlink context is open at a time; closed controls
+do not read mention evidence. Results are paged, 25 rows at a time. **Next page**
+replaces the current page and **First page** starts over. Initially three
+locations per producer claim are shown **on that page**; disclosure reveals
+all its remaining admitted locations. A claim can continue on another page.
+
+Counts describe retained locations, confirmation, producer claims and sources
+across the query, not just the visible page or all-time mentions. Coverage is
+limited to known sources. Capped or unknown retention, unconfirmed locations,
+legacy/no-evidence claims and unavailable excerpts remain visible. Historical
+unknown authored URLs can make an Exact URL search incomplete even when no
+matching stored result is found.
+
+Snippets are inert original text, with the stored UTF-16 match highlighted and
+clipping labelled. They are not reparsed as Markdown. Original-message links
+use the actual timeline message sequence and BB's public URL navigation,
+including the exact message fragment. When exact message navigation is not
+available, the source remains usable and that limitation is stated. Reads are
+lazy and refresh through mounted realtime/reconnect events without idle polling;
+transient failures preserve the last good results for the same query.
+
+### Thread Brief producer ingress (source implementation, activation pending)
+
+A separate producer family atomically accepts a complete fixed BRIEF.md projection
+with primary evidence, or records a safe blocked desired-state status while
+retaining the last good graph. Over-limit and identity-unrepresentable statuses
+remain visible in References even with zero relationships. Actual fixed hit codes
+are shown; a failed update never manufactures a graph edge or changes legacy
+counts. One V1 prospective revision allocator fences newer failed intent from a
+delayed older replacement. Ordinary V1 compatibility and unconfirmed retained
+binding are explicitly preserved.
+
+Migration15 appends three primary tables: one producer/source evidence header,
+full producer/source/target occurrence children and full canonical source-keyed
+blocked status (no resource needed for status-only). The14 shipped migration
+statements remain unchanged. Queries directly join active claims with primary
+children; no read index/bootstrap/service/timer/outbox or reader enqueue/fetch.
+Boundaries are512 total/100 per edge; rejection retains the whole last good state.
+
+Brief rows preserve ref-N, raw SHA, original UTF16 frame/bodyBase/BOM/native line
+and explicit intro/named/withheld heading. They have no ready excerpts. Safe
+metadata is exact; unsafe optional heading/label/detail/provenance/codec/authored
+URL has only a role-domain digest and fixed generic display. Required unsafe
+identity rejects the whole update. The shared pure package classifier is also
+recomputed at ingress. Withheld originals are not copied into storage/errors or
+reconstructed for literal URL lookup.
+
+One surface-shared navigation owner keeps native FileLink anchored at fixed
+BRIEF top. Unmodified primary may request one negotiated fresh same-revision TB
+proof, then open once at its validated original line. Modified/menu/aux actions
+cancel prior proof and retain native top behavior. Unknown/stale/ambiguous proof
+falls back to top with a note. The TB accepted raw-read/accessor/frame/provider
+repairs and exact published0.4 adoption are prerequisites owned by TB, not
+implemented here. FileLink/cache/rawRevision equality alone is not a freshness
+claim; a file can change after a successful read. No new live/UI/fixture proof is
+claimed, and the earlier toolbar acceptance item remains separate.

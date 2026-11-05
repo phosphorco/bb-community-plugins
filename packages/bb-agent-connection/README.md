@@ -54,6 +54,12 @@ const bytes = await readUploadBody(request.body!, metadata, { signal: request.si
 // bytes, retain staging, journal scope and return the documented upload envelope.
 ```
 
+The reader releases its reservation on overflow, abort or callback failure without
+waiting for a source's cancellation acknowledgement. This does not cancel a native
+SDK upload that has already started. Upload failures preserve HTTP status and a
+bounded message from either the shared envelope or native host token errors;
+callers should display that guidance and retain their upload operation ID.
+
 Native projection and acceptance:
 
 ```ts

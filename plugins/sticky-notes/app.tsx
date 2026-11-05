@@ -1042,7 +1042,7 @@ export default definePluginApp((app) => {
     plusMenu: [{
       id: "add-sticky-note",
       label: "Add sticky note",
-      icon: "Note",
+      icon: "sticky-notes/note",
       description: "Add a shared note to this thread",
       run({ composer }) {
         if (composer.scope.kind === "thread") controllerFor(composer.scope.threadId)?.click("plus-menu")

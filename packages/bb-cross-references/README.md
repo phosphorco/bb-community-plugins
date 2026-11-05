@@ -40,3 +40,49 @@ client apply/get/backlinks acceptance and reports source conformance.
 Run `npm run build`, `npm run test`, `npm run typecheck` in the workspace.
 See [CONTRACT.md](./CONTRACT.md) for exports, bounds, wire compatibility,
 legacy describe fallback and proof limitations.
+
+Package 0.2.0 exports `recognitionIdentity` and `recognitionIdentityRecord` for
+recognition-backed consumers. Thread verification stays with the consumer;
+typed opaque IDs use a bounded SHA-256 identity and a separate raw mapping.
+See the [contract](CONTRACT.md#recognition-identity-adapter-package-020-wire-v1-unchanged).
+
+Verified native files use `verifiedFileIdentity` and `verifiedFileIdentityRecord`
+with `VerifiedFileTargetSchema`; the generic adapter rejects unverified `bb.file`.
+Workspace owner is environment ID; storage owner is the owning thread ID.
+Full frame/path survives separately from the bounded hashed graph key and
+original lexical source IDs remain occurrence provenance. See the contract for
+exact canonical tuple/path rules; consumers own bounded existence/containment.
+
+### Stored mention evidence, V2
+
+The 0.3.0 contract reservation adds pure evidence schemas and the explicit
+`createCrossReferencesV2Client(sdk, pluginId)` in `/bb`. Call `describe()` and use
+`listMentions({version:2,query:{kind:'resource',target,relation:'self'}})` or literal
+`{kind:'authored-url',href}`. `resolveLookup({version:2,text,mode:'recognize'})`
+normalizes pasted PR URLs through shared recognition/pure labelled codec without
+fetching cards or writing claims. `githubLookup` is the shared explicit GitHub
+URL codec; issue/unknown-number input cannot silently become PR authority.
+
+Pages carry bounded original-location evidence, exact counts for retained active
+claims, clipping/cap/legacy/unknown-URL coverage and semantic cursors. Conditional
+not-modified includes current coverage. Existing V1 clients stay unchanged. See
+CONTRACT.md for strict inputs, tolerant bounded outputs, direct-query/time limits,
+no-word-cut behavior and read-only conformance. Package source tests and private
+emission are distinct from a published registry consumer or live host proof.
+
+The unreleased0.4 producer additions are exported through existing root, `/bb`
+and `/testing` entries. Use `createCrossReferencesProducerClient` for complete
+Brief graph/evidence replacement and status/readback, and
+`runCrossReferencesProducerConformance` against an adopter's real registered
+handlers. `runBriefNavigationConformance` requires an actual accepted-reader
+fixture; it never supplies a fake freshness proof. Explicitly compile
+`test/public-producer-types.mts`; ordinary test discovery does not compile it.
+`tools/packed-producer-consumer.mjs` checks actual independent installed native
+ESM imports and physical roots; resolver fixtures are not package/registry proof.
+See CONTRACT.md for display withholding, bounds, revision fencing and the still
+separate TB raw-reader/public navigation adoption duties.
+
+In 0.4.1, Brief navigation can negotiate a rendered Thread Brief reader route.
+The optional fixed destination and shared path codec preserve the existing
+same-revision proof and native-file fallback. The reader owner validates the
+accepted section again; stale or expired selections stay at the top with a note.

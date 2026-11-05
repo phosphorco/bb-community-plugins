@@ -1,12 +1,23 @@
+import { admitBriefApply, readBriefSnapshot } from './brief-evidence.ts';
+import { producerGetStateInputSchema, producerStateSchema, producerReportStatusInputSchema, blockedBriefStatusSchema, briefStatusDigest, briefFileSchema, classifyBriefDisplayFieldsV1, BRIEF_LIMITS, type DisplayFieldV1, type ProducerGetStateInput, type ProducerState, type ProducerApplyInput, type ProducerApplyOutput, type ProducerReportStatusInput, type ProducerReportStatusOutput } from '@phosphorco/bb-cross-references';
 import { Buffer } from "node:buffer";
 import { randomUUID } from "node:crypto";
 import type Database from "better-sqlite3";
+import { canonicalJson } from "@phosphorco/bb-context-recognition";
+import { recognitionIdentity, recognitionIdentityRecord, verifiedFileIdentity, verifiedFileIdentityRecord, isUtf16CodePointBoundary } from "@phosphorco/bb-cross-references";
+import { persistedExcerpt } from './mention-excerpts.ts';
+import { mentionFrame } from './mention-markdown.ts';
+import { MENTION_LIMITS, MentionLocationSchema, mentionKey, type MentionScan, type ObservedMention, type MentionEdgeCap } from "./mention-evidence.ts";
 
 import {
   canonicalizeIdentity,
   canonicalizeResource,
   serializeResource,
   projectionPayloadDigest,
+  projectionPayloadJson,
+  MAX_PROJECTION_PAYLOAD_BYTES,
+  utf8ByteLength,
+  sha256Hex,
   type CanonicalIdentity,
   type CanonicalResource,
   type Presentation,
@@ -109,6 +120,172 @@ export const crossReferencesMigrations = [
    );
    CREATE TABLE assistant_link_sync (
      thread_id TEXT PRIMARY KEY, synced_at INTEGER NOT NULL
+   )`,
+  `CREATE TABLE recognized_resources (
+     resource_id INTEGER PRIMARY KEY REFERENCES resources(id) ON DELETE CASCADE,
+     source_identity_json TEXT NOT NULL CHECK (length(CAST(source_identity_json AS BLOB)) <= 16384),
+     codec_version INTEGER NOT NULL CHECK (codec_version = 1)
+   );
+   CREATE TABLE mention_streams (
+     producer_plugin_id TEXT NOT NULL,
+     source_resource_id INTEGER NOT NULL REFERENCES resources(id) ON DELETE CASCADE,
+     evidence_revision INTEGER NOT NULL CHECK (evidence_revision >= 1),
+     evidence_digest TEXT NOT NULL CHECK (length(evidence_digest) = 64),
+     collector_version INTEGER NOT NULL,
+     coverage_json TEXT NOT NULL,
+     last_successful_scan_at INTEGER NOT NULL,
+     PRIMARY KEY (producer_plugin_id, source_resource_id)
+   );
+   CREATE TABLE mention_occurrences (
+     producer_plugin_id TEXT NOT NULL,
+     source_resource_id INTEGER NOT NULL,
+     target_resource_id INTEGER NOT NULL REFERENCES resources(id) ON DELETE RESTRICT,
+     occurrence_key TEXT NOT NULL CHECK (length(occurrence_key) = 64),
+     source_locator_json TEXT NOT NULL,
+     source_content_revision TEXT NOT NULL CHECK (length(source_content_revision) = 64),
+     span_start INTEGER NOT NULL CHECK (span_start >= 0),
+     span_end INTEGER NOT NULL CHECK (span_end > span_start),
+     message_created_at INTEGER NOT NULL,
+     observed_at INTEGER NOT NULL,
+     provenance_json TEXT NOT NULL,
+     confirmed_in_scan INTEGER NOT NULL CHECK (confirmed_in_scan IN (0, 1)),
+     PRIMARY KEY (producer_plugin_id, source_resource_id, target_resource_id, occurrence_key),
+     FOREIGN KEY (producer_plugin_id, source_resource_id)
+       REFERENCES mention_streams(producer_plugin_id, source_resource_id) ON DELETE CASCADE
+   );
+   CREATE INDEX mention_occurrences_target_idx ON mention_occurrences(target_resource_id, source_resource_id)`,
+  `CREATE TABLE mention_edge_caps (
+     producer_plugin_id TEXT NOT NULL,
+     source_resource_id INTEGER NOT NULL,
+     target_resource_id INTEGER NOT NULL REFERENCES resources(id) ON DELETE RESTRICT,
+     state TEXT NOT NULL CHECK (state IN ('capped', 'unknown')),
+     PRIMARY KEY (producer_plugin_id, source_resource_id, target_resource_id),
+     FOREIGN KEY (producer_plugin_id, source_resource_id)
+       REFERENCES mention_streams(producer_plugin_id, source_resource_id) ON DELETE CASCADE
+   );
+   -- Earlier global clipping cannot identify a particular edge. Preserve that
+   -- uncertainty until a complete authoritative scan replaces this producer.
+   INSERT INTO mention_edge_caps
+   SELECT s.producer_plugin_id, s.source_resource_id, o.target_resource_id, 'unknown'
+     FROM mention_streams s
+     JOIN source_projections p ON p.producer_plugin_id = s.producer_plugin_id
+       AND p.source_resource_id = s.source_resource_id
+     JOIN reference_occurrences o ON o.projection_id = p.id
+    WHERE json_extract(s.coverage_json, '$.retentionLimited') = 1`,
+  `ALTER TABLE mention_streams ADD COLUMN cap_history_unknown INTEGER NOT NULL DEFAULT 0
+     CHECK (cap_history_unknown IN (0, 1));
+   UPDATE mention_streams SET cap_history_unknown = 1
+    WHERE EXISTS (SELECT 1 FROM mention_edge_caps c
+      WHERE c.producer_plugin_id = mention_streams.producer_plugin_id
+        AND c.source_resource_id = mention_streams.source_resource_id
+        AND NOT EXISTS (SELECT 1 FROM source_projections p
+          JOIN reference_occurrences o ON o.projection_id = p.id
+          WHERE p.producer_plugin_id = c.producer_plugin_id
+            AND p.source_resource_id = c.source_resource_id
+            AND p.tombstone = 0 AND o.target_resource_id = c.target_resource_id));
+   DELETE FROM mention_edge_caps WHERE NOT EXISTS (
+     SELECT 1 FROM source_projections p JOIN reference_occurrences o ON o.projection_id = p.id
+      WHERE p.producer_plugin_id = mention_edge_caps.producer_plugin_id
+        AND p.source_resource_id = mention_edge_caps.source_resource_id
+        AND p.tombstone = 0 AND o.target_resource_id = mention_edge_caps.target_resource_id)`,
+  `ALTER TABLE assistant_link_jobs ADD COLUMN priority INTEGER NOT NULL DEFAULT 0
+     CHECK (priority BETWEEN 0 AND 2);
+   -- Recover the only historical viewed intent that was explicitly retained.
+   -- Failed positive-time retries carry no recoverable historical priority.
+   UPDATE assistant_link_jobs SET priority = 2 WHERE retry_at = -1 AND attempts = 0;
+   CREATE INDEX assistant_link_jobs_priority_retry_idx
+     ON assistant_link_jobs(priority DESC, retry_at)`,
+  `ALTER TABLE mention_occurrences ADD COLUMN authored_url_state TEXT NOT NULL DEFAULT 'unknown'
+     CHECK(authored_url_state IN ('unknown','not-url','exact'));
+   ALTER TABLE mention_occurrences ADD COLUMN exact_authored_href TEXT
+     CHECK(exact_authored_href IS NULL OR (typeof(exact_authored_href)='text' AND length(exact_authored_href) BETWEEN 1 AND 4096
+       AND length(CAST(exact_authored_href AS BLOB))<=16384));
+   ALTER TABLE mention_streams ADD COLUMN bound_graph_revision INTEGER
+     CHECK(bound_graph_revision IS NULL OR (typeof(bound_graph_revision)='integer' AND bound_graph_revision BETWEEN 0 AND 9007199254740991));
+   CREATE TABLE mention_excerpts (
+     producer_plugin_id TEXT NOT NULL, source_resource_id INTEGER NOT NULL,
+     target_resource_id INTEGER NOT NULL, occurrence_key TEXT NOT NULL,
+     source_content_revision TEXT NOT NULL CHECK(length(source_content_revision)=64),
+     codec_version INTEGER NOT NULL CHECK(codec_version=1),
+     state TEXT NOT NULL CHECK(state IN ('ready','unavailable')),
+     excerpt_text TEXT, excerpt_source_start INTEGER, excerpt_source_end INTEGER,
+     match_start INTEGER, match_end INTEGER,
+     clipped_before INTEGER NOT NULL CHECK(clipped_before IN (0,1)),
+     clipped_after INTEGER NOT NULL CHECK(clipped_after IN (0,1)),
+     match_clipped_before INTEGER NOT NULL CHECK(match_clipped_before IN (0,1)),
+     match_clipped_after INTEGER NOT NULL CHECK(match_clipped_after IN (0,1)),
+     unavailable_reason TEXT,
+     PRIMARY KEY(producer_plugin_id,source_resource_id,target_resource_id,occurrence_key),
+     FOREIGN KEY(producer_plugin_id,source_resource_id,target_resource_id,occurrence_key)
+       REFERENCES mention_occurrences ON DELETE CASCADE,
+     CHECK((state='ready' AND excerpt_text IS NOT NULL AND typeof(excerpt_text)='text' AND unavailable_reason IS NULL
+       AND excerpt_source_start IS NOT NULL AND typeof(excerpt_source_start)='integer'
+       AND excerpt_source_end IS NOT NULL AND typeof(excerpt_source_end)='integer'
+       AND match_start IS NOT NULL AND typeof(match_start)='integer'
+       AND match_end IS NOT NULL AND typeof(match_end)='integer'
+       AND excerpt_source_start>=0 AND excerpt_source_end>excerpt_source_start AND excerpt_source_end<=262144
+       AND match_start>=0 AND match_end>match_start AND match_end<=262144)
+       OR (state='unavailable' AND excerpt_text IS NULL
+       AND excerpt_source_start IS NULL AND excerpt_source_end IS NULL AND match_start IS NULL AND match_end IS NULL
+       AND unavailable_reason IS NOT NULL AND unavailable_reason IN ('indivisible-word','no-eligible-context')
+       AND clipped_before=0 AND clipped_after=0 AND match_clipped_before=0 AND match_clipped_after=0)),
+     CHECK(excerpt_text IS NULL OR length(CAST(excerpt_text AS BLOB))<=1280)
+   );
+   CREATE INDEX mention_exact_href_v2_idx ON mention_occurrences(exact_authored_href COLLATE BINARY,
+     message_created_at DESC,source_resource_id,producer_plugin_id,target_resource_id,occurrence_key)
+     WHERE authored_url_state='exact' AND exact_authored_href IS NOT NULL;
+   CREATE INDEX mention_unknown_href_v2_idx ON mention_occurrences(producer_plugin_id,source_resource_id,target_resource_id,occurrence_key)
+     WHERE authored_url_state='unknown';
+   CREATE INDEX mention_target_time_v2_idx ON mention_occurrences(target_resource_id,message_created_at DESC,
+     source_resource_id,producer_plugin_id,occurrence_key)`,
+  `CREATE TABLE brief_evidence_streams (
+     producer_plugin_id TEXT NOT NULL CHECK(producer_plugin_id='thread-brief'),
+     source_resource_id INTEGER NOT NULL REFERENCES resources(id) ON DELETE RESTRICT,
+     graph_revision INTEGER NOT NULL CHECK(typeof(graph_revision)='integer' AND graph_revision BETWEEN 1 AND 9007199254740991),
+     graph_payload_digest TEXT NOT NULL CHECK(length(graph_payload_digest)=64),
+     evidence_digest TEXT NOT NULL CHECK(length(evidence_digest)=64),
+     source_file_json TEXT NOT NULL CHECK(length(CAST(source_file_json AS BLOB))<=16384),
+     source_state TEXT NOT NULL CHECK(source_state IN ('present','absent','empty')),
+     raw_sha TEXT CHECK(raw_sha IS NULL OR length(raw_sha)=64),
+     frame_json TEXT CHECK(frame_json IS NULL OR length(CAST(frame_json AS BLOB))<=4096),
+     metadata_json TEXT NOT NULL CHECK(length(CAST(metadata_json AS BLOB))<=1048576),
+     occurrence_count INTEGER NOT NULL CHECK(typeof(occurrence_count)='integer' AND occurrence_count BETWEEN 0 AND 512),
+     accepted_at INTEGER NOT NULL CHECK(typeof(accepted_at)='integer' AND accepted_at BETWEEN 0 AND 8640000000000000),
+     PRIMARY KEY(producer_plugin_id,source_resource_id),
+     CHECK((source_state='absent' AND raw_sha IS NULL AND frame_json IS NULL AND occurrence_count=0)
+       OR(source_state IN ('present','empty') AND raw_sha IS NOT NULL AND frame_json IS NOT NULL AND(source_state<>'empty' OR occurrence_count=0)))
+   );
+   CREATE TABLE brief_evidence_occurrences (
+     producer_plugin_id TEXT NOT NULL,source_resource_id INTEGER NOT NULL,
+     target_resource_id INTEGER NOT NULL REFERENCES resources(id) ON DELETE RESTRICT,
+     occurrence_key TEXT NOT NULL CHECK(length(occurrence_key)=64),
+     source_occurrence_id TEXT NOT NULL CHECK(length(CAST(source_occurrence_id AS BLOB)) BETWEEN 1 AND 256),
+     locator_json TEXT NOT NULL CHECK(length(CAST(locator_json AS BLOB))<=4096),
+     provenance_json TEXT NOT NULL CHECK(length(CAST(provenance_json AS BLOB))<=65536),
+     authored_url_json TEXT NOT NULL CHECK(length(CAST(authored_url_json AS BLOB))<=17408),
+     authored_url_state TEXT NOT NULL CHECK(authored_url_state IN ('unknown','not-url','exact','withheld')),
+     exact_authored_href TEXT CHECK(exact_authored_href IS NULL OR length(CAST(exact_authored_href AS BLOB)) BETWEEN 1 AND 16384),
+     PRIMARY KEY(producer_plugin_id,source_resource_id,target_resource_id,occurrence_key),
+     UNIQUE(producer_plugin_id,source_resource_id,source_occurrence_id),
+     FOREIGN KEY(producer_plugin_id,source_resource_id) REFERENCES brief_evidence_streams ON DELETE CASCADE,
+     CHECK((authored_url_state='exact' AND exact_authored_href IS NOT NULL) OR(authored_url_state IN ('unknown','not-url','withheld') AND exact_authored_href IS NULL))
+   );
+   CREATE INDEX brief_target_seek ON brief_evidence_occurrences(target_resource_id,source_resource_id,producer_plugin_id,occurrence_key);
+   CREATE INDEX brief_exact_href ON brief_evidence_occurrences(exact_authored_href COLLATE BINARY,source_resource_id,producer_plugin_id,target_resource_id,occurrence_key) WHERE authored_url_state='exact' AND exact_authored_href IS NOT NULL;
+   CREATE INDEX brief_unknown_href ON brief_evidence_occurrences(producer_plugin_id,source_resource_id,target_resource_id,occurrence_key) WHERE authored_url_state IN ('unknown','withheld');
+   CREATE TABLE brief_producer_status (
+     producer_plugin_id TEXT NOT NULL CHECK(producer_plugin_id='thread-brief'),source_provider TEXT NOT NULL,
+     canonical_keys_json TEXT NOT NULL CHECK(length(CAST(canonical_keys_json AS BLOB))<=32768),
+     source_file_json TEXT NOT NULL CHECK(length(CAST(source_file_json AS BLOB))<=16384),
+     attempt_revision INTEGER NOT NULL CHECK(typeof(attempt_revision)='integer' AND attempt_revision BETWEEN 1 AND 9007199254740991),
+     status_digest TEXT NOT NULL CHECK(length(status_digest)=64),state TEXT NOT NULL CHECK(state IN ('over-limit','identity-unrepresentable')),
+     raw_sha TEXT NOT NULL CHECK(length(raw_sha)=64),
+     limit_codes_json TEXT NOT NULL CHECK(length(CAST(limit_codes_json AS BLOB))<=1024 AND json_valid(limit_codes_json) AND json_type(limit_codes_json)='array' AND json_array_length(limit_codes_json) BETWEEN 0 AND 10),
+     identity_codes_json TEXT NOT NULL DEFAULT '[]' CHECK(length(CAST(identity_codes_json AS BLOB))<=1024 AND json_valid(identity_codes_json) AND json_type(identity_codes_json)='array' AND json_array_length(identity_codes_json) BETWEEN 0 AND 3),
+     reported_at INTEGER NOT NULL CHECK(typeof(reported_at)='integer' AND reported_at BETWEEN 0 AND 8640000000000000),
+     PRIMARY KEY(producer_plugin_id,source_provider,canonical_keys_json),
+     CHECK((state='over-limit' AND json_array_length(limit_codes_json)>0 AND json_array_length(identity_codes_json)=0)
+       OR(state='identity-unrepresentable' AND json_array_length(identity_codes_json)>0))
    )`,
 ] as const;
 
@@ -558,6 +735,78 @@ export class CrossReferenceStore {
     };
   }
 
+  /** New producer family: status is a prospective V1 fence, never another clock. */
+  getProducerState(input: ProducerGetStateInput): ProducerState {
+    const admitted=producerGetStateInputSchema.parse(input);
+    return this.db.transaction(()=>this.producerState(admitted))();
+  }
+
+  private producerState(input:ProducerGetStateInput):ProducerState {
+    const source=canonicalizeIdentity(input.source),resource=this.findResource(source);
+    const projection=this.getProjection(input).projection;
+    const statusRow=this.db.prepare(`SELECT * FROM brief_producer_status WHERE producer_plugin_id=? AND source_provider=? AND canonical_keys_json=?`).get(input.producerPluginId,source.provider,source.canonicalKeysJson) as {attempt_revision:number;status_digest:string;source_file_json:string;state:string;raw_sha:string;limit_codes_json:string;identity_codes_json:string}|undefined;
+    const g=projection?.revision??0,s=resource?readBriefSnapshot(this.db,input.producerPluginId,resource.id):null;
+    const status=statusRow?{...blockedBriefStatusSchema.parse({state:statusRow.state,sourceContentRevision:statusRow.raw_sha,limits:JSON.parse(statusRow.limit_codes_json),...(statusRow.state==='identity-unrepresentable'?{identityReasons:JSON.parse(statusRow.identity_codes_json)}:{})}),attemptRevision:statusRow.attempt_revision,statusDigest:statusRow.status_digest,sourceFile:briefFileSchema.parse(JSON.parse(statusRow.source_file_json)),applicability:statusRow.attempt_revision>g?'current' as const:'superseded-by-graph' as const}:null;
+    if(status&&canonicalizeIdentity(verifiedFileIdentity(status.sourceFile)).canonicalIdentityJson!==source.canonicalIdentityJson)throw new Error('Invalid stored Brief status source.');
+    if(status){const {attemptRevision:_attempt,statusDigest,sourceFile,applicability:_applicability,...content}=status;if(briefStatusDigest(input.producerPluginId,input.source,sourceFile,content)!==statusDigest)throw new Error('Invalid stored Brief status digest.');}
+    // Legacy V1 remains writable, but this new reader never returns unclassified display data.
+    if(projection){const fields:DisplayFieldV1[]=[];let n=0;for(const r of [projection.source,...projection.targets])for(const v of [r.provider,...Object.values(r.keys),...Object.values(r.presentation)])if(typeof v==='string')fields.push({key:[n++],role:'required-identity',value:v});
+      const checked=classifyBriefDisplayFieldsV1(fields);if(checked.state!=='classified'||checked.results.some(r=>r.result.state!=='safe'))throw new Error('Stored producer presentation is unavailable.');}
+    return producerStateSchema.parse({version:1,projection,evidence:s?{kind:'thread-brief',graphRevision:s.row.graph_revision,graphPayloadDigest:s.row.graph_payload_digest,evidenceDigest:s.row.evidence_digest,sourceContentRevision:s.row.raw_sha,state:s.row.graph_revision===g&&s.row.graph_payload_digest===projection?.payloadDigest?'bound':'unconfirmed',occurrenceCount:s.row.occurrence_count,sourceState:s.row.source_state}:null,status,revisionHighWater:Math.max(g,status?.attemptRevision??0)});
+  }
+
+  applyProducer(input:ProducerApplyInput):{response:ProducerApplyOutput;signal:CrossReferencesChangedSignal|null} {
+    const started=performance.now(),check=()=>{if(performance.now()-started>=BRIEF_LIMITS.readMs)throw new Error('Producer admission exceeded its work deadline.');};
+    const {command,evidence,evidenceDigest,metadata}=admitBriefApply(input);check();
+    return this.db.transaction(()=>{
+      const source=this.findResource(command.source),current=source?this.findProjection('thread-brief',source.id):null;
+      const stateInput:ProducerGetStateInput={version:1,producerPluginId:'thread-brief',source:{provider:command.source.provider,keys:command.source.keys}};
+      const state=this.producerState(stateInput),g=current?.revision??0;
+      const reply=(outcome:ProducerApplyOutput['outcome'],disposition:ProducerApplyOutput['evidenceDisposition'],signal:CrossReferencesChangedSignal|null=null)=>({response:{version:1 as const,outcome,currentRevision:signal?.revision??g,currentDigest:signal?command.payloadDigest:current?.payload_digest??null,evidenceDisposition:disposition,state:this.producerState(stateInput)},signal});
+      if(command.revision===g){
+        const outcome=current&&current.payload_digest===command.payloadDigest?(current.mutation_id===command.mutationId?'duplicate':'equal'):'conflict';
+        return reply(outcome,outcome!=='conflict'&&state.evidence?.state==='bound'&&state.evidence.evidenceDigest===evidenceDigest?'replayed':'conflict');
+      }
+      if(command.revision<=state.revisionHighWater)return reply('stale','not-applied');
+      if(command.expectedRevision!==g)return reply('cas-mismatch','not-applied');
+      check();const result=this.applyNormalizedProjection(command);
+      if(result.outcome!=='applied'||!result.signal)throw new Error('Producer projection invariant failed.');
+      const sourceId=this.findResource(command.source)!.id;
+      this.db.prepare(`INSERT INTO brief_evidence_streams(producer_plugin_id,source_resource_id,graph_revision,graph_payload_digest,evidence_digest,source_file_json,source_state,raw_sha,frame_json,metadata_json,occurrence_count,accepted_at)
+        VALUES ('thread-brief',?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(producer_plugin_id,source_resource_id) DO UPDATE SET graph_revision=excluded.graph_revision,graph_payload_digest=excluded.graph_payload_digest,evidence_digest=excluded.evidence_digest,source_file_json=excluded.source_file_json,source_state=excluded.source_state,raw_sha=excluded.raw_sha,frame_json=excluded.frame_json,metadata_json=excluded.metadata_json,occurrence_count=excluded.occurrence_count,accepted_at=excluded.accepted_at`)
+        .run(sourceId,command.revision,command.payloadDigest,evidenceDigest,canonicalJson(evidence.sourceFile),evidence.sourceState,evidence.sourceContentRevision,evidence.frame===null?null:canonicalJson(evidence.frame),metadata,evidence.occurrences.length,Date.now());
+      this.db.prepare('DELETE FROM brief_evidence_occurrences WHERE producer_plugin_id=? AND source_resource_id=?').run('thread-brief',sourceId);
+      const insert=this.db.prepare(`INSERT INTO brief_evidence_occurrences(producer_plugin_id,source_resource_id,target_resource_id,occurrence_key,source_occurrence_id,locator_json,provenance_json,authored_url_json,authored_url_state,exact_authored_href) VALUES ('thread-brief',?,?,?,?,?,?,?,?,?)`);
+      const targetIds=new Map(command.targets.map(t=>[t.canonicalIdentityJson,this.findResource(t)!.id]));
+      for(const o of evidence.occurrences)insert.run(sourceId,targetIds.get(canonicalizeIdentity(o.target).canonicalIdentityJson)!,o.occurrenceKey,o.sourceOccurrenceId,canonicalJson(o.locator),canonicalJson(o.provenance),canonicalJson(o.authoredUrl),o.authoredUrl.state,o.authoredUrl.state==='exact'?o.authoredUrl.href:null);
+      const mapping=this.db.prepare(`INSERT INTO recognized_resources(resource_id,source_identity_json,codec_version) VALUES (?,?,1) ON CONFLICT(resource_id) DO NOTHING`);
+      mapping.run(sourceId,verifiedFileIdentityRecord(evidence.sourceFile));
+      for(const d of evidence.targetDescriptors)if(d.codec.state==='available'){
+        const proof=d.codec.value;const record=proof.kind==='file'?verifiedFileIdentityRecord(proof.verified):proof.kind==='recognition'||proof.kind==='thread'?canonicalJson({provider:proof.source.provider,id:proof.source.id,...(proof.source.kind?{kind:proof.source.kind}:{})}):null;
+        if(record!==null)mapping.run(targetIds.get(canonicalizeIdentity(d.target).canonicalIdentityJson)!,record);
+      }
+      this.db.prepare('DELETE FROM brief_producer_status WHERE producer_plugin_id=? AND source_provider=? AND canonical_keys_json=? AND attempt_revision<?').run('thread-brief',command.source.provider,command.source.canonicalKeysJson,command.revision);
+      const accepted=reply('applied','installed',result.signal);check();return accepted;
+    })();
+  }
+
+  reportProducerStatus(input:ProducerReportStatusInput):{response:ProducerReportStatusOutput;changed:boolean} {
+    if(utf8ByteLength(JSON.stringify(input))>BRIEF_LIMITS.statusBytes)throw new Error('Producer status exceeds its byte bound.');
+    const a=producerReportStatusInputSchema.parse(input),source=canonicalizeIdentity(a.source);
+    return this.db.transaction(()=>{
+      const stateInput:ProducerGetStateInput={version:1,producerPluginId:'thread-brief',source:a.source};const state=this.producerState(stateInput),s=state.status,g=state.projection?.revision??0;
+      const reply=(outcome:ProducerReportStatusOutput['outcome'],changed=false)=>({response:{version:1 as const,outcome,state:this.producerState(stateInput)},changed});
+      if(s?.attemptRevision===a.attemptRevision&&s.statusDigest===a.statusDigest)return reply('duplicate');
+      if(a.attemptRevision<=g||s&&a.attemptRevision<s.attemptRevision)return reply('stale');
+      if(s?.attemptRevision===a.attemptRevision)return reply('conflict');
+      if(a.expectedRevision!==g)return reply('cas-mismatch');
+      this.db.prepare(`INSERT INTO brief_producer_status(producer_plugin_id,source_provider,canonical_keys_json,source_file_json,attempt_revision,status_digest,state,raw_sha,limit_codes_json,identity_codes_json,reported_at) VALUES ('thread-brief',?,?,?,?,?,?,?,?,?,?)
+        ON CONFLICT(producer_plugin_id,source_provider,canonical_keys_json) DO UPDATE SET source_file_json=excluded.source_file_json,attempt_revision=excluded.attempt_revision,status_digest=excluded.status_digest,state=excluded.state,raw_sha=excluded.raw_sha,limit_codes_json=excluded.limit_codes_json,identity_codes_json=excluded.identity_codes_json,reported_at=excluded.reported_at`)
+        .run(source.provider,source.canonicalKeysJson,canonicalJson(a.sourceFile),a.attemptRevision,a.statusDigest,a.status.state,a.status.sourceContentRevision,canonicalJson([...a.status.limits].sort()),canonicalJson('identityReasons' in a.status?[...a.status.identityReasons].sort():[]),Date.now());
+      return reply('recorded',true);
+    })();
+  }
+
   getProjection(input: { producerPluginId: string; source: { provider: string; keys: Record<string, string> } }): GetProjectionResponse {
     const producerPluginId = validateProducerPluginId(input.producerPluginId);
     const sourceIdentity = normalizeIdentityInput(input.source);
@@ -650,6 +899,232 @@ export class CrossReferenceStore {
       if (timeChanged && signals.length === 0) signals.push({
         protocolVersion: 1, producerPluginId: "cross-references", sourceIdentityDigest: canonicalSource.identityDigest,
         revision: projection.revision, affectedIdentityDigests: [canonicalSource.identityDigest, ...selected.map((row) => canonicalizeResource(row.target).identityDigest)],
+      });
+      return signals;
+    })();
+  }
+
+  /** Internal product-store view, intentionally not exposed through strict v1 RPCs. */
+  mentionState(source: {provider:string;keys:Record<string,string>}): {
+    revision:number; digest:string|null; coverage: MentionScan["coverage"]|null; edgeCaps:MentionEdgeCap[];
+    occurrences:Array<ObservedMention & {occurrenceKey:string;observedAt:number;confirmed:boolean}>;
+  } {
+    const resource=this.findResource(canonicalizeIdentity(source));
+    if(!resource)return {revision:0,digest:null,coverage:null,edgeCaps:[],occurrences:[]};
+    const stream=this.db.prepare(`SELECT * FROM mention_streams WHERE producer_plugin_id = 'cross-references' AND source_resource_id = ?`).get(resource.id) as any;
+    if(!stream)return {revision:0,digest:null,coverage:null,edgeCaps:[],occurrences:[]};
+    const projection=this.getProjection({producerPluginId:'cross-references',source}).projection;
+    const targets=new Map((projection?.targets??[]).map(t=>[canonicalizeResource(t).canonicalIdentityJson,t]));
+    const caps=new Map<string,MentionEdgeCap>((projection?.targets??[]).map(t=>{
+      const identity=canonicalizeResource(t);
+      return [identity.canonicalIdentityJson,{target:{provider:identity.provider,keys:identity.keys},state:'uncapped'}];
+    }));
+    const capRows=this.db.prepare(`SELECT r.provider, r.canonical_keys_json, c.state FROM mention_edge_caps c
+      JOIN resources r ON r.id = c.target_resource_id
+      WHERE c.producer_plugin_id = 'cross-references' AND c.source_resource_id = ?`).all(resource.id) as Array<OccurrenceIdentityRow & {state:'capped'|'unknown'}>;
+    for(const row of capRows){const identity=identityFromRow(row);caps.set(identity.canonicalIdentityJson,{target:{provider:identity.provider,keys:identity.keys},state:row.state});}
+    const edgeCaps=[...caps].sort(([a],[b])=>a<b?-1:a>b?1:0).map(([,cap])=>cap);
+    const rows=this.db.prepare(`SELECT m.*, r.provider, r.canonical_keys_json, e.state excerpt_state, e.source_content_revision excerpt_content_revision,
+        e.codec_version,e.excerpt_text,e.excerpt_source_start,e.excerpt_source_end,e.match_start,e.match_end,
+        e.clipped_before,e.clipped_after,e.match_clipped_before,e.match_clipped_after,e.unavailable_reason FROM mention_occurrences m
+      JOIN resources r ON r.id = m.target_resource_id
+      JOIN source_projections p ON p.producer_plugin_id=m.producer_plugin_id AND p.source_resource_id=m.source_resource_id AND p.tombstone=0
+      JOIN reference_occurrences o ON o.projection_id=p.id AND o.target_resource_id=m.target_resource_id
+      LEFT JOIN mention_excerpts e ON e.producer_plugin_id=m.producer_plugin_id AND e.source_resource_id=m.source_resource_id
+        AND e.target_resource_id=m.target_resource_id AND e.occurrence_key=m.occurrence_key WHERE m.producer_plugin_id = 'cross-references' AND m.source_resource_id = ?
+      ORDER BY m.target_resource_id, m.occurrence_key`).all(resource.id) as any[];
+    return {revision:stream.evidence_revision,digest:stream.evidence_digest,coverage:{...JSON.parse(stream.coverage_json),capHistoryUnknown:stream.cap_history_unknown===1},edgeCaps,
+      occurrences:rows.map(row=>{
+        const identity=canonicalizeIdentity({provider:row.provider,keys:JSON.parse(row.canonical_keys_json)});
+        const target=targets.get(identity.canonicalIdentityJson);
+        if(!target)throw new Error('Location without an active producer edge.');
+        return {target,locator:JSON.parse(row.source_locator_json),sourceContentRevision:row.source_content_revision,
+          span:{start:row.span_start,end:row.span_end},messageCreatedAt:row.message_created_at,
+          provenance:JSON.parse(row.provenance_json),authoredUrlState:row.authored_url_state,...(row.exact_authored_href===null?{}:{exactAuthoredHref:row.exact_authored_href}),
+          ...(row.excerpt_state==null?{}:{excerpt:persistedExcerpt(row,row.source_content_revision) as import('@phosphorco/bb-cross-references').ExcerptRecordV2}),occurrenceKey:row.occurrence_key,observedAt:row.observed_at,confirmed:row.confirmed_in_scan===1};
+      })};
+  }
+
+  /** Commit edge claims and bounded locations together inside the collector's
+   * existing generation fence. v1 count/digest/revision semantics stay intact. */
+  replaceConversationMentions(source:Resource, scan:MentionScan, deleted=false):CrossReferencesChangedSignal[] {
+    const canonicalSource=canonicalizeResource(source);
+    // Resources carry presentation; identity-only store/v1 readers deliberately
+    // reject it. Project the validated identity explicitly at every boundary.
+    const sourceIdentity={provider:canonicalSource.provider,keys:canonicalSource.keys};
+    const normalized=scan.occurrences.map(({target,...location})=>({target:serializeResource(canonicalizeResource(target)),...MentionLocationSchema.parse(location)}));
+    const bodies=new Map<string,{body:string;frame:ReturnType<typeof mentionFrame>;hrefs:Map<string,string>;revision:string}>();
+    for(const row of normalized) {
+      const state=row.authoredUrlState??'unknown';
+      if((state==='exact')!==(row.exactAuthoredHref!==undefined))throw new Error('Inconsistent authored URL state.');
+      if(row.excerpt?.state==='ready'||state==='exact'){
+        let proof=bodies.get(row.locator.messageId);
+        if(!proof){const body=scan.sourceBodies?.get(row.locator.messageId);if(body===undefined||body.length>MENTION_LIMITS.messageChars)throw new Error('Admitted source body required for new evidence proof.');
+          const frame=mentionFrame(body);proof={body,frame,hrefs:new Map(frame.links.flatMap(l=>l.authoredHref?[[`${l.span.start}:${l.span.end}`,l.authoredHref] as const]:[])),revision:sha256Hex(body)};bodies.set(row.locator.messageId,proof);}
+        if(proof.revision!==row.sourceContentRevision||row.span.end>proof.body.length)throw new Error('Evidence source body binding mismatch.');
+        if(state==='exact'&&proof.body.slice(row.span.start,row.span.end)!==row.exactAuthoredHref&&
+          proof.hrefs.get(`${row.span.start}:${row.span.end}`)!==row.exactAuthoredHref)throw new Error('Authored destination lacks original spelling proof.');
+        const ex=row.excerpt;
+        if(ex?.state==='ready'){
+          if(!isUtf16CodePointBoundary(proof.body,ex.sourceSpan.start)||!isUtf16CodePointBoundary(proof.body,ex.sourceSpan.end)||
+             !isUtf16CodePointBoundary(proof.body,row.span.start)||!isUtf16CodePointBoundary(proof.body,row.span.end))throw new Error('Excerpt source offsets split a UTF16 code point.');
+          if(proof.body.slice(ex.sourceSpan.start,ex.sourceSpan.end)!==ex.text||ex.sourceSpan.end>proof.body.length||
+             ex.matchSpan.start!==Math.max(0,row.span.start-ex.sourceSpan.start)||ex.matchSpan.end!==Math.min(row.span.end,ex.sourceSpan.end)-ex.sourceSpan.start||
+             ex.matchClippedBefore!==(ex.sourceSpan.start>row.span.start)||ex.matchClippedAfter!==(ex.sourceSpan.end<row.span.end))throw new Error('Excerpt does not prove its original slice.');
+          // Sorted forbidden intervals; only a local predecessor/next seek is needed.
+          const holes=proof.frame.forbidden;let lo=0,hi=holes.length;
+          while(lo<hi){const mid=(lo+hi)>>>1;if(holes[mid]!.end<=ex.sourceSpan.start)lo=mid+1;else hi=mid;}
+          if(holes[lo]&&holes[lo]!.start<ex.sourceSpan.end)throw new Error('Excerpt crosses excluded source content.');
+        }
+      }
+      if(row.locator.threadId!==source.keys.thread)throw new Error('Location belongs to another source.');
+      // The adapter, rather than an opaque raw id parser, defines the mapping.
+      if(row.target.provider==='recognition' || row.provenance.source.provider==='bb.file' || row.provenance.verifiedFile){
+        const file=row.provenance.verifiedFile;
+        if(row.provenance.source.provider==='bb.file' && !file)throw new Error('Native file assertion requires verified frame metadata.');
+        if(file && row.provenance.source.provider!=='bb.file')throw new Error('Verified file metadata requires a native file source.');
+        if(file?.kind==='thread-storage' && file.threadId!==sourceIdentity.keys.thread)throw new Error('File storage owner does not match its source.');
+        const mapped=file?verifiedFileIdentity(file):recognitionIdentity(row.provenance.source);
+        if(canonicalizeIdentity(mapped).canonicalIdentityJson!==canonicalizeResource(row.target).canonicalIdentityJson)throw new Error('Recognition identity mapping mismatch.');
+      }
+    }
+    return this.db.transaction(()=>{
+      const prior=this.mentionState(sourceIdentity);
+      const now=Date.now(), fullyObserved=new Set(scan.observedMessageIds), scanned=new Set(scan.scannedMessageIds), failed=new Set(scan.failedSuppliers);
+      const retained:Array<ObservedMention & {occurrenceKey:string;observedAt:number;confirmed:boolean}>=[];
+      const incoming=normalized.map(row=>({...row,occurrenceKey:mentionKey(row),observedAt:now,confirmed:true}));
+      const byLocation=new Map(incoming.map(row=>[row.occurrenceKey,row]));
+      if(!deleted)for(const row of prior.occurrences){
+        const supplierUncertain=row.provenance.origin==='contributed' && (scan.discoveryIncomplete || failed.has(row.provenance.pluginId));
+        const missingMessage=scan.coverage.timelineComplete && !scanned.has(row.locator.messageId);
+        if(missingMessage)continue;
+        const replacement=byLocation.get(row.occurrenceKey);
+        if(replacement) {
+          // A transport failure is not evidence that a typed observation went
+          // away. Keep it unconfirmed instead of adding a second generic edge.
+          if(supplierUncertain && replacement.provenance.source.provider==='bb.url' && replacement.sourceContentRevision===row.sourceContentRevision){
+            byLocation.delete(row.occurrenceKey);retained.push({...row,confirmed:false});
+          }
+          continue;
+        }
+        if(!fullyObserved.has(row.locator.messageId) || supplierUncertain)retained.push({...row,confirmed:false});
+      }
+      const groups=new Map<string,typeof retained>();
+      const groupKeys=new Map<string,Set<string>>();
+      for(const row of deleted?[]:[...byLocation.values(),...retained]){
+        const key=canonicalizeResource(row.target).canonicalIdentityJson;
+        const group=groups.get(key)??[];
+        const keys=groupKeys.get(key)??new Set<string>();
+        if(!keys.has(row.occurrenceKey)){keys.add(row.occurrenceKey);group.push(row);}
+        groupKeys.set(key,keys);groups.set(key,group);
+      }
+      const incomplete=!scan.coverage.timelineComplete || scan.coverage.reasons.length>0 || scan.discoveryIncomplete || failed.size>0;
+      let capHistoryUnknown=!deleted && incomplete && prior.coverage?.capHistoryUnknown===true;
+      const durableCaps=new Map<string,MentionEdgeCap>();
+      if(incomplete && !deleted)for(const cap of prior.edgeCaps)if(cap.state!=='uncapped')durableCaps.set(canonicalizeIdentity(cap.target).canonicalIdentityJson,cap);
+      // A bounded sample cannot prove that earlier clipping stopped. Reset only
+      // after sufficient complete observation or this producer/source tombstone.
+      let retentionLimited=!deleted && (scan.coverage.retentionLimited || (incomplete && prior.coverage?.retentionLimited===true));
+      const ordered=[...groups].map(([key,rows])=>({key,rows:rows.sort((a,b)=>b.messageCreatedAt-a.messageCreatedAt || a.locator.messageId.localeCompare(b.locator.messageId) || a.span.start-b.span.start || a.occurrenceKey.localeCompare(b.occurrenceKey))}))
+        .sort((a,b)=>b.rows[0]!.messageCreatedAt-a.rows[0]!.messageCreatedAt || a.key.localeCompare(b.key));
+      if(ordered.length>MENTION_LIMITS.targets)retentionLimited=true;
+      const selectedGroups=ordered.slice(0,MENTION_LIMITS.targets);
+      const kept=selectedGroups.flatMap(group=>{
+        if(group.rows.length>MENTION_LIMITS.perEdge){
+          retentionLimited=true;
+          const identity=canonicalizeResource(group.rows[0]!.target);
+          durableCaps.set(group.key,{target:{provider:identity.provider,keys:identity.keys},state:'capped'});
+        }
+        return group.rows.slice(0,MENTION_LIMITS.perEdge);
+      });
+      const observations:ObservedReference[]=selectedGroups.map(group=>({target:group.rows[0]!.target,lastSeenAt:group.rows[0]!.messageCreatedAt}));
+      // Pre-migration native claims lack locations. An incomplete scan cannot
+      // withdraw them. Known located claims follow the message/supplier scope.
+      const current=this.getProjection({producerPluginId:'cross-references',source:sourceIdentity}).projection;
+      const located=new Set(prior.occurrences.map(row=>canonicalizeResource(row.target).canonicalIdentityJson));
+      if(incomplete && !deleted)for(const target of current?.targets??[]){
+        if(!located.has(canonicalizeResource(target).canonicalIdentityJson))observations.push({target,lastSeenAt:null});
+      }
+      // Retained claims keep the original v1 lastSeenAt meaning and time, even
+      // when the newest location was clipped by the bounded retained sample.
+      if(incomplete){
+        const times=this.listForwardReferences({source:sourceIdentity,producerPluginId:'cross-references',pageSize:100});
+        let page=times;
+        const priorTimes=new Map<string,number|null>();
+        while(true){for(const row of page.rows)priorTimes.set(canonicalizeResource(row.target).canonicalIdentityJson,row.lastSeenAt??null);
+          if(!page.nextCursor)break;page=this.listForwardReferences({source:sourceIdentity,producerPluginId:'cross-references',pageSize:100,cursor:page.nextCursor});}
+        for(const row of observations)row.lastSeenAt=Math.max(row.lastSeenAt??-1,priorTimes.get(canonicalizeResource(row.target).canonicalIdentityJson)??-1);
+        for(const row of observations)if(row.lastSeenAt===-1)row.lastSeenAt=null;
+      }
+      // Fit the existing exact v1 payload before its strict writer runs. Measure
+      // canonical target JSON once and add comma bytes, rather than serializing
+      // an ever-growing projection on every candidate. Ordering/dedup matches
+      // the existing native edge selector; no protocol cap is relaxed.
+      const candidates=new Map<string,{target:Resource;lastSeenAt:number|null;canonical:CanonicalResource}>();
+      for(const row of observations){const canonical=canonicalizeResource(row.target),key=canonical.canonicalIdentityJson,prior=candidates.get(key);
+        if(!prior || (row.lastSeenAt??-1)>(prior.lastSeenAt??-1))candidates.set(key,{...row,canonical});}
+      const ranked=[...candidates].sort(([a,ar],[b,br])=>(br.lastSeenAt??-1)-(ar.lastSeenAt??-1) || (a<b?-1:a>b?1:0));
+      const fitted:ObservedReference[]=[];
+      let payloadBytes=utf8ByteLength(projectionPayloadJson('cross-references',canonicalSource,deleted,[])),payloadLimited=false;
+      for(const [,row] of ranked.slice(0,MENTION_LIMITS.targets)){
+        const extra=utf8ByteLength(JSON.stringify(serializeResource(row.canonical)))+(fitted.length?1:0);
+        if(payloadBytes+extra>MAX_PROJECTION_PAYLOAD_BYTES){payloadLimited=true;continue;}
+        fitted.push({target:row.target,lastSeenAt:row.lastSeenAt});payloadBytes+=extra;
+      }
+      if(payloadLimited){retentionLimited=true;capHistoryUnknown=true;}
+      const signals=this.replaceObservedThreadReferences(source,fitted,true,deleted);
+      const sourceId=this.findResource(canonicalSource)!.id;
+      const active=this.getProjection({producerPluginId:'cross-references',source:sourceIdentity}).projection!;
+      const activeKeys=new Set(active.targets.map(t=>canonicalizeResource(t).canonicalIdentityJson));
+      const final=kept.filter(row=>activeKeys.has(canonicalizeResource(row.target).canonicalIdentityJson));
+      if(final.length!==kept.length)retentionLimited=true;
+      // Only retained graph targets get keyed metadata. Remember any discarded
+      // clipping with one source bit rather than accumulating inactive targets.
+      for(const key of durableCaps.keys())if(!activeKeys.has(key)){durableCaps.delete(key);capHistoryUnknown=true;}
+      const priorActiveKeys=new Set((current?.targets??[]).map(target=>canonicalizeResource(target).canonicalIdentityJson));
+      if(capHistoryUnknown && incomplete)for(const target of active.targets){
+        const identity=canonicalizeResource(target),key=identity.canonicalIdentityJson;
+        if(!priorActiveKeys.has(key) && !durableCaps.has(key))durableCaps.set(key,{target:{provider:identity.provider,keys:identity.keys},state:'unknown'});
+      }
+      const edgeCaps=[...durableCaps].sort(([a],[b])=>a<b?-1:a>b?1:0).map(([,cap])=>cap);
+      retentionLimited=retentionLimited || edgeCaps.length>0 || capHistoryUnknown;
+      const coverage={...scan.coverage,retentionLimited,capHistoryUnknown,
+        reasons:[...new Set([...scan.coverage.reasons,...(payloadLimited?['projection-payload-budget']:[])])].sort()};
+      const digest=sha256Hex(canonicalJson({boundGraphRevision:active.revision,coverage,edgeCaps,locations:final.map(row=>({target:canonicalizeResource(row.target).canonicalIdentityJson,
+        locator:row.locator,sourceContentRevision:row.sourceContentRevision,span:row.span,messageCreatedAt:row.messageCreatedAt,
+        provenance:row.provenance,confirmed:row.confirmed,excerpt:row.excerpt??null,authoredUrlState:row.authoredUrlState??'unknown',exactAuthoredHref:row.exactAuthoredHref??null})).sort((a,b)=>canonicalJson(a).localeCompare(canonicalJson(b)))}));
+      const revision=prior.revision+(digest!==prior.digest?1:0);
+      this.db.prepare(`INSERT INTO mention_streams (producer_plugin_id, source_resource_id, evidence_revision, evidence_digest, collector_version, coverage_json, last_successful_scan_at, cap_history_unknown,bound_graph_revision) VALUES ('cross-references', ?, ?, ?, 2, ?, ?, ?, ?)
+        ON CONFLICT(producer_plugin_id,source_resource_id) DO UPDATE SET evidence_revision=excluded.evidence_revision,
+        evidence_digest=excluded.evidence_digest,coverage_json=excluded.coverage_json,last_successful_scan_at=excluded.last_successful_scan_at,cap_history_unknown=excluded.cap_history_unknown,bound_graph_revision=excluded.bound_graph_revision,collector_version=2`)
+        .run(sourceId,revision,digest,canonicalJson(coverage),now,capHistoryUnknown?1:0,active.revision);
+      this.db.prepare(`DELETE FROM mention_edge_caps WHERE producer_plugin_id = 'cross-references' AND source_resource_id = ?`).run(sourceId);
+      const insertCap=this.db.prepare(`INSERT INTO mention_edge_caps VALUES ('cross-references', ?, ?, ?)`);
+      for(const cap of edgeCaps){
+        const target=this.findResource(canonicalizeIdentity(cap.target));
+        if(!target)throw new Error('Cap state without a retained resource identity.');
+        insertCap.run(sourceId,target.id,cap.state);
+      }
+      this.db.prepare(`DELETE FROM mention_occurrences WHERE producer_plugin_id = 'cross-references' AND source_resource_id = ?`).run(sourceId);
+      const insert=this.db.prepare(`INSERT INTO mention_occurrences(producer_plugin_id,source_resource_id,target_resource_id,occurrence_key,source_locator_json,source_content_revision,span_start,span_end,message_created_at,observed_at,provenance_json,confirmed_in_scan,authored_url_state,exact_authored_href)
+        VALUES ('cross-references', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+      const insertExcerpt=this.db.prepare(`INSERT INTO mention_excerpts VALUES ('cross-references',?,?,?,?,1,?,?,?,?,?,?,?,?,?,?,?)`);
+      for(const row of final){
+        const targetId=this.findResource(canonicalizeResource(row.target))!.id;
+        if(row.target.provider==='recognition')this.db.prepare(`INSERT INTO recognized_resources VALUES (?, ?, 1)
+          ON CONFLICT(resource_id) DO NOTHING`).run(targetId,row.provenance.verifiedFile?verifiedFileIdentityRecord(row.provenance.verifiedFile):recognitionIdentityRecord(row.provenance.source));
+        insert.run(sourceId,targetId,row.occurrenceKey,canonicalJson(row.locator),row.sourceContentRevision,row.span.start,row.span.end,
+          row.messageCreatedAt,row.observedAt,canonicalJson(row.provenance),row.confirmed?1:0,row.authoredUrlState??'unknown',row.exactAuthoredHref??null);
+        const ex=row.excerpt;
+        if(ex)insertExcerpt.run(sourceId,targetId,row.occurrenceKey,row.sourceContentRevision,ex.state,ex.state==='ready'?ex.text:null,
+          ex.state==='ready'?ex.sourceSpan.start:null,ex.state==='ready'?ex.sourceSpan.end:null,ex.state==='ready'?ex.matchSpan.start:null,ex.state==='ready'?ex.matchSpan.end:null,
+          ex.state==='ready'&&ex.clippedBefore?1:0,ex.state==='ready'&&ex.clippedAfter?1:0,ex.state==='ready'&&ex.matchClippedBefore?1:0,ex.state==='ready'&&ex.matchClippedAfter?1:0,ex.state==='unavailable'?ex.reason:null);
+      }
+      if(digest!==prior.digest && signals.length===0)signals.push({
+        protocolVersion:1,producerPluginId:'cross-references',sourceIdentityDigest:canonicalSource.identityDigest,
+        revision:active.revision,affectedIdentityDigests:[...new Set([canonicalSource.identityDigest,
+          ...active.targets.map(t=>canonicalizeResource(t).identityDigest),
+          ...prior.edgeCaps.map(cap=>canonicalizeIdentity(cap.target).identityDigest)])],
       });
       return signals;
     })();

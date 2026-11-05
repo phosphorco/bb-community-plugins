@@ -101,3 +101,13 @@ and all DOM peers stay external and optional for non-React consumers.
 SDK 0.5.29 `/testing/app` additionally requires its optional
 `@testing-library/react@16.3.2` peer; the packed probe provisions it only in
 scratch along with React/React DOM and jsdom.
+
+In 0.5.0, `nativeCandidates` is a pure native thread/file/URL helper for consumers
+that need a fallback when suppliers are absent. It uses original UTF-16 spans,
+respects explicit exclusions and has no SDK or DOM runtime dependency. Consumers
+own Markdown grammar, target verification, scheduling and durable evidence.
+
+Hosted presentation registrations accept zero through sixteen owner RPC method names. An empty list makes every owner RPC unavailable; failed views retain the data fallback and use the registration label (or “Hosted”) in the failure message.
+
+
+Hosted registrations may declare `supportsExpansion: false` when a separate expanded card adds no content. Consumers may omit their per-card Expand control in that case; omitted metadata preserves the existing expansion behavior. This is a presentation affordance hint, not readiness or action authority. It does not prevent hosting the same component with `mode: 'full'` when the surrounding surface itself is full size. Older compatible v1 registry copies can read the immutable entry, and older consumers may ignore this additive metadata.

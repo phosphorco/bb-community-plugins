@@ -34,12 +34,15 @@
     "bbPluginSdk": ">=0.6.52"
   },
   "bb": {
-    "name": "Agentation \u2192 Mentions",
+    "name": "Agentation → Mentions",
     "description": "Based on Agentation by Scott Sunarto; adds bb mentions, queued delivery, and verified identity tags to visual feedback.",
     "branding": {
-      "icon": "AtSign",
+      "icon": "./icons/annotate.svg",
       "logo": {
         "light": "./assets/icon-32.png"
+      },
+      "experimental_icons": {
+        "annotate": "./icons/annotate.svg"
       }
     },
     "server": "./server.ts",
@@ -72,7 +75,8 @@
     "app.css",
     "lib/",
     "components/",
-    "hooks/"
+    "hooks/",
+    "icons/"
   ],
   "dependencies": {
     "@hugeicons/core-free-icons": "4.2.3",

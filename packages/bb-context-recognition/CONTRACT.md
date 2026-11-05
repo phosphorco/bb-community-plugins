@@ -830,3 +830,18 @@ teardown and error presentation; the package creates no retry timers.
 The 0.4.1 optional SDK peer range includes `^0.5.29 || ^0.6.29`. Packed source
 probes cover registry SDK 0.5.29 and the selected 0.6.29 fork artifact when supplied;
 this does not establish all future SDK versions or live host behavior.
+
+### Pure native candidates (package 0.5.0)
+
+The root entry exports `nativeCandidates(input, bbOrigin?, provider?)`, extracted
+from Thread Brief's cheap native recognition helper. It validates the unchanged
+bounded v1 linkify input, returns BB thread/file/URL candidates at UTF-16 offsets,
+respects excluded ranges, and performs no I/O, storage or scheduling. Files stay
+thread-framed candidates; thread/file existence checks belong to the consumer.
+The consumer supplies Markdown admission, link-destination windows and arbitration.
+This helper does not own contextual PR grammar or introduce a new wire method.
+Existing entry exports/peer ranges stay stable. Organization adoption is deferred;
+emitted-entry fixtures establish source behavior, not a live host composition.
+
+
+Hosted registrations may declare `supportsExpansion: false` when a separate expanded card adds no content. Consumers may omit their per-card Expand control in that case; omitted metadata preserves the existing expansion behavior. This is a presentation affordance hint, not readiness or action authority. It does not prevent hosting the same component with `mode: 'full'` when the surrounding surface itself is full size. Older compatible v1 registry copies can read the immutable entry, and older consumers may ignore this additive metadata.

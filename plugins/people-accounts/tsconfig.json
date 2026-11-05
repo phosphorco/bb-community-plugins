@@ -1,0 +1,28 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "exactOptionalPropertyTypes": false,
+    "jsx": "react-jsx",
+    "lib": [
+      "ES2023",
+      "DOM",
+      "DOM.Iterable"
+    ],
+    "paths": {
+      "@/*": [
+        "./*"
+      ]
+    },
+    "types": [
+      "node",
+      "bun"
+    ]
+  },
+  "include": [
+    "*.ts",
+    "*.tsx",
+    "cli",
+    "lib",
+    "test"
+  ]
+}

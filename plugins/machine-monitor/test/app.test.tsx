@@ -175,6 +175,145 @@ afterEach(async () => {
   vi.unstubAllGlobals();
 });
 
+test("defaults to a compact all-machines section that reads no timeline and links to each machine", async () => {
+  const app = await loadPluginApp(() => import("../app.tsx"));
+  const timelines: string[] = [];
+  const ranges: Array<{ startMs: number; endMs: number }> = [];
+  const slot = renderSlot(app.navPanels[0]!, { subPath: "" }, {
+    pluginId: "machine-monitor",
+    rpc: fleetRpc(() => overview(), (request) => { timelines.push(request.machine.machineId); ranges.push(request.range); return timeline(request); }),
+  } as any);
+
+  const table = await slot.findByRole("table", { name: "All machines" });
+  expect(table.querySelectorAll("tbody tr")).toHaveLength(2);
+  expect(slot.queryByRole("heading", { name: "Fleet overview" })).toBeNull();
+  const view = slot.getByRole("combobox", { name: "Machine Monitor view" }) as HTMLSelectElement;
+  expect(view.selectedOptions[0]?.textContent).toBe("All (2)");
+  const link = slot.getByRole("link", { name: /Bravo/ }) as HTMLAnchorElement;
+  expect(link.getAttribute("href")).toBe("/plugins/machine-monitor/machine-monitor/machine/enrolled-host%3Amachine-bravo");
+  expect(timelines).toEqual([]);
+  // Focus intentionally prefetches this machine's timeline (bounded intent).
+  link.focus();
+  fireEvent.click(link);
+  expect(slot.navigateCalls.at(-1)).toEqual({ method: "toPluginPanel", path: "machine-monitor", options: { subPath: "machine/enrolled-host:machine-bravo", replace: false } });
+  expect(Array.from(table.querySelectorAll("tbody .machine-monitor__compact-seen")).map((cell) => cell.textContent)).toEqual(["Now", "Now"]);
+
+  const Panel = app.navPanels[0]!.component as import("react").ComponentType<{ subPath: string }>;
+  slot.lifecycle.rerender(<Panel subPath="machine/enrolled-host%3Amachine-bravo" />);
+  await slot.findByRole("img", { name: /Operational history for machine-bravo/ });
+  expect(timelines).toEqual(["machine-bravo"]);
+  // Entering from a section anchors history to server time, not the epoch.
+  expect(ranges).toEqual([{ startMs: 0, endMs: 1_000 }]);
+  const selected = slot.getByRole("combobox", { name: "Selected machine" }) as HTMLSelectElement;
+  expect(selected.selectedOptions[0]?.textContent).toBe("Bravo");
+  // The focused link unmounted with the section; focus lands on the switcher.
+  expect(document.activeElement).toBe(selected);
+  fireEvent.change(selected, { target: { value: "section:all" } });
+  expect(slot.navigateCalls.at(-1)).toEqual({ method: "toPluginPanel", path: "machine-monitor", options: { subPath: "section/all" } });
+  slot.lifecycle.unmount();
+});
+
+test("an explicitly routed machine that appears later replaces the fallback selection", async () => {
+  const app = await loadPluginApp(() => import("../app.tsx"));
+  let machines = [machine(alpha, "Alpha")];
+  const slot = renderSlot(app.navPanels[0]!, { subPath: "machine/enrolled-host:machine-bravo" }, {
+    rpc: fleetRpc(() => overview(machines), (request) => timeline(request)),
+  } as any);
+  await slot.findByRole("img", { name: /Operational history for machine-alpha/ });
+  machines = [machine(alpha, "Alpha"), machine(bravo, "Bravo")];
+  void slot.behavior.emitRealtime("machine-monitor-fleet", { machine: bravo, dataRevision: 2, settingsRevision: 1, kinds: ["collection"] });
+  await slot.findByRole("img", { name: /Operational history for machine-bravo/ });
+  expect((slot.getByRole("combobox", { name: "Selected machine" }) as HTMLSelectElement).selectedOptions[0]?.textContent).toBe("Bravo");
+  slot.lifecycle.unmount();
+});
+
+test("a routed machine missing at navigation replaces the retained selection when it appears", async () => {
+  const app = await loadPluginApp(() => import("../app.tsx"));
+  const Panel = app.navPanels[0]!.component as import("react").ComponentType<{ subPath: string }>;
+  let machines = [machine(alpha, "Alpha")];
+  const slot = renderSlot(app.navPanels[0]!, { subPath: "machine/enrolled-host:machine-alpha" }, {
+    rpc: fleetRpc(() => overview(machines), (request) => timeline(request)),
+  } as any);
+  await slot.findByRole("img", { name: /Operational history for machine-alpha/ });
+  slot.lifecycle.rerender(<Panel subPath="machine/enrolled-host:machine-bravo" />);
+  machines = [machine(alpha, "Alpha"), machine(bravo, "Bravo")];
+  void slot.behavior.emitRealtime("machine-monitor-fleet", { machine: bravo, dataRevision: 2, settingsRevision: 1, kinds: ["collection"] });
+  await slot.findByRole("img", { name: /Operational history for machine-bravo/ });
+  slot.lifecycle.unmount();
+});
+
+test("another user's saved sections reach an open reader through realtime", async () => {
+  const app = await loadPluginApp(() => import("../app.tsx"));
+  const machines = [machine(alpha, "b1-hel"), machine(bravo, "palani-gort")];
+  const slot = renderSlot(app.navPanels[0]!, { subPath: "" }, {
+    settings: { machineSections: `* "All"` },
+    rpc: fleetRpc(() => overview(machines), (request) => timeline(request)),
+  } as any);
+  const view = await slot.findByRole("combobox", { name: "Machine Monitor view" }) as HTMLSelectElement;
+  const sectionOptions = () => Array.from(view.querySelectorAll('optgroup[label="Sections"] option')).map((option) => option.textContent);
+  expect(sectionOptions()).toEqual(["All (2)"]);
+  await slot.behavior.emitRealtime("machine-monitor-sections", { text: `b*-hel "Builders"\n* "All"` });
+  await waitFor(() => expect(sectionOptions()).toEqual(["Builders (1)", "All (2)"]));
+  // The default page follows the new first section.
+  expect(slot.getByRole("table", { name: "Builders machines" }).querySelectorAll("tbody tr")).toHaveLength(1);
+  const editor = slot.getByRole("textbox", { name: "Machine sections" }) as HTMLTextAreaElement;
+  expect(editor.value).toBe(`b*-hel "Builders"\n* "All"`);
+  fireEvent.change(editor, { target: { value: "" } });
+  expect(editor.getAttribute("aria-invalid")).toBe("true");
+  expect(document.getElementById(editor.getAttribute("aria-describedby")!.split(" ")[1]!)?.textContent).toContain("Add at least one section.");
+  expect((slot.getByRole("button", { name: "Save sections" }) as HTMLButtonElement).disabled).toBe(true);
+  slot.lifecycle.unmount();
+});
+
+test("the editor adopts saved sections that load after it mounts", async () => {
+  const app = await loadPluginApp(() => import("../app.tsx"));
+  // No settings yet: the page starts from the built-in default, as it does
+  // while the real settings snapshot loads.
+  const slot = renderSlot(app.navPanels[0]!, { subPath: "" }, {
+    rpc: fleetRpc(() => overview([machine(alpha, "b1-hel")]), (request) => timeline(request)),
+  } as any);
+  const editor = await slot.findByRole("textbox", { name: "Machine sections" }) as HTMLTextAreaElement;
+  expect(editor.value).toBe(`* "All"`);
+  const loaded = `* "All"\nb*-hel "Hetzner Builder"`;
+  await slot.behavior.emitRealtime("machine-monitor-sections", { text: loaded });
+  await waitFor(() => expect(editor.value).toBe(loaded));
+  expect((slot.getByRole("button", { name: "Save sections" }) as HTMLButtonElement).disabled).toBe(true);
+  expect((slot.getByRole("button", { name: "Discard" }) as HTMLButtonElement).disabled).toBe(true);
+  slot.lifecycle.unmount();
+});
+
+test("configured sections filter the compact list and save edits for everyone", async () => {
+  const app = await loadPluginApp(() => import("../app.tsx"));
+  const saved: string[] = [];
+  const machines = [machine(alpha, "b1-hel"), machine(bravo, "palani-gort"), machine({ source: "enrolled-host", machineId: "rosetta" }, "rosetta")];
+  const slot = renderSlot(app.navPanels[0]!, { subPath: "section/hetzner-builder" }, {
+    settings: { machineSections: `* "All"\nb*-hel "Hetzner Builder"\n{palani,cole}-* "Dev Machines"` },
+    rpc: {
+      ...fleetRpc(() => ({ ...overview(machines), generatedAtMs: 1_000 + 2 * 3_600_000 + 5_000 }), (request) => timeline(request)),
+      saveMachineSections: ({ text }: { text: string }) => { saved.push(text); return { text }; },
+    },
+  } as any);
+
+  const table = await slot.findByRole("table", { name: "Hetzner Builder machines" });
+  expect(Array.from(table.querySelectorAll("tbody th")).map((cell) => cell.textContent)).toEqual(["•b1-hel"]);
+  const seen = table.querySelector("tbody time")!;
+  expect(seen.textContent).toBe("2 hr ago");
+  expect(seen.getAttribute("dateTime")).toBe(new Date(1_000).toISOString());
+  const view = slot.getByRole("combobox", { name: "Machine Monitor view" }) as HTMLSelectElement;
+  expect(Array.from(view.querySelectorAll('optgroup[label="Sections"] option')).map((option) => option.textContent)).toEqual(["All (3)", "Hetzner Builder (1)", "Dev Machines (1)"]);
+  expect(Array.from(view.querySelectorAll('optgroup[label="Machines"] option')).map((option) => option.textContent)).toEqual(["b1-hel", "palani-gort", "rosetta"]);
+
+  const editor = slot.getByRole("textbox", { name: "Machine sections" }) as HTMLTextAreaElement;
+  fireEvent.change(editor, { target: { value: `{b1 "Broken"` } });
+  expect(slot.getByText(/Line 1 has an unclosed/)).toBeTruthy();
+  expect((slot.getByRole("button", { name: "Save sections" }) as HTMLButtonElement).disabled).toBe(true);
+  fireEvent.change(editor, { target: { value: `* "Everything"` } });
+  fireEvent.click(slot.getByRole("button", { name: "Save sections" }));
+  await slot.findByText("Saved for everyone.");
+  expect(saved).toEqual([`* "Everything"`]);
+  slot.lifecycle.unmount();
+});
+
 test("bounds the detailed LRU by bytes, rejects oversize entries, and keys exact range plus revision", async () => {
   const rangeA = { startMs: 0, endMs: 60 };
   const rangeB = { startMs: 1, endMs: 61 };
@@ -293,7 +432,7 @@ test("keeps linked references fleet-scoped while preserving add, native navigati
   };
   const updated = { ...attachmentSnapshot, sourceRevision: 1, targets: [target], status: { ...attachmentSnapshot.status, sourceRevision: 1, desiredRevision: 1, state: "pending" as const, pending: true } };
   const replacements: unknown[] = [];
-  const slot = renderSlot(app.navPanels[0]!, { subPath: "" }, {
+  const slot = renderSlot(app.navPanels[0]!, { subPath: "machine" }, {
     rpc: {
       ...fleetRpc(() => overview(), (request) => timeline(request)),
       getAttachments: () => replacements.length === 1 ? updated : attachmentSnapshot,
@@ -334,7 +473,7 @@ test("preserves the latest attachment snapshot and revision after a CAS conflict
   };
   let snapshot = { ...attachmentSnapshot, sourceRevision: 3, targets: [original] };
   const replacements: unknown[] = [];
-  const slot = renderSlot(app.navPanels[0]!, { subPath: "" }, {
+  const slot = renderSlot(app.navPanels[0]!, { subPath: "machine" }, {
     rpc: {
       ...fleetRpc(() => overview(), (request) => timeline(request)),
       getAttachments: () => snapshot,
@@ -372,7 +511,7 @@ test("resolves a same-host BB thread URL without sending it through text search"
   };
   const replacements: unknown[] = [];
   let lookups = 0;
-  const slot = renderSlot(app.navPanels[0]!, { subPath: "" }, {
+  const slot = renderSlot(app.navPanels[0]!, { subPath: "machine" }, {
     rpc: {
       ...fleetRpc(() => overview(), (request) => timeline(request)),
       getAttachments: () => replacements.length === 0
@@ -408,7 +547,7 @@ test("offers arbitrary safe URLs as named external forward references", async ()
     presentation: { label: "Collector runbook", detail: "example.test", url: href },
   };
   const replacements: unknown[] = [];
-  const slot = renderSlot(app.navPanels[0]!, { subPath: "" }, {
+  const slot = renderSlot(app.navPanels[0]!, { subPath: "machine" }, {
     rpc: {
       ...fleetRpc(() => overview(), (request) => timeline(request)),
       getAttachments: () => replacements.length === 0
@@ -433,7 +572,7 @@ test("offers arbitrary safe URLs as named external forward references", async ()
 test("validates external URLs and names against persistence byte limits", async () => {
   const app = await loadPluginApp(() => import("../app.tsx"));
   const replacements: any[] = [];
-  const slot = renderSlot(app.navPanels[0]!, { subPath: "" }, {
+  const slot = renderSlot(app.navPanels[0]!, { subPath: "machine" }, {
     rpc: {
       ...fleetRpc(() => overview(), (request) => timeline(request)),
       getAttachments: () => attachmentSnapshot,
@@ -476,7 +615,7 @@ test("keeps newer search input when a delayed thread selection completes", async
   const lookup = deferred<any>();
   const thread = { id: "thr_delayed", projectId: "proj_delayed", title: "Delayed repair", archived: false };
   const replacements: any[] = [];
-  const slot = renderSlot(app.navPanels[0]!, { subPath: "" }, {
+  const slot = renderSlot(app.navPanels[0]!, { subPath: "machine" }, {
     rpc: {
       ...fleetRpc(() => overview(), (request) => timeline(request)),
       searchThreads: ({ query }: { query: string }) => ({ threads: query === "disk" ? [thread] : [] }),
@@ -502,7 +641,7 @@ test("announces failed BB URL resolution and retries without editing", async () 
   const app = await loadPluginApp(() => import("../app.tsx"));
   const thread = { id: "thr_retry_url", projectId: "proj_retry_url", title: "Recovered thread", archived: false };
   let lookups = 0;
-  const slot = renderSlot(app.navPanels[0]!, { subPath: "" }, {
+  const slot = renderSlot(app.navPanels[0]!, { subPath: "machine" }, {
     rpc: {
       ...fleetRpc(() => overview(), (request) => timeline(request)),
       getThread: () => {
@@ -524,7 +663,7 @@ test("announces failed BB URL resolution and retries without editing", async () 
 test("returns keyboard focus to search after adding a thread", async () => {
   const app = await loadPluginApp(() => import("../app.tsx"));
   const thread = { id: "thr_focus", projectId: "proj_focus", title: "Keyboard repair", archived: false };
-  const slot = renderSlot(app.navPanels[0]!, { subPath: "" }, {
+  const slot = renderSlot(app.navPanels[0]!, { subPath: "machine" }, {
     rpc: {
       ...fleetRpc(() => overview(), (request) => timeline(request)),
       searchThreads: () => ({ threads: [thread] }),
@@ -559,7 +698,7 @@ test("derives a delayed add from the latest attachment snapshot", async () => {
   let snapshot: any = attachmentSnapshot;
   const replacements: any[] = [];
   let attachmentReads = 0;
-  const slot = renderSlot(app.navPanels[0]!, { subPath: "" }, {
+  const slot = renderSlot(app.navPanels[0]!, { subPath: "machine" }, {
     rpc: {
       ...fleetRpc(() => overview(), (request) => timeline(request)),
       getAttachments: () => { attachmentReads += 1; return snapshot; },
@@ -589,7 +728,7 @@ test("never exposes stale search results after the normalized query changes", as
   const first = deferred<any>();
   const second = deferred<any>();
   const searches: string[] = [];
-  const slot = renderSlot(app.navPanels[0]!, { subPath: "" }, {
+  const slot = renderSlot(app.navPanels[0]!, { subPath: "machine" }, {
     rpc: {
       ...fleetRpc(() => overview(), (request) => timeline(request)),
       getAttachments: () => attachmentSnapshot,
@@ -627,7 +766,7 @@ test("retries a failed reconnect refresh and ignores the obsolete pre-reconnect 
     presentation: { label: "Recovered reference", detail: "Project proj_current" },
   };
   let reads = 0;
-  const slot = renderSlot(app.navPanels[0]!, { subPath: "" }, {
+  const slot = renderSlot(app.navPanels[0]!, { subPath: "machine" }, {
     rpc: {
       ...fleetRpc(() => overview(), (request) => timeline(request)),
       getAttachments: () => {
@@ -657,7 +796,7 @@ test("retries a failed reconnect refresh and ignores the obsolete pre-reconnect 
 test("keeps overview resident and reuses a cached timeline without a third RPC", async () => {
   const app = await loadPluginApp(() => import("../app.tsx"));
   const calls: string[] = [];
-  const slot = renderSlot(app.navPanels[0]!, { subPath: "" }, {
+  const slot = renderSlot(app.navPanels[0]!, { subPath: "machine" }, {
     rpc: fleetRpc(() => overview(), (request) => {
       calls.push(request.machine.machineId);
       return timeline(request, { event: true });
@@ -715,7 +854,7 @@ test("renders the daemon-visible static profile after timeline work yields to id
     return 1;
   });
   const app = await loadPluginApp(() => import("../app.tsx"));
-  const slot = renderSlot(app.navPanels[0]!, { subPath: "" }, {
+  const slot = renderSlot(app.navPanels[0]!, { subPath: "machine" }, {
     rpc: fleetRpc(() => overview(), (request) => timeline(request)),
   } as any);
 
@@ -749,7 +888,7 @@ test("retains machine context through telemetry reconciliation without re-readin
     inventoryCalls += 1;
     return originalInventory(request);
   };
-  const slot = renderSlot(app.navPanels[0]!, { subPath: "" }, { rpc } as any);
+  const slot = renderSlot(app.navPanels[0]!, { subPath: "machine" }, { rpc } as any);
 
   await waitFor(() => expect(slot.getAllByText(/Test CPU/).length).toBe(2));
   expect(inventoryCalls).toBe(1);
@@ -788,7 +927,7 @@ test("refreshes retained context after reconnect and discloses a retained-profil
       inventory: { ...result.inventory, cpu: { ...result.inventory.cpu, logicalCores } },
     };
   };
-  const slot = renderSlot(app.navPanels[0]!, { subPath: "" }, { rpc } as any);
+  const slot = renderSlot(app.navPanels[0]!, { subPath: "machine" }, { rpc } as any);
 
   await slot.findByLabelText(/4 logical cores/);
   expect(inventoryCalls).toBe(1);
@@ -831,7 +970,7 @@ test("keeps the atlas in keyboard order while a stale, collector-failing source 
     ],
   });
   const app = await loadPluginApp(() => import("../app.tsx"));
-  const slot = renderSlot(app.navPanels[0]!, { subPath: "" }, {
+  const slot = renderSlot(app.navPanels[0]!, { subPath: "machine" }, {
     rpc: fleetRpc(() => overview([healthy, degraded]), (request) => timeline(request)),
   } as any);
 
@@ -873,7 +1012,7 @@ test("coalesces uncached selection work and disables retained other-machine even
   const bravoPending = deferred<any>();
   const calls: string[] = [];
   let bravoRequest: any;
-  const slot = renderSlot(app.navPanels[0]!, { subPath: "" }, {
+  const slot = renderSlot(app.navPanels[0]!, { subPath: "machine" }, {
     rpc: fleetRpc(() => overview(), (request) => {
       calls.push(request.machine.machineId);
       if (request.machine.machineId === "machine-bravo") {
@@ -919,7 +1058,7 @@ test("an invalidated selected response cannot reclaim event navigation across a 
   const requests: any[] = [];
   let overviewCalls = 0;
   const app = await loadPluginApp(() => import("../app.tsx"));
-  const slot = renderSlot(app.navPanels[0]!, { subPath: "" }, {
+  const slot = renderSlot(app.navPanels[0]!, { subPath: "machine" }, {
     rpc: fleetRpc(() => {
       overviewCalls += 1;
       return overviewCalls === 1 ? initial : reconciliation.promise;
@@ -1005,7 +1144,7 @@ test("anchors initial, user-selected, and reconciliation ranges to server time d
   let current = first;
   const calls: any[] = [];
   const app = await loadPluginApp(() => import("../app.tsx"));
-  const slot = renderSlot(app.navPanels[0]!, { subPath: "" }, {
+  const slot = renderSlot(app.navPanels[0]!, { subPath: "machine" }, {
     rpc: fleetRpc(() => current, (request) => {
       calls.push(request);
       return timeline(request);
@@ -1036,7 +1175,7 @@ test("bounds focus/pointer prefetch and exposes disconnected, stale, unsupported
   ));
   const app = await loadPluginApp(() => import("../app.tsx"));
   const calls: string[] = [];
-  const slot = renderSlot(app.navPanels[0]!, { subPath: "" }, {
+  const slot = renderSlot(app.navPanels[0]!, { subPath: "machine" }, {
     rpc: fleetRpc(() => overview(machines), (request) => {
       calls.push(request.machine.machineId);
       if (request.machine.machineId === "machine-00") return timeline(request, { empty: true });
@@ -1090,7 +1229,7 @@ test("renders one generation-safe fleet utilization strip with a visible attenti
     ],
   });
   const app = await loadPluginApp(() => import("../app.tsx"));
-  const slot = renderSlot(app.navPanels[0]!, { subPath: "" }, {
+  const slot = renderSlot(app.navPanels[0]!, { subPath: "machine" }, {
     rpc: fleetRpc(() => overview([healthy, overTarget, stale]), (request) => timeline(request)),
   } as any);
 
@@ -1123,7 +1262,7 @@ test("renders one generation-safe fleet utilization strip with a visible attenti
 
 test("uses the same native BB navigation for exact event list and chart-pointer activation", async () => {
   const app = await loadPluginApp(() => import("../app.tsx"));
-  const slot = renderSlot(app.navPanels[0]!, { subPath: "" }, {
+  const slot = renderSlot(app.navPanels[0]!, { subPath: "machine" }, {
     rpc: fleetRpc(() => overview(), (request) => timeline(request, { event: true })),
   } as any);
   await slot.findByRole("heading", { name: "Alpha" });
@@ -1150,7 +1289,7 @@ test("a nonselected summary reconciliation keeps the selected chart and exact ev
   ], { dataRevision: 2, settingsRevision: 1 });
   let overviewCalls = 0;
   const app = await loadPluginApp(() => import("../app.tsx"));
-  const slot = renderSlot(app.navPanels[0]!, { subPath: "" }, {
+  const slot = renderSlot(app.navPanels[0]!, { subPath: "machine" }, {
     rpc: fleetRpc(() => {
       overviewCalls += 1;
       return overviewCalls === 1 ? initial : reconciled;
@@ -1187,7 +1326,7 @@ test("coalesced A then B invalidations refresh selected A once and reconnect rec
   const app = await loadPluginApp(() => import("../app.tsx"));
   const timelineRequests: any[] = [];
   let overviewCalls = 0;
-  const slot = renderSlot(app.navPanels[0]!, { subPath: "" }, {
+  const slot = renderSlot(app.navPanels[0]!, { subPath: "machine" }, {
     rpc: fleetRpc(() => {
       overviewCalls += 1;
       if (overviewCalls === 1) return initial;

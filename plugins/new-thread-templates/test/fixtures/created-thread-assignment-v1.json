@@ -1,0 +1,890 @@
+{
+  "protocol": "inbox-created-thread-assignment",
+  "version": 1,
+  "cases": [
+    {
+      "name": "strict minimal namespaced request",
+      "kind": "request",
+      "accepted": true,
+      "data": {
+        "operationId": "new-thread-templates:00000000-0000-4000-8000-000000000001",
+        "threadId": "native-thread-1"
+      }
+    },
+    {
+      "name": "request cannot carry an actor permission",
+      "kind": "request",
+      "accepted": false,
+      "data": {
+        "operationId": "new-thread-templates:00000000-0000-4000-8000-000000000001",
+        "threadId": "native-thread-1",
+        "actorKey": "p6r-person:v1:test:alice"
+      }
+    },
+    {
+      "name": "operation bound160",
+      "kind": "request",
+      "accepted": false,
+      "data": {
+        "operationId": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        "threadId": "native-thread-1"
+      }
+    },
+    {
+      "name": "additive describe with negotiatedV1",
+      "kind": "describe",
+      "accepted": true,
+      "data": {
+        "protocol": "inbox-created-thread-assignment",
+        "versions": [
+          1,
+          2
+        ],
+        "limits": {
+          "operationId": 160,
+          "threadId": 256,
+          "ownerKeys": 200,
+          "receiptRetention": "indefinite",
+          "futureLimit": 3
+        },
+        "futureDiscovery": true
+      }
+    },
+    {
+      "name": "unknown protocol is incompatible",
+      "kind": "describe",
+      "accepted": false,
+      "data": {
+        "protocol": "future-protocol",
+        "versions": [
+          1,
+          2
+        ],
+        "limits": {
+          "operationId": 160,
+          "threadId": 256,
+          "ownerKeys": 200,
+          "receiptRetention": "indefinite",
+          "futureLimit": 3
+        },
+        "futureDiscovery": true
+      }
+    },
+    {
+      "name": "final claimed receipt",
+      "kind": "claim",
+      "accepted": true,
+      "data": {
+        "version": 1,
+        "status": "final",
+        "receipt": {
+          "operationId": "new-thread-templates:00000000-0000-4000-8000-000000000001",
+          "threadId": "native-thread-1",
+          "actorKey": "p6r-person:v1:test:alice",
+          "outcome": "claimed",
+          "reason": "claimed-untouched",
+          "decidedAt": 1793620000000,
+          "ownerRevision": 1
+        },
+        "current": {
+          "threadId": "native-thread-1",
+          "revision": 1,
+          "ownerKeys": [
+            "p6r-person:v1:test:alice"
+          ],
+          "truncated": false,
+          "explicitlyUnassigned": false
+        }
+      }
+    },
+    {
+      "name": "additive every output object",
+      "kind": "claim",
+      "accepted": true,
+      "data": {
+        "version": 1,
+        "status": "final",
+        "receipt": {
+          "operationId": "new-thread-templates:00000000-0000-4000-8000-000000000001",
+          "threadId": "native-thread-1",
+          "actorKey": "p6r-person:v1:test:alice",
+          "outcome": "claimed",
+          "reason": "claimed-untouched",
+          "decidedAt": 1793620000000,
+          "ownerRevision": 1,
+          "futureReceipt": 2
+        },
+        "current": {
+          "threadId": "native-thread-1",
+          "revision": 1,
+          "ownerKeys": [
+            "p6r-person:v1:test:alice"
+          ],
+          "truncated": false,
+          "explicitlyUnassigned": false,
+          "futureCurrent": 3
+        },
+        "futureRoot": 1
+      }
+    },
+    {
+      "name": "future terminal version",
+      "kind": "claim",
+      "accepted": false,
+      "data": {
+        "version": 2,
+        "status": "final",
+        "receipt": {
+          "operationId": "new-thread-templates:00000000-0000-4000-8000-000000000001",
+          "threadId": "native-thread-1",
+          "actorKey": "p6r-person:v1:test:alice",
+          "outcome": "claimed",
+          "reason": "claimed-untouched",
+          "decidedAt": 1793620000000,
+          "ownerRevision": 1
+        },
+        "current": {
+          "threadId": "native-thread-1",
+          "revision": 1,
+          "ownerKeys": [
+            "p6r-person:v1:test:alice"
+          ],
+          "truncated": false,
+          "explicitlyUnassigned": false
+        }
+      }
+    },
+    {
+      "name": "future outcome",
+      "kind": "claim",
+      "accepted": false,
+      "data": {
+        "version": 1,
+        "status": "final",
+        "receipt": {
+          "operationId": "new-thread-templates:00000000-0000-4000-8000-000000000001",
+          "threadId": "native-thread-1",
+          "actorKey": "p6r-person:v1:test:alice",
+          "outcome": "future-assigned",
+          "reason": "claimed-untouched",
+          "decidedAt": 1793620000000,
+          "ownerRevision": 1
+        },
+        "current": {
+          "threadId": "native-thread-1",
+          "revision": 1,
+          "ownerKeys": [
+            "p6r-person:v1:test:alice"
+          ],
+          "truncated": false,
+          "explicitlyUnassigned": false
+        }
+      }
+    },
+    {
+      "name": "claimed reason consistency",
+      "kind": "claim",
+      "accepted": false,
+      "data": {
+        "version": 1,
+        "status": "final",
+        "receipt": {
+          "operationId": "new-thread-templates:00000000-0000-4000-8000-000000000001",
+          "threadId": "native-thread-1",
+          "actorKey": "p6r-person:v1:test:alice",
+          "outcome": "claimed",
+          "reason": "ownership-touched",
+          "decidedAt": 1793620000000,
+          "ownerRevision": 1
+        },
+        "current": {
+          "threadId": "native-thread-1",
+          "revision": 1,
+          "ownerKeys": [
+            "p6r-person:v1:test:alice"
+          ],
+          "truncated": false,
+          "explicitlyUnassigned": false
+        }
+      }
+    },
+    {
+      "name": "claimed revision is positive",
+      "kind": "claim",
+      "accepted": false,
+      "data": {
+        "version": 1,
+        "status": "final",
+        "receipt": {
+          "operationId": "new-thread-templates:00000000-0000-4000-8000-000000000001",
+          "threadId": "native-thread-1",
+          "actorKey": "p6r-person:v1:test:alice",
+          "outcome": "claimed",
+          "reason": "claimed-untouched",
+          "decidedAt": 1793620000000,
+          "ownerRevision": 0
+        },
+        "current": {
+          "threadId": "native-thread-1",
+          "revision": 1,
+          "ownerKeys": [
+            "p6r-person:v1:test:alice"
+          ],
+          "truncated": false,
+          "explicitlyUnassigned": false
+        }
+      }
+    },
+    {
+      "name": "invalid identity key",
+      "kind": "claim",
+      "accepted": false,
+      "data": {
+        "version": 1,
+        "status": "final",
+        "receipt": {
+          "operationId": "new-thread-templates:00000000-0000-4000-8000-000000000001",
+          "threadId": "native-thread-1",
+          "actorKey": "",
+          "outcome": "claimed",
+          "reason": "claimed-untouched",
+          "decidedAt": 1793620000000,
+          "ownerRevision": 1
+        },
+        "current": {
+          "threadId": "native-thread-1",
+          "revision": 1,
+          "ownerKeys": [
+            "p6r-person:v1:test:alice"
+          ],
+          "truncated": false,
+          "explicitlyUnassigned": false
+        }
+      }
+    },
+    {
+      "name": "history separate from manual Unassign",
+      "kind": "lookup",
+      "accepted": true,
+      "data": {
+        "version": 1,
+        "status": "found",
+        "receipt": {
+          "operationId": "new-thread-templates:00000000-0000-4000-8000-000000000001",
+          "threadId": "native-thread-1",
+          "actorKey": "p6r-person:v1:test:alice",
+          "outcome": "claimed",
+          "reason": "claimed-untouched",
+          "decidedAt": 1793620000000,
+          "ownerRevision": 1
+        },
+        "current": {
+          "threadId": "native-thread-1",
+          "revision": 2,
+          "ownerKeys": [],
+          "truncated": false,
+          "explicitlyUnassigned": true
+        }
+      }
+    },
+    {
+      "name": "terminal skipped-preserved receipt",
+      "kind": "claim",
+      "accepted": true,
+      "data": {
+        "version": 1,
+        "status": "final",
+        "receipt": {
+          "operationId": "new-thread-templates:00000000-0000-4000-8000-000000000001",
+          "threadId": "native-thread-1",
+          "actorKey": "p6r-person:v1:test:alice",
+          "outcome": "skipped-preserved",
+          "reason": "ownership-touched",
+          "decidedAt": 1793620000000,
+          "ownerRevision": 2
+        },
+        "current": {
+          "threadId": "native-thread-1",
+          "revision": 2,
+          "ownerKeys": [
+            "p6r-person:v1:test:alice"
+          ],
+          "truncated": false,
+          "explicitlyUnassigned": false
+        }
+      }
+    },
+    {
+      "name": "skipped cannot mean claimed",
+      "kind": "claim",
+      "accepted": false,
+      "data": {
+        "version": 1,
+        "status": "final",
+        "receipt": {
+          "operationId": "new-thread-templates:00000000-0000-4000-8000-000000000001",
+          "threadId": "native-thread-1",
+          "actorKey": "p6r-person:v1:test:alice",
+          "outcome": "skipped-preserved",
+          "reason": "claimed-untouched",
+          "decidedAt": 1793620000000,
+          "ownerRevision": 1
+        },
+        "current": {
+          "threadId": "native-thread-1",
+          "revision": 1,
+          "ownerKeys": [
+            "p6r-person:v1:test:alice"
+          ],
+          "truncated": false,
+          "explicitlyUnassigned": false
+        }
+      }
+    },
+    {
+      "name": "additive exact absent",
+      "kind": "lookup",
+      "accepted": true,
+      "data": {
+        "version": 1,
+        "status": "absent",
+        "operationId": "new-thread-templates:00000000-0000-4000-8000-000000000001",
+        "threadId": "native-thread-1",
+        "current": {
+          "threadId": "native-thread-1",
+          "revision": 0,
+          "ownerKeys": [],
+          "truncated": false,
+          "explicitlyUnassigned": false,
+          "futureCurrent": 1
+        },
+        "futureRoot": true
+      }
+    },
+    {
+      "name": "future absent version",
+      "kind": "lookup",
+      "accepted": false,
+      "data": {
+        "version": 2,
+        "status": "absent",
+        "operationId": "new-thread-templates:00000000-0000-4000-8000-000000000001",
+        "threadId": "native-thread-1",
+        "current": {
+          "threadId": "native-thread-1",
+          "revision": 0,
+          "ownerKeys": [],
+          "truncated": false,
+          "explicitlyUnassigned": false
+        }
+      }
+    },
+    {
+      "name": "truncated current snapshot200 owners",
+      "kind": "lookup",
+      "accepted": true,
+      "data": {
+        "version": 1,
+        "status": "found",
+        "receipt": {
+          "operationId": "new-thread-templates:00000000-0000-4000-8000-000000000001",
+          "threadId": "native-thread-1",
+          "actorKey": "p6r-person:v1:test:alice",
+          "outcome": "claimed",
+          "reason": "claimed-untouched",
+          "decidedAt": 1793620000000,
+          "ownerRevision": 1
+        },
+        "current": {
+          "threadId": "native-thread-1",
+          "revision": 1,
+          "ownerKeys": [
+            "p6r-person:v1:test:owner0",
+            "p6r-person:v1:test:owner1",
+            "p6r-person:v1:test:owner2",
+            "p6r-person:v1:test:owner3",
+            "p6r-person:v1:test:owner4",
+            "p6r-person:v1:test:owner5",
+            "p6r-person:v1:test:owner6",
+            "p6r-person:v1:test:owner7",
+            "p6r-person:v1:test:owner8",
+            "p6r-person:v1:test:owner9",
+            "p6r-person:v1:test:owner10",
+            "p6r-person:v1:test:owner11",
+            "p6r-person:v1:test:owner12",
+            "p6r-person:v1:test:owner13",
+            "p6r-person:v1:test:owner14",
+            "p6r-person:v1:test:owner15",
+            "p6r-person:v1:test:owner16",
+            "p6r-person:v1:test:owner17",
+            "p6r-person:v1:test:owner18",
+            "p6r-person:v1:test:owner19",
+            "p6r-person:v1:test:owner20",
+            "p6r-person:v1:test:owner21",
+            "p6r-person:v1:test:owner22",
+            "p6r-person:v1:test:owner23",
+            "p6r-person:v1:test:owner24",
+            "p6r-person:v1:test:owner25",
+            "p6r-person:v1:test:owner26",
+            "p6r-person:v1:test:owner27",
+            "p6r-person:v1:test:owner28",
+            "p6r-person:v1:test:owner29",
+            "p6r-person:v1:test:owner30",
+            "p6r-person:v1:test:owner31",
+            "p6r-person:v1:test:owner32",
+            "p6r-person:v1:test:owner33",
+            "p6r-person:v1:test:owner34",
+            "p6r-person:v1:test:owner35",
+            "p6r-person:v1:test:owner36",
+            "p6r-person:v1:test:owner37",
+            "p6r-person:v1:test:owner38",
+            "p6r-person:v1:test:owner39",
+            "p6r-person:v1:test:owner40",
+            "p6r-person:v1:test:owner41",
+            "p6r-person:v1:test:owner42",
+            "p6r-person:v1:test:owner43",
+            "p6r-person:v1:test:owner44",
+            "p6r-person:v1:test:owner45",
+            "p6r-person:v1:test:owner46",
+            "p6r-person:v1:test:owner47",
+            "p6r-person:v1:test:owner48",
+            "p6r-person:v1:test:owner49",
+            "p6r-person:v1:test:owner50",
+            "p6r-person:v1:test:owner51",
+            "p6r-person:v1:test:owner52",
+            "p6r-person:v1:test:owner53",
+            "p6r-person:v1:test:owner54",
+            "p6r-person:v1:test:owner55",
+            "p6r-person:v1:test:owner56",
+            "p6r-person:v1:test:owner57",
+            "p6r-person:v1:test:owner58",
+            "p6r-person:v1:test:owner59",
+            "p6r-person:v1:test:owner60",
+            "p6r-person:v1:test:owner61",
+            "p6r-person:v1:test:owner62",
+            "p6r-person:v1:test:owner63",
+            "p6r-person:v1:test:owner64",
+            "p6r-person:v1:test:owner65",
+            "p6r-person:v1:test:owner66",
+            "p6r-person:v1:test:owner67",
+            "p6r-person:v1:test:owner68",
+            "p6r-person:v1:test:owner69",
+            "p6r-person:v1:test:owner70",
+            "p6r-person:v1:test:owner71",
+            "p6r-person:v1:test:owner72",
+            "p6r-person:v1:test:owner73",
+            "p6r-person:v1:test:owner74",
+            "p6r-person:v1:test:owner75",
+            "p6r-person:v1:test:owner76",
+            "p6r-person:v1:test:owner77",
+            "p6r-person:v1:test:owner78",
+            "p6r-person:v1:test:owner79",
+            "p6r-person:v1:test:owner80",
+            "p6r-person:v1:test:owner81",
+            "p6r-person:v1:test:owner82",
+            "p6r-person:v1:test:owner83",
+            "p6r-person:v1:test:owner84",
+            "p6r-person:v1:test:owner85",
+            "p6r-person:v1:test:owner86",
+            "p6r-person:v1:test:owner87",
+            "p6r-person:v1:test:owner88",
+            "p6r-person:v1:test:owner89",
+            "p6r-person:v1:test:owner90",
+            "p6r-person:v1:test:owner91",
+            "p6r-person:v1:test:owner92",
+            "p6r-person:v1:test:owner93",
+            "p6r-person:v1:test:owner94",
+            "p6r-person:v1:test:owner95",
+            "p6r-person:v1:test:owner96",
+            "p6r-person:v1:test:owner97",
+            "p6r-person:v1:test:owner98",
+            "p6r-person:v1:test:owner99",
+            "p6r-person:v1:test:owner100",
+            "p6r-person:v1:test:owner101",
+            "p6r-person:v1:test:owner102",
+            "p6r-person:v1:test:owner103",
+            "p6r-person:v1:test:owner104",
+            "p6r-person:v1:test:owner105",
+            "p6r-person:v1:test:owner106",
+            "p6r-person:v1:test:owner107",
+            "p6r-person:v1:test:owner108",
+            "p6r-person:v1:test:owner109",
+            "p6r-person:v1:test:owner110",
+            "p6r-person:v1:test:owner111",
+            "p6r-person:v1:test:owner112",
+            "p6r-person:v1:test:owner113",
+            "p6r-person:v1:test:owner114",
+            "p6r-person:v1:test:owner115",
+            "p6r-person:v1:test:owner116",
+            "p6r-person:v1:test:owner117",
+            "p6r-person:v1:test:owner118",
+            "p6r-person:v1:test:owner119",
+            "p6r-person:v1:test:owner120",
+            "p6r-person:v1:test:owner121",
+            "p6r-person:v1:test:owner122",
+            "p6r-person:v1:test:owner123",
+            "p6r-person:v1:test:owner124",
+            "p6r-person:v1:test:owner125",
+            "p6r-person:v1:test:owner126",
+            "p6r-person:v1:test:owner127",
+            "p6r-person:v1:test:owner128",
+            "p6r-person:v1:test:owner129",
+            "p6r-person:v1:test:owner130",
+            "p6r-person:v1:test:owner131",
+            "p6r-person:v1:test:owner132",
+            "p6r-person:v1:test:owner133",
+            "p6r-person:v1:test:owner134",
+            "p6r-person:v1:test:owner135",
+            "p6r-person:v1:test:owner136",
+            "p6r-person:v1:test:owner137",
+            "p6r-person:v1:test:owner138",
+            "p6r-person:v1:test:owner139",
+            "p6r-person:v1:test:owner140",
+            "p6r-person:v1:test:owner141",
+            "p6r-person:v1:test:owner142",
+            "p6r-person:v1:test:owner143",
+            "p6r-person:v1:test:owner144",
+            "p6r-person:v1:test:owner145",
+            "p6r-person:v1:test:owner146",
+            "p6r-person:v1:test:owner147",
+            "p6r-person:v1:test:owner148",
+            "p6r-person:v1:test:owner149",
+            "p6r-person:v1:test:owner150",
+            "p6r-person:v1:test:owner151",
+            "p6r-person:v1:test:owner152",
+            "p6r-person:v1:test:owner153",
+            "p6r-person:v1:test:owner154",
+            "p6r-person:v1:test:owner155",
+            "p6r-person:v1:test:owner156",
+            "p6r-person:v1:test:owner157",
+            "p6r-person:v1:test:owner158",
+            "p6r-person:v1:test:owner159",
+            "p6r-person:v1:test:owner160",
+            "p6r-person:v1:test:owner161",
+            "p6r-person:v1:test:owner162",
+            "p6r-person:v1:test:owner163",
+            "p6r-person:v1:test:owner164",
+            "p6r-person:v1:test:owner165",
+            "p6r-person:v1:test:owner166",
+            "p6r-person:v1:test:owner167",
+            "p6r-person:v1:test:owner168",
+            "p6r-person:v1:test:owner169",
+            "p6r-person:v1:test:owner170",
+            "p6r-person:v1:test:owner171",
+            "p6r-person:v1:test:owner172",
+            "p6r-person:v1:test:owner173",
+            "p6r-person:v1:test:owner174",
+            "p6r-person:v1:test:owner175",
+            "p6r-person:v1:test:owner176",
+            "p6r-person:v1:test:owner177",
+            "p6r-person:v1:test:owner178",
+            "p6r-person:v1:test:owner179",
+            "p6r-person:v1:test:owner180",
+            "p6r-person:v1:test:owner181",
+            "p6r-person:v1:test:owner182",
+            "p6r-person:v1:test:owner183",
+            "p6r-person:v1:test:owner184",
+            "p6r-person:v1:test:owner185",
+            "p6r-person:v1:test:owner186",
+            "p6r-person:v1:test:owner187",
+            "p6r-person:v1:test:owner188",
+            "p6r-person:v1:test:owner189",
+            "p6r-person:v1:test:owner190",
+            "p6r-person:v1:test:owner191",
+            "p6r-person:v1:test:owner192",
+            "p6r-person:v1:test:owner193",
+            "p6r-person:v1:test:owner194",
+            "p6r-person:v1:test:owner195",
+            "p6r-person:v1:test:owner196",
+            "p6r-person:v1:test:owner197",
+            "p6r-person:v1:test:owner198",
+            "p6r-person:v1:test:owner199"
+          ],
+          "truncated": true,
+          "explicitlyUnassigned": false
+        }
+      }
+    },
+    {
+      "name": "current snapshot over owner bound",
+      "kind": "lookup",
+      "accepted": false,
+      "data": {
+        "version": 1,
+        "status": "found",
+        "receipt": {
+          "operationId": "new-thread-templates:00000000-0000-4000-8000-000000000001",
+          "threadId": "native-thread-1",
+          "actorKey": "p6r-person:v1:test:alice",
+          "outcome": "claimed",
+          "reason": "claimed-untouched",
+          "decidedAt": 1793620000000,
+          "ownerRevision": 1
+        },
+        "current": {
+          "threadId": "native-thread-1",
+          "revision": 1,
+          "ownerKeys": [
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice",
+            "p6r-person:v1:test:alice"
+          ],
+          "truncated": true,
+          "explicitlyUnassigned": false
+        }
+      }
+    },
+    {
+      "name": "negative current revision",
+      "kind": "lookup",
+      "accepted": false,
+      "data": {
+        "version": 1,
+        "status": "found",
+        "receipt": {
+          "operationId": "new-thread-templates:00000000-0000-4000-8000-000000000001",
+          "threadId": "native-thread-1",
+          "actorKey": "p6r-person:v1:test:alice",
+          "outcome": "claimed",
+          "reason": "claimed-untouched",
+          "decidedAt": 1793620000000,
+          "ownerRevision": 1
+        },
+        "current": {
+          "threadId": "native-thread-1",
+          "revision": -1,
+          "ownerKeys": [
+            "p6r-person:v1:test:alice"
+          ],
+          "truncated": false,
+          "explicitlyUnassigned": false
+        }
+      }
+    },
+    {
+      "name": "typed conflict is a rejection not success",
+      "kind": "claim",
+      "accepted": true,
+      "data": {
+        "version": 1,
+        "status": "rejected",
+        "operationId": "new-thread-templates:00000000-0000-4000-8000-000000000001",
+        "threadId": "native-thread-1",
+        "code": "operation-conflict",
+        "message": "Operation belongs to another actor or thread",
+        "futureDiagnostic": true
+      }
+    },
+    {
+      "name": "future rejection meaning incompatible",
+      "kind": "claim",
+      "accepted": false,
+      "data": {
+        "version": 1,
+        "status": "rejected",
+        "operationId": "new-thread-templates:00000000-0000-4000-8000-000000000001",
+        "threadId": "native-thread-1",
+        "code": "future-decision",
+        "message": "Unknown meaning"
+      }
+    }
+  ]
+}

@@ -1,0 +1,62 @@
+{
+  "name": "@phosphorco/bb-plugin-bb-subscribe-to-anything",
+  "version": "0.1.0",
+  "type": "module",
+  "license": "MIT",
+  "description": "Durable observations and native reminders that keep pending checks quiet.",
+  "engines": {
+    "bb": ">=0.46.1 <1.0.0",
+    "bbPluginSdk": ">=0.6.52"
+  },
+  "bb": {
+    "name": "Subscribe to Anything",
+    "description": "Watch changing evidence without repeatedly waking the requesting agent.",
+    "server": "./server.ts",
+    "branding": {
+      "icon": "Clock"
+    },
+    "skills": [],
+    "app": "./app.tsx"
+  },
+  "files": [
+    "dist/",
+    "*.ts",
+    "README.md",
+    "LICENSE",
+    "IMPLEMENTATION.md",
+    "*.tsx",
+    "*.css",
+    "components/",
+    "lib/"
+  ],
+  "dependencies": {
+    "zod": "4.6.7",
+    "@tanstack/react-query": "5.102.5",
+    "@radix-ui/react-slot": "1.2.3",
+    "class-variance-authority": "0.7.1",
+    "clsx": "2.1.1",
+    "tailwind-merge": "3.4.0"
+  },
+  "devDependencies": {
+    "@get-bb/plugin-sdk": "0.6.52",
+    "@types/node": "^22",
+    "typescript": "^5.9.3",
+    "better-sqlite3": "12.11.1",
+    "@types/better-sqlite3": "^7.6.12",
+    "react": "19.2.1",
+    "react-dom": "19.2.1",
+    "@types/react": "19.2.2",
+    "@types/react-dom": "19.2.2",
+    "vitest": "^4.1.1",
+    "jsdom": "^26.1.0",
+    "@testing-library/react": "^16.3.2",
+    "@testing-library/dom": "^10.4.0",
+    "@playwright/test": "1.63.0"
+  },
+  "scripts": {
+    "build": "node ../../tools/bb-target-cli.mjs plugin build .",
+    "typecheck": "tsc --noEmit",
+    "test": "node --test --experimental-strip-types test/*.test.ts && vitest run test/*.test.tsx",
+    "test:browser": "bun test/browser-check.mjs"
+  }
+}

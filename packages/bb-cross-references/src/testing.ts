@@ -1,5 +1,5 @@
 import { canonicalizeIdentity, normalizeProjectionCommand, resourceIdentityOf, type ApplyProjectionInput } from "./index.js";
-import { createCrossReferencesClient, type CrossReferencesSdk } from "./bb.js";
+import { createCrossReferencesClient, createCrossReferencesV2Client, type CrossReferencesSdk } from "./bb.js";
 
 export interface CrossReferencesConformanceResult {
   level: "source-conformance";
@@ -49,4 +49,48 @@ export async function runCrossReferencesConformance(options: {
   }
   checks.push("backlinks-acceptance");
   return { level: "source-conformance", pluginId: client.pluginId, checks };
+}
+
+/** Read-only V2 conformance through the adopter's real transport/handlers.
+ * The caller owns fixture preparation; this kit never enqueues or writes. */
+export async function runCrossReferencesV2Conformance(options:{sdk:CrossReferencesSdk;pluginId?:string;
+ input:import('./evidence-v2.js').ListMentionsInputV2;lookup:import('./evidence-v2.js').ResolveLookupInputV2;
+ assertPage:(page:Extract<import('./evidence-v2.js').ListMentionsOutputV2,{status:'page'}>)=>void|Promise<void>;
+}):Promise<CrossReferencesConformanceResult>{
+ const client=createCrossReferencesV2Client(options.sdk,options.pluginId);await client.describe();
+ const page=await client.listMentions(options.input);if(page.status!=='page')throw new Error('V2 fixture must yield a page.');await options.assertPage(page);
+ const {cursor:_cursor,ifSnapshot:_conditional,...base}=options.input;
+ const conditional=await client.listMentions({...base,ifSnapshot:page.snapshot});
+ if(conditional.status!=='not-modified'||!conditional.coverage.authoredUrlCoverage.watermark)throw new Error('V2 conditional omitted current coverage.');
+ const lookup=await client.resolveLookup(options.lookup);if(!['ready','ambiguous','incomplete'].includes(lookup.state)||lookup.options.length===0)throw new Error('V2 lookup fixture did not resolve.');
+ return {level:'source-conformance',pluginId:client.pluginId,checks:['describe-v2','actual-evidence-page','conditional-current-coverage','query-normalization']};
+}
+
+/** New-family acceptance, through the adopter's ACTUAL registered transport.
+ * The caller owns an isolated complete fixture and its revision allocation. */
+export async function runCrossReferencesProducerConformance(options:{sdk:CrossReferencesSdk;pluginId?:string;
+ command:import('./producer.js').ProducerApplyInput;blocked:import('./producer.js').ProducerReportStatusInput;
+ assertState?:(state:import('./producer.js').ProducerState)=>void|Promise<void>;
+}):Promise<CrossReferencesConformanceResult>{
+ const {createCrossReferencesProducerClient}=await import('./bb.js');
+ const client=createCrossReferencesProducerClient(options.sdk,options.pluginId),checks:string[]=[];
+ await client.describe();checks.push('producer-describe');
+ const accepted=await client.apply(options.command);
+ if(!['applied','duplicate','equal'].includes(accepted.outcome)||!['installed','replayed'].includes(accepted.evidenceDisposition)||accepted.state.evidence?.state!=='bound'||accepted.state.evidence.evidenceDigest!==options.command.evidenceDigest)throw new Error('Producer fixture was not atomically bound.');
+ checks.push('atomic-graph-evidence');
+ const replay=await client.apply(options.command);if(replay.evidenceDisposition!=='replayed'||replay.state.evidence?.evidenceDigest!==options.command.evidenceDigest)throw new Error('Producer evidence replay failed.');checks.push('evidence-replay');
+ if(options.blocked.expectedRevision!==options.command.projection.revision||options.blocked.attemptRevision<=options.command.projection.revision)throw new Error('Blocked fixture must allocate above the accepted graph.');
+ const blocked=await client.reportStatus(options.blocked);if(!['recorded','duplicate'].includes(blocked.outcome)||blocked.state.projection?.revision!==options.command.projection.revision||blocked.state.revisionHighWater!==options.blocked.attemptRevision)throw new Error('Status changed graph or lost prospective revision.');checks.push('status-retains-last-good');
+ const current=await client.getState({version:1,producerPluginId:'thread-brief',source:options.blocked.source});
+ if(current.status?.statusDigest!==options.blocked.statusDigest||current.evidence?.evidenceDigest!==options.command.evidenceDigest)throw new Error('GetState lost committed evidence/status.');await options.assertState?.(current);checks.push('producer-readback');
+ const oldReplay=await client.apply(options.command);if(oldReplay.evidenceDisposition!=='replayed'||oldReplay.state.status?.attemptRevision!==options.blocked.attemptRevision)throw new Error('An exact replay cleared newer blocked intent.');checks.push('replay-preserves-newer-status');
+ return {level:'source-conformance',pluginId:client.pluginId,checks};
+}
+/** The proof provider must be the actual adopter handler, with its accepted raw
+ * reader fixture. This kit never reads/parses a file or constructs a model. */
+export async function runBriefNavigationConformance(options:{sdk:CrossReferencesSdk;input:import('./producer.js').BriefNavigationInput;assertResult:(value:import('./producer.js').BriefNavigationOutput)=>void|Promise<void>}):Promise<CrossReferencesConformanceResult>{
+ const {createBriefNavigationClient}=await import('./bb.js');const client=createBriefNavigationClient(options.sdk);await client.describe();const result=await client.resolve(options.input);await options.assertResult(result);
+ const checks=['navigation-describe','fixed-file-same-revision-proof'];
+ if(result.reader){const {encodeBriefReaderPath,decodeBriefReaderPath}=await import('./index.js');const decoded=decodeBriefReaderPath(encodeBriefReaderPath(result.reader));if(!decoded||decoded.threadId!==options.input.sourceFile.threadId||decoded.token!==result.reader.token)throw new Error('Rendered Brief destination roundtrip failed.');checks.push('declared-rendered-reader-destination');}
+ return {level:'source-conformance',pluginId:'thread-brief',checks};
 }

@@ -113,3 +113,51 @@ test("conformance kit drives apply/duplicate/get/backlinks and detects broken ac
   await assert.rejects(runCrossReferencesConformance({sdk:fixtureSdk({badGet:true}),command}), /getProjection/);
   await assert.rejects(runCrossReferencesConformance({sdk:fixtureSdk({badBacklink:true}),command}), /listBacklinks/);
 });
+
+test('emitted V2 client negotiates2, targets owner explicitly and admits bytes before tolerant decoding',async()=>{
+ const {createCrossReferencesV2Client}=await import('../dist/bb.js');let calls=0;
+ const client=createCrossReferencesV2Client(sdkFor(async({pluginId,method,input,outputSchema})=>{calls++;assert.equal(pluginId,'fixture-owner');
+  if(method==='crossReferences.describe')return outputSchema.parse({protocol:'cross-references',versions:[1,2],extra:true});
+  return outputSchema.parse({version:2,status:'unavailable',reason:'read-budget',retryable:true,extra:true});
+ }),'fixture-owner');assert.equal((await client.describe()).version,2);
+ const page=await client.listMentions({version:2,query:{kind:'authored-url',href:'https://example.test/a'}});assert.equal(page.status,'unavailable');assert.equal(calls,2);
+ const bad=createCrossReferencesV2Client(sdkFor(async()=>({version:2,status:'unavailable',reason:'read-budget',retryable:true,padding:'x'.repeat(1048576)})));await assert.rejects(bad.listMentions({version:2,query:{kind:'authored-url',href:'https://example.test/a'}}),/byte bound/);
+ const v1=createCrossReferencesV2Client(sdkFor(async()=>({protocol:'cross-references',versions:[1]})));await assert.rejects(v1.describe(),/V2 unavailable/);
+});
+
+test('V2 registration preserves schema validation and exact SDK issue paths',async()=>{
+ const {crossReferencesV2RpcContract,registerCrossReferencesV2}=await import('../dist/bb.js');
+ const method=crossReferencesV2RpcContract.crossReferencesV2ListMentions;
+ const input={version:2,query:{kind:'authored-url',href:'https://example.test/a'}};
+ const valid=await method.input['~standard'].validate(input);
+ assert.deepEqual(valid,{value:input});
+ for(const invalid of [{...input,extra:true},{...input,query:{kind:'authored-url',href:'javascript:alert(1)'}}]){
+  const result=await method.input['~standard'].validate(invalid);
+  assert.ok(result.issues.length>0);assert.equal('value' in result,false);
+  for(const issue of result.issues){assert.equal(typeof issue.message,'string');assert.ok(Array.isArray(issue.path));}
+ }
+ const output={version:2,status:'unavailable',reason:'read-budget',retryable:true,added:{value:true}};
+ assert.deepEqual(await method.output['~standard'].validate(output),{value:output});
+ assert.ok((await method.output['~standard'].validate({...output,retryable:'yes'})).issues.length>0);
+ const handlers={crossReferencesV2ListMentions:()=>output,crossReferencesV2ResolveLookup:()=>({version:2,state:'unrecognized',options:[],reasons:[]})};
+ let registrations=0;
+ registerCrossReferencesV2({rpc:{register(contract,registered){registrations++;assert.equal(contract,crossReferencesV2RpcContract);assert.equal(registered,handlers);}}},handlers);
+ assert.equal(registrations,1);
+});
+
+test('producer SDK boundary is strict before handlers, tolerant on outputs and byte admitted before decode',async()=>{
+ const {crossReferencesProducerRpcContract,createCrossReferencesProducerClient,registerCrossReferencesProducer}=await import('../dist/bb.js');
+ const method=crossReferencesProducerRpcContract[contract.PRODUCER_METHODS.getState],source=contract.verifiedFileIdentity({kind:'thread-storage',threadId:'thr_client',path:'BRIEF.md'}),input={version:1,producerPluginId:'thread-brief',source};
+ assert.deepEqual(await method.input['~standard'].validate(input),{value:input});assert.ok((await method.input['~standard'].validate({...input,extra:true})).issues.length);assert.ok((await method.input['~standard'].validate({...input,padding:'x'.repeat(16384)})).issues.length);
+ const state={version:1,projection:null,evidence:null,status:null,revisionHighWater:0,future:true};assert.deepEqual(await method.output['~standard'].validate(state),{value:state});let calls=0;
+ const client=createCrossReferencesProducerClient(sdkFor(async({method,pluginId})=>{calls++;assert.equal(pluginId,'fixture-owner');return method===contract.PRODUCER_METHODS.describe?{...contract.producerDescribe(),future:true}:state;}),'fixture-owner');await client.describe();assert.equal((await client.getState(input)).future,true);assert.equal(calls,2);
+ await assert.rejects(createCrossReferencesProducerClient(sdkFor(async()=>{throw {code:'unknown_method'};})).describe(),e=>e.code==='unknown_method');
+ const tooBig=createCrossReferencesProducerClient(sdkFor(async()=>({...state,padding:'x'.repeat(1048576)})));await assert.rejects(tooBig.getState(input),/byte bound/);
+ let registered;const handlers={'crossReferencesProducer.describe':contract.producerDescribe,crossReferencesProducerV1GetState:()=>state,crossReferencesProducerV1Apply:()=>{throw Error('not invoked');},crossReferencesProducerV1ReportStatus:()=>{throw Error('not invoked');}};registerCrossReferencesProducer({rpc:{register:(schema,h)=>{assert.equal(schema,crossReferencesProducerRpcContract);registered=h;}}},handlers);assert.equal(registered,handlers);
+});
+test('producer write timeout/cancellation is one transport attempt, without legacy fallback',async()=>{
+ const {createCrossReferencesProducerClient}=await import('../dist/bb.js');let calls=0,signal;
+ const client=createCrossReferencesProducerClient(sdkFor(request=>{calls++;signal=request.signal;return new Promise(()=>{});}),undefined,{callMs:10});
+ const file={kind:'thread-storage',threadId:'thr_client',path:'BRIEF.md'},source=contract.verifiedFileIdentity(file),status={state:'over-limit',sourceContentRevision:contract.sha256Hex('new'),limits:['target-count']};
+ const input={version:1,producerPluginId:'thread-brief',source,sourceFile:file,attemptRevision:2,expectedRevision:0,status,statusDigest:contract.briefStatusDigest('thread-brief',source,file,status)};await assert.rejects(client.reportStatus(input),e=>e.code==='timeout');assert.equal(calls,1);assert.equal(signal.aborted,true);
+});

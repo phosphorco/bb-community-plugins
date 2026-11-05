@@ -1,0 +1,62 @@
+{
+  "name": "@phosphorco/bb-turn-results",
+  "version": "0.1.0",
+  "type": "module",
+  "license": "MIT",
+  "description": "Bounded cross-plugin results for completed BB turns.",
+  "author": "Phosphor",
+  "homepage": "https://github.com/phosphorco/bb-community-plugins/tree/main/packages/bb-turn-results#readme",
+  "bugs": {
+    "url": "https://github.com/phosphorco/bb-community-plugins/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/phosphorco/bb-community-plugins.git",
+    "directory": "packages/bb-turn-results"
+  },
+  "keywords": ["bb", "turn-results", "plugin-contract"],
+  "exports": {
+    ".": { "types": "./dist/types/index.d.ts", "import": "./dist/index.js" },
+    "./events": { "types": "./dist/types/events.d.ts", "import": "./dist/events.js" },
+    "./bb": { "types": "./dist/types/bb.d.ts", "import": "./dist/bb.js" },
+    "./testing": { "types": "./dist/types/testing.d.ts", "import": "./dist/testing.js" },
+    "./testing/react": { "types": "./dist/types/testing-react.d.ts", "import": "./dist/testing-react.js" }
+  },
+  "files": ["dist/", "README.md", "CONTRACT.md", "PACKAGING.md", "LICENSE"],
+  "publishConfig": { "access": "public" },
+  "dependencies": {
+    "@phosphorco/bb-context-recognition": "0.5.0",
+    "zod": "4.6.7"
+  },
+  "peerDependencies": {
+    "@get-bb/plugin-sdk": "^0.6.52",
+    "react": "^19.2.1",
+    "react-dom": "^19.2.1",
+    "jsdom": "^27.0.0"
+  },
+  "peerDependenciesMeta": {
+    "@get-bb/plugin-sdk": { "optional": true },
+    "react": { "optional": true },
+    "react-dom": { "optional": true },
+    "jsdom": { "optional": true }
+  },
+  "devDependencies": {
+    "@get-bb/plugin-sdk": "0.6.52+phosphor.975e38f02f1a.sdk.12eb78c20820",
+    "@types/bun": "1.3.14",
+    "@types/jsdom": "^27.0.0",
+    "@types/node": "^22",
+    "@types/react": "19.2.2",
+    "@types/react-dom": "19.2.2",
+    "bun": "1.3.14",
+    "jsdom": "^27.0.0",
+    "react": "19.2.1",
+    "react-dom": "19.2.1",
+    "typescript": "^5.9.3"
+  },
+  "scripts": {
+    "build": "bun tools/build.mjs --entry src/index.ts --target browser --entry src/events.ts --target browser --entry src/bb.ts --target browser --entry src/testing.ts --target browser --entry src/testing-react.tsx --target browser --external zod --external @phosphorco/bb-context-recognition --external @phosphorco/bb-context-recognition/* --external @get-bb/plugin-sdk --external @get-bb/plugin-sdk/* --external react --external react/* --external react-dom --external react-dom/* --external jsdom --external node:* && tsc --project tsconfig.declarations.json",
+    "test": "bun test test/*.test.mjs",
+    "typecheck": "tsc --noEmit",
+    "verify:packed": "node tools/packed-consumer.mjs"
+  }
+}

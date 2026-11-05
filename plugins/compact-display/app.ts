@@ -1,6 +1,29 @@
-import { definePluginApp } from "@get-bb/plugin-sdk/app";
+import { useEffect } from "react";
+import { definePluginApp, useSettings } from "@get-bb/plugin-sdk/app";
+
+function UpdateReadyPreference(): null {
+  const { values } = useSettings();
+  const hideUpdateReady = values?.hideUpdateReady;
+  useEffect(() => {
+    // Leave notifications visible until settings load; retain the last applied
+    // preference when a later settings read is temporarily unavailable.
+    if (hideUpdateReady === undefined) return;
+    document.documentElement.toggleAttribute(
+      "data-bb-compact-hide-updates",
+      hideUpdateReady === true,
+    );
+  }, [hideUpdateReady]);
+  useEffect(() => () => {
+    document.documentElement.removeAttribute("data-bb-compact-hide-updates");
+  }, []);
+  return null;
+}
 
 export default definePluginApp((app) => {
+  app.slots.experimental_appOverlay({
+    id: "update-ready-preference",
+    component: UpdateReadyPreference,
+  });
   app.contentScripts.register({
     id: "compact-display",
     mount() {
@@ -11,6 +34,15 @@ export default definePluginApp((app) => {
       style.textContent = `
 /* Native BB overrides belong together here so their layout interactions can be
    reviewed together. Keep feature-owned UI styles in their owning plugins. */
+
+/* Hide update-ready sidebar badges when the setting is known to be enabled.
+   The native settings hook updates the preference attribute without DOM watching.
+   Restrict both URL forms to notification badges, leaving navigation available.
+   BB reuses provider badges for progress; keep their loading indicator visible. */
+:root[data-bb-compact-hide-updates] [data-sidebar="sidebar"]
+:is([href="/settings/update"], [href="/settings/updates"])[data-testid^="sidebar-updates-badge-"]:not(:has([data-icon="Loading"])) {
+    display: none !important;
+}
 
 /* Thread measure: BB currently uses this utility on both the timeline column
    and its composer footer. Scope to thread windows so settings/home stay native.
