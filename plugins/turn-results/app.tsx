@@ -1,15 +1,12 @@
 import { definePluginApp, useBbNavigate, useSdk, useRealtime, useRealtimeConnectionState } from '@get-bb/plugin-sdk/app';
 import { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { createRoot } from 'react-dom/client';
 import { createPortal } from 'react-dom';
 import type { PluginThreadHeaderActionProps } from '@get-bb/plugin-sdk/app';
 import { createGalleryAnchorReader, GalleryBoundaryError, GALLERY_HISTORY_LIMITS } from './gallery/anchors.ts';
 import { mountGalleryPane, observeGalleryDemand, GALLERY_PANE_LIMITS, sameBoundary, resolveGalleryBridge } from './gallery/pane.ts';
-import { createGalleryRuntime } from './gallery/runtime.ts';
+import { createGalleryWorkOwner } from './gallery/work-owner.ts';
 import type { GalleryRuntime } from './gallery/runtime.ts';
-import { TurnGallery, openFingerprint, openAvailable } from './gallery/view.tsx';
 import type { GalleryOpenPort, GalleryOpenOutcome } from './gallery/view.tsx';
-import { navigateResult } from '@phosphorco/bb-turn-results/bb';
 import { untilAborted } from './gallery/lifetime.ts';
 import type { GalleryAnchor, GalleryTimelinePort } from './gallery/anchors.ts';
 import './app.css';
@@ -22,6 +19,26 @@ interface HeaderPreload {
 
 export default definePluginApp(app => {
   let runtime: GalleryRuntime | null = null;
+  let workOwner: ReturnType<typeof createGalleryWorkOwner> | null = null;
+  type Implementation = typeof import('./gallery/view.tsx');
+  let implementation: Implementation | null = null, implementationLoad: Promise<Implementation> | null = null;
+  function loadImplementation() {
+    if (!implementationLoad) {
+      const intent = activationIntent, loading = import('./gallery/view.tsx');
+      implementationLoad = loading;
+      void loading.then(value => {
+        if (generationActive && intent === activationIntent && implementationLoad === loading) implementation = value;
+      }, () => { /* Current mounted callers contain and display this failure. */ });
+    }
+    return implementationLoad;
+  }
+  async function requireRuntime(sdk: Parameters<Implementation['createGalleryRuntime']>[0], current: () => boolean) {
+    const intent = activationIntent, work = workOwner;
+    const module = await loadImplementation();
+    if (!generationActive || intent !== activationIntent || work !== workOwner || !current() || !work?.isActive()) throw Error('Gallery implementation retired.');
+    if (!runtime) runtime = module.createGalleryRuntime(sdk, work);
+    return runtime;
+  }
   let generationActive = true, activationIntent = 0;
   let stopping: Promise<void> | null = null, currentStop: (() => Promise<void>) | null = null;
   const paneHandles = new Set<ReturnType<typeof mountGalleryPane>>();
@@ -35,14 +52,21 @@ export default definePluginApp(app => {
     const activate = () => {
       if (context.signal.aborted || intent !== activationIntent) return;
       generationActive = true;
+      const work = createGalleryWorkOwner(); workOwner = work;
+      implementation = null; implementationLoad = null;
+      // Fetch code opportunistically, without awaiting mount or requiring an
+      // SDK. The committed header/reader still owns all real work and can
+      // progress while this module is pending or fails.
+      void loadImplementation();
       let stopped: Promise<void> | null = null;
       const stop = () => {
         if (stopped) return stopped;
         generationActive = false;
         const owner = runtime, panes = [...paneHandles].map(retirePane);
-        owner?.dispose();
-        stopped = Promise.all([...panes, owner?.whenDrained() ?? Promise.resolve()]).then(() => {
+        owner?.dispose(); work.dispose();
+        stopped = Promise.all([...panes, owner?.whenDrained() ?? Promise.resolve(), work.whenDrained()]).then(() => {
           if (runtime === owner) runtime = null;
+          if (workOwner === work) workOwner = null;
           if (currentStop === stop) currentStop = null;
           if (stopping === stopped) stopping = null;
         });
@@ -104,9 +128,8 @@ export default definePluginApp(app => {
         epochs[key]++; jobs[key]?.stop(); jobs[key] = null;
         const hint = route();
         if (!hint || !coverage || !headerLive() || core !== 'connected' || liveConnection.current !== 'connected') return;
-        if (!runtime && generationActive) runtime = createGalleryRuntime(sdk);
-        if (!runtime) return;
-        const owner = runtime, controller = new AbortController(), currentEpoch = epochs[key];
+        if (!workOwner?.isActive()) return;
+        const owner = workOwner, controller = new AbortController(), currentEpoch = epochs[key];
         const sharedAtBirth = historyShare.current, lineage = { current: {} };
         const resetReader = () => { lineage.current = {}; };
         let consumed = false, complete = false, arrived = false, stopped = false, adoptable = !nearby;
@@ -114,13 +137,20 @@ export default definePluginApp(app => {
         const mediaKeys = new Set<string>();
         const current = () => !stopped && !controller.signal.aborted && currentEpoch === epochs[key] && headerLive()
           && core === 'connected' && liveConnection.current === 'connected' && route()?.href === hint.href && owner.isActive();
-        const discovery = owner.retainDiscoveryDemand(); discovery?.visible(true);
+        let discovery: ReturnType<GalleryRuntime['retainDiscoveryDemand']> = null;
+        const warmReadiness = () => {
+          void requireRuntime(sdk, current).then(resources => {
+            if (!current()) return;
+            if (!discovery) { discovery = resources.retainDiscoveryDemand(); discovery?.visible(true); }
+            discovery?.warm(threadId, true);
+          }).catch(() => { /* Sentinel owns current local implementation failure UI. */ });
+        };
         const reader = createGalleryAnchorReader({ async timeline(input) {
           if (!current()) throw Error('Preload retired.');
           const readerMark = lineage.current;
           const read = owner.readTimeline(input, nativeTimeline.port, { scope: sharedAtBirth, speculative: true,
             current: () => current() && historyShare.current === sharedAtBirth && lineage.current === readerMark });
-          if (!input.beforeAnchorId) discovery?.warm(threadId, true);
+          if (!input.beforeAnchorId) warmReadiness();
           const result = await read; if (!current()) throw Error('Preload retired.');
           return result.state === 'ready' ? result.value : { state: 'capacity' };
         } }, threadId, resetReader);
@@ -191,9 +221,11 @@ export default definePluginApp(app => {
           let proof = nearby ? await reader.read(nearby, controller.signal) : await reader.nearby(hint.sequence, controller.signal);
           if (proof.automatic && current()) proof = nearby ? await reader.read(nearby, controller.signal) : await reader.nearby(hint.sequence, controller.signal, false);
           if (!current()) return;
-          complete = !proof.continued && !proof.capacity; clearTimeout(timer);
+          complete = !proof.continued && !proof.capacity;
+          const resources = await requireRuntime(sdk, current);
+          if (!current()) return; clearTimeout(timer);
           for (const anchor of proof.anchors.slice(0, nearby ? 2 : 1)) {
-            const lease = owner.retain(anchor, true, undefined, true); if (lease.capacity) continue;
+            const lease = resources.retain(anchor, true, undefined, true); if (lease.capacity) continue;
             if (!adoptable) lease.passive();
             leases.push(lease);
             const warmImages = () => {
@@ -202,7 +234,7 @@ export default definePluginApp(app => {
                 if (mediaKeys.size >= 2) break;
                 if (mediaKeys.has(row.key) || row.resolution?.fallback.kind !== 'image') continue;
                 mediaKeys.add(row.key);
-                void owner.image(row, true, true, controller.signal, sdk.plugins).then(resource => {
+                void resources.image(row, true, true, controller.signal, sdk.plugins).then(resource => {
                   if (!resource) return; if (!current()) resource.dispose(); else media.push({ id: anchor.rowId, resource, transferred: false });
                 }).catch(() => {});
               }
@@ -286,6 +318,7 @@ export default definePluginApp(app => {
   }
   function Sentinel({ threadId, bridgeCurrent, preload, nearby, historyShare, timelineClient }: { threadId: string; bridgeCurrent(): boolean; preload: { current: HeaderPreload | null }; nearby: { current: ((ids: readonly string[]) => void) | null }; historyShare: { current: object }; timelineClient(): GalleryTimelinePort | null }) {
     const sdk = useSdk(), publicNavigate = useBbNavigate();
+    const [implementationError, setImplementationError] = useState(false);
     const activation = activationIntent;
     const navigationBinding = useMemo(() => ({ threadId, sdk, activation }), [threadId, sdk, activation]);
     const committedNavigation = useRef<{ binding: typeof navigationBinding; api: typeof publicNavigate } | null>(null);
@@ -330,6 +363,8 @@ export default definePluginApp(app => {
     const openValidation = useRef<{ turnId: string; dirty(): void; cancel(): void } | null>(null);
     const mutationTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
     const requestOpen = useCallback<GalleryOpenPort>(async input => {
+      if (!implementation) return { state: 'declined', reason: 'This result could not be checked.' };
+      const { openFingerprint, openAvailable, navigateResult } = implementation;
       const owner = runtime, generation = scope.current, expected = openFingerprint(input.expected);
       const controller = new AbortController(), started = performance.now();
       const decline = (reason: string): GalleryOpenOutcome => ({ state: 'declined', reason });
@@ -426,7 +461,14 @@ export default definePluginApp(app => {
       try {
         const result = await reader.current.read(targets.current, controller.signal);
         if (controller.signal.aborted || !generationActive || !bridgeCurrent() || generation !== scope.current || version !== boundary.current) return;
-        if (!runtime) runtime = createGalleryRuntime(sdk);
+        // The reader has completed this slice. Waiting for code is not an
+        // in-progress fresh-history chain eligible for soft hydration hints.
+        historyPass.current = null;
+        try { await requireRuntime(sdk, () => !controller.signal.aborted && generationActive && bridgeCurrent() && generation === scope.current && version === boundary.current); }
+        catch { if (!controller.signal.aborted && generation === scope.current && version === boundary.current) setImplementationError(true); return; }
+        if (controller.signal.aborted || !generationActive || !bridgeCurrent() || generation !== scope.current || version !== boundary.current || !runtime || !implementation) return;
+        setImplementationError(false);
+        const { createRoot, TurnGallery } = implementation;
         const scopeRows = [...historyRows.current.values()];
         if (handle.current) handle.current.update(result.anchors, result.checked, scopeRows);
         else {
@@ -522,11 +564,10 @@ export default definePluginApp(app => {
     useLayoutEffect(() => {
       if (!threadId || !sentinel.current) return;
       scope.current++;
-      if (!runtime && generationActive) runtime = createGalleryRuntime(sdk);
-      if (!runtime) return;
-      const owner = runtime;
+      if (!workOwner?.isActive()) return;
+      const owner = workOwner;
       const readerScope = scope.current;
-      let discoveryDemand = owner.retainDiscoveryDemand();
+      let discoveryDemand: ReturnType<GalleryRuntime['retainDiscoveryDemand']> = null;
       // Subscribe before the first latest read. These are positive reset
       // signals, not an acknowledgement/replay or proof from event silence.
       let listening = true;
@@ -573,7 +614,14 @@ export default definePluginApp(app => {
         });
         // Real native history gets the first FIFO slot. Readiness-only
         // discovery may then negotiate before the older boundary walk ends.
-        if (!input.beforeAnchorId) discoveryDemand?.warm(threadId);
+        if (!input.beforeAnchorId) {
+          void requireRuntime(sdk, () => listening && generationActive && readerScope === scope.current && owner.isActive() && bridgeCurrent() && !document.hidden && targets.current.length > 0 && !input.signal.aborted && readerLineage.current === readerMark && historyShare.current === shared).then(resources => {
+            if (!listening || readerScope !== scope.current || !owner.isActive() || !bridgeCurrent() || document.hidden || !targets.current.length || input.signal.aborted || readerLineage.current !== readerMark || historyShare.current !== shared) return;
+            if (!discoveryDemand) { discoveryDemand = resources.retainDiscoveryDemand(); discoveryDemand?.visible(true); }
+            discoveryDemand?.warm(threadId);
+            setImplementationError(false);
+          }, () => { if (listening && readerScope === scope.current && owner.isActive() && bridgeCurrent() && !document.hidden && targets.current.length > 0 && !input.signal.aborted && readerLineage.current === readerMark && historyShare.current === shared) setImplementationError(true); });
+        }
         const read = await pending;
         input.signal.throwIfAborted();
         if (!generationActive || readerScope !== scope.current || !owner.isActive()) throw Error('Timeline read retired.');
@@ -598,7 +646,7 @@ export default definePluginApp(app => {
         for (const item of preload.current?.foreground(ids) ?? []) {
           if (foregroundMedia.current.length < 2) foregroundMedia.current.push(item); else item.dispose();
         }
-        discoveryDemand ??= owner.retainDiscoveryDemand();
+        discoveryDemand ??= runtime?.retainDiscoveryDemand() ?? null;
         discoveryDemand?.visible(ids.length > 0);
         const pass = historyPass.current;
         if (reason === 'hydration' && semanticScope.current === readerScope && semanticConnection.current === 'connected'
@@ -629,7 +677,8 @@ export default definePluginApp(app => {
         targets.current = []; historyRows.current.clear(); historyBytes.current = 0; refreshTurns.current = new Set();
       };
     }, [threadId, sdk, refresh, invalidateBoundary, timelineClient]);
-    return <span ref={sentinel} hidden data-turn-results-sentinel="" />;
+    return <><span ref={sentinel} hidden data-turn-results-sentinel="" />
+      {implementationError && <div data-turn-results-notice="" role="status">Turn results could not load. Reload to try again.</div>}</>;
 
   }
 

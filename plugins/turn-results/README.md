@@ -198,6 +198,31 @@ not run before its frontend exists and does not promise cross-session preloading
 Speculative reads can spend existing lane time and deadlines on content the
 reader ultimately skips; they do not increase any read, byte or lease budget.
 
+## Frontend startup
+
+The committed public header starts the existing bounded native-history reader
+through a lean shared work owner while the rendering and supplier implementation
+loads. Content activation starts that code fetch immediately without awaiting it;
+its initial network and parse work is not eliminated or postponed until demand. The same two-window, one-thread queue owns the early pages and later
+runtime work, including raw settlement, Open priority and queued-latest waiter
+charges. Issued cursors and sparse-row byte limits are processed before rendering
+code arrives; attaching the implementation does not replay that live chain.
+When the implementation is available, readiness-only listed/Describe negotiation
+can use the next shared slot after latest history. Unloaded code cannot put that
+negotiation ahead of an older page already in flight, and history never waits for
+code to preserve that ordering. No source enumeration, retained-result work,
+custom canvas or action starts from the page request alone. Current native proof
+and normal source gates still control placement and actions.
+
+This begins only after the host commits the real SDK-backed header. It does not
+supply a pre-slot SDK, bypass host loading, or establish a native latency gain.
+Retirement, hide, transport, semantic and physical changes keep their existing
+proof resets; late module completion cannot restore retired authority. A failed
+implementation load displays a local failure and does not loop import retries or
+clear on proof restart. Reloading into a working frontend generation supplies a
+genuine recovery path. Module-load tests and emitted static-import bytes are
+separate evidence from native startup timing.
+
 ## Bounded owner work
 
 Each demanded owner prepares its resolve, source-invalidation, feed and native

@@ -7,6 +7,7 @@ import type { RegistrationPort } from '@phosphorco/bb-turn-results/bb';
 import { createGalleryRuntime, GALLERY_RUNTIME_LIMITS } from '../gallery/runtime.ts';
 import { GALLERY_METHODS } from '../gallery/rpc.ts';
 import { createGalleryAnchorReader } from '../gallery/anchors.ts';
+import { createGalleryWorkOwner } from '../gallery/work-owner.ts';
 import type { GalleryAnchor, GalleryTimelinePort } from '../gallery/anchors.ts';
 import type { StageRecord, GalleryObservation } from '../gallery/index.ts';
 const tick = () => new Promise(resolve => setTimeout(resolve, 0));
@@ -1506,4 +1507,54 @@ test('local helper timeout notices expired borrow without a false disconnect or 
     await until(() => recognized.filter(id => id === 'source-001').length === 3 && h.runtime.stats().running === 0 && h.runtime.stats().queued === 0);
     assert.equal(nativeCalls, 4); assert.equal(statusWrites, 1); assert.equal(lease.store.state.continued, false); assert.equal(lease.store.state.error, null);
   } finally { release?.(); controller.abort(); lease.dispose(); h.dispose(); await h.runtime.whenDrained(); monotonic.mock.restore(); assert.equal(h.runtime.stats().bytes, 0); }
+});
+
+
+test('lean history queue declines unknown or explicit undefined wire from latest cohorts without changing dispatch inputs', async () => {
+  const h = setup(), scope = {}, calls: Record<string, unknown>[] = [];
+  const client: GalleryTimelinePort = { async timeline(input) { calls.push(input); return latestPage(); } };
+  try {
+    for (const extra of [{ beforeAnchorId: undefined }, { beforeAnchorSeq: undefined }, { unknownWire: 'value' }]) {
+      const input = () => ({ ...latestInput(new AbortController().signal), ...extra }) as unknown as Parameters<GalleryTimelinePort['timeline']>[0];
+      const before = calls.length;
+      await Promise.all([h.runtime.readTimeline(input(), client, { scope, current: () => true }), h.runtime.readTimeline(input(), client, { scope, current: () => true })]);
+      await until(() => h.runtime.stats().running === 0);
+      assert.equal(calls.length, before + 2, 'unsupported wire stays independent rather than gaining shared eligibility');
+      for (const call of calls.slice(before)) for (const key of Object.keys(extra)) {
+        assert.ok(Object.hasOwn(call, key)); assert.equal(call[key], extra[key as keyof typeof extra]);
+      }
+    }
+    const before = calls.length;
+    await Promise.all([h.runtime.readTimeline(latestInput(new AbortController().signal), client, { scope, current: () => true }),
+      h.runtime.readTimeline(latestInput(new AbortController().signal), client, { scope, current: () => true })]);
+    await until(() => h.runtime.stats().running === 0);
+    assert.equal(calls.length, before + 1, 'exact known latest wire still shares one queued physical call');
+    assert.equal(h.runtime.stats().historyReads, 0);
+  } finally { h.dispose(); await h.runtime.whenDrained(); }
+});
+
+
+test('deferred runtime adopts the SAME early queue and cannot release ignored raw lanes or bypass queued Open', async () => {
+  const h = setup(); h.runtime.dispose(); await h.runtime.whenDrained();
+  const work = createGalleryWorkOwner(), early = new AbortController(), order: string[] = [];
+  let release!: () => void, started = false, rawSettled = false;
+  const raw = work.readScope('same', early.signal, async () => { started = true; await new Promise<void>(done => { release = done; }); rawSettled = true; }, false, false, false).catch(() => null);
+  let runtime: ReturnType<typeof createGalleryRuntime> | null = null;
+  try {
+    await until(() => started); assert.equal(work.running, 1);
+    runtime = createGalleryRuntime(h.sdk, work);
+    const queued = runtime.readScope('same', new AbortController().signal, async () => { order.push('ordinary'); });
+    const open = runtime.readScope('same', new AbortController().signal, async () => { order.push('Open'); }, true);
+    early.abort(); await raw;
+    assert.equal(rawSettled, false); assert.equal(runtime.stats().running, 1);
+    await runtime.readScope('other', new AbortController().signal, async () => { assert.equal(work.running, 2); order.push('other'); });
+    await until(() => work.running === 1);
+    assert.deepEqual(order, ['other'], 'no same-thread replacement can bypass the already-issued raw call');
+    release(); await Promise.all([queued, open]);
+    await until(() => work.running === 0);
+    assert.equal(rawSettled, true); assert.deepEqual(order, ['other', 'Open', 'ordinary']);
+    assert.equal(runtime.stats().historyReads, 0); assert.equal(runtime.stats().queued, 0);
+    runtime.dispose(); await runtime.whenDrained(); assert.equal(work.isActive(), false);
+    await assert.rejects(work.readScope('after-dispose', new AbortController().signal, async () => assert.fail('retired owner must not dispatch')));
+  } finally { release(); runtime?.dispose(); work.dispose(); await work.whenDrained(); h.dispose(); }
 });
