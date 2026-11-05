@@ -11,6 +11,10 @@ import { untilAborted } from './gallery/lifetime.ts';
 import type { GalleryAnchor, GalleryTimelinePort } from './gallery/anchors.ts';
 import './app.css';
 interface HeaderPreload {
+  demand?(ids: readonly string[]): void;
+  proof?(result: { anchors: readonly GalleryAnchor[]; continued: boolean; capacity: boolean }): void;
+  failed?(): void;
+  retireInitial?(): void;
   observe(records: readonly MutationRecord[]): void;
   stop(): void;
   foreground(ids: readonly string[]): { id: string; dispose(): void }[];
@@ -110,9 +114,75 @@ export default definePluginApp(app => {
       let live = true, coverage = false, core = 'unknown';
       const jobs: { route: HeaderPreload | null; nearby: HeaderPreload | null } = { route: null, nearby: null };
       const epochs = { route: 0, nearby: 0 };
+      let initialRoute = true;
+      type InitialIntent = { href: string; sequence: number | null; shared: object; epoch: number;
+        pane: HTMLElement; scope: HTMLElement; parent: Element | null;
+        witnesses: { id: string; row: HTMLElement; parent: Element | null; list: Element | null }[] | null };
+      let initial: InitialIntent | null = null;
+      const retireInitial = () => { initial = null; initialRoute = false; };
+      const initialCurrent = (intent: InitialIntent) => {
+        const mapped = resolveGalleryBridge(node);
+        return headerLive() && coverage && core === 'connected' && liveConnection.current === 'connected'
+          && route()?.href === intent.href && epochs.route === intent.epoch && historyShare.current === intent.shared
+          && mapped?.pane === intent.pane && mapped.scope === intent.scope && mapped.scope.parentElement === intent.parent;
+      };
+      const releaseInitial = () => {
+        const intent = initial; initial = null;
+        if (intent && initialCurrent(intent)) start();
+      };
       const combined: HeaderPreload = {
-        observe(records) { jobs.route?.observe(records); jobs.nearby?.observe(records); },
-        stop() { if (!live) return; historyShare.current = {}; for (const key of ['route', 'nearby'] as const) { epochs[key]++; jobs[key]?.stop(); jobs[key] = null; } },
+        observe(records) {
+          // No mutation history is waived for this scheduling hint. Owned
+          // rendering alone cannot make a native witness stale.
+          const own = '[data-turn-results-bridge], [data-turn-results-sentinel], [data-turn-results-gallery], [data-turn-results-notice]';
+          if (initial && records.some(record => !(record.target instanceof Element ? record.target : record.target.parentElement)?.closest(own)
+            && !(record.type === 'childList' && [...record.addedNodes, ...record.removedNodes].every(node => node instanceof Element && node.matches(own))))) retireInitial();
+          jobs.route?.observe(records); jobs.nearby?.observe(records);
+        },
+        retireInitial,
+        demand(ids) {
+          const intent = initial; if (!intent) return;
+          if (!initialCurrent(intent)) { retireInitial(); return; }
+          if (!ids.length) { releaseInitial(); return; }
+          if (intent.witnesses) {
+            if (ids.length !== intent.witnesses.length || intent.witnesses.some(witness => !ids.includes(witness.id))) retireInitial();
+            return;
+          }
+          const rows = [...intent.pane.querySelectorAll<HTMLElement>('[data-timeline-row-id]')];
+          if (ids.length > GALLERY_PANE_LIMITS.targets || rows.length > GALLERY_PANE_LIMITS.rows) { releaseInitial(); return; }
+          const witnesses: NonNullable<InitialIntent['witnesses']> = [];
+          for (const id of ids) {
+            const matches = rows.filter(row => row.dataset.timelineRowId === id);
+            const row = matches[0], list = row?.closest('[data-timeline-row-list]');
+            if (matches.length !== 1 || !row || !list || row.closest('[data-thread-window]') !== intent.pane) { releaseInitial(); return; }
+            witnesses.push({ id, row, list, parent: row.parentElement });
+          }
+          intent.witnesses = witnesses;
+        },
+        proof(result) {
+          const intent = initial; if (!intent) return;
+          if (!initialCurrent(intent)) { retireInitial(); return; }
+          const rows = [...intent.pane.querySelectorAll<HTMLElement>('[data-timeline-row-id]')];
+          const target = intent.sequence === null ? undefined : result.anchors.find(anchor => anchor.turnSeqStart <= intent.sequence! && anchor.turnSeqEnd >= intent.sequence!);
+          const witness = intent.witnesses?.find(value => value.id === target?.rowId);
+          const lists = [...intent.pane.querySelectorAll('[data-timeline-row-list="top-level"]')]
+            .filter(list => list.closest('[data-thread-window]') === intent.pane);
+          const box = witness?.row.getBoundingClientRect(), paneBox = intent.pane.getBoundingClientRect();
+          const foreground = witness && (document.activeElement?.closest('[data-timeline-row-id]') === witness.row
+            || box && box.width > 0 && box.height > 0 && box.bottom > Math.max(0, paneBox.top)
+              && box.top < Math.min(window.innerHeight, paneBox.bottom) && box.right > 0 && box.left < window.innerWidth);
+          if (!result.continued && !result.capacity && target && witness && rows.length <= GALLERY_PANE_LIMITS.rows
+            && rows.filter(row => row.dataset.timelineRowId === witness.id).length === 1 && witness.row.isConnected
+            && foreground && lists.length === 1 && lists[0] === witness.list
+            && witness.row.dataset.timelineRowId === witness.id && witness.row.parentElement === witness.parent
+            && witness.row.closest('[data-thread-window]') === intent.pane && witness.row.closest('[data-timeline-row-list]') === witness.list) {
+            // Omit optional work only. This result grants no route-reader,
+            // placement, custom or action authority to another consumer.
+            initial = null;
+          } else releaseInitial();
+        },
+        failed: releaseInitial,
+        stop() { if (!live) return; retireInitial(); historyShare.current = {}; for (const key of ['route', 'nearby'] as const) { epochs[key]++; jobs[key]?.stop(); jobs[key] = null; } },
         foreground(ids) { return [...(jobs.route?.foreground(ids) ?? []), ...(jobs.nearby?.foreground(ids) ?? [])]; },
         take(ids, port, reset) { return jobs.route?.take(ids, port, reset) ?? null; },
       };
@@ -129,6 +199,15 @@ export default definePluginApp(app => {
         const hint = route();
         if (!hint || !coverage || !headerLive() || core !== 'connected' || liveConnection.current !== 'connected') return;
         if (!workOwner?.isActive()) return;
+        if (key === 'route' && initialRoute) {
+          initialRoute = false;
+          const mapped = resolveGalleryBridge(node);
+          if (mapped && hint.sequence !== null) {
+            initial = { ...hint, shared: historyShare.current, epoch: epochs.route,
+              pane: mapped.pane, scope: mapped.scope, parent: mapped.scope.parentElement, witnesses: null };
+            return;
+          }
+        }
         const owner = workOwner, controller = new AbortController(), currentEpoch = epochs[key];
         const sharedAtBirth = historyShare.current, lineage = { current: {} };
         const resetReader = () => { lineage.current = {}; };
@@ -461,6 +540,7 @@ export default definePluginApp(app => {
       try {
         const result = await reader.current.read(targets.current, controller.signal);
         if (controller.signal.aborted || !generationActive || !bridgeCurrent() || generation !== scope.current || version !== boundary.current) return;
+        preload.current?.proof?.(result);
         // The reader has completed this slice. Waiting for code is not an
         // in-progress fresh-history chain eligible for soft hydration hints.
         historyPass.current = null;
@@ -500,6 +580,7 @@ export default definePluginApp(app => {
         // Missing/limited native history never invents a completed turn or a
         // collection surface. Only proved meaningful results render inline.
       } catch (failure) {
+        if (!controller.signal.aborted && generation === scope.current && version === boundary.current) preload.current?.failed?.();
         if (failure instanceof GalleryBoundaryError && generation === scope.current && version === boundary.current) handle.current?.update([], targets.current);
       } finally {
         clearTimeout(timer);
@@ -513,6 +594,7 @@ export default definePluginApp(app => {
     const invalidateBoundary = useCallback((mutation = false, changedRows: readonly string[] | null = null) => {
       if (!reader.current || !generationActive) return;
       for (const item of foregroundMedia.current) item.dispose(); foregroundMedia.current = [];
+      preload.current?.retireInitial?.();
       historyShare.current = {}; historyPass.current = null;
       boundary.current++; reader.current.invalidate();
       const affected = handle.current?.invalidate(changedRows ?? undefined) ?? [];
@@ -641,6 +723,7 @@ export default definePluginApp(app => {
       foregroundPort.current = port; reader.current = createGalleryAnchorReader(port, threadId, () => { readerLineage.current = {}; });
       const stop = observeGalleryDemand(sentinel.current, (ids, _limited, reason, changedRows) => {
         targets.current = ids;
+        preload.current?.demand?.(ids);
         for (const item of foregroundMedia.current) if (!ids.includes(item.id)) item.dispose();
         foregroundMedia.current = foregroundMedia.current.filter(item => ids.includes(item.id));
         for (const item of preload.current?.foreground(ids) ?? []) {

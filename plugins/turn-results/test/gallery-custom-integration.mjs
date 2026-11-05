@@ -44,6 +44,7 @@ registerHooks({ load(url, context, next) {
   if (url.endsWith('.css')) return { format: 'module', shortCircuit: true, source: 'export default {}' };
   if (new URL(url).pathname.endsWith('.tsx')) {
     let source = readFileSync(new URL(url), 'utf8');
+    source = source.replace('targets.current = ids;', 'globalThis.__foregroundRouteBefore?.markers.push({kind: "actual-foreground-demand-publication", ids: [...ids], at: performance.now() - globalThis.__foregroundRouteBefore.started}); targets.current = ids;');
     if (url === navigationVariantUrl) source = source.replace('useBbNavigate,', 'useBbNavigate as originalUseBbNavigate,')
       .replace('useSdk,', 'useSdk as originalUseSdk,') + navigationHookFixture;
     if (url === runtimeVariantUrl) source = source.replace('module.createGalleryRuntime(sdk, work)', 'observeRuntimeFactory(module.createGalleryRuntime, sdk, work)')
@@ -261,6 +262,7 @@ async function fixture(count = 6, mount = true, contribution = {}) {
   const renderBanner = () => renderSlot(banner, headerProps, { sdk,
     openFilePreview(options) { fileOpenCalls.push(options); if (contribution.focusOnFileOpen) { const preview = document.createElement('button'); document.body.append(preview); preview.focus(); } return fileOpenAccepted; },
     openUrl(url) { navigation.push(url); return true; }, realtimeConnectionState: 'connected' });
+  contribution.beforeHeader?.();
   let rendered = null; if (mount) act(() => { rendered = renderBanner(); });
   // Factory capture now waits for the real deferred implementation. This is
   // observation only: no runtime or readiness is fabricated for old fixtures.
@@ -3039,6 +3041,7 @@ test('startup: real issued older cursor finishes before heavy evaluation, with n
     await until(() => probe.entered);
     await until(() => calls.some(call => call.older)); await settle(40);
     beforeCalls = calls.length;
+    assert.equal(beforeCalls, 3, 'ordinary no-hash startup keeps the delivered three physical history calls');
     assert.equal(probe.evaluated, false);
     assert.equal(document.querySelectorAll('.tr-card').length, 0);
     releaseHeavy(); f = await pendingFixture;
@@ -3053,4 +3056,130 @@ test('startup: real issued older cursor finishes before heavy evaluation, with n
     releaseHeavy(); if (!f && pendingFixture) f = await pendingFixture;
     if (f && !closed) await f.dispose(); delete globalThis.__startupHeavyEvaluation;
   }
+});
+
+test('foreground-route: already visible exact target uses one native proof and no optional duplicate work', async () => {
+ const {createFakePluginHost}=await import('@get-bb/plugin-sdk/testing');
+ const {createRegisteredHandlerRpc}=await import('@phosphorco/bb-turn-results/testing');
+ const {createResultsSupplierClient}=await import('@phosphorco/bb-turn-results/bb');
+ const {adaptCompletedEvent}=await import('@phosphorco/bb-turn-results/events');
+ const {resolveOutcomeBudget,canonicalJson}=await import('@phosphorco/bb-turn-results');
+ const {imageCandidate}=await import('../../turn-result-images/recognition.ts');
+ const imagePlugin=(await import('../../turn-result-images/server.ts')).default;
+ const galleryPlugin=(await import('../server.ts')).default;
+ const result={status:'running',setup:[],calls:[],markers:[],owners:[],positive:null,cleanup:null,dbWrites:'not exposed by existing public fixture; committed Apply results are not claimed as SQL writes'};
+ const start=performance.now();result.started=start;const audit=(phase,kind,data={})=>{const entry={order:result.calls.length+1,phase,kind,at:performance.now()-start,...data};result.calls.push(entry);return entry;};
+ const wire=input=>Object.fromEntries(Object.entries(input).filter(([k])=>k!=='signal').map(([k,v])=>[k,k==='beforeAnchorId'?{sha256:createHash('sha256').update(String(v)).digest('hex')}:v]));
+ const bytes=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aX1cAAAAASUVORK5CYII=','base64'),sha=createHash('sha256').update(bytes).digest('hex');
+ const native={id:'native-image',threadId:'thread',seq:3,scope:{kind:'turn',turnId:'turn-0'},type:'item/completed',createdAt:1,data:{item:{id:'image',type:'imageGeneration',status:'completed',error:null,path:'/saved/image.png',transparentBackground:false,result:bytes.toString('base64')}}};
+ const selected=await adaptCompletedEvent(native);assert.equal(selected.state,'admitted');const identity=imageCandidate(selected.event).identity;
+ let phase='setup',leases=0,f,raw=[],runtime,gets=0,subscriptions=new Set();
+ const tracked=async(kind,fn,data={})=>{const item=audit(phase,kind,data);try{const value=await fn();item.end=performance.now()-start;item.state=value?.state??null;return value;}catch(error){item.end=performance.now()-start;item.failure=error?.code??error?.name;throw error;}};
+ const imageHost=createFakePluginHost({pluginId:'turn-result-images',sdk:{threads:{events:{list:input=>tracked('Images.native',async()=>[native],{limit:input.limit})},get:input=>tracked('Images.thread',async()=>({environmentId:'env'}))},environments:{get:input=>tracked('Images.environment',async()=>({hostId:'fixed-host'}))},files:{read:input=>tracked('Images.file',async()=>({path:'/saved/image.png',content:bytes.toString('base64'),contentEncoding:'base64',sha256:sha,sizeBytes:bytes.length,mimeType:'image/png'})),createPreview:input=>tracked('Images.preview',async()=>({baseUrl:`/api/v1/file-previews/fixture-${++leases}`,expiresAtMs:Date.now()+120000}))}}});
+ const galleryHost=createFakePluginHost({pluginId:'turn-results'});imagePlugin(imageHost.bb);galleryPlugin(galleryHost.bb);
+ const imageRpc=createRegisteredHandlerRpc(imageHost,'turn-result-images'),galleryRpc=createRegisteredHandlerRpc(galleryHost,'turn-results');
+ const rpc=(port,args)=>tracked('RPC',()=>port.callRpc(args),{owner:args.pluginId,method:args.method,inputSha256:createHash('sha256').update(canonicalJson(args.input)).digest('hex'),cursorPresent:args.input?.cursor!=null,afterPresent:args.input?.after!=null});
+ try{
+ const initial=await tracked('setup.Media',()=>imageHost.harness.behavior.callRpc('turnResultImagesV1Media',{version:1,identity}));assert.equal(initial.state,'ready');
+ const client=createResultsSupplierClient({plugins:{callRpc:args=>rpc(imageRpc,args)}},'turn-result-images');const resolved=await client.resolve({version:1,threadId:'thread',items:[identity],maxOutcomeBytes:resolveOutcomeBudget(1)});assert.equal(resolved.resolutions[0].state,'resolved');
+ const custom=recordFixture();
+ await tracked('setup.Apply',()=>galleryHost.harness.behavior.callRpc(GALLERY_METHODS.apply,{owner:'turn-result-images',threadId:'thread',changes:[{kind:'upsert',value:resolved.resolutions[0].value}]}));
+ await tracked('setup.Apply',()=>galleryHost.harness.behavior.callRpc(GALLERY_METHODS.apply,{owner:'custom-fixture',threadId:'thread',changes:[{kind:'upsert',value:custom.resolution}]}));
+ const saved=await tracked('setup.Read',()=>galleryHost.harness.behavior.callRpc(GALLERY_METHODS.read,{threadId:'thread',turnId:'turn-0'}));assert.equal(saved.page.rows.length,2);
+ const originalFacts=canonicalJson(saved.page.rows.map(row=>({identity:row.identity,resolution:row.resolution})));result.setup={primeMedia:1,claims:2,sha};phase='pass';
+ const cursor={anchorId:'issued older / opaque',anchorSeq:100};let older=0;
+ globalThis.__foregroundRouteBefore=result;
+ f=await fixture(1,true,{captureRuntime:true,nativeItems:true,preloadNearby:true,loadedImage:true,fileRoute:true,
+  url:'https://fixture.invalid/projects/project/threads/thread#msg=3',positions:{'opaque-0':20},
+  beforeHeader(){const row=document.querySelector('[data-timeline-row-id="opaque-0"]');assert.ok(row?.isConnected);const rect=row.getBoundingClientRect();assert.ok(rect.top>=0&&rect.bottom<=600);result.markers.push({kind:'exact-target-physically-visible-before-header',at:performance.now()-start});},
+  observeRuntime(owner){runtime=owner;const retain=owner.retain,image=owner.image;owner.retain=function(...args){result.owners.push({kind:'retain',rowId:args[0].rowId,speculative:args[3]===true,at:performance.now()-start});return retain.apply(this,args);};owner.image=function(...args){result.owners.push({kind:'image',speculative:args[2]===true,shown:args[1],at:performance.now()-start});return image.apply(this,args);};},
+  configureSdk(sdk){
+   globalThis.fetch=async(url,options)=>tracked('GET',async()=>{gets++;return new Response(bytes,{headers:{'content-type':'image/png'}});});
+   const customRpc=sdk.plugins.callRpc;
+   sdk.subscribe=input=>{result.markers.push({kind:'subscribe',event:input.event,at:performance.now()-start});subscriptions.add(input);if(input.event==='realtime:connection')queueMicrotask(()=>{if(subscriptions.has(input)){result.markers.push({kind:'committed-core-connected-callback',at:performance.now()-start});input.callback({state:'connected',reconnected:false,reconnectDelayMs:null});}});return()=>subscriptions.delete(input);};
+   sdk.threads.timeline=input=>tracked('Gallery.timeline',async()=>{if(!input.beforeAnchorId)return {rows:[{id:'newer-boundary',threadId:'thread',turnId:'newer',kind:'turn',status:'completed',sourceSeqStart:100,sourceSeqEnd:105}],completedTurnDisplay:'collapse',timelinePage:{historySnapshot:'fresh-public',olderCursor:cursor}};assert.equal(input.beforeAnchorId,cursor.anchorId);assert.equal(input.beforeAnchorSeq,String(cursor.anchorSeq));older++;return {rows:[{id:'user-boundary',threadId:'thread',turnId:null,kind:'conversation',role:'user',sourceSeqStart:0,sourceSeqEnd:0},{id:'opaque-0',threadId:'thread',turnId:'turn-0',kind:'turn',status:'completed',sourceSeqStart:1,sourceSeqEnd:5}],completedTurnDisplay:'collapse',timelinePage:{historySnapshot:'fresh-public',olderCursor:null}};},{wire:wire(input)});
+   sdk.threads.events.list=input=>tracked('Gallery.events',async()=>[native],{limit:input.limit});
+   sdk.plugins.experimental_discoverRpc=input=>tracked('metadata',async()=>[{pluginId:'turn-result-images',method:METHODS.describe},{pluginId:'custom-fixture',method:METHODS.describe}]);
+   sdk.plugins.list=input=>tracked('plugins.list',async()=>({plugins:[{id:'turn-result-images',enabled:true,status:'running'},{id:'custom-fixture',enabled:true,status:'running'}]}));
+   sdk.plugins.callRpc=args=>{const port=args.pluginId==='turn-results'?galleryRpc:args.pluginId==='turn-result-images'?imageRpc:{callRpc:customRpc};const call=rpc(port,args);raw.push(call);return call;};
+  }});
+ globalThis.fetch=async(url,options)=>tracked('GET',async()=>{gets++;return new Response(bytes,{headers:{'content-type':'image/png'}});});
+ // Automatic visible ImageCanvas may have acquired before fixture returns;
+ // install the same response implementation before header via fixture seam.
+ await until(()=>document.querySelector('img[src^="blob:"]')&&document.querySelector('[data-supplier]')&&runtime.stats().running===0&&runtime.stats().queued===0);
+ assert.ok(older>0);assert.ok(gets>=1);
+ const img=document.querySelector('img');assert.ok(img.isConnected);const imageRow=saved.page.rows.find(row=>row.owner==='turn-result-images'),customRow=saved.page.rows.find(row=>row.owner==='custom-fixture');
+ const imageCard=[...document.querySelectorAll('[data-result-key]')].find(card=>card.dataset.resultKey===imageRow.key),customCard=[...document.querySelectorAll('[data-result-key]')].find(card=>card.dataset.resultKey===customRow.key);
+ await act(async()=>imageCard.querySelector('.tr-image-action').click());await act(async()=>customCard.querySelector('.tr-open-icon').click());assert.deepEqual(f.navigation,['https://fixture.invalid/0']);assert.equal(f.fileOpenCalls.length,1);assert.deepEqual(f.fileOpenCalls[0].target,{kind:'host',hostId:'fixed-host',path:'/saved/image.png'});
+ phase='validation';const final=await tracked('validation.Read',()=>galleryHost.harness.behavior.callRpc(GALLERY_METHODS.read,{threadId:'thread',turnId:'turn-0'}));assert.equal(canonicalJson(final.page.rows.map(row=>({identity:row.identity,resolution:row.resolution}))),originalFacts);
+ const count=result.calls.length;await settle(80);assert.equal(result.calls.length,count);result.positive={rich:true,blob:true,exactSha:sha,exactImageFileOpen:1,exactURL:f.navigation[0],factsExact:true,idle:true};
+ const pass=result.calls.filter(c=>c.phase==='pass');result.counts=Object.fromEntries([...new Set(pass.map(c=>c.kind==='RPC'?c.owner+'/'+c.method:c.kind))].map(k=>[k,pass.filter(c=>(c.kind==='RPC'?c.owner+'/'+c.method:c.kind)===k).length]));
+ result.observedOptional=result.owners.filter(c=>c.speculative).length;
+ result.status='positive-complete';
+ }catch(error){result.status='failed';result.failure={name:error.name,message:error.message};throw error;}
+ finally{if(f)await f.dispose();await Promise.allSettled(raw);if(runtime)await runtime.whenDrained();await imageHost.harness.lifecycle.dispose();await galleryHost.harness.lifecycle.dispose();delete globalThis.__foregroundRouteBefore;
+ result.cleanup={subscriptions:subscriptions.size,runtime:runtime?.stats(),media:runtime?.media.stats(),canvases:runtime?.canvases.counts()};
+ console.log('FOREGROUND_ROUTE_AFTER',JSON.stringify(result));assert.equal(subscriptions.size,0);if(runtime){assert.equal(runtime.stats().running,0);assert.equal(runtime.media.stats().running,0);}
+ }
+ // An unnecessary work assertion is evaluated ONLY after all capabilities and
+ // cleanup; raw counts may instead substantiate no change needed.
+ assert.equal(result.counts['Gallery.timeline'],2,'one genuine latest+its issued older suffice; no second older walk');
+ assert.equal(result.counts['turn-result-images/turnResultImagesV1Media'],1); assert.equal(result.counts.GET,1);
+ assert.equal(result.observedOptional,0,'already foreground exact target should not need optional retain/media work');
+ function recordFixture(){return record(0);}
+});
+
+test('initial route arbitration releases one live mismatching/limited/failed intent but never a retired physical witness', async t => {
+ for(const mode of ['offscreen-goal','limited-first-proof','failed-first-proof','revoked-physical-witness']) await t.test(mode,async()=>{
+  let calls=0,release,rawStarted=false;const rawGate=new Promise(done=>{release=done;});const optional=[];
+  const f=await fixture(2,true,{captureRuntime:true,nativeItems:true,preloadNearby:true,url:'https://fixture.invalid/projects/project/threads/thread#msg=13',positions:{'opaque-0':20,'opaque-1':2000},
+   observeRuntime(owner){const retain=owner.retain;owner.retain=function(...args){if(args[3])optional.push(args[0].rowId);return retain.apply(this,args);};},
+   configureSdk(sdk){const timeline=sdk.threads.timeline;sdk.threads.timeline=async input=>{
+    calls++;if(calls===1){
+     if(mode==='failed-first-proof')throw Error('ordinary source read failed');
+     if(mode==='limited-first-proof')return {rows:[{id:'overbound'.repeat(150),threadId:'thread',turnId:'turn-0',kind:'turn',status:'completed',sourceSeqStart:1,sourceSeqEnd:5}],completedTurnDisplay:'collapse',timelinePage:{historySnapshot:'first-capacity',olderCursor:null}};
+     if(mode==='revoked-physical-witness'){rawStarted=true;await rawGate;}
+    }
+    return timeline(input);
+   };}
+  });
+  try{
+   if(mode==='revoked-physical-witness'){
+    await until(()=>rawStarted);const native=document.querySelector('[data-timeline-row-id="opaque-0"]'),parent=native.parentElement;
+    await act(async()=>{native.remove();parent.append(native);await tick();});release();
+    await until(()=>document.querySelector('[data-result-key="row-0"] [data-supplier]')&&f.runtime().stats().running===0&&f.runtime().stats().queued===0);
+    assert.deepEqual(optional,[],'an observed ABA drops the parked intent; a later fresh result cannot resurrect it');
+   }else{
+    await until(()=>optional.includes('opaque-1')&&f.runtime().stats().running===0&&f.runtime().stats().queued===0);
+    assert.equal(optional.filter(id=>id==='opaque-1').length,1,'only the original live optional intent is released');
+    assert.equal(document.querySelector('[data-result-key="row-1"]'),null,'offscreen warming grants no custom or placement authority');
+    if(mode!=='offscreen-goal'){await f.notify();}
+    await until(()=>document.querySelector('[data-result-key="row-0"] [data-supplier]'));
+   }
+   await act(async()=>document.querySelector('[data-result-key="row-0"] .tr-open-icon').click());assert.deepEqual(f.navigation,['https://fixture.invalid/0']);
+   const count=calls;await settle(50);assert.equal(calls,count,'no idle retry or implicit route rearm');
+   console.log('INITIAL_ROUTE_NEGATIVE',JSON.stringify({mode,calls,optional,exactOpen:true}));
+  }finally{release();await f.dispose();}
+ });
+});
+
+test('empty initial physical demand and later explicit hash/popstate keep ordinary route warming', async () => {
+ const optional=[];const f=await fixture(2,true,{captureRuntime:true,nativeItems:true,preloadNearby:true,
+  url:'https://fixture.invalid/projects/project/threads/thread#msg=3',positions:{'opaque-0':2000,'opaque-1':4000},
+  observeRuntime(owner){const retain=owner.retain;owner.retain=function(...args){if(args[3])optional.push(args[0].rowId);return retain.apply(this,args);};}});
+ try{
+  await until(()=>optional.includes('opaque-0')&&f.runtime().stats().running===0&&f.runtime().stats().queued===0);
+  assert.equal(document.querySelectorAll('[data-result-key]').length,0,'empty foreground demand does not manufacture placement');
+  await f.rowPosition('opaque-0',20);
+  await until(()=>document.querySelector('[data-result-key="row-0"] [data-supplier]'));
+  const afterEmpty=optional.length;
+  await act(async()=>{window.location.hash='#msg=13';await tick();});
+  await until(()=>optional.slice(afterEmpty).includes('opaque-1')&&f.runtime().stats().running===0&&f.runtime().stats().queued===0);
+  assert.equal(document.querySelector('[data-result-key="row-1"]'),null);
+  const afterHash=optional.length;
+  await act(async()=>{window.history.pushState(null,'','/projects/project/threads/thread#msg=3');window.dispatchEvent(new f.dom.window.PopStateEvent('popstate'));await tick();});
+  await until(()=>optional.slice(afterHash).includes('opaque-0')&&f.runtime().stats().running===0&&f.runtime().stats().queued===0);
+  await act(async()=>document.querySelector('[data-result-key="row-0"] .tr-open-icon').click());assert.deepEqual(f.navigation,['https://fixture.invalid/0']);
+  const calls=f.nativeCalls.length;await settle(50);assert.equal(f.nativeCalls.length,calls);
+ }finally{await f.dispose();}
 });
