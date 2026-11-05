@@ -19,6 +19,7 @@ import { rpcContract } from "./rpc-contract.ts";
 import { MAX_SKILL_QUERY_CATALOG_ROWS, MAX_SKILL_QUERY_RAW_ROWS, skillQueryFilterSchema, skillQueryResultSchema, skillRawContributorResultSchema, type SkillQueryFilter } from "./skill-query-schema.ts";
 import { SkillQueryService, type ForkFreeSkillQueryInput } from "./skill-query-service.ts";
 import { RetainedQueryCache } from "./retained-query-cache.ts";
+import { registerClientFactHttp } from "./extraction/client-fact-http.ts";
 import {
   AnalyticsStore,
   analyticsMigrations,
@@ -90,6 +91,7 @@ function bundleSummary(bundle: AnalyticsBundle, builtin: boolean) {
 }
 
 export default function analyticsPlugin(bb: BbPluginApi) {
+  registerClientFactHttp(bb);
   const db = bb.storage.database();
   bb.storage.migrate(db, [...analyticsMigrations]);
   const store = new AnalyticsStore(db);
