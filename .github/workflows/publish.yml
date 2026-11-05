@@ -34,6 +34,7 @@ on:
           - bb-thread-context
           - bb-thread-filters
           - bb-inbox-rows
+          - bb-thread-attachments
       dry_run:
         type: boolean
         default: false
@@ -88,6 +89,7 @@ on:
       - "bb-thread-context/v*"
       - "bb-thread-filters/v*"
       - "bb-inbox-rows/v*"
+      - "bb-thread-attachments/v*"
 
 permissions:
   contents: read
@@ -181,13 +183,14 @@ jobs:
             bb-usage-algebra) workspace="@phosphorco/bb-usage-algebra" ;;
             bb-thread-metrics) workspace="@phosphorco/bb-thread-metrics" ;;
             bb-inbox-rows) workspace="@phosphorco/bb-inbox-rows" ;;
+            bb-thread-attachments) workspace="@phosphorco/bb-thread-attachments" ;;
             bb-thread-filters) workspace="@phosphorco/bb-thread-filters" ;;
             bb-thread-context) workspace="@phosphorco/bb-thread-context" ;;
             bb-thread-membership) workspace="@phosphorco/bb-thread-membership" ;;
             *) echo "Unsupported release plugin: $plugin" >&2; exit 1 ;;
           esac
           case "$plugin" in
-            bb-identity|bb-provider-settings|bb-context-recognition|bb-turn-results|bb-markdown|bb-cross-references|bb-agent-connection|bb-people-accounts|bb-usage-algebra|bb-thread-metrics|bb-thread-membership|bb-thread-context|bb-thread-filters|bb-inbox-rows) path="packages/$plugin" ;;
+            bb-identity|bb-provider-settings|bb-context-recognition|bb-turn-results|bb-markdown|bb-cross-references|bb-agent-connection|bb-people-accounts|bb-usage-algebra|bb-thread-metrics|bb-thread-membership|bb-thread-context|bb-thread-filters|bb-inbox-rows|bb-thread-attachments) path="packages/$plugin" ;;
             *) path="plugins/$plugin" ;;
           esac
           package_version="$(npm pkg get version --workspace "$workspace" | node -e 'let input=""; process.stdin.on("data", chunk => input += chunk); process.stdin.on("end", () => console.log(Object.values(JSON.parse(input))[0]))')"
@@ -285,7 +288,7 @@ jobs:
             # Its runtime dependencies are exact registry packages; no sibling draft emission is needed.
             npm run build --workspace packages/bb-markdown
           else
-            npm run build --workspace packages/bb-identity --workspace packages/bb-provider-settings --workspace packages/bb-context-recognition --workspace packages/bb-turn-results --workspace packages/bb-cross-references --workspace packages/bb-agent-connection --workspace packages/bb-people-accounts --workspace packages/bb-usage-algebra --workspace packages/bb-thread-metrics --workspace packages/bb-thread-membership --workspace packages/bb-thread-context --workspace packages/bb-thread-filters --workspace packages/bb-inbox-rows
+            npm run build --workspace packages/bb-identity --workspace packages/bb-provider-settings --workspace packages/bb-context-recognition --workspace packages/bb-turn-results --workspace packages/bb-cross-references --workspace packages/bb-agent-connection --workspace packages/bb-people-accounts --workspace packages/bb-usage-algebra --workspace packages/bb-thread-metrics --workspace packages/bb-thread-membership --workspace packages/bb-thread-context --workspace packages/bb-thread-filters --workspace packages/bb-inbox-rows --workspace packages/bb-thread-attachments
           fi
 
       - name: Check out the selected Turn Results compiler

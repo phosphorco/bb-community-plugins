@@ -39,6 +39,7 @@ jobs:
           python3 .github/scripts/test-pinned-release.py
           python3 .github/scripts/test-context-recognition-publish.py
           python3 .github/scripts/test-markdown-release.py
+          python3 .github/scripts/test-thread-attachments-release.py
           node --test .github/scripts/check-turn-results-artifacts.test.mjs
 
       - name: Install locked dependencies
@@ -57,6 +58,7 @@ jobs:
           npm run build --workspace @phosphorco/bb-thread-context
 
           npm run build --workspace @phosphorco/bb-inbox-rows
+          npm run build --workspace @phosphorco/bb-thread-attachments
           npm run build --workspace @phosphorco/bb-thread-filters
 
       - name: Check out the selected Turn Results compiler
@@ -156,3 +158,6 @@ jobs:
 
       - name: Inspect Inbox Rows package
         run: npm pack --dry-run --ignore-scripts --workspace @phosphorco/bb-inbox-rows
+
+      - name: Inspect Thread Attachments package
+        run: npm pack --dry-run --ignore-scripts --workspace @phosphorco/bb-thread-attachments
