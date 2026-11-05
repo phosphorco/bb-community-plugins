@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 import { observeGalleryDemand, mountGalleryPane, resolveGalleryBridge, mountGalleryNotice } from '../gallery/pane.ts';
 import type { GalleryAnchor } from '../gallery/anchors.ts';
+import type { GalleryActionScope } from '../gallery/pane.ts';
 const tick = () => new Promise(resolve => setTimeout(resolve, 0));
 function fixture(count: number) {
   const dom = new JSDOM('<main data-thread-window><div data-timeline-row-list="top-level"></div><span></span></main>', { pretendToBeVisual: true });
@@ -98,13 +99,14 @@ function structuralFixture(count = 4, scope?: { id: string; turnId: string | nul
   const anchors = f.rows.slice(0, onlyFirst ? 1 : count).map((row, i): GalleryAnchor => ({ threadId: 'thread', turnId: `turn-${i}`, rowId: row.dataset.timelineRowId!,
     sourceSeqStart: 1, sourceSeqEnd: 10, turnSeqStart: 1, turnSeqEnd: 10, historySnapshot: 'accepted-public-snapshot' }));
   const current = new Map<string, () => boolean>(), changes: (readonly string[] | null)[] = [];
-  const handle = mountGalleryPane(f.sentinel, 'thread', anchors, (_host, anchor, check) => {
-    current.set(anchor.turnId, check); return { dispose() {} };
+  const actions = new Map<string, GalleryActionScope>(), reasons: string[] = [];
+  const handle = mountGalleryPane(f.sentinel, 'thread', anchors, (_host, anchor, check, _lifetime, actionScope) => {
+    current.set(anchor.turnId, check); actions.set(anchor.turnId, actionScope); return { dispose() {} };
   }, publicRows);
   const stop = observeGalleryDemand(f.sentinel, (_ids, _capacity, reason, rows) => {
-    if (reason === 'mutation') { changes.push(rows); handle.invalidate(rows ?? undefined); }
+    if (reason === 'mutation' || reason === 'hydration') { reasons.push(reason); changes.push(rows); handle.invalidate(rows ?? undefined); }
   });
-  return { ...f, items, list, chrome, publicRows, anchors, current, changes, handle,
+  return { ...f, items, list, chrome, publicRows, anchors, current, changes, reasons, actions, handle,
     async close() { stop(); await handle.dispose(); f.restore(); } };
 }
 
@@ -124,6 +126,29 @@ test('structurally empty outside-list chrome is quiet, preserves healthy authori
   } finally { await f.close(); }
 });
 
+test('whole proved body/chrome batch suspends input and irreversibly revokes captured intent before fresh proof', async () => {
+  const f = structuralFixture(3, undefined, false, true);
+  try {
+    await tick(); const current = f.current.get('turn-0')!, capture = f.actions.get('turn-0')!.capture()!;
+    assert.equal(capture.live(), true); assert.equal(current(), true);
+    const button = f.rows[0]!.querySelector('button')!;
+    button.replaceWith(button.cloneNode(true)); f.rows[0]!.append(document.createElement('button'));
+    f.chrome.firstChild!.replaceWith(document.createElement('div'));
+    await tick();
+    assert.equal(f.reasons.at(-1), 'hydration'); assert.deepEqual(f.changes.at(-1), ['opaque-row-0']);
+    assert.equal(current(), false); assert.equal(capture.live(), false);
+    assert.equal(f.current.get('turn-1')!(), true, 'unaffected physical row retains its own proof');
+    f.handle.update(f.anchors, f.anchors.map(a => a.rowId), f.publicRows); await tick();
+    assert.equal(current(), true); assert.equal(capture.live(), false, 'fresh proof cannot revive a pre-hint capture');
+    const fresh = f.actions.get('turn-0')!.capture()!; assert.equal(fresh.live(), true); fresh.release();
+    // Mixed owned-root history is not body-only, even if removed by delivery.
+    const owned = document.createElement('div'); owned.dataset.turnResultsGallery = '';
+    f.rows[0]!.append(owned); owned.remove(); f.rows[0]!.querySelector('button')!.textContent = 'Changed';
+    await tick(); assert.equal(f.reasons.at(-1), 'mutation');
+    assert.equal(current(), false);
+  } finally { await f.close(); }
+});
+
 test('outside-list classification refuses structural descendants, placement changes, mixed batches and bounded overflow', async t => {
   const cases: [string, (f: ReturnType<typeof structuralFixture>) => void][] = [
     ['list removal', f => f.list.remove()],
@@ -135,7 +160,7 @@ test('outside-list classification refuses structural descendants, placement chan
     ['outside window identity', f => { f.chrome.dataset.threadWindow = ''; }],
     ['outside row identity attribute', f => { f.chrome.dataset.timelineRowId = 'unmapped'; }],
     ['items marker removal', f => { delete f.items.dataset.timelineItems; }],
-    ['mixed chrome and native row content', f => { f.chrome.firstChild!.replaceWith(document.createElement('div')); f.rows[1]!.querySelector('button')!.textContent = 'Native correction'; }],
+    ['mixed unproved chrome and native row content', f => { f.chrome.firstChild!.replaceWith(document.createElement('div')); f.chrome.insertAdjacentHTML('beforeend', '<span data-timeline-items></span>'); f.rows[1]!.querySelector('button')!.textContent = 'Native correction'; }],
     ['mixed chrome and accepted foreign-turn windowing', f => { f.chrome.firstChild!.replaceWith(document.createElement('div')); f.rows[1]!.remove(); }],
     ['unknown item child', f => f.items.append(document.createElement('aside'))],
     ['record overflow', f => { for (let i = 0; i < 65; i++) f.chrome.append(document.createElement('div')); }],

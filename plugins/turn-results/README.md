@@ -111,7 +111,20 @@ Private continuation memory shares the existing budgets. Public advertised RPC
 membership narrows descriptor candidates when available; the ordinary current
 plugin list and Describe still establish supplier readiness. Unsupported or invalid
 metadata uses ordinary discovery. No per-card discovery or hidden all-history
-walk is performed. Actual capacity
+walk is performed. Visible native demand queues one readiness-only discovery
+slice per window generation after its first actual history read, so renderer
+negotiation can finish while the native boundary is still loading. This uses
+the same passive lanes; a slow discovery can delay other queued reads. Actual
+public metadata/list/Describe promises remain owned until settlement.
+
+During an already-dispatched fresh latest-rooted history chain, a bounded batch
+of body rendering may be coalesced only when every changed subtree preserves
+the exact physical row, parent, list and ID, with no structural or owned-root
+changes. Proved outside-row chrome may share that batch. Actions and captures
+are suspended immediately; only complete public history restores them. Core
+thread/config changes, backfill even at an unchanged sequence, connection loss,
+unknown batches and physical changes still reset proof. Event silence and equal
+snapshot tokens never validate cached older anchors. Actual capacity
 may show a quiet limitation beside meaningful results. Successful empty/routine-only turns
 have no frame or reserved space; a failed empty read shows its current error until
 a genuine successful read clears it. Plain data cards use1x1,

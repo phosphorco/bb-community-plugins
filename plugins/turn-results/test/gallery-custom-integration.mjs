@@ -2190,11 +2190,13 @@ test('validated positive prefix is visible but cannot Open, capture or acquire a
       nativePublic: f.nativeCalls.map(call => ({ threadId: call.threadId, beforeAnchorId: call.beforeAnchorId ?? null })),
       prefixVisible: !!prefix && f.dom.window.getComputedStyle(prefix).visibility !== 'hidden',
       cards: shell.querySelectorAll('[data-result-key]').length, customLive: f.stats().live,
-      canOpen: runtime.isReadyOwner(owner), occupancy: runtime.canvases.counts(), stats: runtime.stats(), peak, released };
+      ownerReady: runtime.isReadyOwner(owner), canOpen: prefix?.querySelector('.tr-data-action')?.disabled === false,
+      occupancy: runtime.canvases.counts(), stats: runtime.stats(), peak, released };
     result.phases.push(pending); save();
     assert.ok(native.isConnected && shell.isConnected); assert.equal(f.nativeCalls.length, 1);
     assert.equal(result.calls[0].keys.length, 8); assert.ok(issued); assert.equal(result.calls.length, 2);
     assert.equal(pending.customLive, 0); assert.equal(pending.occupancy.occupied, 0);
+    assert.equal(pending.ownerReady, true, 'early descriptor readiness does not authorize partial membership actions or custom leases');
     assert.equal(pending.canOpen, false); assert.equal(f.navigation.length, 0);
     assert.equal(prefix.querySelector('.tr-data-action').disabled, true);
     assert.ok([...prefix.querySelectorAll('button')].every(button => button.disabled));
@@ -2373,6 +2375,57 @@ test('page-boundary FIFO admits proved next turn before a later issued page and 
     const idle = calls.length; await settle(); assert.equal(calls.length, idle);
   } finally {
     release(); releaseOptional(); await f.dispose(); await runtime.whenDrained();
+    assert.equal(live, 0); assert.equal(runtime.stats().running, 0); assert.equal(runtime.stats().queued, 0);
+    assert.equal(runtime.stats().leases, 0); assert.equal(runtime.canvases.counts().occupied, 0);
+  }
+});
+
+test('visible native demand negotiates generic readiness before held older proof without early collection authority', async () => {
+  let release, held = false, released = false, live = 0, peak = 0;
+  const calls = [], cursor = { anchorId: 'actually-issued-older-page', anchorSeq: 20 };
+  const gate = new Promise(done => { release = () => { released = true; done(); }; });
+  const f = await fixture(1, true, { captureRuntime: true, nativeItems: true,
+    configureSdk(sdk) {
+      const history = sdk.threads.timeline, list = sdk.plugins.list, rpc = sdk.plugins.callRpc;
+      const track = async (name, call) => {
+        calls.push(name); live++; peak = Math.max(peak, live);
+        try { return await call(); } finally { live--; }
+      };
+      sdk.threads.timeline = input => track(input.beforeAnchorId ? 'history:older' : 'history:latest', async () => {
+        if (!input.beforeAnchorId) return { rows: [{ id: 'newer-public-row', threadId: 'thread', turnId: 'newer-turn',
+          kind: 'turn', status: 'completed', sourceSeqStart: 20, sourceSeqEnd: 25 }], completedTurnDisplay: 'collapse',
+          timelinePage: { historySnapshot: 'public-snapshot', olderCursor: cursor } };
+        assert.equal(input.beforeAnchorId, cursor.anchorId); assert.equal(input.beforeAnchorSeq, String(cursor.anchorSeq));
+        held = true; await gate; input.signal.throwIfAborted(); return history(input);
+      });
+      sdk.plugins.experimental_discoverRpc = () => track('advertised', async () => [{ pluginId: owner, method: METHODS.describe }]);
+      sdk.plugins.list = input => track('listed', () => list(input));
+      sdk.plugins.callRpc = args => track(args.method, () => rpc(args));
+    } });
+  const runtime = f.runtime(), facts = JSON.stringify(f.rows());
+  try {
+    await until(() => held); await settle(30);
+    console.log('EARLY_READINESS_BEFORE_BOUNDARY', JSON.stringify({ calls, ready: runtime.isReadyOwner(owner), released, stats: runtime.stats(), peak }));
+    assert.equal(released, false);
+    assert.equal(runtime.isReadyOwner(owner), true, 'real listed/Describe negotiation must finish before the held older boundary');
+    assert.equal(calls[0], 'history:latest', 'first genuine native history read has FIFO precedence');
+    assert.equal(calls.filter(call => call === METHODS.describe).length, 1);
+    assert.ok(calls.indexOf(METHODS.describe) < calls.indexOf('history:older'));
+    assert.equal(document.querySelectorAll('[data-turn-results-gallery]').length, 0, 'readiness cannot manufacture native placement');
+    assert.equal(document.querySelectorAll('[data-result-key]').length, 0);
+    assert.equal(runtime.canvases.counts().occupied, 0); assert.equal(f.stats().live, 0);
+    for (const method of [GALLERY_METHODS.read, GALLERY_METHODS.stage, GALLERY_METHODS.apply, METHODS.enumerate])
+      assert.equal(calls.includes(method), false, 'no early retained/source work before full native proof');
+    await act(async () => { release(); await tick(); });
+    await until(() => f.stats().live === 1 && runtime.stats().running === 0 && runtime.stats().queued === 0);
+    const card = document.querySelector('[data-result-key="row-0"]');
+    assert.ok(card.querySelector('[data-supplier]')); assert.ok(calls.includes(GALLERY_METHODS.stage));
+    await act(async () => { card.querySelector('.tr-open-icon').click(); await tick(); });
+    assert.deepEqual(f.navigation, ['https://fixture.invalid/0']); assert.equal(JSON.stringify(f.rows()), facts);
+    assert.equal(calls.filter(call => call === METHODS.describe).length, 1, 'ordinary source phase reuses its genuine ready descriptor');
+    assert.equal(peak, 1); const idle = calls.length; await settle(40); assert.equal(calls.length, idle);
+  } finally {
+    release(); await f.dispose(); await runtime.whenDrained();
     assert.equal(live, 0); assert.equal(runtime.stats().running, 0); assert.equal(runtime.stats().queued, 0);
     assert.equal(runtime.stats().leases, 0); assert.equal(runtime.canvases.counts().occupied, 0);
   }

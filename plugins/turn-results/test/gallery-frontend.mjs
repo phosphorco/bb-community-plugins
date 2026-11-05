@@ -214,7 +214,8 @@ test('large valid retained artifacts stop at the charged byte cap with exact bin
   };
   const lease = f.runtime.retain(f.anchor);
   try {
-    await until(() => lease.store.state.loaded && f.runtime.stats().running === 0);
+    await until(() => lease.store.state.limited && !lease.store.state.busy && f.runtime.stats().running === 0 && f.runtime.stats().queued === 0);
+    assert.equal(lease.store.state.loaded, false); assert.equal(lease.store.state.continued, true);
     assert.ok(lease.store.state.rows.length > 8 && lease.store.state.rows.length < 64);
     assert.equal(lease.store.state.limited, true); assert.ok(reads.length <= 8);
     assert.equal(Object.keys(lease.store.state.bindings).length, lease.store.state.rows.length);

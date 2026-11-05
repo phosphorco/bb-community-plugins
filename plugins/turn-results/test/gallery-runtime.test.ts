@@ -120,8 +120,9 @@ test('discovery demand is bounded128, does not start work, and actual hide/unloa
     await tick(); assert.equal(started, false); assert.equal(h.runtime.stats().discoveryDemands, 128);
     lease = h.runtime.retain(anchor('thread')); await until(() => started);
     lease.visible(false); demands[0]!.visible(false); assert.equal(bounded.aborted, true);
-    await until(() => h.runtime.stats().running === 0);
-    h.hidden(true); release(); await tick(); assert.equal(h.runtime.isReadyOwner('source-000'), false);
+    await tick(); assert.equal(h.runtime.stats().running, 1, 'ignored raw Describe still owns its lane after local cancellation');
+    h.hidden(true); release(); await until(() => h.runtime.stats().running === 0);
+    assert.equal(h.runtime.isReadyOwner('source-000'), false);
     assert.equal(h.sourceCalls.length, 0);
     for (const demand of demands) demand.dispose(); assert.equal(h.runtime.stats().discoveryDemands, 0);
     h.runtime.dispose(); await tick(); assert.equal(h.runtime.stats().visibleDiscoveryDemands, 0);
@@ -322,8 +323,11 @@ test('hidden or disposed targeted retry ignores late valid descriptor and cannot
     try {
       await until(() => Boolean(release));
       if (retire === 'hidden') h.hidden(true); else h.runtime.dispose();
-      assert.equal(bounded.aborted, true); await until(() => h.runtime.stats().running === 0);
-      release(); await tick(); await tick();
+      assert.equal(bounded.aborted, true); await tick();
+      assert.equal(h.runtime.stats().running, 1, 'retired generation keeps ignored raw retry occupancy');
+      let drained = false; const drainage = h.runtime.whenDrained().then(() => { drained = true; });
+      await tick(); assert.equal(drained, false);
+      release(); await drainage; await until(() => h.runtime.stats().running === 0);
       assert.equal(h.runtime.isReadyOwner('source-000'), false); assert.equal(h.sourceCalls.length, 0);
       assert.equal(descriptions, 2);
     } finally { release?.(); lease.dispose(); h.dispose(); }
@@ -374,11 +378,15 @@ test('actual public500ms Describe timeout retries once; ignored late initial des
   };
   const lease = h.runtime.retain(anchor('thread'));
   try {
-    await until(() => descriptions === 2 && h.runtime.isReadyOwner('source-000') && h.runtime.stats().running === 0);
+    await until(() => firstSignal?.aborted);
     assert.equal(firstSignal.aborted, true, 'the unchanged public default call deadline aborted the first request');
+    assert.equal(descriptions, 1, 'a timed-out ignored transport must settle before a second Describe dispatch');
+    assert.equal(h.runtime.isReadyOwner('source-000'), false); assert.equal(h.runtime.stats().running, 1);
+    release();
+    await until(() => descriptions === 2 && h.runtime.isReadyOwner('source-000') && h.runtime.stats().running === 0);
     h.runtime.invalidateReadiness(); assert.equal(h.runtime.isReadyOwner('source-000'), false);
-    release(); await tick(); await tick();
-    assert.equal(h.runtime.isReadyOwner('source-000'), false, 'late old call cannot readmit an invalidated generation');
+    await tick(); await tick();
+    assert.equal(h.runtime.isReadyOwner('source-000'), false, 'settled old work cannot readmit an invalidated generation');
     assert.equal(descriptions, 2); assert.equal(h.runtime.stats().running, 0);
   } finally { release?.(); lease.dispose(); h.dispose(); }
 });
@@ -755,6 +763,77 @@ test('page continuation keeps its original deadline across queue wait and releas
     assert.deepEqual(lease.store.state.rows, [a, b]);
     assert.equal(h.runtime.stats().bytes, Buffer.byteLength(JSON.stringify(lease.store.state)), 'completion transfers rows without retaining a second collection');
   } finally { queuedSignal.abort(); lease.dispose(); h.dispose(); clock.mock.restore(); }
+});
+
+test('early readiness shares one first slice across visible roots, preserves cursor debt and rechecks new membership', async () => {
+  const h = setup(33), rpc = h.sdk.plugins.callRpc, listed = h.sdk.plugins.list;
+  const described: string[] = []; let release!: () => void, entered = false, disabled = false;
+  h.sdk.plugins.callRpc = async args => { if (args.method === METHODS.describe) described.push(args.pluginId); return rpc(args); };
+  h.sdk.plugins.list = async input => {
+    const value = await listed(input);
+    return { plugins: value.plugins.map(row => row.id === 'source-000' && disabled ? { ...row, enabled: false } : row) };
+  };
+  const demands = Array.from({ length: 3 }, () => h.runtime.retainDiscoveryDemand()!);
+  const controller = new AbortController();
+  const firstHistory = h.runtime.readScope('same', controller.signal, async () => {
+    entered = true; await new Promise<void>(done => { release = done; });
+  });
+  try {
+    await until(() => entered);
+    for (const [index, demand] of demands.entries()) { demand.visible(true); demand.warm(index === 2 ? 'other' : 'same'); }
+    assert.equal(h.runtime.stats().queued, 1, 'one queued first slice for the window generation, not one per root');
+    assert.deepEqual(described, []); release(); await firstHistory;
+    await until(() => h.runtime.isReadyOwner('source-031') && h.runtime.stats().running === 0);
+    assert.equal(described.length, 32); assert.equal(h.runtime.isReadyOwner('source-032'), false);
+    assert.equal(h.sourceCalls.length, 0); assert.deepEqual(h.reads, [], 'readiness-only task never collects or consumes sources');
+    for (const demand of demands) demand.warm('same');
+    await tick(); await tick(); assert.equal(described.length, 32, 'no automatic continuation or idle retry from visible roots');
+    await h.runtime.readScope('same', controller.signal, signal => h.runtime.discoverReady(signal));
+    assert.equal(described.length, 33); assert.equal(h.runtime.isReadyOwner('source-032'), true, 'later genuine discovery demand uses the existing issued discovery cursor');
+    disabled = true; h.runtime.invalidateReadiness();
+    assert.equal(h.runtime.readyOwners.state.size, 0);
+    for (const demand of demands) demand.warm('same');
+    await until(() => h.runtime.readyOwners.state.size === 32 && h.runtime.stats().running === 0);
+    assert.equal(described.length, 65); assert.equal(described.filter(id => id === 'source-000').length, 1);
+    assert.equal(h.runtime.isReadyOwner('source-000'), false, 'new generation requires fresh enabled membership');
+    const calls = described.length; await tick(); await tick(); assert.equal(described.length, calls);
+  } finally { release?.(); controller.abort(); for (const demand of demands) demand.dispose(); h.dispose(); }
+});
+
+test('early discovery owns ignored raw timeout, skips expired helper dispatch and refuses no-demand/hide/retirement', async () => {
+  const h = setup(2), rpc = h.sdk.plugins.callRpc;
+  let release!: () => void, held: AbortSignal | undefined, settled = false;
+  const described: string[] = [];
+  h.sdk.plugins.callRpc = async args => {
+    if (args.method === METHODS.describe) {
+      described.push(args.pluginId);
+      if (described.length === 1) { held = args.signal; await new Promise<void>(done => { release = done; }); settled = true; }
+    }
+    return rpc(args);
+  };
+  const demand = h.runtime.retainDiscoveryDemand()!; demand.visible(true); demand.warm('same');
+  const controller = new AbortController(); let sameDispatched = false;
+  try {
+    await until(() => held?.aborted === true);
+    assert.equal(settled, false); assert.deepEqual(described, ['source-000']);
+    assert.equal(h.runtime.stats().running, 1); assert.equal(h.runtime.stats().historyReads, 1);
+    const same = h.runtime.readScope('same', controller.signal, async () => { sameDispatched = true; });
+    const sameRejected = assert.rejects(same);
+    const other = await h.runtime.readScope('other', new AbortController().signal, async () => 'other-thread-progress');
+    assert.deepEqual(other, { state: 'ready', value: 'other-thread-progress' }); assert.equal(sameDispatched, false);
+    await new Promise(done => setTimeout(done, 520)); // The second helper's unchanged500ms deadline expires while queued behind raw work.
+    assert.deepEqual(described, ['source-000']); assert.equal(h.runtime.stats().running, 1);
+    demand.visible(false); controller.abort('retired'); await sameRejected;
+    assert.equal(h.runtime.isReadyOwner('source-000'), false); assert.equal(sameDispatched, false);
+    h.hidden(true); release(); await until(() => h.runtime.stats().running === 0);
+    assert.deepEqual(described, ['source-000'], 'expired queued helper must not dispatch after old raw settles');
+    assert.equal(h.runtime.readyOwners.state.size, 0); assert.equal(h.runtime.stats().historyReads, 0);
+    h.hidden(false); demand.visible(true); demand.warm('same');
+    await until(() => h.runtime.readyOwners.state.size === 2 && h.runtime.stats().running === 0);
+    assert.deepEqual(described, ['source-000', 'source-000', 'source-001']); assert.equal(h.sourceCalls.length, 0);
+    demand.dispose(); h.runtime.dispose(); await h.runtime.whenDrained();
+    assert.equal(h.runtime.stats().running, 0); assert.equal(h.runtime.stats().historyReads, 0);
+  } finally { release?.(); controller.abort(); demand.dispose(); h.dispose(); }
 });
 
 test('conflicting duplicate page cannot complete a prefix and complete last-good data is not replaced by refresh prefix', async () => {

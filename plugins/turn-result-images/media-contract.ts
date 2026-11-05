@@ -8,7 +8,7 @@ import { MAX_IMAGE_BYTES, MAX_IMAGE_DIMENSION, MAX_IMAGE_PIXELS } from './verifi
 export const IMAGE_MEDIA_METHOD = 'turnResultImagesV1Media';
 export const IMAGE_MEDIA_INPUT_BYTES = 8_192;
 export const IMAGE_MEDIA_OUTPUT_BYTES = 16_384;
-export const IMAGE_MEDIA_DEADLINE_MS = 1_300;
+export const IMAGE_MEDIA_DEADLINE_MS = 3_000;
 export const IMAGE_MEDIA_TTL_MS = 120_000;
 export interface ImageMediaInput { version: 1; identity: ResultIdentity }
 export interface ImageMediaLease {

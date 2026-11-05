@@ -11,7 +11,7 @@ export function sameBoundary(a: Readonly<GalleryAnchor>, b: Readonly<GalleryAnch
     && a.sourceSeqStart === b.sourceSeqStart && a.sourceSeqEnd === b.sourceSeqEnd
     && a.turnSeqStart === b.turnSeqStart && a.turnSeqEnd === b.turnSeqEnd;
 }
-const owners = new WeakMap<HTMLElement, { dispose(): Promise<void>; wake(): void; knowsRow(id: string): boolean }>();
+const owners = new WeakMap<HTMLElement, { dispose(): Promise<void>; wake(): void; knowsRow(id: string): boolean; invalidate(ids?: readonly string[], revokeCaptures?: boolean): string[] }>();
 const handoffs = new WeakMap<HTMLElement, { drained: boolean; promise: Promise<void> }>();
 export const GALLERY_PANE_LIMITS = Object.freeze({ rows: 1000, targets: 20, roots: 64 });
 const ownedSurface = '[data-turn-results-gallery], [data-turn-results-sentinel], [data-turn-results-dialog], [data-turn-results-notice], [data-turn-results-bridge]';
@@ -72,12 +72,12 @@ export function mountGalleryNotice(sentinel: HTMLElement, ids: readonly string[]
     dispose() { element.remove(); } };
 }
 
-export function observeGalleryDemand(sentinel: HTMLElement, changed: (ids: string[], capacity: boolean, reason: 'demand' | 'mutation' | 'visibility', changedRows: readonly string[] | null) => void) {
+export function observeGalleryDemand(sentinel: HTMLElement, changed: (ids: string[], capacity: boolean, reason: 'demand' | 'mutation' | 'hydration' | 'visibility', changedRows: readonly string[] | null) => void) {
   const pane = sentinel.closest('[data-thread-window]');
   if (!pane) return () => {};
   const paneToken = domToken(pane)!;
   let active = true, queued = false, prior = '', rows: HTMLElement[] = [];
-  let reason: 'demand' | 'mutation' | 'visibility' = 'demand';
+  let reason: 'demand' | 'mutation' | 'hydration' | 'visibility' = 'demand';
   let broad = false;
   const changedRows = new Set<string>();
   const visible = new Set<Element>();
@@ -146,6 +146,11 @@ export function observeGalleryDemand(sentinel: HTMLElement, changed: (ids: strin
     schedule();
   }
   const mutations = new MutationObserver(delivered => {
+    // Internal rendering is ignored, but a mixed native/owned-root insertion
+    // cannot establish a body-only batch from its filtered remainder.
+    const ownedRootsChanged = delivered.some(record => record.type === 'childList'
+      && !(record.target instanceof Element ? record.target : record.target.parentElement)?.closest(ownedSurface)
+      && [...record.addedNodes, ...record.removedNodes].some(node => node instanceof Element && node.matches(ownedSurface)));
     const records = delivered.filter(record => {
       const target = record.target instanceof Element ? record.target : record.target.parentElement;
       return !target?.closest(ownedSurface) && !(record.type === 'childList' && [...record.addedNodes, ...record.removedNodes].every(node => node instanceof Element && node.matches(ownedSurface)));
@@ -156,24 +161,70 @@ export function observeGalleryDemand(sentinel: HTMLElement, changed: (ids: strin
     let chrome = false, visited = 0;
     // Prove absence across the entire batch; never decide from a DIV/class or
     // only the mutation target. Unknown/overflow/mixed batches remain broad.
-    const structurallyEmpty = (root: Node) => {
+    const structurallyEmpty = (root: Node, noOwned = false) => {
       const walker = document.createTreeWalker(root, 0xffffffff);
       let node: Node | null = root;
       do {
         if (++visited > 128 || ![1, 3, 8].includes(node.nodeType)
-          || (node.nodeType === 1 && (!(node instanceof Element) || node.matches(nativeStructure)))) return false;
+          || (node.nodeType === 1 && (!(node instanceof Element) || node.matches(noOwned ? `${nativeStructure}, ${ownedSurface}` : nativeStructure)))) return false;
         node = walker.nextNode();
       } while (node);
       return true;
     };
-    const outsideChrome = (record: MutationRecord, target: Element) => {
+    const outsideChrome = (record: MutationRecord, target: Element, noOwned = false) => {
       if (records.length > 64 || !placed() || !placement
         || !['childList', 'characterData'].includes(record.type)
         || target.closest(nativeStructure) !== pane
         || target === pane || target.contains(placement.list) || placement.list.contains(target)
         || target.contains(placement.items) || placement.items.contains(target)) return false;
-      return structurallyEmpty(target) && [...record.addedNodes, ...record.removedNodes].every(structurallyEmpty);
+      return structurallyEmpty(target, noOwned) && [...record.addedNodes, ...record.removedNodes].every(node => structurallyEmpty(node, noOwned));
     };
+    const bodyIds = new Set<string>();
+    const bodyOnly = !ownedRootsChanged && placed() && records.some(record => {
+      const target = record.target instanceof Element ? record.target : record.target.parentElement;
+      return !!target?.closest('[data-timeline-row-id]');
+    }) && records.every(record => {
+      const target = record.target instanceof Element ? record.target : record.target.parentElement;
+      if (!target?.isConnected || target.closest('[data-thread-window]') !== pane
+        || !['childList', 'characterData'].includes(record.type)) return false;
+      const row = target.closest<HTMLElement>('[data-timeline-row-id]');
+      if (!row) return outsideChrome(record, target, true);
+      const witness = rowWitnesses.get(row), origin = rowOrigins.get(row);
+      if (!witness || !origin || !placement || priorIds.get(witness.id) !== row
+        || row.dataset.timelineRowId !== witness.id || witness.parent !== placement.items
+        || row.parentElement !== witness.parent || witness.list !== placement.list
+        || row.closest('[data-timeline-row-list]') !== witness.list
+        || origin.pane !== paneToken || origin.parent !== domToken(witness.parent)
+        || origin.list !== domToken(witness.list) || origin.id !== witness.id) return false;
+      let node: Element | null = target, depth = 0;
+      while (node && node !== row && depth++ < 32) {
+        if (++visited > 128) return false;
+        if (node.matches(`${nativeStructure}, ${ownedSurface}`)) return false;
+        node = node.parentElement;
+      }
+      if (node !== row || ++visited > 128) return false;
+      // Inspect changed subtrees, not the unchanged row's owned gallery.
+      for (const root of [...record.addedNodes, ...record.removedNodes]) {
+        const walker = document.createTreeWalker(root, 0xffffffff); let changed: Node | null = root;
+        do {
+          if (++visited > 128 || ![1, 3, 8].includes(changed.nodeType)
+            || changed instanceof Element && changed.matches(`${nativeStructure}, ${ownedSurface}`)) return false;
+          changed = walker.nextNode();
+        } while (changed);
+      }
+      bodyIds.add(witness.id);
+      return bodyIds.size <= GALLERY_PANE_LIMITS.targets;
+    });
+    if (bodyOnly && bodyIds.size) {
+      const ids = [...bodyIds];
+      // Revoke input/captured Checking immediately, before deferred publication.
+      // This is only a scheduling classification, never fresh history proof.
+      owners.get(pane as HTMLElement)?.invalidate(ids, true);
+      for (const id of ids) changedRows.add(id);
+      if (changedRows.size > GALLERY_PANE_LIMITS.targets) broad = true;
+      if (reason !== 'mutation' && reason !== 'visibility') reason = 'hydration';
+      scan(); return;
+    }
     let nextRows: HTMLElement[] | undefined, nextIds: Map<string, Element | null> | undefined;
     let structuralNodes = 0;
     const structuralIds = new Set<string>();
@@ -439,7 +490,7 @@ export function mountGalleryPane(sentinel: HTMLElement, threadId: string,
   });
   const handle = { get capacity() { return capacity; }, get pendingRoots() { return roots.size + retiring.size > 0; },
     knowsRow(id: string): boolean { const turn = scopeRows?.get(id); return own() && typeof turn === 'string' && turn.length > 0; },
-    wake() { predecessorReady = handoff === null || handoff.drained; if (active) reconcile(); }, invalidate(ids?: readonly string[]) {
+    wake() { predecessorReady = handoff === null || handoff.drained; if (active) reconcile(); }, invalidate(ids?: readonly string[], revokeCaptures = false) {
     // Match sibling public rows through their witnessed turn, never through an
     // opaque ID convention. Missing proof remains conservative.
     const witnessed = scopeRows;
@@ -450,6 +501,7 @@ export function mountGalleryPane(sentinel: HTMLElement, threadId: string,
     for (const anchor of anchors) if (includes(anchor)) invalid.add(anchor);
     for (const old of roots.values()) if (includes(old.anchor)) {
       invalidated.push(old.anchor.turnId);
+      if (revokeCaptures) { old.actionToken = {}; old.actionCapture = null; }
       old.validity.current = false; old.root.suspend?.(true);
     }
     return invalidated;

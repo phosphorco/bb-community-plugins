@@ -141,6 +141,9 @@ export default definePluginApp(app => {
     const refreshTurns = useRef<Set<string> | null>(new Set());
     const targets = useRef<string[]>([]);
     const request = useRef<AbortController | null>(null), scope = useRef(0), boundary = useRef(0);
+    const historyPass = useRef<{ generation: number; version: number; targets: string[]; started: boolean } | null>(null);
+    const semanticScope = useRef<number | null>(null);
+    const semanticConnection = useRef<'connected' | 'connecting' | 'disconnected' | 'unknown'>('unknown');
     const queued = useRef(false), rediscover = useRef(false);
     const openValidation = useRef<{ turnId: string; dirty(): void; cancel(): void } | null>(null);
     const mutationTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -223,7 +226,12 @@ export default definePluginApp(app => {
       if (request.current) { queued.current = true; return; }
       queued.current = false;
       const controller = new AbortController(), generation = scope.current, version = boundary.current;
+      const priorPass = historyPass.current;
+      historyPass.current = { generation, version, targets: [...targets.current], started: !!priorPass?.started
+        && priorPass.generation === generation && priorPass.version === version
+        && priorPass.targets.length === targets.current.length && priorPass.targets.every(id => targets.current.includes(id)) };
       request.current = controller;
+      let continuing = false;
       const timer = setTimeout(() => controller.abort('deadline'), 5000);
       try {
         const result = await reader.current.read(targets.current, controller.signal);
@@ -256,7 +264,7 @@ export default definePluginApp(app => {
         rediscover.current = false;
         // Only one queued second four-page slice for this live target epoch.
         // The private reader hard-stops the chain at eight; no timer retries.
-        if (result.automatic) queued.current = true;
+        if (result.automatic) { queued.current = true; continuing = true; }
         // Missing/limited native history never invents a completed turn or a
         // collection surface. Only proved meaningful results render inline.
       } catch (failure) {
@@ -264,6 +272,7 @@ export default definePluginApp(app => {
       } finally {
         clearTimeout(timer);
         if (request.current === controller) {
+          if (!continuing) historyPass.current = null;
           request.current = null;
           if (queued.current && mutationTimer.current === null && generationActive && generation === scope.current && !document.hidden) queueMicrotask(() => void refresh());
         }
@@ -271,6 +280,7 @@ export default definePluginApp(app => {
     }, [threadId, sdk, navigate, requestOpen, bridgeCurrent]);
     const invalidateBoundary = useCallback((mutation = false, changedRows: readonly string[] | null = null) => {
       if (!reader.current || !generationActive) return;
+      historyPass.current = null;
       boundary.current++; reader.current.invalidate();
       const affected = handle.current?.invalidate(changedRows ?? undefined) ?? [];
       const validation = openValidation.current;
@@ -311,7 +321,9 @@ export default definePluginApp(app => {
     const previousConnection = useRef(connection);
     useLayoutEffect(() => {
       const prior = previousConnection.current; previousConnection.current = connection;
-      if (connection === 'connected' && prior !== connection) { rediscover.current = true; invalidateBoundary(); }
+      if (prior === connection) return;
+      if (connection === 'connected') { rediscover.current = true; invalidateBoundary(); }
+      else invalidateBoundary(true, null);
     }, [connection, invalidateBoundary]);
     useLayoutEffect(() => {
       if (!threadId || !sentinel.current) return;
@@ -321,8 +333,49 @@ export default definePluginApp(app => {
       const owner = runtime;
       const readerScope = scope.current;
       let discoveryDemand = owner.retainDiscoveryDemand();
+      // Subscribe before the first latest read. These are positive reset
+      // signals, not an acknowledgement/replay or proof from event silence.
+      let listening = true;
+      semanticConnection.current = 'unknown';
+      const subscriptions: (() => void)[] = [];
+      const semanticChanged = () => {
+        if (listening && readerScope === scope.current && generationActive) invalidateBoundary(true, null);
+      };
+      try {
+        subscriptions.push(sdk.subscribe({ event: 'thread:changed', threadId, callback(event) {
+          if (typeof event?.id === 'string' && event.id !== threadId) return;
+          // Backfill may retain timelineSequence; unknown changes are hard too.
+          semanticChanged();
+        } }));
+        subscriptions.push(sdk.subscribe({ event: 'system:config-changed', callback: semanticChanged }));
+        subscriptions.push(sdk.subscribe({ event: 'realtime:connection', callback(event) {
+          if (!listening || readerScope !== scope.current || !generationActive) return;
+          const next = event?.state === 'connected' || event?.state === 'connecting' || event?.state === 'disconnected'
+            ? event.state : 'unknown';
+          const prior = semanticConnection.current; semanticConnection.current = next;
+          // This is live transport coverage, not a subscription acknowledgement
+          // or semantic replay. Any existing chain/proof must start fresh when
+          // coverage changes or reconnects, including unknown/disconnected.
+          if ((next !== prior || next !== 'connected' || event?.reconnected)
+            && (request.current || historyRows.current.size || handle.current)) semanticChanged();
+        } }));
+        semanticScope.current = readerScope;
+      } catch {
+        // Older/unavailable public subscriptions keep conservative resets.
+        semanticScope.current = null;
+        for (const stop of subscriptions.splice(0)) stop();
+      }
       reader.current = createGalleryAnchorReader({ async timeline(input) {
-        const read = await owner.readScope(threadId, input.signal, signal => sdk.threads.timeline({ ...input, signal }));
+        const pending = owner.readScope(threadId, input.signal, signal => {
+          const pass = historyPass.current;
+          if (!input.beforeAnchorId && pass && request.current?.signal === input.signal
+            && pass.generation === readerScope && pass.version === boundary.current) pass.started = true;
+          return sdk.threads.timeline({ ...input, signal });
+        });
+        // Real native history gets the first FIFO slot. Readiness-only
+        // discovery may then negotiate before the older boundary walk ends.
+        if (!input.beforeAnchorId) discoveryDemand?.warm(threadId);
+        const read = await pending;
         input.signal.throwIfAborted();
         if (!generationActive || readerScope !== scope.current || !owner.isActive()) throw Error('Timeline read retired.');
         if (read.state === 'ready') {
@@ -342,11 +395,27 @@ export default definePluginApp(app => {
         targets.current = ids;
         discoveryDemand ??= owner.retainDiscoveryDemand();
         discoveryDemand?.visible(ids.length > 0);
-        if (reason === 'demand') void refresh(); else invalidateBoundary(reason === 'mutation', changedRows);
+        const pass = historyPass.current;
+        if (reason === 'hydration' && semanticScope.current === readerScope && semanticConnection.current === 'connected'
+          && previousConnection.current === 'connected' && pass?.started
+          && request.current && !request.current.signal.aborted && pass.generation === scope.current && pass.version === boundary.current
+          && pass.targets.length === ids.length && pass.targets.every(id => ids.includes(id))) {
+          const affected = handle.current?.invalidate(changedRows ?? undefined, true) ?? [];
+          if (openValidation.current && affected.includes(openValidation.current.turnId)) openValidation.current.cancel();
+          if (refreshTurns.current) for (const turn of affected) {
+            refreshTurns.current.add(turn);
+            if (refreshTurns.current.size > GALLERY_PANE_LIMITS.roots) { refreshTurns.current = null; break; }
+          }
+          // Only an already-running NEW latest chain can absorb this proved
+          // body hint. Its original timer/cursors/snapshot checks stay intact.
+        } else if (reason === 'demand') void refresh();
+        else invalidateBoundary(reason === 'mutation' || reason === 'hydration', changedRows);
       });
       const visibility = () => { if (document.hidden) { discoveryDemand?.visible(false); invalidateBoundary(); request.current?.abort(); } };
       document.addEventListener('visibilitychange', visibility);
       return () => {
+        listening = false; semanticScope.current = null; semanticConnection.current = 'unknown'; historyPass.current = null;
+        for (const unsubscribe of subscriptions) unsubscribe();
         scope.current++; boundary.current++; queued.current = false;
         if (mutationTimer.current !== null) clearTimeout(mutationTimer.current); mutationTimer.current = null;
         stop(); discoveryDemand?.dispose(); document.removeEventListener('visibilitychange', visibility); request.current?.abort(); reader.current = null;

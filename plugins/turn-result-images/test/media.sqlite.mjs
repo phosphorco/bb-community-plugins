@@ -242,3 +242,27 @@ test('real host disposal aborts ignored in-flight lease and fences its late resp
     assert.equal(f.calls.filter(([kind]) => kind === 'preview').length, 1);
   } finally { held.resolve(); await f.dispose(); }
 });
+
+
+test('a valid fixed-target image taking 1600ms verifies before a lease and remains within the selected source budget', async () => {
+  const f = await fixture(); let read = Promise.resolve(); let finished = false;
+  try {
+    await f.bind(); f.calls.length = 0;
+    const before = canonicalJson(f.store().read(f.identity.ref.source));
+    f.state.read = () => {
+      read = delay(1600).then(() => { finished = true; return f.state.file; });
+      return read;
+    };
+    const preview = f.state.preview;
+    f.state.preview = async args => { assert.equal(finished, true, 'no lease before the fixed-target bytes finish verification'); return preview(args); };
+    const started = performance.now(), output = await f.media();
+    assert.equal(output.state, 'ready', 'a valid 1600ms file must yield a real verified preview, not a later refusal');
+    assert.ok(performance.now() - started >= 1600);
+    assert.ok(performance.now() - started < IMAGE_MEDIA_DEADLINE_MS + 500);
+    assert.deepEqual(f.calls.map(([kind]) => kind), ['file', 'preview']);
+    assert.equal(f.calls[0][1].hostId, 'host-bound');
+    assert.equal(output.image.sha256, f.digest);
+    assert.equal(output.lease.targetFingerprint, await sha256Canonical({ target: { kind: 'host', hostId: 'host-bound', path: '/saved/image #1.png' }, sha256: f.digest }));
+    assert.equal(canonicalJson(f.store().read(f.identity.ref.source)), before);
+  } finally { await read; await f.dispose(); }
+});

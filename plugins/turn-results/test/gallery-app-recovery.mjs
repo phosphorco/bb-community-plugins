@@ -34,7 +34,7 @@ function retained(turnId = 'turn') {
       provenance: { originHost: { state: 'unknown', reason: 'not-recorded' }, artifactLocation: { state: 'unknown', reason: 'not-verified' } },
       fallback: { kind: 'card', title: `Saved ${turnId} result` }, spans: { width: 2, height: 1 } } };
 }
-async function fixture(status = 'pending', depth = 0) {
+async function fixture(status = 'pending', depth = 0, options = {}) {
   const dom = new JSDOM('<body><section data-split-pane-id="left"><header><div data-thread-header-workflow-actions><div data-bb-plugin-root data-bb-plugin="turn-results" class="contents"><span role="group" data-fixture-header></span></div></div></header><section data-thread-window><div data-timeline-row-list="top-level"><div data-timeline-row-id="opaque-stable"><button>Native content</button></div></div></section></section></body>', { pretendToBeVisual: true });
   const saved = Object.fromEntries(['window','document','Element','HTMLElement','MutationObserver','ResizeObserver','IntersectionObserver','IS_REACT_ACT_ENVIRONMENT'].map(key => [key, globalThis[key]]));
   class Observer { constructor(callback) { this.callback = callback; this.targets = new Set(); } observe(target) { this.targets.add(target); } unobserve(target) { this.targets.delete(target); } disconnect() { this.targets.clear(); } }
@@ -44,8 +44,15 @@ async function fixture(status = 'pending', depth = 0) {
   document.body.getBoundingClientRect = () => box;
   document.querySelector('[data-thread-window]').getBoundingClientRect = () => box;
   const native = document.querySelector('[data-timeline-row-id]'); native.getBoundingClientRect = () => ({ ...box, height: 80, bottom: 80 });
-  let rows = [publicRow(status)], snapshot = `snapshot-${status}`, hold = false, holdOlder = false, fail = false, maxOwned = 0;
+  if (options.nativeItems) {
+    const items = document.createElement('div'); items.dataset.timelineItems = '';
+    native.parentElement.append(items); items.append(native);
+    native.insertAdjacentHTML('beforeend', '<a href="https://fixture.invalid/native">Native link</a>');
+    document.querySelector('[data-thread-window]').insertAdjacentHTML('beforeend', '<aside data-fixture-native-chrome><div>Native status</div></aside>');
+  }
+  let rows = [publicRow(status)], snapshot = `snapshot-${status}`, hold = !!options.holdOlder, holdOlder = !!options.holdOlder, fail = false, maxOwned = 0;
   const calls = [], held = [], navigation = [], responses = [], cursors = new Map(); let issued = 0;
+  const subscriptions = new Set(), subscriptionCountsAtRead = [];
   const response = input => {
     const chain = input.beforeAnchorId ? cursors.get(input.beforeAnchorId) : {
       rows: structuredClone([...rows, ...Array.from({ length: depth }, (_, i) => ({ id: `newer-${i}`, threadId: 'thread',
@@ -64,8 +71,17 @@ async function fixture(status = 'pending', depth = 0) {
     const value = { rows: structuredClone(selected), completedTurnDisplay: 'collapse', timelinePage: { historySnapshot: chain.snapshot, olderCursor } };
     responses.push(value); return value;
   };
-  const sdk = { threads: {
+  const sdk = { subscribe(input) {
+    subscriptions.add(input);
+    // The actual public SDK reports its last observed connection in a guarded
+    // microtask; registration itself supplies no connected authority.
+    if (input.event === 'realtime:connection') queueMicrotask(() => {
+      if (subscriptions.has(input)) input.callback({ state: 'connected', reconnected: false, reconnectDelayMs: null });
+    });
+    return () => subscriptions.delete(input);
+  }, threads: {
     async timeline(input) {
+      subscriptionCountsAtRead.push(subscriptions.size);
       const value = response(input); calls.push(input); maxOwned = Math.max(maxOwned, calls.filter(call => !call.signal.aborted && !call.finished).length);
       try { if (hold && (!holdOlder || input.beforeAnchorId)) return await new Promise(resolve => held.push(() => resolve(value))); if (fail) throw Error('Fixture timeline offline'); return value; }
       finally { input.finished = true; }
@@ -83,7 +99,9 @@ async function fixture(status = 'pending', depth = 0) {
   const bridge = app.threadHeaderActions[0];
   const rendered = renderSlot({ ...bridge, component: props => createPortal(createElement(bridge.component, props), document.querySelector('[data-fixture-header]')) }, { threadId: 'thread', projectId: 'project', isCompactViewport: false }, { sdk,
     openUrl(url) { navigation.push(url); return true; }, realtimeConnectionState: 'connected' });
-  return { dom, native, rendered, app, sdk, calls, held, navigation, responses, depth(value) { depth = value; }, maxOwned: () => maxOwned,
+  return { dom, native, rendered, app, sdk, calls, held, navigation, responses, subscriptions, subscriptionCountsAtRead,
+    changed(event, channel = 'thread:changed') { for (const subscription of [...subscriptions]) if (subscription.event === channel) subscription.callback(event); },
+    depth(value) { depth = value; }, maxOwned: () => maxOwned,
     set(value, nextSnapshot = `snapshot-${JSON.stringify(value)}`) { rows = value; snapshot = nextSnapshot; },
     hold(value, olderOnly = false) { hold = value; holdOlder = olderOnly; }, fail(value) { fail = value; },
     mutate(text = 'Native changed') { native.querySelector('button').firstChild.data = text; },
@@ -91,7 +109,7 @@ async function fixture(status = 'pending', depth = 0) {
     notify() { return rendered.behavior.emitRealtime('results-changed', { threadId: 'thread' }); },
     async hidden(value) { Object.defineProperty(document, 'hidden', { configurable: true, value }); await act(async () => document.dispatchEvent(new dom.window.Event('visibilitychange'))); },
     async dispose() { await act(async () => rendered.unmount()); controller.abort(); if (typeof script === 'function') script();
-      for (const release of held) release(); await settle(); Object.assign(globalThis, saved); dom.window.close(); },
+      for (const release of held) release(); await settle(); assert.equal(subscriptions.size, 0); Object.assign(globalThis, saved); dom.window.close(); },
   };
 }
 
@@ -107,6 +125,102 @@ for (const trigger of ['native-content', 'source-notification', 'reconnect', 'vi
     await until(() => f.roots().length === 1 && f.roots()[0].querySelector('[data-result-key]'));
     assert.equal(f.roots()[0].dataset.sourceRow, 'opaque-stable'); assert.equal(f.roots()[0].dataset.sourceTurn, 'turn');
     assert.equal(f.calls.length, 2); await settle(200); assert.equal(f.calls.length, 2, 'owned render and settled idle start no history reads');
+  } finally { await f.dispose(); }
+});
+
+test('body-only hydration keeps one running fresh issued chain while semantic and structural changes retire it', async () => {
+  const f = await fixture('completed', 150, { nativeItems: true, holdOlder: true });
+  const latest = () => f.calls.filter(call => !call.beforeAnchorId).length;
+  try {
+    await until(() => f.held.length === 1);
+    const initialOlder = f.calls.at(-1), issued = f.responses[0].timelinePage.olderCursor;
+    assert.equal(initialOlder.beforeAnchorId, issued.anchorId); assert.equal(f.roots().length, 0);
+    await act(async () => {
+      const link = f.native.querySelector('a'); link.replaceWith(link.cloneNode(true));
+      const button = document.createElement('button'); button.textContent = 'Native hydrated action'; f.native.append(button);
+      // The real batch also contains proved nonstructural outside-row chrome.
+      const chrome = document.querySelector('[data-fixture-native-chrome]');
+      chrome.firstChild.replaceWith(document.createElement('div'));
+      await tick();
+    });
+    await settle(180);
+    assert.equal(f.calls.length, 2); assert.equal(f.roots().length, 0); assert.equal(f.navigation.length, 0);
+    f.hold(false); f.held[0]();
+    await until(() => f.roots()[0]?.querySelector('.tr-data-action'));
+    console.log('BODY_HYDRATION_CHAIN', JSON.stringify({ latest: latest(), calls: f.calls.map(call => ({ before: call.beforeAnchorId ?? null, finished: call.finished })),
+      subscribedBeforeRead: f.subscriptionCountsAtRead, sameIssuedOlder: f.calls[1] === initialOlder, maxOwned: f.maxOwned() }));
+    assert.equal(latest(), 1, 'pure body hydration must not discard the already-running genuine fresh chain');
+    assert.equal(f.calls.length, 2); assert.ok(f.subscriptionCountsAtRead.every(count => count === 3));
+    await act(async () => f.roots()[0].querySelector('.tr-data-action').click());
+    assert.deepEqual(f.navigation, ['https://fixture.invalid/turn']);
+
+    // Current-thread semantic events are hard regardless of unchanged sequence
+    // or opaque snapshot; no old captured completed response may restore input.
+    f.hold(true, true);
+    await act(async () => f.changed({ type: 'changed', entity: 'thread', id: 'thread', changes: ['events-appended'], metadata: { timelineSequence: 10 } }));
+    await until(() => f.held.length === 2);
+    const old = f.calls.at(-1), mark = latest();
+    f.set([publicRow('pending')], 'snapshot-completed');
+    await act(async () => {
+      f.changed({ type: 'changed', entity: 'thread', id: 'thread', changes: ['events-appended'], metadata: { timelineSequence: 10 } });
+      f.changed({ type: 'changed', entity: 'thread', id: 'thread', changes: ['history-rewritten'] });
+    });
+    f.hold(false); f.held[1]();
+    await until(() => latest() === mark + 1 && f.calls.at(-1).finished && f.roots().length === 0);
+    assert.equal(old.finished, true); assert.deepEqual(f.navigation, ['https://fixture.invalid/turn']);
+
+    f.set([publicRow('completed')], 'snapshot-next'); f.hold(true, true);
+    await act(async () => f.changed({ type: 'changed', entity: 'thread', id: 'thread', changes: ['status-changed'] }));
+    await until(() => f.held.length === 3);
+    const structuralMark = latest(), parent = f.native.parentElement;
+    await act(async () => { f.native.remove(); parent.append(f.native); await tick(); });
+    f.set([publicRow('pending')], 'snapshot-next');
+    f.hold(false); f.held[2]();
+    await until(() => latest() === structuralMark + 1 && f.calls.at(-1).finished && f.roots().length === 0);
+    // Surface policy can change outside thread-detail events. Its public
+    // config signal also retires an equal-token completed response.
+    f.set([publicRow('completed')], 'surface-snapshot'); f.hold(true, true);
+    await act(async () => f.changed({ type: 'changed', entity: 'thread', id: 'thread', changes: ['status-changed'] }));
+    await until(() => f.held.length === 4);
+    const surfaceMark = latest(); f.set([publicRow('pending')], 'surface-snapshot');
+    await act(async () => f.changed({ type: 'changed', entity: 'system', id: 'config', changes: ['provider-policy'] }, 'system:config-changed'));
+    f.hold(false); f.held[3]();
+    await until(() => latest() === surfaceMark + 1 && f.calls.at(-1).finished && f.roots().length === 0);
+    assert.equal(f.maxOwned(), 1);
+    const idle = f.calls.length; await settle(200); assert.equal(f.calls.length, idle);
+  } finally { await f.dispose(); }
+});
+
+for (const transport of ['plugin', 'SDK core']) test(`BH1 live ${transport} disconnect keeps later hydration hard until connected coverage`, async () => {
+  const f = await fixture('completed', 150, { nativeItems: true, holdOlder: true });
+  const latest = () => f.calls.filter(call => !call.beforeAnchorId).length;
+  try {
+    await until(() => f.held.length === 1);
+    if (transport === 'plugin') await act(async () => f.rendered.behavior.setRealtimeConnectionState('disconnected'));
+    else await act(async () => f.changed({ state: 'disconnected', reconnected: false, reconnectDelayMs: 1000 }, 'realtime:connection'));
+    // SDK-core-only loss deliberately leaves the independent plugin hook at
+    // its actual initial connected state. Registration remains installed.
+    await settle(180); f.held[0](); await until(() => f.held.length === 2);
+    const mark = latest(); f.set([publicRow('pending')], 'snapshot-completed');
+    await act(async () => {
+      const link = f.native.querySelector('a'); link.replaceWith(link.cloneNode(true));
+      f.native.append(document.createElement('button'));
+      document.querySelector('[data-fixture-native-chrome]').firstChild.replaceWith(document.createElement('div'));
+      await tick();
+    });
+    await settle(180); f.hold(false); f.held[1]();
+    await until(() => latest() === mark + 1 && f.calls.at(-1).finished && f.roots().length === 0);
+    assert.deepEqual(f.navigation, []); assert.equal(f.maxOwned(), 1);
+    // Actual recovery still needs a fresh latest after both channels regain
+    // coverage; it cannot reinstate the captured older completed response.
+    f.set([publicRow('completed')], 'fresh-connected');
+    if (transport === 'plugin') await act(async () => f.rendered.behavior.setRealtimeConnectionState('connected'));
+    else await act(async () => f.changed({ state: 'connected', reconnected: true, reconnectDelayMs: null }, 'realtime:connection'));
+    await until(() => f.roots()[0]?.querySelector('.tr-data-action'));
+    assert.equal(f.responses.at(-1).timelinePage.historySnapshot, 'fresh-connected');
+    await act(async () => f.roots()[0].querySelector('.tr-data-action').click());
+    assert.deepEqual(f.navigation, ['https://fixture.invalid/turn']);
+    const count = f.calls.length; await settle(180); assert.equal(f.calls.length, count);
   } finally { await f.dispose(); }
 });
 

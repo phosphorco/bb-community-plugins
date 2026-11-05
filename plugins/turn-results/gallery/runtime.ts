@@ -1,7 +1,7 @@
 import { Store } from '@tanstack/store';
 import { z } from 'zod';
 import { canonicalByteLength, canonicalJson, InputSchemas, PluginIdSchema } from '@phosphorco/bb-turn-results';
-import { createResultsDiscoveryOwner, discoverResultsParticipants, createResultsSupplierClient, classifyResultsError } from '@phosphorco/bb-turn-results/bb';
+import { createResultsDiscoveryOwner, discoverResultsParticipants, createResultsSupplierClient, classifyResultsError, ResultsCallError } from '@phosphorco/bb-turn-results/bb';
 import type { ResultsDiscoveryCursor } from '@phosphorco/bb-turn-results/bb';
 import type { GalleryAnchor } from './anchors.ts';
 import type { GalleryObservation, GalleryPage, StageRecord } from './index.ts';
@@ -75,6 +75,7 @@ export function createGalleryRuntime(sdk: Sdk) {
   const drainedWork = () => { if (!running && finishWorkDrain) { const done = finishWorkDrain; finishWorkDrain = null; workDrain = null; done(); } };
   const historyReads = new Set<HistoryRead>();
   let discoveryController: AbortController | null = null, discoveryGeneration = 0;
+  let earlyDiscoveryGeneration = -1;
   let discoveryCapacity = false;
   // Named, window-shared debt: a failed descriptor gets one yielded retry.
   // A persistent failure parks until a later genuine demand, never an idle tick.
@@ -196,9 +197,34 @@ export function createGalleryRuntime(sdk: Sdk) {
       if (result.state !== 'committed' && result.state !== 'unchanged') throw Error(`History ${result.state}: ${result.reason ?? 'continuation was not committed'}`);
     },
   };
-  async function discoveryExclusions(signal: AbortSignal, deadline: number): Promise<string[]> {
+  function discoveryPort(signal: AbortSignal, deadline: number) {
+    // Public helper timeouts fence their result, not the underlying transport.
+    // Serialize actual calls and drain them before returning this lane. Queued
+    // helper calls must recheck their own (possibly expired) supplied signal.
+    let tail: Promise<unknown> = Promise.resolve();
+    const pending = new Set<Promise<unknown>>();
+    const tracked = <T>(supplied: AbortSignal | undefined, call: () => Promise<T>): Promise<T> => {
+      const result = tail.then(() => {
+        signal.throwIfAborted(); supplied?.throwIfAborted();
+        if (performance.now() >= deadline) throw new ResultsCallError('timeout');
+        return call();
+      });
+      pending.add(result); tail = result.catch(() => {});
+      void result.finally(() => pending.delete(result)).catch(() => {});
+      return result;
+    };
+    const plugins: Sdk['plugins'] = {
+      ...sdk.plugins,
+      list: input => tracked(input?.signal, () => sdk.plugins.list(input)),
+      callRpc: input => tracked(input.signal, () => sdk.plugins.callRpc(input)),
+      ...(sdk.plugins.experimental_discoverRpc ? { experimental_discoverRpc: (input?: { method?: string; signal?: AbortSignal }) =>
+        tracked(input?.signal, () => sdk.plugins.experimental_discoverRpc!(input)) } : {}),
+    };
+    return { sdk: { ...sdk, plugins }, async drain() { await Promise.allSettled([...pending]); } };
+  }
+  async function discoveryExclusions(plugins: Sdk['plugins'], signal: AbortSignal, deadline: number): Promise<string[]> {
     const exclude = ['turn-results'];
-    if (!sdk.plugins.experimental_discoverRpc) return exclude;
+    if (!plugins.experimental_discoverRpc) return exclude;
     const controller = new AbortController(), abort = () => controller.abort(signal.reason);
     signal.addEventListener('abort', abort, { once: true });
     if (signal.aborted) abort();
@@ -207,7 +233,7 @@ export function createGalleryRuntime(sdk: Sdk) {
     const timer = setTimeout(() => controller.abort('deadline'), Math.max(0, Math.min(500, deadline - performance.now())));
     const calls: Promise<unknown>[] = [];
     try {
-      const methodCall = Promise.resolve().then(() => { controller.signal.throwIfAborted(); return sdk.plugins.experimental_discoverRpc!({ method: 'turnResultsDescribe', signal: controller.signal }); });
+      const methodCall = Promise.resolve().then(() => { controller.signal.throwIfAborted(); return plugins.experimental_discoverRpc!({ method: 'turnResultsDescribe', signal: controller.signal }); });
       calls.push(methodCall);
       const methods = await untilAborted(methodCall, controller.signal);
       signal.throwIfAborted();
@@ -220,7 +246,7 @@ export function createGalleryRuntime(sdk: Sdk) {
       }
       // Older SDK hosts may expose this optional method but reject its call.
       // Do not add a second list on that fallback path.
-      const listCall = Promise.resolve().then(() => { controller.signal.throwIfAborted(); return sdk.plugins.list({ signal: controller.signal }); });
+      const listCall = Promise.resolve().then(() => { controller.signal.throwIfAborted(); return plugins.list({ signal: controller.signal }); });
       calls.push(listCall);
       const listed = await untilAborted(listCall, controller.signal);
       signal.throwIfAborted();
@@ -247,16 +273,17 @@ export function createGalleryRuntime(sdk: Sdk) {
     if (!discovering) {
       const controller = new AbortController(), generation = discoveryGeneration;
       discoveryController = controller;
+      const deadline = performance.now() + 3000;
+      const port = discoveryPort(controller.signal, deadline);
       const operation = (async () => {
-        const deadline = performance.now() + 3000;
         // Listing-only discovery retains the public list admission/capacity
         // rules. Only failed named owners are described again; healthy owners
         // keep their valid descriptor and canvas authority.
         const candidates = retry ? [...descriptorDebt].filter(([, state]) => state === 'queued').slice(0, 32).map(([id]) => id) : [];
         for (const id of candidates) descriptorDebt.set(id, 'parked');
-        const exclude = await discoveryExclusions(controller.signal, deadline);
+        const exclude = await discoveryExclusions(port.sdk.plugins, controller.signal, deadline);
         controller.signal.throwIfAborted();
-        const result = await discoverResultsParticipants({ sdk, owner: discoveryOwner, cursor: retry ? null : discoveryCursor,
+        const result = await discoverResultsParticipants({ sdk: port.sdk, owner: discoveryOwner, cursor: retry ? null : discoveryCursor,
           exclude, budgets: { concurrency: 1, ...(retry ? { processingSlots: 0 } : {}) },
           overallDeadline: deadline, signal: controller.signal });
         controller.signal.throwIfAborted();
@@ -276,7 +303,7 @@ export function createGalleryRuntime(sdk: Sdk) {
             // queued ahead of the attempted prefix for the next yielded unit.
             descriptorDebt.delete(id); descriptorDebt.set(id, 'parked');
             try {
-              const negotiated = await createResultsSupplierClient(sdk, id, { signal: controller.signal,
+              const negotiated = await createResultsSupplierClient(port.sdk, id, { signal: controller.signal,
                 current: () => active && visible && generation === discoveryGeneration,
                 overallDeadline: deadline }).describe();
               controller.signal.throwIfAborted();
@@ -326,7 +353,7 @@ export function createGalleryRuntime(sdk: Sdk) {
         publishReady(new Set(result.rows.filter(row => row.state === 'ready' && row.capabilities?.supplier
           || row.state === 'prior-slice' && previousReady.has(row.pluginId)).map(row => row.pluginId)));
         return sources;
-      })();
+      })().finally(() => port.drain());
       discovering = operation;
       void operation.finally(() => { if (discovering === operation) { discovering = null; discoveryController = null; } }).catch(() => {});
     }
@@ -657,15 +684,30 @@ export function createGalleryRuntime(sdk: Sdk) {
     retainDiscoveryDemand() {
       if (!active || discoveryDemands >= GALLERY_RUNTIME_LIMITS.leases) return null;
       discoveryDemands++;
-      let live = true, shown = false;
+      let live = true, shown = false, work: AbortController | null = null;
       return {
         visible(next: boolean) {
           if (!live || !active || shown === next) return;
           shown = next; visibleDiscoveryDemands += next ? 1 : -1;
-          if (!next) stopUnusedDiscovery();
+          if (!next) { work?.abort('demand-retired'); stopUnusedDiscovery(); }
+        },
+        warm(threadId: string) {
+          if (!live || !shown || !active || !visible || sources !== null || discovering || earlyDiscoveryGeneration === discoveryGeneration) return;
+          const generation = discoveryGeneration;
+          earlyDiscoveryGeneration = generation;
+          work?.abort('superseded'); work = new AbortController();
+          // One first slice per generation, in the genuine demanding thread's
+          // passive FIFO. The app queues native history first. Later ordinary
+          // source work retains existing cursor/debt/retry ownership.
+          void readScope(threadId, work.signal, async signal => {
+            signal.throwIfAborted();
+            if (!live || !shown || generation !== discoveryGeneration || !active || !visible || sources !== null || discovering) return;
+            await discover(signal);
+          }).catch(() => {}); // Optional readiness failure leaves native proof/retained reads usable.
         },
         dispose() {
           if (!live) return; live = false;
+          work?.abort('demand-retired');
           if (!active) return;
           discoveryDemands--; if (shown) visibleDiscoveryDemands--;
           stopUnusedDiscovery();
