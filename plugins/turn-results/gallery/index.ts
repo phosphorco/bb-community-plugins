@@ -28,6 +28,7 @@ export interface StageValue {
   debt: JsonValue;
 }
 export interface StageRecord { version: number; value: StageValue }
+export interface OwnerPreparation { resolve: StageRecord | null; invalidation: StageRecord | null; feed: StageRecord | null; native: StageRecord | null }
 export interface SupplierState {
   revision: string; connection: 'connected' | 'disconnected' | 'unsupported';
   freshUntil: number | null;
@@ -44,6 +45,8 @@ export interface GalleryPage {
   coverage?: CoverageInterval[];
   /** Explicit user historical reindex, never set by automatic mounted refresh. */
   allowReindex?: boolean;
+  /** Exact source barrier from this owner's consistent preparation. */
+  expectedInvalidationVersion?: number | null;
 }
 export type IndexCommit =
   | { state: 'committed' | 'unchanged'; mutations: number; changedBytes: number; stageVersion: number | null }
@@ -72,6 +75,7 @@ export interface GalleryIndex {
   readTurn(threadId: string, turnId: string, options: ReadPageOptions): ObservationPage;
   readThread(threadId: string, options: ReadPageOptions): ObservationPage;
   readStage(threadId: string, owner: string, id: string): StageRecord | null;
+  prepareOwner(threadId: string, owner: string, turnId: string): OwnerPreparation;
   listStages(threadId: string, options?: { owner?: string; after?: string; limit?: number }): { rows: { key: string; owner: string; id: string; record: StageRecord }[]; next: string | null };
   coverage(threadId: string): { state: 'unindexed' | 'partial' | 'deleted'; intervals: CoverageInterval[] };
   evict(options?: { threadId?: string; limit?: number }): IndexCommit;
@@ -397,6 +401,11 @@ export function createGalleryIndex(db: Database.Database, options: GalleryIndexO
     PluginIdSchema.parse(p.owner); id(p.threadId);
     ensure(Array.isArray(p.changes) && p.changes.length <= 8, 'page-count-over-limit');
     ensure(p.coverage === undefined || p.coverage.length <= 8, 'coverage-page-over-limit');
+    if ('expectedInvalidationVersion' in p) {
+      ensure(p.expectedInvalidationVersion === null || integer(p.expectedInvalidationVersion), 'invalid-source-barrier');
+      const barrier = find('stage', key(p.threadId, p.owner, 'source-invalidation'));
+      ensure((barrier ? decode<StageRecord>(barrier).version : null) === p.expectedInvalidationVersion, 'source-invalidation-conflict');
+    }
     const m = meta(), t = thread(p.threadId);
     ensure(!t.value.deleted && !t.value.retiring, 'thread-deleted-or-retiring');
     const mutations: Mutation[] = [], seen = new Set<string>();
@@ -428,9 +437,14 @@ export function createGalleryIndex(db: Database.Database, options: GalleryIndexO
       validateStage(v);
       // Global durable generation prevents ABA after completed-stage retirement
       // and recreation of the same caller-owned unit id.
-      stageVersion = m.order_head + 1;
-      ensure(integer(stageVersion), 'stage-version-exhausted');
-      mutations.push({ before, after: make('stage', k, p.threadId, p.owner, { version: stageVersion, value: v }, m, before) });
+      const ordinary = p.stage.id.startsWith('feed:') && v.stage === 'feed'
+        || p.stage.id.startsWith('native:') && v.stage === 'recognize' || p.stage.id.startsWith('resolve:') && v.stage === 'resolve';
+      if (ordinary && old && same(old.value, v)) stageVersion = old.version;
+      else {
+        stageVersion = m.order_head + 1;
+        ensure(integer(stageVersion), 'stage-version-exhausted');
+        mutations.push({ before, after: make('stage', k, p.threadId, p.owner, { version: stageVersion, value: v }, m, before) });
+      }
     }
     const gaps = [...(p.coverage ?? [])];
     for (const raw of p.changes) {
@@ -580,6 +594,22 @@ export function createGalleryIndex(db: Database.Database, options: GalleryIndexO
       id(threadId); PluginIdSchema.parse(owner); id(stageId);
       const t = thread(threadId); if (t.value.deleted || t.value.retiring) return null;
       const row = find('stage', key(threadId, owner, stageId)); return row ? decode<StageRecord>(row) : null;
+    },
+    prepareOwner(threadId, owner, turnId) {
+      id(threadId); PluginIdSchema.parse(owner); id(turnId);
+      return db.transaction(() => {
+        const t = thread(threadId); ensure(!t.value.deleted && !t.value.retiring, 'thread-deleted-or-retiring');
+        const keys = [key(threadId, owner, `resolve:${turnId}`), key(threadId, owner, 'source-invalidation'),
+          key(threadId, owner, `feed:${turnId}`), key(threadId, owner, `native:${turnId}`)];
+        const rows = db.prepare("SELECT * FROM gallery_records WHERE kind='stage' AND record_key IN (?,?,?,?)").all(...keys) as Row[];
+        const records = new Map(rows.map(row => {
+          ensure(row.thread_id === threadId && row.owner === owner, 'foreign-owner-preparation');
+          return [row.record_key, decode<StageRecord>(row)] as const;
+        }));
+        const result = { resolve: records.get(keys[0]!) ?? null, invalidation: records.get(keys[1]!) ?? null,
+          feed: records.get(keys[2]!) ?? null, native: records.get(keys[3]!) ?? null };
+        canonicalByteLength(result, 262144); return result;
+      }).deferred();
     },
     listStages(threadId, options = {}) {
       id(threadId); if (options.owner !== undefined) PluginIdSchema.parse(options.owner);

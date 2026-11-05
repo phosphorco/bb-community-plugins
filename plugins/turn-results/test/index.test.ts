@@ -557,4 +557,50 @@ if (process.versions.bun) {
     assert.equal(bounded.applyPage(page([], { stage: { id: 'feed:incoming', expectedVersion: incoming.stageVersion!, value: { ...complete, debt: { content: 'x'.repeat(required) } } } })).state, 'capacity');
     assert.equal(sqlSnapshot(db), before, 'more than sixteen small victims cannot trigger another selection or partial retirement');
   });
+  test('owner preparation is one bounded indexed snapshot; stale invalidation rejects every write after CAS', t => {
+    const { db, index, open } = fixture(t);
+    const checkpoint: StageValue = { stage: 'resolve', cursor: null, status: 'complete', debt: { exact: true } };
+    ok(index.applyPage(page([result(1)], { stage: { id: 'resolve:turn-1', expectedVersion: null, value: checkpoint } })));
+    const prepared = index.prepareOwner('thread-a', owner, 'turn-1');
+    assert.deepEqual(Object.keys(prepared), ['resolve', 'invalidation', 'feed', 'native']);
+    assert.equal(prepared.resolve!.value.status, 'complete'); assert.equal(prepared.invalidation, null);
+    const plan = db.prepare("EXPLAIN QUERY PLAN SELECT * FROM gallery_records WHERE kind='stage' AND record_key IN (?,?,?,?)")
+      .all(...['resolve:turn-1', 'source-invalidation', 'feed:turn-1', 'native:turn-1'].map(id => canonicalJson(['thread-a', owner, id]))) as { detail: string }[];
+    assert.ok(plan.every(row => !row.detail.includes('SCAN'))); t.diagnostic(plan.map(row => row.detail).join('; '));
+    const barrier = { stage: 'feed' as const, cursor: null, status: 'ready' as const, debt: { revision: 'same' } };
+    const first = ok(index.applyPage(page([], { stage: { id: 'source-invalidation', expectedVersion: null, value: barrier } })));
+    const after = sqlSnapshot(db);
+    const stale = index.applyPage(page([result(2)], { expectedInvalidationVersion: null,
+      stage: { id: 'resolve:turn-1', expectedVersion: prepared.resolve!.version, value: checkpoint } }));
+    assert.deepEqual(stale.state, 'conflict'); assert.equal(sqlSnapshot(db), after, 'no head/claim/supplier/stage mutation from stale preparation');
+    const fresh = index.prepareOwner('thread-a', owner, 'turn-1');
+    const second = ok(index.applyPage(page([], { stage: { id: 'source-invalidation', expectedVersion: first.stageVersion!, value: barrier } })));
+    assert.ok(second.stageVersion! > first.stageVersion!, 'identical invalidation remains a fresh guard');
+    const guarded = sqlSnapshot(db);
+    assert.equal(index.applyPage(page([], { expectedInvalidationVersion: fresh.invalidation!.version })).state, 'conflict');
+    assert.equal(sqlSnapshot(db), guarded);
+    db.close(); const reopened = createGalleryIndex(open());
+    assert.deepEqual(reopened.prepareOwner('thread-a', owner, 'turn-1').invalidation!.version, second.stageVersion);
+    assert.equal(reopened.readTurn('thread-a', 'turn-1', { now: 200 }).rows.length, 1, 'earlier genuine feed/facts survive refusal and reopen');
+  });
+
+  test('ordinary equal stage values no-op only after CAS; barrier and maintenance generations remain writes', t => {
+    const { db, index } = fixture(t);
+    for (const [id, kind] of [['feed:t', 'feed'], ['native:t', 'recognize'], ['resolve:t', 'resolve']] as const) {
+      const value: StageValue = { stage: kind, cursor: null, status: 'complete', debt: { exact: 'same' } };
+      const first = ok(index.applyPage(page([], { stage: { id, expectedVersion: null, value } })));
+      const before = sqlSnapshot(db);
+      const equal = index.applyPage(page([], { stage: { id, expectedVersion: first.stageVersion!, value } }));
+      assert.equal(equal.state, 'unchanged'); assert.equal(equal.stageVersion, first.stageVersion); assert.equal(sqlSnapshot(db), before);
+      assert.equal(index.applyPage(page([], { stage: { id, expectedVersion: null, value } })).state, 'conflict');
+      assert.equal(sqlSnapshot(db), before, 'semantic equality never bypasses CAS');
+    }
+    for (const id of ['source-invalidation', 'maintenance', 'feed:barrier']) {
+      const value: StageValue = { stage: 'maintenance', cursor: null, status: 'ready', debt: {} };
+      const first = ok(index.applyPage(page([], { stage: { id, expectedVersion: null, value } })));
+      const next = ok(index.applyPage(page([], { stage: { id, expectedVersion: first.stageVersion!, value } })));
+      assert.equal(next.state, 'committed'); assert.ok(next.stageVersion! > first.stageVersion!);
+    }
+  });
+
 }

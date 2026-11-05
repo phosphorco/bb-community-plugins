@@ -3,7 +3,7 @@ import { canonicalByteLength, canonicalJson, claimKey, correlateResolveOutput, r
 import { ResultsCallError, classifyResultsError, createResultsSupplierClient } from '@phosphorco/bb-turn-results/bb';
 import type { ResultsSupplierClient } from '@phosphorco/bb-turn-results/bb';
 import type { CapabilitiesV1, RecognizeInput } from '@phosphorco/bb-turn-results';
-import type { NativeHistoryEvent } from '@phosphorco/bb-turn-results/events';
+import type { NativeHistoryEvent, EventWindow } from '@phosphorco/bb-turn-results/events';
 import type { GalleryAnchor } from './anchors.ts';
 import type { GalleryBackend } from './rpc.ts';
 import type { GalleryPage, StageRecord } from './index.ts';
@@ -13,6 +13,7 @@ import { nativeImageIdentity } from './media.ts';
 
 export interface ConsumerSource { pluginId: string; capabilities: CapabilitiesV1; client: ResultsSupplierClient }
 export interface NativeReader {
+  window?(input: { threadId: string; afterSeq: string; beforeSeq: string; limit: string; order: 'asc'; types: ['item/completed']; signal: AbortSignal }): Promise<{ window: EventWindow; rawLength: number }>;
   list(input: { threadId: string; afterSeq: string; beforeSeq: string; limit: string; order: 'asc'; types: ['item/completed']; signal: AbortSignal }): Promise<NativeHistoryEvent[]>;
 }
 const scopeMatches = (stage: StageRecord | null, anchor: GalleryAnchor) =>
@@ -43,10 +44,11 @@ export async function consumeTurnSource(backend: GalleryBackend, native: NativeR
   if (!backend.pending) throw Error('Pending gallery adapter is required.');
   signal.throwIfAborted();
   const resolveId = `resolve:${anchor.turnId}`;
-  const resolveStage = await backend.stage(anchor.threadId, source.pluginId, resolveId, signal); signal.throwIfAborted();
-  const invalidation = await backend.stage(anchor.threadId, source.pluginId, 'source-invalidation', signal); signal.throwIfAborted();
+  const prepared = await backend.prepare(anchor.threadId, source.pluginId, anchor.turnId, signal); signal.throwIfAborted();
+  const resolveStage = prepared.resolve, invalidation = prepared.invalidation;
   const scope = { threadId: anchor.threadId, turnId: anchor.turnId, owner: source.pluginId,
     fromSeq: anchor.turnSeqStart, throughSeq: anchor.turnSeqEnd };
+  const apply = (page: GalleryPage) => backend.apply({ ...page, expectedInvalidationVersion: invalidation?.version ?? null }, signal);
   const old = resolveStage?.value.debt;
   const debt = old && typeof old === 'object' && !Array.isArray(old) ? old : {};
   const sameScope = Object.entries(scope).every(([k,v]) => debt[k] === v);
@@ -55,7 +57,7 @@ export async function consumeTurnSource(backend: GalleryBackend, native: NativeR
     return { continued: false, reason: 'Supplier resolve is quarantined until its revision or invalidation changes.' };
   let feedContinued = false;
   if (supplier.enumerate) {
-    const feedId = `feed:${anchor.turnId}`, feedStage = await backend.stage(anchor.threadId, source.pluginId, feedId, signal);
+    const feedId = `feed:${anchor.turnId}`, feedStage = prepared.feed;
     signal.throwIfAborted();
     let output;
     try {
@@ -71,24 +73,28 @@ export async function consumeTurnSource(backend: GalleryBackend, native: NativeR
       throw error;
     }
     signal.throwIfAborted();
-    await backend.apply({ threadId: anchor.threadId, owner: source.pluginId,
+    await apply({ threadId: anchor.threadId, owner: source.pluginId,
       changes: output.state === 'page' ? output.rows : [],
       stage: { id: feedId, expectedVersion: feedStage?.version ?? null, value: { stage: 'feed',
         cursor: output.state === 'page' ? output.nextCursor : null, status: output.state === 'page' && output.settled ? 'complete' : 'ready',
         debt: { fromSeq: anchor.turnSeqStart, throughSeq: anchor.turnSeqEnd, epoch: output.epoch, throughRevision: output.state === 'page' ? output.throughRevision : 0 } } },
       supplier: { revision: source.capabilities.revision, connection: 'connected', freshUntil: Date.now() + 30000, epoch: output.epoch },
-    }, signal);
+    });
     signal.throwIfAborted(); feedContinued = output.state === 'reset' || !output.settled;
   }
   const id = `native:${anchor.turnId}`;
-  const stage = await backend.stage(anchor.threadId, source.pluginId, id, signal); signal.throwIfAborted();
+  const stage = prepared.native; signal.throwIfAborted();
   const scoped = scopeMatches(stage, anchor);
   const after = scoped ? debtNumber(stage, 'afterSeq', Math.max(0, anchor.turnSeqStart - 1)) : Math.max(0, anchor.turnSeqStart - 1);
   let continued = feedContinued;
   if (supplier.recognize && (!scoped || stage?.value.status !== 'complete')) {
-    const raw = await untilAborted(native.list({ threadId: anchor.threadId, afterSeq: String(after), beforeSeq: String(anchor.turnSeqEnd + 1),
-      limit: '32', order: 'asc', types: ['item/completed'], signal }), signal); signal.throwIfAborted();
-    const window = await buildEventWindow(raw, { afterSeq: after, threadId: anchor.threadId, maxEvents: 32, maxBytes: 196608 });
+    const query = { threadId: anchor.threadId, afterSeq: String(after), beforeSeq: String(anchor.turnSeqEnd + 1),
+      limit: '32', order: 'asc' as const, types: ['item/completed'] as ['item/completed'], signal };
+    const selected = native.window ? await native.window(query) : await (async () => {
+      const raw = await untilAborted(native.list(query), signal); signal.throwIfAborted();
+      return { window: await buildEventWindow(raw, { afterSeq: after, threadId: anchor.threadId, maxEvents: 32, maxBytes: 196608 }), rawLength: raw.length };
+    })();
+    const { window, rawLength } = selected;
     signal.throwIfAborted();
     const input: RecognizeInput = { version: 1, context: { consumer: { pluginId: 'turn-results', surface: 'inline-gallery' },
       threadId: anchor.threadId, range: { fromSeq: after + 1, throughSeq: Math.max(after + 1, window.afterSeq) } },
@@ -98,11 +104,11 @@ export async function consumeTurnSource(backend: GalleryBackend, native: NativeR
       : { candidates: [], page: { state: 'complete' as const, nextCursor: null } };
     signal.throwIfAborted();
     const moreCandidates = recognized.page.nextCursor !== null;
-    const incompleteWindow = window.nextInputIndex < raw.length;
-    const complete = !moreCandidates && !incompleteWindow && raw.length < 32;
+    const incompleteWindow = window.nextInputIndex < rawLength;
+    const complete = !moreCandidates && !incompleteWindow && rawLength < 32;
     // An unscoped/unreliable prefix cannot advance the source cursor. Park it
     // visibly rather than rescan the same native debt automatically forever.
-    const blocked = raw.length > 0 && window.afterSeq === after && !moreCandidates;
+    const blocked = rawLength > 0 && window.afterSeq === after && !moreCandidates;
     // Scope restarts may reselect a pruned event with a new selectedDigest.
     // Resolve the public claim key to its retained complete identity before
     // the unchanged immutable index applies this recognition page and cursor.
@@ -121,7 +127,7 @@ export async function consumeTurnSource(backend: GalleryBackend, native: NativeR
       coverage: window.diagnostics.length ? [{ fromSeq: Math.min(...window.diagnostics.map(gap => gap.seq ?? after + 1)),
         throughSeq: Math.max(...window.diagnostics.map(gap => gap.seq ?? after + 1)), state: 'unsupported', owner: source.pluginId,
         reason: 'Native selected window includes unsupported or oversized evidence.' }] : [] };
-    await backend.apply(page, signal); signal.throwIfAborted();
+    await apply(page); signal.throwIfAborted();
     continued ||= !complete && !blocked;
     if (blocked) return { continued: false, reason: 'Native history has an unscoped or unsupported gap.' };
   }
@@ -183,11 +189,11 @@ export async function consumeTurnSource(backend: GalleryBackend, native: NativeR
   signal.throwIfAborted();
   // Outcome and traversal commit together under the existing stage CAS. A
   // failed apply propagates, leaving the previous traversal available to retry.
-  await backend.apply({ owner: source.pluginId, threadId: anchor.threadId, changes,
+  await apply({ owner: source.pluginId, threadId: anchor.threadId, changes,
     stage: { id: resolveId, expectedVersion: resolveStage?.version ?? null, value: { stage: 'resolve', cursor: null,
       status: more ? 'ready' : parked ? 'parked' : 'complete', debt: { ...scope, after: next, batch: nextBatch, parked, quarantine,
         sourceRevision: source.capabilities.revision, invalidationVersion: invalidation?.version ?? null, reason } } },
-    ...(sourceAnswered ? { supplier: { revision: source.capabilities.revision, connection: 'connected' as const, freshUntil: Date.now() + 30000 } } : {}) }, signal);
+    ...(sourceAnswered ? { supplier: { revision: source.capabilities.revision, connection: 'connected' as const, freshUntil: Date.now() + 30000 } } : {}) });
   signal.throwIfAborted();
   return { continued: !quarantine && (continued || more), reason };
 }

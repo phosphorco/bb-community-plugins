@@ -190,6 +190,9 @@ async function fixture(count = 6, mount = true, contribution = {}) {
     return { rows: rows.map((row, i) => ({ id: `opaque-${i}`, threadId: 'thread', turnId: row.identity.ref.source.turnId,
       kind: 'turn', status: 'completed', sourceSeqStart: i * 10 + 1, sourceSeqEnd: i * 10 + 5 })).concat(structuralRows), completedTurnDisplay: 'collapse', timelinePage: { historySnapshot: 'public-snapshot', olderCursor: null } };
   }, events: { async list() { throw Error('No native event read is allowed in this fixture'); } } }, plugins: {
+    // The SDK test proxy invents callable missing methods. Model an older
+    // host's actual unsupported route, rather than an unconfigured transport.
+    async experimental_discoverRpc() { throw { status: 404, body: { error: 'Not Found' } }; },
     async list() { listCalls++; return { plugins: [{ id: registeredOwner, enabled, status: enabled ? 'running' : 'disabled' }] }; },
     async callRpc(args) {
       let value;
@@ -205,6 +208,7 @@ async function fixture(count = 6, mount = true, contribution = {}) {
           value = { page: { rows: page, next: last && start + 8 < all.length ? { seq: last.identity.ref.source.seq, key: last.key } : null }, coverage: { state: 'partial', intervals: [] } };
         }
         else if (args.method === GALLERY_METHODS.pending) value = { rows: [], next: null };
+        else if (args.method === GALLERY_METHODS.prepare) value = { resolve: null, invalidation: null, feed: null, native: null };
         else if (args.method === GALLERY_METHODS.stage) value = null;
         else if (args.method === GALLERY_METHODS.known) value = [];
         else value = { state: 'committed' };
@@ -798,8 +802,8 @@ test('live discovery reaches supplier33 across bounded passes and revokes remove
     const ids = Array.from({ length: 33 }, (_, i) => `supplier-${String(i).padStart(2, '0')}`), original = f.sdk.plugins.list;
     f.sdk.plugins.list = async () => ({ plugins: ids.map(id => ({ id, enabled: true, status: 'running' })) });
     let passes = 0, continued;
-    do { const read = await runtime.readScope('thread', controller.signal, signal => runtime.discoverReady(signal)); assert.equal(read.state, 'ready'); continued = read.value.continued; passes++; assert.ok(passes <= 4); } while (continued);
-    assert.ok(passes >= 2); assert.equal(runtime.readyOwners.state.size, 33); assert.equal(runtime.isReadyOwner('supplier-32'), true);
+    do { const read = await runtime.readScope('thread', controller.signal, signal => runtime.discoverReady(signal)); assert.equal(read.state, 'ready'); continued = read.value.continued; passes++; assert.ok(passes <= 33); } while (continued);
+    assert.equal(passes, 33); assert.equal(runtime.readyOwners.state.size, 33); assert.equal(runtime.isReadyOwner('supplier-32'), true);
     f.sdk.plugins.list = async () => ({ plugins: [{ id: 'supplier-32', enabled: true, status: 'running' }] });
     runtime.invalidateReadiness(); assert.equal(runtime.readyOwners.state.size, 0);
     await runtime.readScope('thread', controller.signal, signal => runtime.discoverReady(signal));
@@ -1802,11 +1806,11 @@ test('admitted event labels survive an incomplete rediscovery slice without gran
   f.sdk.plugins.callRpc=async args=>{if(args.method===METHODS.describe&&args.pluginId.startsWith('aaa-prefix-')){prefixCalls++;return args.outputSchema.parse({protocol:'bb-turn-results',versions:[]})}return originalRpc(args)};
   runtime.invalidateReadiness();assert.equal(runtime.isReadyOwner(owner),false);
   const first=await runtime.readScope('thread',controller.signal,signal=>runtime.discoverReady(signal));
-  assert.equal(first.state,'ready');assert.equal(first.value.continued,true);assert.equal(prefixCalls,32);
+  assert.equal(first.state,'ready');assert.equal(first.value.continued,true);assert.equal(prefixCalls,1);
   assert.equal(runtime.isReadyOwner(owner),false,'retained display metadata cannot restore current presentation readiness');
   assert.equal(runtime.caption(row),'Created','a partial pass must not erase an already admitted descriptor label for a still-listed owner');
-  const second=await runtime.readScope('thread',controller.signal,signal=>runtime.discoverReady(signal));
-  assert.equal(second.value.continued,false);assert.equal(runtime.caption(row),'Created');assert.equal(runtime.isReadyOwner(owner),true);
+  let second; for(let i=0;i<32;i++) second=await runtime.readScope('thread',controller.signal,signal=>runtime.discoverReady(signal));
+  assert.equal(prefixCalls,32); assert.equal(second.value.continued,false);assert.equal(runtime.caption(row),'Created');assert.equal(runtime.isReadyOwner(owner),true);
   const quiet=f.stats();await settle(25);assert.deepEqual(f.stats(),quiet);
   f.sdk.plugins.list=async()=>({plugins:[]});runtime.invalidateReadiness();await runtime.readScope('thread',controller.signal,signal=>runtime.discoverReady(signal));
   assert.equal(runtime.caption(row),'Result recorded','no descriptor identity is invented after the owner disappears from discovery');
@@ -2154,8 +2158,8 @@ test('cold proved turns publish indexed previews before unrelated optional suppl
         live++; peak = Math.max(peak, live);
         try {
           if (args.method === GALLERY_METHODS.read) reads.push(args.input.turnId);
-          if (args.method === GALLERY_METHODS.stage) steps++;
-          if (!held && args.method === GALLERY_METHODS.stage) { held = true; await gate; }
+          if (args.method === GALLERY_METHODS.prepare) steps++;
+          if (!held && args.method === GALLERY_METHODS.prepare) { held = true; await gate; }
           if (args.method === GALLERY_METHODS.apply) commits++;
           args.signal?.throwIfAborted(); return await original(args);
         } finally { live--; }
@@ -2371,7 +2375,7 @@ test('page-boundary FIFO admits proved next turn before a later issued page and 
             if (args.input.turnId === 'turn-0') issued = structuredClone(value.page.next);
             return value;
           }
-          if (!optionalHeld && args.method === GALLERY_METHODS.stage) { optionalHeld = true; await optionalGate; }
+          if (!optionalHeld && args.method === GALLERY_METHODS.prepare) { optionalHeld = true; await optionalGate; }
           return await rpc(args);
         } finally { live--; }
       };
@@ -2443,12 +2447,12 @@ test('visible native demand negotiates generic readiness before held older proof
     assert.equal(document.querySelectorAll('[data-turn-results-gallery]').length, 0, 'readiness cannot manufacture native placement');
     assert.equal(document.querySelectorAll('[data-result-key]').length, 0);
     assert.equal(runtime.canvases.counts().occupied, 0); assert.equal(f.stats().live, 0);
-    for (const method of [GALLERY_METHODS.read, GALLERY_METHODS.stage, GALLERY_METHODS.apply, METHODS.enumerate])
+    for (const method of [GALLERY_METHODS.read, GALLERY_METHODS.stage, GALLERY_METHODS.prepare, GALLERY_METHODS.apply, METHODS.enumerate])
       assert.equal(calls.includes(method), false, 'no early retained/source work before full native proof');
     await act(async () => { release(); await tick(); });
     await until(() => f.stats().live === 1 && runtime.stats().running === 0 && runtime.stats().queued === 0);
     const card = document.querySelector('[data-result-key="row-0"]');
-    assert.ok(card.querySelector('[data-supplier]')); assert.ok(calls.includes(GALLERY_METHODS.stage));
+    assert.ok(card.querySelector('[data-supplier]')); assert.ok(calls.includes(GALLERY_METHODS.prepare));
     await act(async () => { card.querySelector('.tr-open-icon').click(); await tick(); });
     assert.deepEqual(f.navigation, ['https://fixture.invalid/0']); assert.equal(JSON.stringify(f.rows()), facts);
     assert.equal(calls.filter(call => call === METHODS.describe).length, 1, 'ordinary source phase reuses its genuine ready descriptor');
@@ -2733,4 +2737,54 @@ test('reverse public reset callbacks and a later source hint cannot orphan fresh
     await act(async () => document.querySelector('.tr-open-icon').click()); assert.deepEqual(f.navigation, ['https://fixture.invalid/0']);
     assert.equal(JSON.stringify(f.rows()), facts);
   } finally { release(); await f.dispose(); }
+});
+
+
+test('transient advertised metadata yields to proved foreground work without nonparticipant fanout, then genuinely recovers rich and Open', async () => {
+  const calls = []; let metadata = 0, entered = false, release, live = 0, peak = 0;
+  const gate = new Promise(done => { release = done; });
+  const f = await fixture(1, true, { captureRuntime: true, nativeItems: true, configureSdk(sdk) {
+    const list = sdk.plugins.list, rpc = sdk.plugins.callRpc;
+    const track = async (name, read) => { calls.push(name); live++; peak = Math.max(peak, live); try { return await read(); } finally { live--; } };
+    sdk.plugins.experimental_discoverRpc = input => track('metadata', async () => {
+      assert.equal(input.method, METHODS.describe);
+      if (++metadata === 1) { entered = true; await gate; throw Object.assign(Error('temporary metadata failure'), { status: 500 }); }
+      return [{ pluginId: owner, method: METHODS.describe }];
+    });
+    sdk.plugins.list = input => track('list', async () => ({ plugins: [
+      ...Array.from({ length: 8 }, (_, i) => ({ id: `aaa-nonparticipant-${i}`, enabled: true, status: 'running' })), ...(await list(input)).plugins] }));
+    sdk.plugins.callRpc = args => track(`${args.pluginId}:${args.method}`, async () => {
+      if (args.pluginId.startsWith('aaa-nonparticipant-')) throw Object.assign(Error('not a participant'), { status: 404, body: { error: { code: 'unknown_method' } } });
+      return rpc(args);
+    });
+  } });
+  const runtime = f.runtime(), facts = JSON.stringify(f.rows()), controller = new AbortController();
+  try {
+    await until(() => entered);
+    assert.equal(runtime.isReadyOwner(owner), false);
+    const foreground = runtime.readScope('thread', controller.signal, async signal => {
+      calls.push('foreground:retained');
+      return runtime.backend.read('thread', 'turn-0', signal);
+    });
+    await settle(10); assert.equal(calls.includes('foreground:retained'), false, 'pending actual metadata response owns its thread lane');
+    await act(async () => { release(); await tick(); });
+    await foreground;
+    await until(() => f.stats().live === 1 && runtime.stats().running === 0 && runtime.stats().queued === 0);
+    const card = document.querySelector('[data-result-key="row-0"]');
+    assert.ok(card?.querySelector('[data-supplier]'), 'fresh metadata plus real Describe recovers rich content');
+    await act(async () => { card.querySelector('.tr-open-icon').click(); await tick(); });
+    assert.deepEqual(f.navigation, ['https://fixture.invalid/0']); assert.equal(JSON.stringify(f.rows()), facts);
+    const nonparticipants = calls.filter(name => name.startsWith('aaa-nonparticipant-'));
+    console.log('TRANSIENT_METADATA_FOREGROUND', JSON.stringify({ metadata, nonparticipantCalls: nonparticipants.length,
+      foregroundIndex: calls.indexOf('foreground:retained'), retryIndex: calls.lastIndexOf('metadata'),
+      descriptions: calls.filter(name => name.endsWith(`:${METHODS.describe}`)).length, peak, stats: runtime.stats() }));
+    assert.equal(nonparticipants.length, 0, 'transient metadata failure must not fan out to known nonparticipants');
+    assert.equal(metadata, 2); assert.equal(calls.filter(name => name.endsWith(`:${METHODS.describe}`)).length, 1);
+    assert.ok(calls.indexOf('foreground:retained') < calls.lastIndexOf('metadata'), 'queued foreground retained work precedes yielded metadata retry');
+    assert.equal(peak, 1); const idle = calls.length; await settle(40); assert.equal(calls.length, idle);
+  } finally {
+    release(); controller.abort(); await f.dispose(); await runtime.whenDrained();
+    assert.equal(live, 0); assert.equal(runtime.stats().running, 0); assert.equal(runtime.stats().queued, 0);
+    assert.equal(runtime.stats().leases, 0); assert.equal(runtime.canvases.counts().occupied, 0);
+  }
 });

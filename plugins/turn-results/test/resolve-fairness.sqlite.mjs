@@ -27,7 +27,7 @@ async function fixture(t, options={}) {
   let host=createFakePluginHost({pluginId:'turn-results'}); galleryPlugin(host.bb);
   const supplierHosts=[], calls=[];
   const rpc=(method,input)=>host.harness.behavior.callRpc(method,JSON.parse(canonicalJson(input,262144)));
-  const backend={pending:input=>rpc(GALLERY_METHODS.pending,input),read:(threadId,turnId)=>rpc(GALLERY_METHODS.read,{threadId,turnId}),
+  const backend={prepare:(threadId,owner,turnId)=>rpc(GALLERY_METHODS.prepare,{threadId,owner,turnId}),pending:input=>rpc(GALLERY_METHODS.pending,input),read:(threadId,turnId)=>rpc(GALLERY_METHODS.read,{threadId,turnId}),
     stage:(threadId,owner,id)=>rpc(GALLERY_METHODS.stage,{threadId,owner,id}),knownIdentities:(threadId,owner,refs)=>rpc(GALLERY_METHODS.known,{threadId,owner,refs}),
     async apply(page){ const result=await rpc(GALLERY_METHODS.apply,page); if(!['committed','unchanged'].includes(result.state)) throw Error(JSON.stringify(result)); }};
   async function supplier(owner, handler=async request=>buildResolveOutput(request,request.items.map(identity=>({state:'resolved',value:value(identity)})))) {
@@ -87,7 +87,7 @@ test('stage CAS refusal and apply fault do not advance traversal or outcomes; re
   await assert.rejects(f.run(a,{...f.backend,async apply(){throw Error('injected backend fault');}}),/backend fault/);assert.equal(f.snapshot(),before);
   await f.backend.apply({threadId:'thread',owner:'source-a',changes:[],stage:{id:'resolve:turn',expectedVersion:null,value:{stage:'resolve',cursor:null,status:'ready',debt:null}}});
   const concurrent=f.snapshot();
-  await assert.rejects(f.run(a,{...f.backend,stage:async(threadId,owner,id)=>id==='resolve:turn'?null:f.backend.stage(threadId,owner,id)}),/conflict/);assert.equal(f.snapshot(),concurrent);
+  await assert.rejects(f.run(a,{...f.backend,prepare:async(threadId,owner,turnId)=>({...await f.backend.prepare(threadId,owner,turnId),resolve:null})}),/conflict/);assert.equal(f.snapshot(),concurrent);
   await f.reopen();await f.run(a);assert.deepEqual(f.calls.map(c=>c.items[0].ref.source.seq),[1,1,1]);
 });
 for(const kind of ['aborted','stale'])test(`${kind} propagates with no outcome or stage mutation`,async t=>{
@@ -175,7 +175,7 @@ test('stage cursor is reused only for exact owner/thread/turn/range and same rev
   await f.run(a);const retained=await f.backend.stage('thread','source-a','resolve:turn');
   for(const changed of [{owner:'source-b'},{threadId:'other'},{turnId:'other'},{fromSeq:0},{throughSeq:101},{sourceRevision:'old'}]){
     const altered={...retained,value:{...retained.value,debt:{...retained.value.debt,...changed}}};
-    await f.run(a,{...f.backend,stage:async(threadId,owner,id)=>id==='resolve:turn'?{...altered,version:(await f.backend.stage(threadId,owner,id)).version}:f.backend.stage(threadId,owner,id)});
+    await f.run(a,{...f.backend,prepare:async(threadId,owner,turnId)=>{const prepared=await f.backend.prepare(threadId,owner,turnId);return {...prepared,resolve:{...altered,version:prepared.resolve.version}};}});
     assert.equal(f.calls.at(-1).items[0].ref.source.seq,1);
   }
 });
@@ -255,10 +255,10 @@ test('RF1 strict UTF8 duplicate/backward/foreign/scope/control negatives fail be
   }
   // Force a fully scoped retained continuation, then reject duplicate/backward
   // rows against its previous-page cursor (rather than only within one page).
-  const originalStage=f.backend.stage;
+  const originalPrepare=f.backend.prepare;
   const scopedStage={version:1,value:{stage:'resolve',cursor:null,status:'ready',debt:{threadId:'thread',owner:'source-a',turnId:'turn',fromSeq:1,throughSeq:100,
     sourceRevision:'v1',invalidationVersion:null,after:{seq:3,key:claimKey('source-a',high.ref)},batch:8}}};
-  for(const row of [low,high])await assert.rejects(f.run(a,{...f.backend,stage:(thread,owner,id)=>id==='resolve:turn'?Promise.resolve(scopedStage):originalStage(thread,owner,id),pending:async()=>({rows:[row],next:null})}));
+  for(const row of [low,high])await assert.rejects(f.run(a,{...f.backend,prepare:async(thread,owner,turnId)=>({...await originalPrepare(thread,owner,turnId),resolve:scopedStage}),pending:async()=>({rows:[row],next:null})}));
   for(const eventId of ['event-\u0000','event-\n','event-\u007F'])await assert.rejects(f.seed('source-a',[unicodeIdentity(eventId)]));
   assert.equal(f.snapshot(),before);assert.equal(f.calls.length,0);
 });

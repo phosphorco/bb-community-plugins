@@ -3,8 +3,8 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { createFakePluginHost } from '@get-bb/plugin-sdk/testing';
 import { createRegisteredHandlerRpc } from '@phosphorco/bb-turn-results/testing';
-import { createResultsSupplierClient } from '@phosphorco/bb-turn-results/bb';
-import { canonicalJson, claimKey, resolveOutcomeBudget } from '@phosphorco/bb-turn-results';
+import { createResultsSupplierClient, createResultsConsumerClient, registerTurnResultsParticipant } from '@phosphorco/bb-turn-results/bb';
+import { canonicalJson, claimKey, resolveOutcomeBudget, buildResolveOutput } from '@phosphorco/bb-turn-results';
 import galleryPlugin from '../server.ts';
 import imagePlugin from '../../turn-result-images/server.ts';
 import { JSDOM } from 'jsdom';
@@ -43,11 +43,12 @@ async function fixture(t) {
   const call = (method, input) => galleryHost.harness.behavior.callRpc(method, JSON.parse(canonicalJson(input, 262144)));
   const lookups = [], applications = [];
   const backend = {
+    prepare: (threadId, owner, turnId) => call(GALLERY_METHODS.prepare, { threadId, owner, turnId }),
     pending: input => call(GALLERY_METHODS.pending, input),
     knownIdentities: (threadId, owner, refs) => { lookups.push({ threadId, owner, refs }); return call(GALLERY_METHODS.known, { threadId, owner, refs }); },
     read: (threadId, turnId, _signal, after) => call(GALLERY_METHODS.read, { threadId, turnId, ...(after ? { after } : {}) }),
     stage: (threadId, owner, id) => call(GALLERY_METHODS.stage, { threadId, owner, id }),
-    async apply(page) { applications.push(page); const value = await call(GALLERY_METHODS.apply, page); assert.ok(['committed', 'unchanged'].includes(value.state), JSON.stringify(value)); },
+    async apply(page) { applications.push(page); const value = await call(GALLERY_METHODS.apply, page); assert.ok(['committed', 'unchanged'].includes(value.state), JSON.stringify(value)); return value; },
   };
   const imageRpc = createRegisteredHandlerRpc(imageHost, 'turn-result-images');
   const client = createResultsSupplierClient({ plugins: imageRpc }, 'turn-result-images');
@@ -213,6 +214,10 @@ for (const changed of ['start', 'end']) test(`runtime aborts stale native work a
     first.dispose(); // This view replaces its scope; an independent split lease must not be cancelled.
     second = runtime.retain(updated);
     assert.equal(firstSignal.aborted, true, 'bound change synchronously retires old native slice');
+    await new Promise(resolve => setTimeout(resolve, 5));
+    assert.equal(queries.length, 1, 'ignored old native call still owns the same-thread raw lane');
+    assert.equal(runtime.stats().running, 1);
+    release([native]);
     await wait(() => second.store.state.rows.some(row => row.unresolved && row.resolution === null) && !second.store.state.busy);
     await f.admitImages(); runtime.invalidate('thread');
     await wait(() => second.store.state.rows.some(row => row.resolution?.knowledge === 'confirmed') && !second.store.state.busy);
@@ -391,4 +396,133 @@ test('fault during reconciled image page rolls back new claim and full-scope sta
   assert.deepEqual(after.map(row => row.identity.ref.source.seq), [3,9]);
   assert.deepEqual(after[1].identity, before.identity); assert.deepEqual(after[1].resolution.proof, before.resolution.proof);
   assert.equal((await f.backend.stage('thread', 'turn-result-images', 'native:turn')).value.debt.fromSeq, 1);
+});
+
+
+test('two registered owners share bounded preparation/native work with real SQLite commits, safe FIFO and unchanged bookkeeping', async t => {
+  const now = Date.now();
+  const dom = new JSDOM('', { pretendToBeVisual: true }), saved = globalThis.document; globalThis.document = dom.window.document;
+  const galleryHost = createFakePluginHost({ pluginId: 'turn-results' }), hosts = [], records = [], live = new Map();
+  const counters = { native: 0, metadata: 0, list: 0, supplier: {}, gallery: {}, dbTransactions: 0, dbWriteCommits: 0 };
+  const db = galleryHost.bb.storage.database(), transaction = db.transaction.bind(db);
+  db.transaction = function(work) {
+    const actual = transaction(work), wrapped = (...args) => invoke(actual, args);
+    function invoke(call, args) {
+      const outer = !db.inTransaction, before = db.prepare('SELECT total_changes() n').get().n;
+      const value = call(...args);
+      if (outer) { counters.dbTransactions++; if (db.prepare('SELECT total_changes() n').get().n > before) counters.dbWriteCommits++; }
+      return value;
+    }
+    for (const key of ['default', 'deferred', 'immediate', 'exclusive']) wrapped[key] = (...args) => invoke(actual[key], args);
+    return wrapped;
+  };
+  galleryPlugin(galleryHost.bb);
+  let held = false, release, sameFinished = false, otherFinished = false;
+  const gate = new Promise(done => { release = done; }), signal = new AbortController();
+  const selected = await adaptCompletedEvent(native); assert.equal(selected.state, 'admitted');
+  function identity(id, source = selected.event.source, digest = selected.event.selectedDigest) {
+    return { version: 1, ref: { source, member: 'result', kind: 'example/result' }, artifact: { provider: id, id: source.eventId, kind: 'image' },
+      specificity: 'typed', evidence: { basis: 'native-completion', selectedDigest: digest, sites: [], targetUrls: [] }, lookup: null };
+  }
+  function resolution(id, value) {
+    return { identity: value, proof: { kind: 'native-image', source: value.ref.source, selectedDigest: value.evidence.selectedDigest },
+      revision: { epoch: `epoch-${id}`, sequence: 1 }, knowledge: 'confirmed',
+      outcomeEvidence: { kind: 'observation', id: value.ref.source.eventId, digest: value.evidence.selectedDigest, recordedAt: 100 },
+      availability: { state: 'available', asOf: now, expiresAt: null }, route: { kind: 'url', href: `https://fixture.invalid/${id}/${value.ref.source.seq}` },
+      provenance: { originHost: { state: 'unknown', reason: 'not-recorded' }, artifactLocation: { state: 'unknown', reason: 'not-verified' } },
+      fallback: { kind: 'link', title: `${id} saved result` }, spans: { width: 1, height: 1 } };
+  }
+  const ids = ['owner-a', 'owner-b'], sourceRpcs = new Map();
+  for (const id of ids) {
+    const host = createFakePluginHost({ pluginId: id }); hosts.push(host);
+    registerTurnResultsParticipant(host.bb, { pluginId: id, capabilities: { revision: 'v1', supplier: { recognize: true, resolve: true, enumerate: true,
+      kinds: [{ kind: 'example/result', namespace: 'example', neutralLabel: 'Result', confirmedLabel: 'Created', specificity: 'typed', memberVersion: 'v1', equivalenceNamespaces: [] }] } },
+      async enumerate() {
+        const value = identity(id, { ...selected.event.source, eventId: `feed-${id}`, itemId: `feed-${id}`, seq: 2 });
+        return { state: 'page', epoch: `epoch-${id}`, phase: 'changes', throughRevision: 1, rows: [{ kind: 'upsert', value: resolution(id, value) }],
+          nextCursor: `feed-${id}-issued`, settled: true, coverage: { retainedFrom: 1, unplaced: 0, complete: true } };
+      },
+      async recognize(input) {
+        return { candidates: input.events.map(event => ({ identity: identity(id, event.source, event.selectedDigest) })), page: { state: 'complete', nextCursor: null } };
+      },
+      async resolve(input) { return buildResolveOutput(input, input.items.map(value => ({ state: 'resolved', value: resolution(id, value) }))); },
+    });
+    sourceRpcs.set(id, createRegisteredHandlerRpc(host, id));
+  }
+  const galleryRpc = createRegisteredHandlerRpc(galleryHost, 'turn-results');
+  const sdk = { plugins: {
+    async list() { counters.list++; records.push('list'); return { plugins: ids.map(id => ({ id, enabled: true, status: 'running' })) }; },
+    async experimental_discoverRpc() { counters.metadata++; records.push('metadata'); return ids.map(pluginId => ({ pluginId, method: 'turnResultsDescribe' })); },
+    async callRpc(args) {
+      const group = args.pluginId === 'turn-results' ? counters.gallery : counters.supplier;
+      group[args.method] = (group[args.method] ?? 0) + 1; records.push(`${args.pluginId}:${args.method}`);
+      live.set('thread', (live.get('thread') ?? 0) + 1);
+      try {
+        if (args.pluginId === 'owner-a' && args.method === 'turnResultsV1Recognize' && !held) {
+          held = true; await gate; args.signal.throwIfAborted();
+        }
+        return await (args.pluginId === 'turn-results' ? galleryRpc : sourceRpcs.get(args.pluginId)).callRpc(args);
+      } finally { live.set('thread', live.get('thread') - 1); }
+    },
+  }, threads: { events: { async list(input) {
+    counters.native++; records.push('native'); input.signal.throwIfAborted(); return [structuredClone(native)];
+  } } } };
+  const runtime = createGalleryRuntime(sdk), lease = runtime.retain(anchor);
+  async function idle() { for (let i = 0; i < 600; i++) { if (runtime.stats().running === 0 && runtime.stats().queued === 0 && !lease.store.state.busy) return; await new Promise(done => setTimeout(done, 0)); } assert.fail('two-owner pass did not park'); }
+  const resetCounts = () => { for (const name of Object.keys(counters)) counters[name] = typeof counters[name] === 'number' ? 0 : {}; records.length = 0; };
+  // Initialization is outside the demand's counters; supplier calls start only in queued microtasks.
+  resetCounts();
+  try {
+    for (let i = 0; !held && i < 500; i++) await new Promise(done => setTimeout(done, 0));
+    assert.equal(held, true);
+    assert.equal(db.prepare("SELECT count(*) n FROM gallery_records WHERE kind='claim'").get().n, 1, 'early feed is already committed before later source work');
+    const same = runtime.readScope('thread', signal.signal, async bounded => { records.push('same-foreground'); await runtime.backend.read('thread', 'turn', bounded); sameFinished = true; });
+    const other = runtime.readScope('other', signal.signal, async () => { records.push('other-foreground'); otherFinished = true; });
+    await other; assert.equal(otherFinished, true); assert.equal(sameFinished, false, 'same-thread foreground waits through the actual held raw promise');
+    await new Promise(done => setTimeout(done, 0));
+    assert.equal(live.get('thread'), 1); assert.equal(runtime.stats().running, 1);
+    release(); await same; await idle();
+    const rows = await runtime.backend.read('thread', 'turn', signal.signal);
+    assert.equal(rows.page.rows.length, 4); assert.ok(rows.page.rows.every(row => !row.unresolved && row.resolution.knowledge === 'confirmed'));
+    assert.ok(records.indexOf('same-foreground') < records.indexOf('owner-b:turnResultsV1Enumerate'), 'foreground runs at the actual safe owner yield');
+    const first = structuredClone(counters), facts = canonicalJson(rows.page.rows.map(row => [row.identity, row.resolution]));
+    resetCounts(); lease.more(); await idle();
+    const after = await runtime.backend.read('thread', 'turn', signal.signal);
+    assert.equal(canonicalJson(after.page.rows.map(row => [row.identity, row.resolution])), facts);
+    const repeated = structuredClone(counters);
+    console.log('TWO_OWNER_WORK', JSON.stringify({ first, repeated, rawRemaining: live.get('thread'), queued: runtime.stats().queued }));
+    assert.equal(first.native, 1, 'one exact bounded selected native window must serve both owners');
+    assert.equal(first.gallery.turnResultsGalleryV1Stage ?? 0, 0, 'four separate stage RPCs per owner are replaced by one consistent preparation');
+    assert.equal(first.gallery.turnResultsGalleryV1Prepare, 2);
+    assert.equal(repeated.dbWriteCommits, 2, 'genuine feed freshness commits remain; equal resolve bookkeeping cannot mint extra stage/head revisions');
+    assert.equal(repeated.gallery.turnResultsGalleryV1Read, 4, 'initial, two real feed-freshness refreshes, and explicit final verification all remain');
+    const quiet = records.length; await new Promise(done => setTimeout(done, 10)); assert.equal(records.length, quiet);
+    const prepare = owner => galleryRpc.callRpc({ pluginId: 'turn-results', method: GALLERY_METHODS.prepare,
+      input: { threadId: 'thread', turnId: 'turn', owner }, outputSchema: { parse: value => value }, signal: signal.signal });
+    const prior = await prepare('owner-a');
+    const consumer = createResultsConsumerClient({ plugins: galleryRpc }, 'turn-results');
+    const invalidation = { version: 1, supplierPluginId: 'owner-a', threadId: 'thread', revision: { epoch: 'epoch-owner-a', sequence: 2 }, affected: 'thread' };
+    assert.equal((await consumer.invalidate(invalidation, signal.signal)).state, 'dirty');
+    const snapshot = () => canonicalJson({ rows: db.prepare('SELECT * FROM gallery_records ORDER BY kind,record_key').all(), meta: db.prepare('SELECT * FROM gallery_meta').all() });
+    const staleApply = old => galleryRpc.callRpc({ pluginId: 'turn-results', method: GALLERY_METHODS.apply, outputSchema: { parse: value => value }, signal: signal.signal,
+      input: { owner: 'owner-a', threadId: 'thread', changes: [], expectedInvalidationVersion: old.invalidation?.version ?? null,
+        stage: { id: 'resolve:turn', expectedVersion: old.resolve.version, value: old.resolve.value } } });
+    const beforeStale = snapshot(); assert.equal((await staleApply(prior)).state, 'conflict'); assert.equal(snapshot(), beforeStale);
+    const current = await prepare('owner-a');
+    assert.equal((await consumer.invalidate(invalidation, signal.signal)).state, 'dirty');
+    assert.ok((await prepare('owner-a')).invalidation.version > current.invalidation.version, 'same public Invalidate still advances its guard');
+    const repeatedBarrier = snapshot(); assert.equal((await staleApply(current)).state, 'conflict'); assert.equal(snapshot(), repeatedBarrier);
+    const unaffected = await prepare('owner-b');
+    const noop = await galleryRpc.callRpc({ pluginId: 'turn-results', method: GALLERY_METHODS.apply, outputSchema: { parse: value => value }, signal: signal.signal,
+      input: { owner: 'owner-b', threadId: 'thread', changes: [], expectedInvalidationVersion: unaffected.invalidation?.version ?? null,
+        stage: { id: 'resolve:turn', expectedVersion: unaffected.resolve.version, value: unaffected.resolve.value } } });
+    assert.equal(noop.state, 'unchanged');
+    assert.equal(canonicalJson((await runtime.backend.read('thread', 'turn', signal.signal)).page.rows.map(row => [row.identity, row.resolution])), facts,
+      'earlier exact feed/native facts remain committed after stale preparation refusals');
+  } finally {
+    release(); signal.abort(); lease.dispose(); runtime.dispose(); await runtime.whenDrained();
+    assert.equal(live.get('thread'), 0); assert.equal(runtime.stats().running, 0); assert.equal(runtime.stats().bytes, 0);
+    await galleryHost.harness.lifecycle.dispose(); for (const host of hosts) await host.harness.lifecycle.dispose();
+    globalThis.document = saved; dom.window.close();
+  }
 });

@@ -4,7 +4,7 @@ import type { GalleryPage } from './gallery/index.ts';
 import { canonicalByteLength } from '@phosphorco/bb-turn-results';
 import { registerTurnResultsParticipant } from '@phosphorco/bb-turn-results/bb';
 import { createGalleryIndex } from './gallery/index.ts';
-import { GALLERY_METHODS, PendingGallerySchema, PendingGalleryOutputSchema, ReadGallerySchema, StageGallerySchema, ApplyGallerySchema, KnownGallerySchema, KnownGalleryOutputSchema, GalleryRawSchema } from './gallery/rpc.ts';
+import { GALLERY_METHODS, PrepareGallerySchema, OwnerPreparationSchema, PendingGallerySchema, PendingGalleryOutputSchema, ReadGallerySchema, StageGallerySchema, ApplyGallerySchema, KnownGallerySchema, KnownGalleryOutputSchema, GalleryRawSchema } from './gallery/rpc.ts';
 
 function standard<T>(schema: ZodType<T>): StandardSchemaV1<unknown, T> {
   return { '~standard': { version: 1, vendor: 'turn-results-gallery',
@@ -38,12 +38,14 @@ export default function turnResultsPlugin(bb: BbPluginApi): void {
     });
   }
   bb.rpc.register({
+    [GALLERY_METHODS.prepare]: { input: standard(PrepareGallerySchema), output: standard(OwnerPreparationSchema) },
     [GALLERY_METHODS.pending]: { input: standard(PendingGallerySchema), output: standard(PendingGalleryOutputSchema) },
     [GALLERY_METHODS.known]: { input: standard(KnownGallerySchema), output: standard(KnownGalleryOutputSchema) },
     [GALLERY_METHODS.read]: { input: standard(ReadGallerySchema), output: standard(GalleryRawSchema) },
     [GALLERY_METHODS.stage]: { input: standard(StageGallerySchema), output: standard(GalleryRawSchema) },
     [GALLERY_METHODS.apply]: { input: standard(ApplyGallerySchema), output: standard(GalleryRawSchema) },
   }, {
+    [GALLERY_METHODS.prepare]: input => index.prepareOwner(input.threadId, input.owner, input.turnId),
     [GALLERY_METHODS.pending]: input => index.readPending(input),
     [GALLERY_METHODS.known]: input => index.knownIdentities(input.threadId, input.owner, input.refs),
     [GALLERY_METHODS.read]: input => {

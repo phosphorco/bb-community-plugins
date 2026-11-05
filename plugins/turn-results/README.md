@@ -110,7 +110,12 @@ conflict, replace a complete last-good snapshot, or update an authoritative dial
 Private continuation memory shares the existing budgets. Public advertised RPC
 membership narrows descriptor candidates when available; the ordinary current
 plugin list and Describe still establish supplier readiness. Unsupported or invalid
-metadata uses ordinary discovery. No per-card discovery or hidden all-history
+metadata uses ordinary discovery, yielding after each legacy owner negotiation.
+A transient metadata failure yields one retry from the existing demand budget,
+then parks until fresh demand; it never fans out to unrelated plugins. Access
+refusal waits for a new readiness generation. Discovery-only slices do not reread
+retained collections; source operations still refresh their committed results.
+No per-card discovery or hidden all-history
 walk is performed. Visible native demand queues one readiness-only discovery
 slice per window generation after its first actual history read, so renderer
 negotiation can finish while the native boundary is still loading. This uses
@@ -183,6 +188,38 @@ loading of the plugin executable is an independent floor: this scheduling does
 not run before its frontend exists and does not promise cross-session preloading.
 Speculative reads can spend existing lane time and deadlines on content the
 reader ultimately skips; they do not increase any read, byte or lease budget.
+
+## Bounded owner work
+
+Each demanded owner prepares its resolve, source-invalidation, feed and native
+checkpoints in one indexed SQLite read transaction. Every following Apply still
+checks the captured invalidation version inside its own atomic transaction, as
+well as the stage CAS. Even an identical new invalidation advances that guard.
+Feed, recognition and resolution commits remain separate, so an earlier valid
+feed survives a later refusal. Equal ordinary checkpoints can avoid a redundant
+write only after CAS; invalidation and maintenance checkpoints do not use that
+shortcut. Genuine supplier freshness updates still commit and refresh retained
+rows. A wholly unchanged owner can yield without another retained collection.
+
+Within one continuously live full anchor and source generation, owners may
+reuse one exact selected native query until the originating six-second slice
+ends; a borrowing owner cannot extend that window's deadline. The existing
+entry and window byte budgets charge preparation and selected
+data. Optional reuse yields to useful foreground facts under memory pressure;
+active raw work retains its charge until settlement. Resets, full anchor changes,
+source readiness revocation and retirement discard reuse eligibility. The
+record holds selected data and bounded validity tokens, never raw provider
+payloads, promises or unit closures, and grants no placement or action authority.
+
+Actual native, supplier and Gallery transports within an owner unit serialize
+through their real public promise settlement. A local helper timeout does not
+release its thread slot or let a status write overlap ignored source work.
+Queued calls recheck the original deadline, supplied signal and generation
+before dispatch; expired work does not run. The existing FIFO yields between
+owners, with the same two-window/one-thread limits. Consistent preparation adds
+explicit read transactions and invalidation guard reads; fewer RPCs or repeated
+checkpoint writes do not imply universally less SQLite work or faster native
+rendering.
 
 ## Verification limits
 

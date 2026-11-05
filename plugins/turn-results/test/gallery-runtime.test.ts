@@ -1,7 +1,7 @@
 import { test, mock } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
-import { buildResolveOutput, METHODS } from '@phosphorco/bb-turn-results';
+import { buildResolveOutput, canonicalByteLength, METHODS } from '@phosphorco/bb-turn-results';
 import { registerTurnResultsParticipant, ResultsCallError } from '@phosphorco/bb-turn-results/bb';
 import type { RegistrationPort } from '@phosphorco/bb-turn-results/bb';
 import { createGalleryRuntime, GALLERY_RUNTIME_LIMITS } from '../gallery/runtime.ts';
@@ -15,7 +15,7 @@ function anchor(threadId: string, turnId = 'turn', start = 1): GalleryAnchor {
   return { threadId, turnId, rowId: 'opaque-public-row', sourceSeqStart: 90, sourceSeqEnd: 100,
     turnSeqStart: start, turnSeqEnd: 100, historySnapshot: 'public-snapshot' };
 }
-function setup(count = 0, failed = '', productive = false) {
+function setup(count = 0, failed = '', productive = false, recognizing = false, enumerating = true) {
   const dom = new JSDOM('', { pretendToBeVisual: true }), saved = globalThis.document;
   globalThis.document = dom.window.document;
   const handlers = new Map<string, Parameters<RegistrationPort['rpc']['register']>[1]>();
@@ -23,15 +23,16 @@ function setup(count = 0, failed = '', productive = false) {
   let holding: ((threadId: string, signal: AbortSignal) => Promise<void>) | null = null;
   const ids = Array.from({ length: count }, (_, i) => `source-${String(i).padStart(3, '0')}`);
   for (const id of ids) registerTurnResultsParticipant({ rpc: { register(_contract, methods) { handlers.set(id, methods); } } }, {
-    pluginId: id, capabilities: { revision: 'r1', supplier: { recognize: false, resolve: true, enumerate: true,
+    pluginId: id, capabilities: { revision: 'r1', supplier: { recognize: recognizing, resolve: true, enumerate: enumerating,
       kinds: [{ kind: 'example/result', namespace: 'example', neutralLabel: 'Result', confirmedLabel: 'Created', specificity: 'typed', memberVersion: 'v1', equivalenceNamespaces: [] }] } },
+    ...(recognizing ? { async recognize() { return { candidates: [], page: { state: 'complete' as const, nextCursor: null } }; } } : {}),
     async resolve(input) { return buildResolveOutput(input, input.items.map(() => ({ state: 'unavailable' as const, reason: 'No fixture result' }))); },
-    async enumerate() {
+    ...(enumerating ? { async enumerate() {
       sourceCalls.push(id); if (id === failed) throw Error('Disconnected owner');
       return { state: 'page', epoch: 'epoch', phase: 'changes', throughRevision: sourceCalls.length,
         rows: [], nextCursor: `cursor-${sourceCalls.length}`, settled: !productive,
         coverage: { retainedFrom: null, unplaced: 0, complete: true } };
-    },
+    } } : {}),
   });
   const sdk: Parameters<typeof createGalleryRuntime>[0] = { plugins: {
     async list() { return { plugins: ids.map(id => ({ id, enabled: true, status: 'running' })) }; },
@@ -43,7 +44,8 @@ function setup(count = 0, failed = '', productive = false) {
         if (args.method === GALLERY_METHODS.read) {
           reads.push(String(input.threadId)); if (holding) await holding(String(input.threadId), args.signal!);
           value = { page: { rows: [], next: null }, coverage: { state: 'unindexed', intervals: [] } };
-        } else if (args.method === GALLERY_METHODS.pending) value = { rows: [], next: null };
+        } else if (args.method === GALLERY_METHODS.prepare) value = Object.fromEntries(['resolve', 'invalidation', 'feed', 'native'].map(name => [name, stages.get(JSON.stringify([input.threadId, input.owner, name === 'invalidation' ? 'source-invalidation' : `${name}:${input.turnId}`])) ?? null]));
+        else if (args.method === GALLERY_METHODS.pending) value = { rows: [], next: null };
         else if (args.method === GALLERY_METHODS.stage) value = stages.get(JSON.stringify([input.threadId, input.owner, input.id])) ?? null;
         else if (args.method === GALLERY_METHODS.known) value = [];
         else {
@@ -96,7 +98,7 @@ test('proof suspension retains finite discovery lane; same-thread history waits 
     await until(() => history.includes('other')); assert.deepEqual(history, ['other']);
     assert.ok(h.runtime.stats().running <= 2); assert.equal(h.sourceCalls.length, 0);
     release(); await Promise.all([same, other]); await until(() => h.runtime.stats().running === 0);
-    assert.equal(descriptions.length, 32); assert.equal(h.sourceCalls.length, 0, 'suspended proof cannot consume');
+    assert.equal(descriptions.length, 1); assert.equal(h.sourceCalls.length, 0, 'suspended proof cannot consume');
     lease.visible(true);
     await until(() => h.runtime.isReadyOwner('source-032') && h.sourceCalls.length === 34 && h.runtime.stats().running === 0);
     assert.equal(h.sourceCalls.filter(id => id === 'source-000').length, 2, 'one bounded transient feed retry');
@@ -299,7 +301,8 @@ test('targeted retry fresh listing rejects removed and disabled debt; incompatib
     };
     const lease = h.runtime.retain(anchor('thread'));
     try {
-      await until(() => listCalls === 2 && h.runtime.stats().running === 0);
+      await until(() => listCalls >= 2 && h.runtime.stats().running === 0);
+      assert.equal(listCalls, state === 'incompatible' ? 3 : 2, 'two finite legacy owner slices; a still-listed failed owner also gets the genuine named retry list');
       assert.equal(h.runtime.isReadyOwner('source-000'), false, state);
       assert.equal(h.runtime.isReadyOwner('source-001'), true, state);
       assert.equal(descriptions, state === 'incompatible' ? 2 : 1);
@@ -338,12 +341,14 @@ test('hidden or disposed targeted retry ignores late valid descriptor and cannot
 test('named Describe retry debt yields at32 owners, advances past persistent prefix, and shares a finite wave', async () => {
   const h = setup(33), rpc = h.sdk.plugins.callRpc;
   const counts = new Map<string, number>(), perUnit = new Map<number, number>();
-  let held = true, clock = performance.now();
+  let held = true, clock = performance.now(), discoveryUnit = 0;
+  const list = h.sdk.plugins.list;
+  h.sdk.plugins.list = async input => { discoveryUnit++; return list(input); };
   const monotonic = mock.method(performance, 'now', () => clock);
   h.sdk.plugins.callRpc = async args => {
     if (args.method === METHODS.describe) {
       const count = (counts.get(args.pluginId) ?? 0) + 1; counts.set(args.pluginId, count);
-      perUnit.set(h.reads.length, (perUnit.get(h.reads.length) ?? 0) + 1);
+      perUnit.set(discoveryUnit, (perUnit.get(discoveryUnit) ?? 0) + 1);
       if (count === 1) throw transientDescribeError();
       if (held && ['source-000', 'source-001'].includes(args.pluginId)) {
         clock += 3001; // Exercise the existing overall-deadline path without a real3s sleep.
@@ -395,20 +400,20 @@ test('actual public500ms Describe timeout retries once; ignored late initial des
 test('optional retry list failure parks without revoking a healthy owner, then new demand obtains a fresh descriptor', async () => {
   const h = setup(2), rpc = h.sdk.plugins.callRpc, list = h.sdk.plugins.list;
   let lists = 0, descriptions = 0;
-  h.sdk.plugins.list = async args => { if (++lists === 2) throw transientDescribeError(); return list(args); };
+  h.sdk.plugins.list = async args => { if (++lists === 3) throw transientDescribeError(); return list(args); };
   h.sdk.plugins.callRpc = async args => {
     if (args.method === METHODS.describe && args.pluginId === 'source-000' && ++descriptions === 1) throw transientDescribeError();
     return rpc(args);
   };
   const lease = h.runtime.retain(anchor('thread'));
   try {
-    await until(() => lists === 2 && h.runtime.stats().running === 0);
+    await until(() => lists === 3 && h.runtime.stats().running === 0);
     assert.equal(descriptions, 1); assert.equal(h.runtime.isReadyOwner('source-001'), true);
     assert.equal(h.runtime.isReadyOwner('source-000'), false);
-    await tick(); await tick(); assert.equal(lists, 2);
+    await tick(); await tick(); assert.equal(lists, 3);
     h.runtime.invalidate('thread');
     await until(() => h.runtime.isReadyOwner('source-000') && h.runtime.stats().running === 0);
-    assert.equal(descriptions, 2); assert.equal(lists, 3);
+    assert.equal(descriptions, 2); assert.equal(lists, 4);
   } finally { lease.dispose(); h.dispose(); }
 });
 
@@ -430,7 +435,7 @@ test('one transient Enumerate retry yields behind healthy owners and shared root
       await until(() => calls.length === 3 && !first.store.state.busy && h.runtime.stats().running === 0);
       assert.deepEqual(calls, ['source-000', 'source-001', 'source-000'], kind);
       assert.deepEqual(descriptions, ['source-000', 'source-001'], 'healthy descriptors are not restarted');
-      assert.equal(lists, 2, 'one bounded fresh membership admission for the retry');
+      assert.equal(lists, 3, 'two initial owner slices plus one bounded fresh membership admission for the retry');
       assert.equal(first.store, duplicate.store); assert.equal(first.store.state.error, null);
       assert.equal(h.runtime.isReadyOwner('source-001'), true);
       const quiet = h.reads.length; await tick(); await tick(); assert.equal(h.reads.length, quiet);
@@ -465,7 +470,7 @@ test('failed-feed revisit refuses removed disabled and malformed public membersh
     const h = setup(2), rpc = h.sdk.plugins.callRpc, list = h.sdk.plugins.list;
     let lists = 0; const calls: string[] = [];
     h.sdk.plugins.list = async args => {
-      const result = await list(args); if (++lists === 1) return result;
+      const result = await list(args); if (++lists <= 2) return result;
       if (state === 'malformed') return { plugins: [...result.plugins, result.plugins[0]!] };
       return { plugins: result.plugins.flatMap(row => row.id !== 'source-000' ? [row]
         : state === 'removed' ? [] : [{ ...row, enabled: false }]) };
@@ -478,7 +483,7 @@ test('failed-feed revisit refuses removed disabled and malformed public membersh
     };
     const lease = h.runtime.retain(anchor('thread'));
     try {
-      await until(() => lists === 2 && h.runtime.stats().running === 0);
+      await until(() => lists === 3 && h.runtime.stats().running === 0);
       assert.deepEqual(calls, ['source-000', 'source-001'], state);
       const quiet = h.reads.length; await tick(); await tick(); assert.equal(h.reads.length, quiet);
     } finally { lease.dispose(); h.dispose(); }
@@ -504,7 +509,7 @@ test('nontransient feed errors and backend Apply failure gain no Enumerate retry
     const lease = h.runtime.retain(anchor('thread'));
     try {
       await until(() => calls.length === 2 && h.runtime.stats().running === 0);
-      assert.deepEqual(calls, ['source-000', 'source-001'], kind); assert.equal(lists, 1);
+      assert.deepEqual(calls, ['source-000', 'source-001'], kind); assert.equal(lists, 2, 'one fresh list per initial legacy owner slice, with no retry list');
     } finally { lease.dispose(); h.dispose(); }
   }
 });
@@ -514,7 +519,7 @@ test('hidden or retired failed-feed membership read fences ignored late results 
     const h = setup(2), rpc = h.sdk.plugins.callRpc, list = h.sdk.plugins.list;
     let lists = 0, release!: () => void, held!: AbortSignal; const calls: string[] = [];
     h.sdk.plugins.list = async args => {
-      if (++lists === 2) { held = args?.signal!; await new Promise<void>(resolve => { release = resolve; }); }
+      if (++lists === 3) { held = args?.signal!; await new Promise<void>(resolve => { release = resolve; }); }
       return list(args);
     };
     h.sdk.plugins.callRpc = async args => {
@@ -527,8 +532,9 @@ test('hidden or retired failed-feed membership read fences ignored late results 
     try {
       await until(() => Boolean(release));
       if (retirement === 'hidden') h.hidden(true); else h.runtime.dispose();
-      assert.equal(held.aborted, true); await until(() => h.runtime.stats().running === 0);
-      release(); await tick(); await tick();
+      assert.equal(held.aborted, true); await tick();
+      assert.equal(h.runtime.stats().running, 1, 'ignored raw membership read retains actual occupancy');
+      release(); await until(() => h.runtime.stats().running === 0); await tick();
       assert.deepEqual(calls, ['source-000', 'source-001']); assert.equal(h.runtime.stats().queued, 0);
     } finally { release?.(); lease.dispose(); h.dispose(); }
   }
@@ -625,10 +631,11 @@ test('advertised public Describe membership skips nonparticipants but still requ
   } finally { lease.dispose(); h.dispose(); }
 });
 
-for (const mode of ['unsupported', 'failure', 'malformed', 'overbound'] as const) test(`optional advertised membership ${mode} falls back to genuine bounded discovery`, async () => {
+for (const mode of ['unsupported', 'failure', 'route404', 'malformed', 'overbound'] as const) test(`optional advertised membership ${mode} falls back to genuine bounded discovery`, async () => {
   const h = setup(1), original = h.sdk.plugins.callRpc; let described = 0;
   if (mode !== 'unsupported') h.sdk.plugins.experimental_discoverRpc = async () => {
-    if (mode === 'failure') throw Error('Unsupported RPC discovery');
+    if (mode === 'failure') throw Object.assign(Error('Unsupported RPC discovery'), { status: 404, body: { error: { code: 'unknown_method' } } });
+    if (mode === 'route404') throw { status: 404, body: { error: 'Not Found' } };
     if (mode === 'malformed') return [{ pluginId: 'INVALID ID', method: METHODS.describe }];
     return Array.from({ length: 257 }, (_, i) => ({ pluginId: `listed-${i}`, method: METHODS.describe }));
   };
@@ -784,18 +791,19 @@ test('early readiness shares one first slice across visible roots, preserves cur
     for (const [index, demand] of demands.entries()) { demand.visible(true); demand.warm(index === 2 ? 'other' : 'same'); }
     assert.equal(h.runtime.stats().queued, 1, 'one queued first slice for the window generation, not one per root');
     assert.deepEqual(described, []); release(); await firstHistory;
-    await until(() => h.runtime.isReadyOwner('source-031') && h.runtime.stats().running === 0);
-    assert.equal(described.length, 32); assert.equal(h.runtime.isReadyOwner('source-032'), false);
+    await until(() => h.runtime.isReadyOwner('source-000') && h.runtime.stats().running === 0);
+    assert.equal(described.length, 1); assert.equal(h.runtime.isReadyOwner('source-032'), false);
     assert.equal(h.sourceCalls.length, 0); assert.deepEqual(h.reads, [], 'readiness-only task never collects or consumes sources');
     for (const demand of demands) demand.warm('same');
-    await tick(); await tick(); assert.equal(described.length, 32, 'no automatic continuation or idle retry from visible roots');
-    await h.runtime.readScope('same', controller.signal, signal => h.runtime.discoverReady(signal));
+    await tick(); await tick(); assert.equal(described.length, 1, 'no automatic continuation or idle retry from visible roots');
+    for (let i = 1; i < 33; i++) await h.runtime.readScope('same', controller.signal, signal => h.runtime.discoverReady(signal));
     assert.equal(described.length, 33); assert.equal(h.runtime.isReadyOwner('source-032'), true, 'later genuine discovery demand uses the existing issued discovery cursor');
     disabled = true; h.runtime.invalidateReadiness();
     assert.equal(h.runtime.readyOwners.state.size, 0);
     for (const demand of demands) demand.warm('same');
-    await until(() => h.runtime.readyOwners.state.size === 32 && h.runtime.stats().running === 0);
-    assert.equal(described.length, 65); assert.equal(described.filter(id => id === 'source-000').length, 1);
+    await until(() => h.runtime.readyOwners.state.size === 1 && h.runtime.stats().running === 0);
+    for (let i = 1; i < 32; i++) await h.runtime.readScope('same', controller.signal, signal => h.runtime.discoverReady(signal));
+    assert.equal(h.runtime.readyOwners.state.size, 32); assert.equal(described.length, 65); assert.equal(described.filter(id => id === 'source-000').length, 1);
     assert.equal(h.runtime.isReadyOwner('source-000'), false, 'new generation requires fresh enabled membership');
     const calls = described.length; await tick(); await tick(); assert.equal(described.length, calls);
   } finally { release?.(); controller.abort(); for (const demand of demands) demand.dispose(); h.dispose(); }
@@ -830,7 +838,9 @@ test('early discovery owns ignored raw timeout, skips expired helper dispatch an
     assert.deepEqual(described, ['source-000'], 'expired queued helper must not dispatch after old raw settles');
     assert.equal(h.runtime.readyOwners.state.size, 0); assert.equal(h.runtime.stats().historyReads, 0);
     h.hidden(false); demand.visible(true); demand.warm('same');
-    await until(() => h.runtime.readyOwners.state.size === 2 && h.runtime.stats().running === 0);
+    await until(() => h.runtime.readyOwners.state.size === 1 && h.runtime.stats().running === 0);
+    await h.runtime.readScope('same', new AbortController().signal, signal => h.runtime.discoverReady(signal));
+    assert.equal(h.runtime.readyOwners.state.size, 2);
     assert.deepEqual(described, ['source-000', 'source-000', 'source-001']); assert.equal(h.sourceCalls.length, 0);
     demand.dispose(); h.runtime.dispose(); await h.runtime.whenDrained();
     assert.equal(h.runtime.stats().running, 0); assert.equal(h.runtime.stats().historyReads, 0);
@@ -1074,4 +1084,426 @@ test('anchor reset callbacks include target additions, explicit invalidation, in
   await reader.read(['row'], new AbortController().signal); assert.equal(marks, 5);
   assert.equal(reader.adopt(['row'], client, () => { replacementMarks++; }), true); assert.equal(replacementMarks, 1);
   reader.invalidate(); assert.equal(marks, 5); assert.equal(replacementMarks, 2);
+});
+
+
+test('transient metadata has one shared yielded retry, then parks until genuine demand without caching empty success', async () => {
+  const h = setup(1), list = h.sdk.plugins.list, rpc = h.sdk.plugins.callRpc;
+  let metadata = 0, lists = 0, descriptions = 0, healthy = false;
+  h.sdk.plugins.experimental_discoverRpc = async () => {
+    metadata++; if (!healthy) throw Object.assign(Error('temporary metadata transport'), { status: 500 });
+    return [{ pluginId: 'source-000', method: METHODS.describe }];
+  };
+  h.sdk.plugins.list = async input => { lists++; return list(input); };
+  h.sdk.plugins.callRpc = async input => { if (input.method === METHODS.describe) descriptions++; return rpc(input); };
+  const leases = [h.runtime.retain(anchor('same')), h.runtime.retain(anchor('same'))];
+  try {
+    await until(() => metadata === 2 && h.runtime.stats().running === 0);
+    assert.equal(lists, 0); assert.equal(descriptions, 0); assert.equal(h.sourceCalls.length, 0);
+    assert.equal(h.runtime.isReadyOwner('source-000'), false); assert.equal(leases[0]!.store.state.continued, true);
+    assert.equal(h.reads.length, 1, 'metadata-only retries do not walk retained rows again');
+    await tick(); await tick(); assert.equal(metadata, 2, 'persistent failure has no idle retry');
+    healthy = true; leases[0]!.more();
+    await until(() => h.runtime.isReadyOwner('source-000') && h.runtime.stats().running === 0);
+    assert.equal(metadata, 3); assert.equal(descriptions, 1); assert.equal(h.sourceCalls.length, 1);
+    const idle = metadata; await tick(); assert.equal(metadata, idle);
+  } finally { for (const lease of leases) lease.dispose(); h.dispose(); }
+});
+
+test('permanent optional metadata refusal cannot fan out or retry without a new readiness generation', async () => {
+  const h = setup(1), rpc = h.sdk.plugins.callRpc; let metadata = 0, descriptions = 0;
+  h.sdk.plugins.experimental_discoverRpc = async () => { metadata++; throw Object.assign(Error('forbidden'), { status: 403 }); };
+  h.sdk.plugins.callRpc = async input => { if (input.method === METHODS.describe) descriptions++; return rpc(input); };
+  const lease = h.runtime.retain(anchor('refused'));
+  try {
+    await until(() => metadata === 1 && h.runtime.stats().running === 0); lease.more();
+    await until(() => h.runtime.stats().running === 0 && h.runtime.stats().queued === 0);
+    assert.equal(metadata, 1); assert.equal(descriptions, 0); assert.equal(h.sourceCalls.length, 0);
+    assert.equal(h.runtime.readyOwners.state.size, 0);
+    h.sdk.plugins.experimental_discoverRpc = async () => { metadata++; return [{ pluginId: 'source-000', method: METHODS.describe }]; };
+    h.runtime.invalidate(undefined, true);
+    await until(() => h.runtime.isReadyOwner('source-000') && h.runtime.stats().running === 0);
+    assert.equal(metadata, 2); assert.equal(descriptions, 1);
+  } finally { lease.dispose(); h.dispose(); }
+});
+
+test('legacy negative owner slices yield foreground FIFO through owner33 without multiplying retained reads', async () => {
+  const h = setup(1), list = h.sdk.plugins.list, rpc = h.sdk.plugins.callRpc;
+  const calls: string[] = [], noise = Array.from({ length: 32 }, (_, i) => `aaa-noise-${String(i).padStart(2, '0')}`);
+  const controller = new AbortController(); let foreground: Promise<unknown> | undefined;
+  h.sdk.plugins.list = async input => ({ plugins: [...noise.map(id => ({ id, enabled: true, status: 'running' })), ...(await list(input)).plugins] });
+  h.sdk.plugins.callRpc = async input => {
+    if (input.method === METHODS.describe) {
+      calls.push(input.pluginId);
+      if (input.pluginId === noise[0]) queueMicrotask(() => {
+        foreground = h.runtime.readScope('same', controller.signal, async signal => {
+          calls.push('foreground'); return h.runtime.backend.read('same', 'turn', signal);
+        });
+      });
+      if (noise.includes(input.pluginId)) throw Object.assign(Error('not a participant'), { status: 404, body: { error: { code: 'unknown_method' } } });
+    }
+    return rpc(input);
+  };
+  const lease = h.runtime.retain(anchor('same'));
+  try {
+    await until(() => h.runtime.isReadyOwner('source-000') && h.runtime.stats().running === 0 && h.runtime.stats().queued === 0);
+    await foreground;
+    assert.equal(calls.filter(value => value !== 'foreground').length, 33);
+    assert.equal(new Set(calls).size, 34); assert.deepEqual(calls.slice(0, 3), [noise[0], 'foreground', noise[1]]);
+    assert.equal(h.sourceCalls.length, 1); assert.equal(h.reads.length, 3, 'one initial, one real foreground, one post-source retained read; none per negative Describe');
+    console.log('LEGACY_FAIR_TOTAL', JSON.stringify({ descriptions: 33, retainedReads: h.reads.length, sourceUnits: h.sourceCalls.length, calls: calls.length }));
+    const idle = calls.length; await tick(); await tick(); assert.equal(calls.length, idle);
+  } finally { controller.abort(); lease.dispose(); h.dispose(); }
+});
+
+
+test('actual metadata timeout retains ignored raw ownership then yields fresh retry behind foreground history', async () => {
+  const h = setup(1), rpc = h.sdk.plugins.callRpc;
+  let metadata = 0, descriptions = 0, release!: () => void, bounded!: AbortSignal, rawSettled = false;
+  const order: string[] = [], controller = new AbortController();
+  h.sdk.plugins.experimental_discoverRpc = async input => {
+    order.push('metadata'); metadata++;
+    if (metadata === 1) { bounded = input!.signal!; await new Promise<void>(done => { release = done; }); rawSettled = true; }
+    return [{ pluginId: 'source-000', method: METHODS.describe }];
+  };
+  h.sdk.plugins.callRpc = async input => { if (input.method === METHODS.describe) descriptions++; return rpc(input); };
+  const lease = h.runtime.retain(anchor('same'));
+  try {
+    await until(() => !!bounded);
+    const same = h.runtime.readScope('same', controller.signal, async () => { order.push('foreground'); });
+    const other = await h.runtime.readScope('other', controller.signal, async () => 'other progress');
+    assert.deepEqual(other, { state: 'ready', value: 'other progress' });
+    await new Promise(done => setTimeout(done, 520));
+    assert.equal(bounded.aborted, true); assert.equal(rawSettled, false);
+    assert.equal(h.runtime.stats().running, 1); assert.equal(descriptions, 0); assert.equal(h.runtime.readyOwners.state.size, 0);
+    assert.deepEqual(order, ['metadata']); release(); await same;
+    await until(() => h.runtime.isReadyOwner('source-000') && h.runtime.stats().running === 0);
+    assert.deepEqual(order, ['metadata', 'foreground', 'metadata']); assert.equal(descriptions, 1);
+    assert.equal(h.sourceCalls.length, 1); assert.equal(h.runtime.stats().historyReads, 0);
+    const idle = metadata; await tick(); assert.equal(metadata, idle);
+  } finally { release?.(); controller.abort(); lease.dispose(); h.dispose(); }
+});
+
+
+test('fresh legacy continuation removal retires failed owner debt while the healthy suffix finishes and idle parks', async () => {
+  const h = setup(2), list = h.sdk.plugins.list, rpc = h.sdk.plugins.callRpc;
+  let lists = 0; const enumerated: string[] = [];
+  h.sdk.plugins.list = async input => {
+    const result = await list(input); return { plugins: ++lists === 1 ? result.plugins : result.plugins.filter(row => row.id !== 'source-000') };
+  };
+  h.sdk.plugins.callRpc = async input => {
+    if (input.method === METHODS.enumerate) {
+      enumerated.push(input.pluginId); if (input.pluginId === 'source-000') throw new ResultsCallError('source-error');
+    }
+    return rpc(input);
+  };
+  const lease = h.runtime.retain(anchor('removed-debt'));
+  try {
+    await until(() => h.runtime.isReadyOwner('source-001') && h.runtime.stats().running === 0 && h.runtime.stats().queued === 0);
+    assert.deepEqual(enumerated, ['source-000', 'source-001']); assert.equal(h.runtime.isReadyOwner('source-000'), false);
+    const idle = { lists, reads: h.reads.length }; await tick(); await tick(); assert.deepEqual({ lists, reads: h.reads.length }, idle);
+  } finally { lease.dispose(); h.dispose(); }
+});
+
+
+test('metadata failure after readiness revocation parks failed-feed debt without inferring absent owners or spinning', async () => {
+  const h = setup(2), rpc = h.sdk.plugins.callRpc;
+  let revoked = false, metadata = 0, healthy = false; const enumerated: string[] = [];
+  h.sdk.plugins.callRpc = async input => {
+    if (input.method === METHODS.enumerate) {
+      enumerated.push(input.pluginId);
+      if (!revoked) {
+        revoked = true;
+        h.sdk.plugins.experimental_discoverRpc = async () => {
+          metadata++; if (!healthy) throw Object.assign(Error('temporary metadata failure'), { status: 500 });
+          return ['source-000', 'source-001'].map(pluginId => ({ pluginId, method: METHODS.describe }));
+        };
+        h.runtime.invalidateReadiness(); throw new ResultsCallError('source-error');
+      }
+    }
+    return rpc(input);
+  };
+  const lease = h.runtime.retain(anchor('thread'));
+  try {
+    await until(() => metadata === 2 && h.runtime.stats().running === 0 && h.runtime.stats().queued === 0);
+    assert.deepEqual(enumerated, ['source-000']); assert.equal(h.runtime.readyOwners.state.size, 0);
+    assert.equal(lease.store.state.continued, true, 'failed metadata is pending work, not successful empty membership');
+    const idle = h.reads.length; await tick(); await tick(); assert.equal(h.reads.length, idle); assert.equal(metadata, 2);
+    healthy = true; lease.more();
+    await until(() => h.runtime.readyOwners.state.size === 2 && h.runtime.stats().running === 0);
+    assert.deepEqual(enumerated, ['source-000', 'source-000', 'source-001']); assert.equal(metadata, 3);
+  } finally { lease.dispose(); h.dispose(); }
+});
+
+
+test('source helper timeout cannot overlap backend status writes; actual raw settlement owns thread credit through the original deadline', async () => {
+  const h = setup(2), rpc = h.sdk.plugins.callRpc, control = new AbortController();
+  let release!: () => void, bounded!: AbortSignal, slice!: AbortSignal, live = 0, peak = 0, rawSettled = false;
+  let statusWrites = 0; const order: string[] = [];
+  h.sdk.plugins.callRpc = async input => {
+    if (input.method === GALLERY_METHODS.prepare && input.input && (input.input as { owner: string }).owner === 'source-000') slice = input.signal!;
+    if (input.method === METHODS.enumerate && input.pluginId === 'source-000' && !rawSettled) {
+      bounded = input.signal!; live++; peak = Math.max(peak, live); order.push('raw');
+      try { await new Promise<void>(done => { release = done; }); rawSettled = true; return await rpc(input); }
+      finally { live--; }
+    }
+    if (input.method === GALLERY_METHODS.apply) {
+      if ((input.input as { supplier?: { connection: string } }).supplier?.connection === 'disconnected') statusWrites++;
+      assert.equal(live, 0, 'backend transport must follow actual source transport settlement');
+    }
+    return rpc(input);
+  };
+  const lease = h.runtime.retain(anchor('same'));
+  try {
+    await until(() => !!release);
+    const same = h.runtime.readScope('same', control.signal, async () => { order.push('same'); });
+    const other = await h.runtime.readScope('other', control.signal, async () => { order.push('other'); });
+    assert.equal(other.state, 'ready');
+    await new Promise<void>(done => bounded.addEventListener('abort', () => done(), { once: true }));
+    await tick(); assert.equal(rawSettled, false); assert.equal(statusWrites, 0); assert.deepEqual(order, ['raw', 'other']);
+    assert.equal(h.runtime.stats().running, 1);
+    await new Promise<void>(done => slice.aborted ? done() : slice.addEventListener('abort', () => done(), { once: true }));
+    await tick(); assert.equal(statusWrites, 0); assert.equal(h.runtime.stats().running, 1);
+    release(); await same; await until(() => h.runtime.stats().running === 0 && h.runtime.stats().queued === 0);
+    assert.equal(peak, 1); assert.equal(statusWrites, 0, 'expired queued status dispatches zero, even after raw settlement');
+    assert.deepEqual(order, ['raw', 'other', 'same']); assert.ok(h.sourceCalls.includes('source-001'), 'healthy suffix progresses after the safe yield');
+    const idle = h.reads.length; await tick(); assert.equal(h.reads.length, idle);
+  } finally { release?.(); control.abort(); lease.dispose(); h.dispose(); await h.runtime.whenDrained(); assert.equal(live, 0); assert.equal(h.runtime.stats().bytes, 0); }
+});
+
+test('held native selection cannot relabel or refill a successor full anchor; actual raw drain precedes fresh work', async () => {
+  const h = setup(1, '', false, true), calls: string[] = [];
+  let release!: () => void, count = 0, oldSignal!: AbortSignal;
+  h.sdk.threads.events.list = async input => {
+    count++; calls.push(`native-${count}`);
+    if (count === 1) { oldSignal = input.signal; await new Promise<void>(done => { release = done; }); }
+    return [];
+  };
+  const first = h.runtime.retain(anchor('same'));
+  let successor: ReturnType<typeof h.runtime.retain> | undefined;
+  try {
+    await until(() => count === 1);
+    successor = h.runtime.retain({ ...anchor('same'), rowId: 'successor-physical-row', historySnapshot: 'fresh-other-snapshot' });
+    assert.equal(oldSignal.aborted, true); await tick(); assert.equal(count, 1); assert.equal(h.runtime.stats().running, 1);
+    release(); await until(() => count === 2 && h.runtime.stats().running === 0 && h.runtime.stats().queued === 0);
+    assert.deepEqual(calls, ['native-1', 'native-2']); assert.equal(successor.store.state.error, null);
+    const idle = count; await tick(); assert.equal(count, idle);
+  } finally { release?.(); first.dispose(); successor?.dispose(); h.dispose(); await h.runtime.whenDrained(); assert.equal(h.runtime.stats().bytes, 0); }
+});
+
+test('a completely unchanged non-enumerating owner yields without another retained collection or supplier freshness write', async () => {
+  const h = setup(1, '', false, false, false), rpc = h.sdk.plugins.callRpc;
+  let value: unknown, applies = 0;
+  h.sdk.plugins.callRpc = async input => {
+    if (input.method === GALLERY_METHODS.apply) {
+      applies++; const next = (input.input as { stage: { value: unknown } }).stage.value;
+      if (JSON.stringify(next) === JSON.stringify(value)) return input.outputSchema.parse({ state: 'unchanged' });
+      value = structuredClone(next);
+    }
+    return rpc(input);
+  };
+  const lease = h.runtime.retain(anchor('unchanged'));
+  try {
+    await until(() => applies === 1 && h.runtime.stats().running === 0); assert.equal(h.reads.length, 2); assert.equal(h.sourceCalls.length, 0);
+    lease.more(); await until(() => applies === 2 && h.runtime.stats().running === 0);
+    assert.equal(h.reads.length, 3, 'new demanded retained read remains; semantic no-op causes no post-owner reread');
+    const idle = applies; await tick(); await tick(); assert.equal(applies, idle);
+  } finally { lease.dispose(); h.dispose(); }
+});
+
+test('optional selected-window memory yields to a larger valid complete foreground collection without evicting last-good facts', async () => {
+  const h = setup(1, '', false, true), rpc = h.sdk.plugins.callRpc;
+  const small = Array.from({ length: 8 }, (_, n) => prefixRow(n, 3500)), large = Array.from({ length: 40 }, (_, n) => prefixRow(n, 3500));
+  let expanded = false, nativeCalls = 0, during = 0, sawWindow = false;
+  h.sdk.threads.events.list = async () => { nativeCalls++; return Array.from({ length: 10 }, (_, n) => ({ id: `event-${n}`, threadId: 'prefix', seq: n + 1,
+    createdAt: 1, scope: { kind: 'turn', turnId: 'turn' }, type: 'item/completed', data: { item: { id: `item-${n}`, type: 'toolCall', status: 'completed',
+      error: null, tool: 'example', result: 'x'.repeat(9500) } } })); };
+  h.sdk.plugins.callRpc = async input => {
+    if (input.method === GALLERY_METHODS.read) {
+      const after = (input.input as { after?: { key: string } }).after;
+      const rows = expanded ? large : small, start = after ? rows.findIndex(row => row.key === after.key) + 1 : 0;
+      if (expanded) { during++; sawWindow ||= h.runtime.stats().bytes > 150000; }
+      const part = rows.slice(start, start + 8), last = part.at(-1)!;
+      return input.outputSchema.parse(prefixRead(part, start + part.length < rows.length ? { seq: last.identity.ref.source.seq, key: last.key } : null));
+    }
+    const result = await rpc(input);
+    if (input.method === GALLERY_METHODS.apply && (input.input as { stage?: { id: string } }).stage?.id === 'resolve:turn') expanded = true;
+    return result;
+  };
+  const lease = h.runtime.retain(anchor('prefix'));
+  try {
+    try { await until(() => expanded && h.runtime.stats().running === 0 && h.runtime.stats().queued === 0); } catch (error) { console.log('SOURCE_MEMORY_STATE', { expanded, nativeCalls, during, stats: h.runtime.stats(), state: { ...lease.store.state, rows: lease.store.state.rows.length } }); throw error; }
+    assert.ok(sawWindow); assert.equal(nativeCalls, 1); assert.equal(during, 5);
+    assert.equal(lease.store.state.loaded, true); assert.equal(lease.store.state.rows.length, 40); assert.equal(lease.store.state.limited, false);
+    assert.equal(lease.store.state.error, null);
+    console.log('SOURCE_MEMORY_COMPLETE', { stats: h.runtime.stats(), canonical: canonicalByteLength(lease.store.state, GALLERY_RUNTIME_LIMITS.snapshotBytes), json: Buffer.byteLength(JSON.stringify(lease.store.state)) });
+    assert.equal(h.runtime.stats().bytes, canonicalByteLength(lease.store.state, GALLERY_RUNTIME_LIMITS.snapshotBytes), 'optional window charge is shed; only complete facts remain');
+    const idle = during; await tick(); await tick(); assert.equal(during, idle);
+  } finally { lease.dispose(); h.dispose(); assert.equal(h.runtime.stats().bytes, 0); }
+});
+
+test('selected native reuse expires at its originating slice while queued owner work keeps its own fresh unit', async () => {
+  const h = setup(2, '', false, true), rpc = h.sdk.plugins.callRpc, controller = new AbortController();
+  let release!: () => void, held = false, nativeCalls = 0, queued: Promise<unknown> | undefined;
+  h.sdk.threads.events.list = async () => { nativeCalls++; return []; };
+  h.sdk.plugins.callRpc = async input => {
+    const result = await rpc(input);
+    if (!held && input.method === GALLERY_METHODS.apply && (input.input as { stage?: { id: string } }).stage?.id === 'native:turn') {
+      held = true;
+      queued = h.runtime.readScope('same', controller.signal, async () => { await new Promise<void>(done => { release = done; }); });
+    }
+    return result;
+  };
+  const lease = h.runtime.retain(anchor('same'));
+  try {
+    await until(() => !!release); assert.equal(nativeCalls, 1);
+    await new Promise(done => setTimeout(done, GALLERY_RUNTIME_LIMITS.sliceMs + 5));
+    assert.equal(nativeCalls, 1); assert.equal(h.runtime.stats().running, 1, 'held ordinary work owns the real lane');
+    release(); await queued;
+    await until(() => h.sourceCalls.length === 2 && h.runtime.stats().running === 0 && h.runtime.stats().queued === 0);
+    assert.equal(nativeCalls, 2, 'the next owner cannot reuse selected data past the first unit deadline');
+    assert.equal(lease.store.state.error, null); const idle = nativeCalls; await tick(); assert.equal(nativeCalls, idle);
+  } finally { release?.(); controller.abort(); lease.dispose(); h.dispose(); await h.runtime.whenDrained(); }
+});
+
+
+test('actual preparation memory pressure refuses the owner truthfully without disconnecting it or evicting complete retained facts', async () => {
+  const h = setup(1), rpc = h.sdk.plugins.callRpc, rows = Array.from({ length: 24 }, (_, n) => prefixRow(n, 3500));
+  let applies = 0;
+  h.sdk.plugins.callRpc = async input => {
+    if (input.method === GALLERY_METHODS.read) {
+      const after = (input.input as { after?: { key: string } }).after, start = after ? rows.findIndex(row => row.key === after.key) + 1 : 0;
+      const part = rows.slice(start, start + 8), last = part.at(-1)!;
+      return input.outputSchema.parse(prefixRead(part, start + part.length < rows.length ? { seq: last.identity.ref.source.seq, key: last.key } : null));
+    }
+    if (input.method === GALLERY_METHODS.prepare) return input.outputSchema.parse(Object.fromEntries(['resolve', 'invalidation', 'feed', 'native'].map(name => [name,
+      { version: 1, value: { stage: 'feed', cursor: null, status: 'ready', debt: { bounded: 'x'.repeat(45000) } } }])));
+    if (input.method === GALLERY_METHODS.apply) applies++;
+    return rpc(input);
+  };
+  const lease = h.runtime.retain(anchor('prefix'));
+  try {
+    await until(() => h.runtime.stats().running === 0 && h.runtime.stats().queued === 0 && !!lease.store.state.error);
+    assert.equal(lease.store.state.loaded, true); assert.equal(lease.store.state.rows.length, 24);
+    assert.match(lease.store.state.error!, /source preparation capacity/); assert.equal(applies, 0); assert.equal(h.sourceCalls.length, 0);
+    assert.equal(h.runtime.stats().bytes, canonicalByteLength(lease.store.state, GALLERY_RUNTIME_LIMITS.snapshotBytes));
+    const reads = h.reads.length; await tick(); await tick(); assert.equal(h.reads.length, reads);
+  } finally { lease.dispose(); h.dispose(); }
+});
+
+test('borrowed selected-window expiry yields one charged fresh selection after foreground and healthy suffix', async () => {
+  const h = setup(3, '', false, true), rpc = h.sdk.plugins.callRpc;
+  let clock = 1000, nativeCalls = 0, advanced = false, straddled = false, statusWrites = 0, bSignal!: AbortSignal;
+  const recognized: string[] = [], order: string[] = [];
+  const controller = new AbortController(); let foreground: Promise<unknown> | undefined;
+  const monotonic = mock.method(performance, 'now', () => clock);
+  h.sdk.threads.events.list = async () => { nativeCalls++; return [{ id: 'event-in-window', threadId: 'same', seq: 1, createdAt: 1, scope: { kind: 'turn', turnId: 'turn' }, type: 'item/completed', data: { item: { id: 'item-in-window', type: 'toolCall', status: 'completed', error: null, tool: 'example', result: 'bounded fixture result' } } }]; };
+  h.sdk.plugins.callRpc = async input => {
+    const page = input.input as { owner?: string; stage?: { id: string }; supplier?: { connection: string } };
+    if (input.method === GALLERY_METHODS.prepare && page.owner === 'source-001' && !bSignal) bSignal = input.signal!;
+    if (input.method === GALLERY_METHODS.apply && page.supplier?.connection === 'disconnected') statusWrites++;
+    if (input.method === METHODS.recognize) {
+      recognized.push(input.pluginId); order.push(input.pluginId);
+      if (input.pluginId === 'source-001' && !straddled) {
+        assert.equal(nativeCalls, 1, 'borrower used the live originating selection before expiry');
+        assert.equal(bSignal.aborted, false);
+        const value = await rpc(input);
+        foreground = h.runtime.readScope('same', controller.signal, async () => { order.push('foreground'); });
+        straddled = true; clock = 7010; // after old7000, before this owner's12900 deadline
+        return value;
+      }
+    }
+    const value = await rpc(input);
+    if (!advanced && input.method === GALLERY_METHODS.apply && page.owner === 'source-000' && page.stage?.id === 'resolve:turn') {
+      advanced = true; clock = 6900; // first owner succeeds; next unit starts near old expiry
+    }
+    return value;
+  };
+  const lease = h.runtime.retain(anchor('same'));
+  try {
+    await until(() => straddled && h.sourceCalls.includes('source-002') && h.runtime.stats().running === 0 && h.runtime.stats().queued === 0);
+    await foreground;
+    assert.deepEqual(recognized, ['source-000', 'source-001', 'source-002', 'source-001']);
+    assert.deepEqual(order, ['source-000', 'source-001', 'foreground', 'source-002', 'source-001'], 'foreground and healthy suffix precede the recovery');
+    assert.equal(nativeCalls, 3, 'one recovery uses a genuinely fresh selection rather than the healthy suffix cache');
+    assert.equal(statusWrites, 0); assert.equal(bSignal.aborted, false);
+    assert.equal(lease.store.state.continued, false); assert.equal(lease.store.state.error, null);
+    const idle = { nativeCalls, recognized: recognized.length, reads: h.reads.length }; await tick(); await tick();
+    assert.deepEqual({ nativeCalls, recognized: recognized.length, reads: h.reads.length }, idle);
+    console.log('BORROWED_SELECTION_AUTOMATIC_RECOVERY', JSON.stringify({ nativeCalls, recognized, order, statusWrites, continued: lease.store.state.continued }));
+    lease.more(); await until(() => h.runtime.stats().running === 0 && h.runtime.stats().queued === 0);
+    assert.equal(nativeCalls, 3, 'committed recovery does not repeat recognition on ordinary demand');
+    assert.equal(recognized.length, 4);
+  } finally { controller.abort(); lease.dispose(); h.dispose(); await h.runtime.whenDrained(); monotonic.mock.restore(); assert.equal(h.runtime.stats().bytes, 0); }
+});
+
+test('borrowed expiry debt spends only the existing four credits and stays pending until genuinely demanded when exhausted', async () => {
+  const h = setup(11, '', false, true), rpc = h.sdk.plugins.callRpc;
+  let clock = 1000, nativeCalls = 0, statusWrites = 0;
+  const straddled = new Set<string>(), recognized: string[] = [];
+  const monotonic = mock.method(performance, 'now', () => clock);
+  h.sdk.threads.events.list = async () => { nativeCalls++; return [{ id: 'event', threadId: 'same', seq: 1, createdAt: 1,
+    scope: { kind: 'turn', turnId: 'turn' }, type: 'item/completed', data: { item: { id: 'item', type: 'toolCall', status: 'completed', tool: 'example', result: 'bounded' } } }]; };
+  h.sdk.plugins.callRpc = async input => {
+    const page = input.input as { owner?: string; stage?: { id: string }; supplier?: { connection: string } };
+    if (input.method === GALLERY_METHODS.apply && page.supplier?.connection === 'disconnected') statusWrites++;
+    const value = await rpc(input);
+    if (input.method === METHODS.recognize) {
+      recognized.push(input.pluginId); const n = Number(input.pluginId.slice(-3));
+      if (n % 2 && !straddled.has(input.pluginId)) { straddled.add(input.pluginId); clock += 110; }
+    }
+    if (input.method === GALLERY_METHODS.apply && page.stage?.id === 'resolve:turn' && Number(page.owner!.slice(-3)) % 2 === 0) clock += 5900;
+    return value;
+  };
+  const lease = h.runtime.retain(anchor('same'));
+  try {
+    await until(() => straddled.size === 5 && h.runtime.stats().running === 0 && h.runtime.stats().queued === 0);
+    assert.equal(recognized.length, 11 + GALLERY_RUNTIME_LIMITS.automaticDebtUnits);
+    for (const id of ['source-001', 'source-003', 'source-005', 'source-007']) assert.equal(recognized.filter(value => value === id).length, 2);
+    assert.equal(recognized.filter(id => id === 'source-009').length, 1, 'exhausted debt cannot dispatch an uncounted fifth recovery');
+    assert.equal(nativeCalls, 6 + GALLERY_RUNTIME_LIMITS.automaticDebtUnits); assert.equal(statusWrites, 0);
+    assert.equal(lease.store.state.continued, true, 'remaining selected-window debt cannot report completion');
+    const idle = { calls: recognized.length, nativeCalls, reads: h.reads.length }; await tick(); await tick();
+    assert.deepEqual({ calls: recognized.length, nativeCalls, reads: h.reads.length }, idle);
+    lease.more(); await until(() => recognized.filter(id => id === 'source-009').length === 2 && h.runtime.stats().running === 0 && h.runtime.stats().queued === 0);
+    assert.equal(nativeCalls, 11); assert.equal(lease.store.state.continued, false); assert.equal(lease.store.state.error, null); assert.equal(statusWrites, 0);
+  } finally { lease.dispose(); h.dispose(); await h.runtime.whenDrained(); monotonic.mock.restore(); assert.equal(h.runtime.stats().bytes, 0); }
+});
+
+test('local helper timeout notices expired borrow without a false disconnect or releasing ignored raw ownership', async () => {
+  const h = setup(3, '', false, true), rpc = h.sdk.plugins.callRpc, controller = new AbortController();
+  let clock = 1000, nativeCalls = 0, release!: () => void, rawSignal!: AbortSignal, held = false, statusWrites = 0, healthy = false;
+  const recognized: string[] = [], order: string[] = [];
+  const monotonic = mock.method(performance, 'now', () => clock);
+  h.sdk.threads.events.list = async () => { nativeCalls++; return [{ id: 'event', threadId: 'same', seq: 1, createdAt: 1,
+    scope: { kind: 'turn', turnId: 'turn' }, type: 'item/completed', data: { item: { id: 'item', type: 'toolCall', status: 'completed', tool: 'example', result: 'bounded' } } }]; };
+  h.sdk.plugins.callRpc = async input => {
+    const page = input.input as { owner?: string; stage?: { id: string }; supplier?: { connection: string } };
+    if (input.method === GALLERY_METHODS.apply && page.supplier?.connection === 'disconnected') statusWrites++;
+    if (input.method === METHODS.recognize) {
+      recognized.push(input.pluginId); order.push(input.pluginId);
+      if (input.pluginId === 'source-001' && !held) { held = true; rawSignal = input.signal!; clock = 7010;
+        await new Promise<void>(done => { release = done; }); }
+      else if (input.pluginId === 'source-001' && !healthy) throw new ResultsCallError('source-error');
+    }
+    const value = await rpc(input);
+    if (input.method === GALLERY_METHODS.apply && page.owner === 'source-000' && page.stage?.id === 'resolve:turn') clock = 6900;
+    return value;
+  };
+  const lease = h.runtime.retain(anchor('same'));
+  try {
+    await until(() => !!release);
+    const same = h.runtime.readScope('same', controller.signal, async () => { order.push('foreground'); });
+    const other = await h.runtime.readScope('other', controller.signal, async () => 'other-thread'); assert.equal(other.state, 'ready');
+    await new Promise<void>(done => rawSignal.aborted ? done() : rawSignal.addEventListener('abort', () => done(), { once: true }));
+    await tick(); assert.equal(h.runtime.stats().running, 1); assert.deepEqual(order, ['source-000', 'source-001']); assert.equal(statusWrites, 0);
+    release(); await same; await until(() => h.runtime.stats().running === 0 && h.runtime.stats().queued === 0);
+    assert.deepEqual(order, ['source-000', 'source-001', 'foreground', 'source-002', 'source-001']);
+    assert.equal(nativeCalls, 3); assert.equal(statusWrites, 1, 'only the fresh retry genuinely failed at the supplier');
+    assert.equal(lease.store.state.continued, true, 'failed fresh recovery is parked pending work');
+    const idle = recognized.length; await tick(); await tick(); assert.equal(recognized.length, idle);
+    healthy = true; lease.more();
+    await until(() => recognized.filter(id => id === 'source-001').length === 3 && h.runtime.stats().running === 0 && h.runtime.stats().queued === 0);
+    assert.equal(nativeCalls, 4); assert.equal(statusWrites, 1); assert.equal(lease.store.state.continued, false); assert.equal(lease.store.state.error, null);
+  } finally { release?.(); controller.abort(); lease.dispose(); h.dispose(); await h.runtime.whenDrained(); monotonic.mock.restore(); assert.equal(h.runtime.stats().bytes, 0); }
 });
