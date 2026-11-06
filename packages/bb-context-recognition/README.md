@@ -111,3 +111,7 @@ Hosted presentation registrations accept zero through sixteen owner RPC method n
 
 
 Hosted registrations may declare `supportsExpansion: false` when a separate expanded card adds no content. Consumers may omit their per-card Expand control in that case; omitted metadata preserves the existing expansion behavior. This is a presentation affordance hint, not readiness or action authority. It does not prevent hosting the same component with `mode: 'full'` when the surrounding surface itself is full size. Older compatible v1 registry copies can read the immutable entry, and older consumers may ignore this additive metadata.
+
+## 0.5.3 source changes
+
+The optional `/testing/react` entry adds `runHostedPresentationConformance` for explicit host-stamped presentations that do not use a recognizer. It shares the resolver-based hosted checks, and the import scanner checks transformed import statements. Runtime failure fallback carries a diagnostic marker for these checks. This source version does not establish an npm release or host activation.
