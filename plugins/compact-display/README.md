@@ -3,7 +3,9 @@
 Enable **Compact display** in BB's Plugins settings to keep thread conversations
 and their composers within a centered responsive column, constrain wide Markdown tables
 to that column with horizontal scrolling, and reduce the prompt editor's maximum
-height and spacing. Narrow panes and mobile screens still shrink to fit. The
+height and spacing. The height cap respects BB's corrected shell height when a
+keyboard shrinks the visible area, as well as the native editor's available-height
+budget. Long drafts scroll inside the editor. Narrow panes and mobile screens still shrink to fit. The
 column maximum includes its padding. Disable the plugin to restore BB's defaults.
 
 In **Settings → Plugins → Compact display**, **Hide update-ready notifications**
@@ -13,6 +15,12 @@ Like BB's other plugin settings, this preference is shared by the deployment.
 Active update progress stays visible. If the initial settings read is unavailable,
 notifications stay visible until settings load; later read failures retain the last
 applied preference.
+
+On touch devices or viewports below 768px, typing controls use at least 16px
+text before and during focus, including plugin forms mounted later. This covers
+text inputs, textareas, selects, and contenteditable editors throughout the app,
+and preserves larger inherited font sizes. Non-typing inputs are excluded.
+The rule does not disable pinch zoom or change the native composer expansion.
 
 | Available thread-container width | Column maximum |
 | --- | --- |
@@ -44,7 +52,8 @@ The override dependencies are:
 | Thread/composer maximum | `data-thread-window` and the `max-w-[760px]` class | Establishes a named inline-size container and caps both native columns at 760/1080/1440px together; excludes home/settings and uncapped embedded panels. |
 | Table containment | `data-thread-window` and inline `--md-table-breakout-max` | Overrides BB's measured breakout limit on the wrapper itself; the native inner table keeps horizontal scrolling. |
 | Composer spacing | `data-promptbox-action-row` | Reduces action-row padding for all composers. |
-| Composer height | `data-promptbox-editor-scroll` | Limits editor height relative to the viewport and reduces top padding. |
+| Composer height | `data-promptbox-editor-scroll`, `--bb-shell-height`, and `--composer-editor-available-height` | Caps height at the smaller of 30dvh minus 3rem, 30% of the corrected shell height minus 3rem, and BB's available editor height. Falls back to viewport units when no corrected height exists. Reduces top padding. |
+| Mobile typing size | Native `input`, `textarea`, `select`, and editable `contenteditable` attributes in the app document | Enforces a 16px floor with `!important` against compact field utilities; applies to coarse pointers in any orientation or widths below 768px. Does not enter iframe documents or shadow roots. |
 
 BB already caps ordinary thread columns at 760px. The table rule closes its
 intentional wider-table exception. The separate native `--md-content-w` value
@@ -63,3 +72,46 @@ The `npm run build`, `npm run dev`, and `npm run typecheck` commands are for
 development inside this repository: they use its pinned CLI and shared TypeScript
 configuration. To build a standalone source package, use `bb plugin build <path>`
 with a compatible BB CLI. Published packages include the built `dist/` assets.
+
+### Mobile browser check
+
+`tools/mobile-inputs.mjs` checks the installed plugin in a live BB UI, saves
+composer screenshots and geometry before/after a touch tap, a synthesized touch
+scroll attempt, and wheel scrolling, audits
+visible typing controls on thread/settings routes, and checks late-mounted
+small-font control fixtures. It compares the loaded stylesheet with a local
+browser-only disabled-sheet control; it never disables the live plugin globally
+or submits a message. Desktop and touch landscape cases are included.
+Choose a thread without a full Thread Brief overlay covering its composer.
+Set `BB_RELOAD_CHECK=1` to reload Compact display once during the phone case
+and verify that exactly one stylesheet remains mounted. An unchanged bundle
+may retain its existing stylesheet.
+
+Install Playwright Core in a scratch directory and provide its module and a
+Chromium executable, a BB UI URL, an existing thread, and an evidence directory:
+
+```sh
+npm install --prefix /tmp/bb-mobile-probe playwright-core@1.58.2
+PLAYWRIGHT_MODULE=/tmp/bb-mobile-probe/node_modules/playwright-core/index.mjs \
+CHROME_EXECUTABLE=/path/to/chrome \
+BB_URL=http://127.0.0.1:38888 BB_TEST_THREAD=thr_example \
+BB_EVIDENCE_DIR=/tmp/mobile-input-evidence \
+node plugins/compact-display/tools/mobile-inputs.mjs
+```
+
+Chromium touch emulation verifies computed CSS and layout, not iOS WebView's
+keyboard, automatic focus zoom, or visual-viewport panning. Confirm those on
+an actual iPhone WebView; a smaller Playwright viewport is not a native keyboard.
+
+With the same environment variables, run `tools/keyboard-viewport.mjs` for the
+long-draft regression. It types a disposable 30-line draft in an ephemeral browser
+context (BB stores drafts in that context's localStorage), never submits it, and
+models visible heights of 500, 380, 300, and 250px while layout height stays 844px.
+The loaded CSS must keep the composer in the modeled visible band and preserve an
+80px native available-height constraint. A browser-only control restoring the old
+`30dvh` cap must reproduce clipping at 300/250px. The probe also records a separate
+simulated zoom case; it does not assert that keyboard zoom/panning is fixed.
+
+Run browsers and expensive checks on `b2-hel`, not the BB service machine or
+`b1-hel`. Keep remote source snapshots as verification inputs, with hashes checked
+against canonical sources. Live plugin loading remains from the canonical path.

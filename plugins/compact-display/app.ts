@@ -84,8 +84,34 @@ export default definePluginApp((app) => {
 }
 
 [data-promptbox-editor-scroll] {
-    max-height: calc(30dvh - 3rem) !important;
+    /* The keyboard can shrink the visual viewport without shrinking dvh.
+       Respect BB's corrected shell height and its tighter home-editor budget;
+       otherwise a long draft can push the composer above the visible area. */
+    max-height: min(
+        calc(30dvh - 3rem),
+        calc(var(--bb-shell-height, 100dvh) * 0.3 - 3rem),
+        var(--composer-editor-available-height, 100dvh)
+    ) !important;
     padding-top: 0.25rem !important;
+}
+
+/* Keep typing controls legible before focus as well as during it. Cover touch
+   devices in landscape and narrow WebViews even if pointer detection differs.
+   Apply across the app, including plugin forms and editors mounted later.
+   Exclude non-typing input controls; keep larger inherited text sizes. */
+@media (any-pointer: coarse), (max-width: 767px) {
+    :where(
+        input:not([type="button"], [type="checkbox"], [type="color"],
+            [type="file"], [type="hidden"], [type="image"], [type="radio"],
+            [type="range"], [type="reset"], [type="submit"]),
+        textarea,
+        select,
+        [contenteditable=""],
+        [contenteditable="true" i],
+        [contenteditable="plaintext-only" i]
+    ) {
+        font-size: max(16px, 1em) !important;
+    }
 }
 `;
       document.head.append(style);
