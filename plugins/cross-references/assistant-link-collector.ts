@@ -33,7 +33,8 @@ export class AssistantLinkCollector {
   private disposed = false;
   private running = false;
   private readonly lifetime = new AbortController();
-  private readonly recognitionCache=new Map<string,TaggedCandidateV1[]>();
+  private recognitionCache=new Map<string,TaggedCandidateV1[]>();
+  private readonly activeAttempts=new Set<{threadId:string;controller:AbortController}>();
   private readonly discoveryOwner = createRecognitionDiscoveryOwner();
   private suppliers: ReadyRecognitionSupplier[] = [];
   private discoveryNeeded = true;
@@ -63,8 +64,11 @@ export class AssistantLinkCollector {
    * source jobs, not a detached promise, own subsequent recognition work. */
   invalidateSuppliers():void {
     if(this.inactive())return;
-    this.recognitionCache.clear();
+    // A supplier call may ignore abort and resolve late. Detach its cache so
+    // that only attempts in this new epoch can populate it.
+    this.recognitionCache=new Map();
     this.supplierEpoch++;
+    for(const attempt of this.activeAttempts)attempt.controller.abort();
     this.discoveryNeeded=true;
     this.discoveryOwner.dispose();
     this.seed();
@@ -77,7 +81,7 @@ export class AssistantLinkCollector {
     this.supplierEpoch++;
     this.lifetime.abort();
     this.discoveryOwner.dispose();
-    this.recognitionCache.clear();
+    this.recognitionCache=new Map();
     this.suppliers=[];
     this.wake?.();
   }
@@ -137,6 +141,7 @@ export class AssistantLinkCollector {
       VALUES (?, ?, 1, ?, 0, ?) ON CONFLICT(thread_id) DO UPDATE SET
       version = version + 1, deleted = MAX(deleted, excluded.deleted), retry_at = excluded.retry_at, attempts = 0,
       priority = MAX(priority, excluded.priority)`).run(threadId, projectId, deleted ? 1 : 0, priority);
+    if(force)for(const attempt of this.activeAttempts)if(attempt.threadId===threadId)attempt.controller.abort();
     this.wake?.();
   }
 
@@ -167,6 +172,18 @@ export class AssistantLinkCollector {
     const epoch=this.supplierEpoch;
     const job = this.db.prepare("SELECT * FROM assistant_link_jobs WHERE retry_at <= ? ORDER BY priority DESC, retry_at, rowid LIMIT 1").get(Date.now()) as Job | undefined;
     if (job === undefined || signal.aborted) return false;
+    const attemptController=new AbortController();
+    const attempt={threadId:job.thread_id,controller:attemptController};
+    this.activeAttempts.add(attempt);
+    signal=AbortSignal.any([signal,attemptController.signal]);
+    // Stop obsolete attempts at native-I/O boundaries. Priority-only updates
+    // preserve version, so they remain the current attempt.
+    const stillCurrent=():boolean=>{
+      if(this.inactive() || signal.aborted)return false;
+      if(epoch!==this.supplierEpoch)return false;
+      const current=this.db.prepare("SELECT version FROM assistant_link_jobs WHERE thread_id = ?").get(job.thread_id) as {version:number}|undefined;
+      return current?.version===job.version;
+    };
     const diagnostics=new MentionDiagnostics(()=>!this.disposed && this.db.open && !signal.aborted);
     let outerDiagnostic:MentionDiagnosticOperation|undefined;
     try {
@@ -179,9 +196,10 @@ export class AssistantLinkCollector {
       let missingMessageSeq=false;
       let textChars=0;
       if (!deleted) {
+        if(!stillCurrent())return true;
         try {
           const thread = await bounded(s=>this.bb.sdk.threads.get({ threadId: job.thread_id, signal:s }),signal,1000,outerDiagnostic=diagnostics.operation('source-prefetch'));
-          if(this.inactive() || signal.aborted)return true;
+          if(!stillCurrent())return true;
           if (thread.id!==job.thread_id || thread.projectId !== job.project_id) {(outerDiagnostic=diagnostics.operation('source-prefetch')).fail('source-identity-mismatch');throw new Error("Thread project identity changed.");}
           deleted = thread.deletedAt != null;
           title = thread.title ?? "Thread";
@@ -194,12 +212,12 @@ export class AssistantLinkCollector {
       if (!deleted) {
         let cursor: { anchorSeq: number; anchorId: string } | null = null;
         for (let pageNumber = 0; pageNumber < 50; pageNumber++) {
-          if (this.inactive() || signal.aborted) return true;
+          if (!stillCurrent()) return true;
           const page = await bounded(s=>this.bb.sdk.threads.timeline({
             threadId: job.thread_id, includeNestedRows: "false", segmentLimit: "100", signal:s,
             ...(cursor === null ? {} : { beforeAnchorSeq: String(cursor.anchorSeq), beforeAnchorId: cursor.anchorId }),
           }),signal,1000,outerDiagnostic=diagnostics.operation('timeline-prefetch'));
-          if(this.inactive() || signal.aborted)return true;
+          if(!stillCurrent())return true;
           for (const row of page.rows) {
             if (row.kind !== "conversation" || (row.role !== "assistant" && row.role !== "user") || row.threadId!==job.thread_id) continue;
             if(row.role==='user' && (row.initiator==='system' || (row.systemMessageKind && row.systemMessageKind!=='unlabeled')))continue;
@@ -219,16 +237,26 @@ export class AssistantLinkCollector {
           cursor = next;
         }
       }
+      if(!stillCurrent())return true;
+      let context:ContextBundleV1|undefined;
+      if(!deleted){
+        context=await this.context(job.project_id,job.thread_id,environmentId,signal,diagnostics);
+        if(!stillCurrent())return true;
+      }
+      if(!stillCurrent())return true;
+      const recognitionCache=this.recognitionCache;
+      const fileVerifier=createMentionFileVerifier(this.bb,{threadId:job.thread_id,projectId:job.project_id,environmentId});
       const scan:MentionScan=deleted?{occurrences:[],observedMessageIds:[],scannedMessageIds:[],failedSuppliers:[],discoveryIncomplete:false,
         coverage:{timelineComplete:true,reasons:[],retentionLimited:false}}:await collectConversationMentions({messages:[...messages.values()],
-        context:await this.context(job.project_id,job.thread_id,environmentId,signal,diagnostics),clients:this.suppliers,
-        getThread:(threadId,requestSignal,diagnostic)=>bounded(s=>this.bb.sdk.threads.get({threadId,signal:s}),requestSignal,500,diagnostic,true),
-        verifyFile:createMentionFileVerifier(this.bb,{threadId:job.thread_id,projectId:job.project_id,environmentId}),signal,appUrl:this.bb.server.experimental_appUrl??undefined,
-        discoveryIncomplete:this.discoveryIncomplete,failedSuppliers:this.failedSuppliers,cache:this.recognitionCache,diagnostics});
+        context:context!,clients:this.suppliers,
+        getThread:(threadId,requestSignal,diagnostic)=>{requestSignal.throwIfAborted();return bounded(s=>this.bb.sdk.threads.get({threadId,signal:s}),requestSignal,500,diagnostic,true);},
+        verifyFile:(file,requestSignal,diagnostic)=>{requestSignal.throwIfAborted();return fileVerifier(file,requestSignal,diagnostic);},signal,appUrl:this.bb.server.experimental_appUrl??undefined,
+        discoveryIncomplete:this.discoveryIncomplete,failedSuppliers:this.failedSuppliers,cache:recognitionCache,diagnostics});
       scan.coverage.timelineComplete=complete;
       if(missingMessageSeq){scan.coverage.timelineComplete=false;scan.coverage.reasons.push('missing-message-seq');}
       if(!complete)scan.coverage.reasons.push(sourceLimited?'source-text-budget':'timeline-50-pages');
-      if (this.inactive() || signal.aborted) return true;
+      if (!stillCurrent()) return true;
+      let committed=false;
       const signals = this.db.transaction(() => {
         const current = this.db.prepare("SELECT version FROM assistant_link_jobs WHERE thread_id = ?").get(job.thread_id) as { version: number } | undefined;
         if (current?.version !== job.version || epoch!==this.supplierEpoch || this.disposed || signal.aborted) return [];
@@ -239,12 +267,13 @@ export class AssistantLinkCollector {
         this.db.prepare("DELETE FROM assistant_link_jobs WHERE thread_id = ? AND version = ?").run(job.thread_id, job.version);
         this.db.prepare(`INSERT INTO assistant_link_sync(thread_id, synced_at) VALUES (?, ?)
           ON CONFLICT(thread_id) DO UPDATE SET synced_at = excluded.synced_at`).run(job.thread_id, Date.now());
+        committed=true;
         return result;
       })();
       for (const changed of signals) {if(this.inactive() || signal.aborted)break;this.publish(changed,threadIdentity(job.project_id,job.thread_id));}
-      if(!this.inactive() && !signal.aborted && scan.coverage.reasons.length)this.bb.log.warn(`Cross References collection incomplete for ${job.thread_id}: ${scan.coverage.reasons.join(', ')}. Prior unvisited locations retained within caps. Diagnostics: ${diagnostics.encode()}`);
+      if(committed && !this.inactive() && !signal.aborted && epoch===this.supplierEpoch && scan.coverage.reasons.length)this.bb.log.warn(`Cross References collection incomplete for ${job.thread_id}: ${scan.coverage.reasons.join(', ')}. Prior unvisited locations retained within caps. Diagnostics: ${diagnostics.encode()}`);
     } catch (error) {
-      if (!this.inactive() && !signal.aborted) {
+      if (stillCurrent()) {
         const retryAt = Date.now() + Math.min(60_000, 1_000 * 2 ** Math.min(job.attempts, 6));
         this.db.prepare(`UPDATE assistant_link_jobs SET retry_at = ?, attempts = attempts + 1
           WHERE thread_id = ? AND version = ?`).run(retryAt, job.thread_id, job.version);
@@ -252,7 +281,7 @@ export class AssistantLinkCollector {
         this.bb.log.warn(`Could not collect Cross References for ${job.thread_id}: Diagnostics: ${diagnostics.encode()}`);
       }
     }
-    finally {diagnostics.close();}
+    finally {diagnostics.close();this.activeAttempts.delete(attempt);}
     return true;
   }
 

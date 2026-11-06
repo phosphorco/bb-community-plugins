@@ -108,6 +108,157 @@ test("retry survives errors, repeated header reads coalesce, newer jobs and abor
   assert.ok(db.prepare("SELECT 1 FROM assistant_link_jobs WHERE thread_id = 'thr_b'").get());
 });
 
+test("obsolete page response stops paging and leaves the successor job untouched, which then collects its reference", async t => {
+  const { db, store } = open(); t.after(() => db.close());
+  let release!: (page: any) => void, enter!: () => void;
+  const held = new Promise<any>(resolve => { release = resolve; });
+  const entered = new Promise<void>(resolve => { enter = resolve; });
+  let pages = 0, contextReads = 0;
+  const { collector, bb, signals } = fixture(db, store, async () => {
+    pages++;
+    if (pages === 1) { enter(); return held; }
+    return { rows: [{ id: "msg_new", threadId:"thr_a", sourceSeqStart:2, messageSeq:2, kind:"conversation", role:"assistant", text:"[Link](https://example.test/a)", createdAt:200 }], timelinePage:{olderCursor:null} };
+  });
+  bb.sdk.projects = { get: async () => { contextReads++; return { gitRemoteUrl:null }; } };
+  collector.enqueue("proj_a", "thr_a");
+  const running = collector.processNext(new AbortController().signal);
+  await entered;
+  collector.enqueue("proj_a", "thr_a", false, true, 2);
+  const successor = db.prepare("SELECT * FROM assistant_link_jobs WHERE thread_id='thr_a'").get();
+  release({ rows: [{ id:"msg_old", threadId:"thr_a", sourceSeqStart:1, messageSeq:1, kind:"conversation", role:"assistant", text:"old", createdAt:100 }], timelinePage:{olderCursor:{anchorSeq:1,anchorId:"msg_old"}} });
+  await running;
+  assert.equal(pages, 1, "obsolete olderCursor must not trigger page 2");
+  assert.equal(contextReads, 0, "obsolete scan must not fetch context");
+  assert.deepEqual(db.prepare("SELECT * FROM assistant_link_jobs WHERE thread_id='thr_a'").get(), successor);
+  assert.deepEqual(signals, []);
+  assert.equal(store.getProjection({producerPluginId:"cross-references",source:sourceIdentity}).projection, null);
+  await collector.processNext(new AbortController().signal);
+  assert.equal(pages, 2);
+  assert.equal(store.listForwardReferences({source:sourceIdentity}).rows[0]?.target.keys.href, "https://example.test/a");
+});
+
+test("supplier invalidation makes an in-flight page rejection neutral instead of retrying the current job", async t => {
+  const { db, store } = open(); t.after(() => db.close());
+  let reject!: (error: Error) => void, enter!: () => void;
+  const held = new Promise<any>((_, fail) => { reject = fail; });
+  const entered = new Promise<void>(resolve => { enter = resolve; });
+  const { collector, warnings } = fixture(db, store, () => { enter(); return held; });
+  collector.enqueue("proj_a", "thr_a", false, true, 1);
+  const running = collector.processNext(new AbortController().signal);
+  await entered;
+  collector.invalidateSuppliers();
+  const afterInvalidation = db.prepare("SELECT * FROM assistant_link_jobs WHERE thread_id='thr_a'").get();
+  reject(new Error("obsolete page failure"));
+  await running;
+  assert.deepEqual(db.prepare("SELECT * FROM assistant_link_jobs WHERE thread_id='thr_a'").get(), afterInvalidation);
+  assert.deepEqual(warnings, []);
+});
+
+test("supplier invalidation during awaited context prevents subsequent native mention recognition", async t => {
+  const { db, store } = open(); t.after(() => db.close());
+  let release!: (value:any)=>void, enter!: ()=>void;
+  const held = new Promise<any>(resolve => { release = resolve; });
+  const entered = new Promise<void>(resolve => { enter = resolve; });
+  let gets = 0;
+  const { collector, bb } = fixture(db, store, async () => ({ rows:[{id:"msg_a",threadId:"thr_a",sourceSeqStart:1,messageSeq:1,kind:"conversation",role:"assistant",text:"See https://bb.test/projects/proj_a/threads/thr_target",createdAt:100}], timelinePage:{olderCursor:null} }));
+  bb.sdk.threads.get = async ({threadId}:any) => { gets++; return {id:threadId,projectId:"proj_a"}; };
+  bb.sdk.projects = { get: () => { enter(); return held; } };
+  collector.enqueue("proj_a", "thr_a");
+  const running = collector.processNext(new AbortController().signal);
+  await entered;
+  collector.invalidateSuppliers();
+  release({gitRemoteUrl:null});
+  await running;
+  assert.equal(gets, 1, "only the source prefetch may have run; target recognition must not start");
+  assert.equal(store.getProjection({producerPluginId:"cross-references",source:sourceIdentity}).projection, null);
+});
+
+test("late invalidated supplier response cannot poison the successor cache; same supplier produces its current reference", async t => {
+  const { db, store } = open(); t.after(() => db.close());
+  let release!: (value:any)=>void, enter!: ()=>void, calls=0, describes=0;
+  const held = new Promise<any>(resolve => { release = resolve; });
+  const entered = new Promise<void>(resolve => { enter = resolve; });
+  const { collector, bb, signals } = fixture(db, store, async () => ({rows:[{id:"msg_a",threadId:"thr_a",sourceSeqStart:1,messageSeq:1,kind:"conversation",role:"assistant",text:"TOKEN",createdAt:100}],timelinePage:{olderCursor:null}}));
+  const candidate={span:{start:0,end:5},match:"TOKEN",source:{provider:"review.issue",id:"NEW",kind:"issue"},confidence:"high",provenance:{basis:"explicit",explanation:"current supplier"}};
+  bb.sdk.plugins={list:async()=>({plugins:[{id:"review-supplier",name:"Review",status:"running"}]}),callRpc:async({method}:any)=>{
+    if(method==="contextRecognitionDescribe"){describes++;return{protocol:"bb-context-recognition",versions:[1],capabilities:{revision:"same",linkify:{providers:[{provider:"review.issue",kinds:["issue"]}]}}};}
+    assert.equal(method,"contextRecognitionV1Linkify");calls++;if(calls===1){enter();return held;}return{candidates:[candidate]};
+  }};
+  collector.enqueue("proj_a","thr_a");
+  const first=collector.processNext(new AbortController().signal);await entered;
+  collector.invalidateSuppliers();
+  const successor=db.prepare("SELECT * FROM assistant_link_jobs WHERE thread_id='thr_a'").get();
+  release({candidates:[]});await first;
+  assert.equal((collector as any).recognitionCache.size,0,"late response writes only to its detached attempt cache");
+  assert.deepEqual(db.prepare("SELECT * FROM assistant_link_jobs WHERE thread_id='thr_a'").get(),successor);
+  assert.deepEqual(signals,[]);assert.equal((collector as any).activeAttempts.size,0);
+  await collector.processNext(new AbortController().signal);
+  assert.equal(describes,2);assert.equal(calls,2);
+  assert.equal(store.listForwardReferences({source:sourceIdentity}).total,1,"successor must recognize the reference at the same supplier revision");
+  assert.equal(db.prepare("SELECT * FROM assistant_link_jobs WHERE thread_id='thr_a'").get(),undefined);
+  assert.equal((collector as any).activeAttempts.size,0);
+});
+
+for(const mode of ["version","epoch"] as const)test("attempt abort prevents the next native target call after "+mode+" supersession",async t=>{
+  const {db,store}=open();t.after(()=>db.close());
+  let enter!:()=>void,release!:(value:any)=>void;
+  const entered=new Promise<void>(resolve=>{enter=resolve;});
+  const held=new Promise<any>(resolve=>{release=resolve;});
+  const {collector,bb,signals}=fixture(db,store,async()=>({rows:[{id:"msg_a",threadId:"thr_a",sourceSeqStart:1,messageSeq:1,kind:"conversation",role:"assistant",text:"https://bb.test/projects/proj_a/threads/thr_one https://bb.test/projects/proj_a/threads/thr_two",createdAt:100}],timelinePage:{olderCursor:null}}));
+  const gets:string[]=[];
+  bb.sdk.threads.get=async({threadId}:any)=>{gets.push(threadId);if(threadId==="thr_one"){enter();return held;}return{id:threadId,projectId:"proj_a"};};
+  collector.enqueue("proj_a","thr_a");
+  const first=collector.processNext(new AbortController().signal);await entered;
+  if(mode==="version")collector.enqueue("proj_a","thr_a",false,true,2);else collector.invalidateSuppliers();
+  const successor=db.prepare("SELECT * FROM assistant_link_jobs WHERE thread_id='thr_a'").get();
+  release({id:"thr_one",projectId:"proj_a"});await first;
+  assert.deepEqual(gets,["thr_a","thr_one"],"no second target verification may begin after abort");
+  assert.deepEqual(db.prepare("SELECT * FROM assistant_link_jobs WHERE thread_id='thr_a'").get(),successor);
+  assert.deepEqual(signals,[]);assert.equal((collector as any).activeAttempts.size,0);
+  await collector.processNext(new AbortController().signal);
+  assert.ok(gets.includes("thr_two"),"successor remains eligible to verify the later target");
+  assert.equal(db.prepare("SELECT * FROM assistant_link_jobs WHERE thread_id='thr_a'").get(),undefined);
+  assert.ok(store.listForwardReferences({source:sourceIdentity}).total>0);
+  assert.equal((collector as any).activeAttempts.size,0);
+});
+
+test("priority-only upgrade does not abort a held native target attempt",async t=>{
+  const {db,store}=open();t.after(()=>db.close());
+  let enter!:()=>void,release!:(value:any)=>void;
+  const entered=new Promise<void>(resolve=>{enter=resolve;});
+  const held=new Promise<any>(resolve=>{release=resolve;});
+  const {collector,bb}=fixture(db,store,async()=>({rows:[{id:"msg_a",threadId:"thr_a",sourceSeqStart:1,messageSeq:1,kind:"conversation",role:"assistant",text:"https://bb.test/projects/proj_a/threads/thr_one https://bb.test/projects/proj_a/threads/thr_two",createdAt:100}],timelinePage:{olderCursor:null}}));
+  const gets:string[]=[];
+  bb.sdk.threads.get=async({threadId}:any)=>{gets.push(threadId);if(threadId==="thr_one"){enter();return held;}return{id:threadId,projectId:"proj_a"};};
+  collector.enqueue("proj_a","thr_a");
+  const running=collector.processNext(new AbortController().signal);await entered;
+  collector.enqueue("proj_a","thr_a",false,false,2);
+  assert.equal((collector as any).activeAttempts.values().next().value.controller.signal.aborted,false);
+  release({id:"thr_one",projectId:"proj_a"});await running;
+  assert.ok(gets.includes("thr_two"));assert.equal(db.prepare("SELECT * FROM assistant_link_jobs WHERE thread_id='thr_a'").get(),undefined);
+  assert.equal((collector as any).activeAttempts.size,0);
+});
+
+test("attempt abort during native file verification prevents later file verification calls",async t=>{
+  const {db,store}=open();t.after(()=>db.close());
+  let enter!:()=>void,release!:(value:any)=>void,gets=0,storageReads=0;
+  const entered=new Promise<void>(resolve=>{enter=resolve;});
+  const held=new Promise<any>(resolve=>{release=resolve;});
+  const {collector,bb}=fixture(db,store,async()=>({rows:[{id:"msg_a",threadId:"thr_a",sourceSeqStart:1,messageSeq:1,kind:"conversation",role:"assistant",text:"plans/one.md plans/two.md",createdAt:100}],timelinePage:{olderCursor:null}}));
+  bb.sdk.threads.get=async()=>{gets++;if(gets===2){enter();return held;}return{id:"thr_a",projectId:"proj_a"};};
+  bb.sdk.environments={get:async()=>{storageReads++;return{id:"env_a",projectId:"proj_a",path:"/tmp/workspace"};}};
+  bb.sdk.threads.storageLocation=async()=>({hostId:"host_a",storageRootPath:"/tmp/storage"});
+  bb.hosts={experimental_client:()=>({call:async()=>({exists:true})})};
+  collector.enqueue("proj_a","thr_a");
+  const running=collector.processNext(new AbortController().signal);await entered;
+  collector.invalidateSuppliers();release({id:"thr_a",projectId:"proj_a"});await running;
+  await new Promise<void>(resolve=>setImmediate(resolve));
+  assert.equal(gets,2,"source prefetch and first file owner only");
+  assert.equal(storageReads,0,"aborted first file verification must not continue to storage or a second file owner");
+  assert.equal((db.prepare("SELECT * FROM assistant_link_jobs WHERE thread_id='thr_a'").get() as any)?.attempts,0);
+  assert.equal((collector as any).activeAttempts.size,0);
+});
+
 test("a scan aborted during native timeline I/O leaves durable work and cannot publish", async t => {
   const { db, store } = open(); t.after(() => db.close());
   let release!: (page: any) => void;
