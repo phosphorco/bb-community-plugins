@@ -10,8 +10,8 @@ afterEach(cleanup);
 const capturedApp = vi.hoisted(() => ({ component: null as null | (() => React.ReactElement), calls: [] as string[] }));
 
 vi.mock("@get-bb/plugin-sdk/app", () => ({
-  definePluginApp(register: (app: { slots: { navPanel(input: { component: () => React.ReactElement }): void } }) => void) {
-    register({ slots: { navPanel(input) { capturedApp.component = input.component; } } });
+  definePluginApp(register: (app: { experimental_icons: { register(registration: unknown): void }; slots: { navPanel(input: { component: () => React.ReactElement }): void } }) => void) {
+    register({ experimental_icons: { register() {} }, slots: { navPanel(input) { capturedApp.component = input.component; } } });
     return {};
   },
   useRpc: () => ({ call: async (method: string) => { capturedApp.calls.push(method); return null; } }),
