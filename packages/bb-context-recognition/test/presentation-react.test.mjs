@@ -10,7 +10,7 @@ import {z} from 'zod';
 import {PresentationHost,createOwnerPresentationClient,PresentationCallError} from '../dist/react.js';
 import {registerPresentation,lookupPresentation} from '../dist/presentation.js';
 import {createIsolatedPresentationRealm} from '../dist/testing.js';
-import {runPresentationConformance,scanPresentationEntry} from '../dist/testing-react.js';
+import {runPresentationConformance,runHostedPresentationConformance,scanPresentationEntry} from '../dist/testing-react.js';
 import {registerRecognitionSupplier,createSupplierClient} from '../dist/bb.js';
 import {UnknownResultSchema} from '../dist/index.js';
 const source={provider:'plan-graph',id:'env_x:x.plan.pkl',kind:'plan'};
@@ -133,7 +133,7 @@ function server(bb){
  registerRecognitionSupplier(bb,{revision:'presentation/1',resolve:{providers:[{provider:'plan-graph',kinds:['plan']}],handler:input=>({resolutions:input.sources.map(source=>({source,state:'ready',reasons:[],card:{title:'Plan'},presentation:ref}))})}});
  bb.rpc.register({scene:{input:z.strictObject({id:z.string()}),output:z.unknown()}},{scene:input=>({id:input.id,title:'Owner scene'})});
 }
-function content(ctx){return registerPresentation(ctx,{...registration,label:'Plan graph',load:async()=>function View({owner,data,mode}){const [value,setValue]=useState('loading');useEffect(()=>{owner.call('scene',{id:data.id}).then(v=>setValue(v.title),()=>{});},[owner,data.id]);return React.createElement('p',null,value+' '+mode);}});}
+function content(ctx){return registerPresentation(ctx,{...registration,load:async()=>function View({owner,data,mode}){const [value,setValue]=useState('loading');useEffect(()=>{owner.call('scene',{id:data.id}).then(v=>setValue(v.title),()=>{});},[owner,data.id]);return React.createElement('p',null,value+' '+mode);}});}
 test('presentation React conformance drives real registered server/content script in both modes',async()=>{
  const report=await runPresentationConformance({pluginId:'plan-graph',register:server,mountContentScript:content,cases:[{identity:source,detail:'card',expect:{schema:ref.schema}}]});assert.equal(report.passed,true,JSON.stringify(report));assert.ok(report.checks.some(c=>c.name.endsWith('mode:full')));
 });
@@ -157,12 +157,82 @@ test('label resolve rejects a presentation before consumer admission',async()=>{
  await assert.rejects(createSupplierClient(sdk,'plan-graph').resolve({version:1,context:{consumer:{pluginId:'thread-brief'}},sources:[source],detail:'label'}),e=>e.kind==='incompatible');
 });
 
-test('no-RPC hosted gallery denies every owner call and uses its registration label on failure',async()=>{
- const realm=createIsolatedPresentationRealm(),m=await mount();let calls=0,denied=false;
+// --- Successor witnesses: parser, generic failure label, host-stamped conformance ---
+test('scan parser: a semicolon-less file classifies each import statement on its own',async()=>{
+ const scratch=await mkdtemp(join(tmpdir(),'presentation-scan-parser-'));
  try{
-  registerPresentation(ctx(),{...registration,methods:[],label:'Gallery',load:async()=>function Gallery({owner}){useEffect(()=>{void owner.call('anything',{}).catch(e=>{denied=e.kind==='not-allowed';});},[]);return React.createElement('p',null,'No-RPC gallery');}});
-  await act(async()=>m.root.render(React.createElement(PresentationHost,{...hostProps,sdk:{plugins:{callRpc:async()=>{calls++;throw Error('must not call');}}}})));await act(async()=>new Promise(r=>setTimeout(r,10)));assert.match(m.dom.window.document.body.textContent,/No-RPC gallery/);assert.equal(denied,true);assert.equal(calls,0);
-  registerPresentation({...ctx(),generation:2},{...registration,methods:[],label:'Gallery',load:async()=>()=>{throw Error('controlled gallery failure');}});
-  await act(async()=>m.root.render(React.createElement(PresentationHost,{...hostProps})));await act(async()=>new Promise(r=>setTimeout(r,10)));assert.match(m.dom.window.document.body.textContent,/Card fallback/);assert.match(m.dom.window.document.body.textContent,/Gallery view failed/);assert.doesNotMatch(m.dom.window.document.body.textContent,/Plan view failed/);
+  // Negative (must pass): React hooks on the line before an allowlisted SDK import.
+  await writeFile(join(scratch,'nosemi-ok.ts'),"import { useEffect, useMemo } from 'react'\nimport { useBbContext } from '@get-bb/plugin-sdk/app'\nexport const x=[useEffect,useMemo,useBbContext]\n");
+  const ok=await scanPresentationEntry({entry:join(scratch,'nosemi-ok.ts')});
+  assert.equal(ok.passed,true,JSON.stringify(ok.violations));
+  // Positive (must fail, and name only the SDK hook).
+  await writeFile(join(scratch,'nosemi-bad.ts'),"import { useEffect } from 'react'\nimport { useRpc } from '@get-bb/plugin-sdk/app'\nexport const x=[useEffect,useRpc]\n");
+  const bad=await scanPresentationEntry({entry:join(scratch,'nosemi-bad.ts')});
+  assert.equal(bad.passed,false);
+  assert.deepEqual(bad.violations.map(v=>v.message),['SDK app export not allowed: useRpc']);
+  // Semicolon-less namespace and default imports are still refused.
+  await writeFile(join(scratch,'nosemi-ns.ts'),"import { useEffect } from 'react'\nimport * as sdk from '@get-bb/plugin-sdk/app'\nexport const x=[useEffect,sdk]\n");
+  assert.equal((await scanPresentationEntry({entry:join(scratch,'nosemi-ns.ts')})).passed,false);
+  // The DOM rule is unchanged.
+  await writeFile(join(scratch,'dom.ts'),"export const f=(e)=>e.querySelector('a')\n");
+  assert.equal((await scanPresentationEntry({entry:join(scratch,'dom.ts')})).passed,false);
+ }finally{await rm(scratch,{recursive:true,force:true});}
+});
+test('scan classifies actual import statements: comment, string, template and regex text cannot classify or hide one',async()=>{
+ const scratch=await mkdtemp(join(tmpdir(),'presentation-scan-statements-'));
+ const scan=async(name,code)=>{await writeFile(join(scratch,name),code);return scanPresentationEntry({entry:join(scratch,name)});};
+ const messages=report=>report.violations.map(v=>v.message);
+ try{
+  const rejected={
+   'comment-escape.ts':[String.raw`// import {useBbContext} from '@get-bb/plugin-sdk/app'
+import {useRpc} from '@get-bb/plugin-sdk/app'
+export const x=useRpc`,['SDK app export not allowed: useRpc']],
+   'escaped.ts':[String.raw`import {useRpc} from '@get-bb/plugin-sdk/app';export const x=useRpc;`,['SDK app export not allowed: useRpc']],
+   'string.ts':["const s=\"import {useBbContext as \";import {useRpc} from '@get-bb/plugin-sdk/app';export const x=[s,useRpc];",['SDK app export not allowed: useRpc']],
+   'template.ts':["const t=`\nimport {useBbContext} from '@get-bb/plugin-sdk/app'\n`;import * as sdk from '@get-bb/plugin-sdk/\\u0061pp';export const x=[t,sdk];",['SDK namespace/default import is not allowed']],
+   'regex.ts':["const r=/['import {useBbContext} from '@get-bb/plugin-sdk/app']/;import * as sdk from '@get-bb/plugin-sdk/\\u0061pp';export const x=[r,sdk];",['SDK namespace/default import is not allowed']],
+   'inner-comment.ts':["import * as ns // import {useBbContext}\n from '@get-bb/plugin-sdk/app'\nexport const x=ns\n",['SDK namespace/default import is not allowed']],
+   // No tree shaking: an unused value import is still classified.
+   'unused.ts':["import {useRpc} from '@get-bb/plugin-sdk/app'\nexport const y=1\n",['SDK app export not allowed: useRpc']],
+   'default.ts':["import d,{useBbContext} from '@get-bb/plugin-sdk/app';export const x=[d,useBbContext];",['SDK namespace/default import is not allowed']],
+   'reexport.ts':["export {useRpc as read} from '@get-bb/plugin-sdk/app';",['SDK app export not allowed: useRpc']],
+   'export-star.ts':["export * from '@get-bb/plugin-sdk/app';",['Unclassified SDK app import is not allowed']],
+   'side-effect.ts':["import '@get-bb/plugin-sdk/app';",['Unclassified SDK app import is not allowed']],
+   'dynamic.ts':[String.raw`export const p=import('@get-bb/plugin-sdk/app');`,['Dynamic SDK app import is not allowed']],
+  };
+  for(const [name,[code,expected]] of Object.entries(rejected)){const report=await scan(name,code);assert.equal(report.passed,false,name);assert.deepEqual(messages(report),expected,name);}
+  const accepted={
+   'escaped-allowed.ts':String.raw`import {useBbContext} from '@get-bb/plugin-sdk/app';export const x=useBbContext;`,
+   'comment-forbidden.ts':"// import {useRpc} from '@get-bb/plugin-sdk/app'\nconst s=\"import * as sdk from '@get-bb/plugin-sdk/app'\";\nimport {useBbContext} from '@get-bb/plugin-sdk/app'\nexport const x=[s,useBbContext]\n",
+   'type-only.ts':"import type {useRpc} from '@get-bb/plugin-sdk/app';import {type useRealtime,useBbContext as ctx} from '@get-bb/plugin-sdk/app';export const x:typeof useRpc|null=null;export const y=ctx;",
+   'jsx.tsx':"import {useBbContext} from '@get-bb/plugin-sdk/app'\nexport const A=()=><div>it's import {'{useRpc}'} from \"@get-bb/plugin-sdk/app\"{String(useBbContext)}</div>\n",
+  };
+  for(const [name,code] of Object.entries(accepted)){const report=await scan(name,code);assert.equal(report.passed,true,name+' '+JSON.stringify(report.violations));}
+ }finally{await rm(scratch,{recursive:true,force:true});}
+});
+
+test('failure label names the registration and is detectable without text',async()=>{
+ const realm=createIsolatedPresentationRealm();const m=await mount();
+ try{
+  registerPresentation(ctx(),{...registration,label:'Inbox',load:async()=>()=>{throw new Error('Hosted crash');}});
+  await act(async()=>m.root.render(React.createElement(PresentationHost,hostProps)));
+  await act(async()=>{await new Promise(r=>setTimeout(r,20));});
+  assert.match(m.dom.window.document.body.textContent,/Inbox view failed/);
+  assert.doesNotMatch(m.dom.window.document.body.textContent,/Plan view failed/);
+  assert.ok(m.dom.window.document.querySelector('[data-bb-presentation-failed]'));
  }finally{await m.dispose();realm.restore();}
+});
+function stampServer(bb){bb.rpc.register({scene:{input:z.strictObject({id:z.string()}),output:z.unknown()}},{scene:input=>({id:input.id,title:'Owner scene'})});}
+test('host-stamped conformance drives the real content script and owner RPC without a recognizer',async()=>{
+ const report=await runHostedPresentationConformance({pluginId:'plan-graph',register:stampServer,mountContentScript:content,stamps:[{schema:ref.schema,data:ref.data,identity:source}]});
+ assert.equal(report.passed,true,JSON.stringify(report));
+ assert.ok(report.checks.some(c=>c.name==='presentation:stamp-0:mode:full'&&c.state==='passed'));
+ assert.ok(report.checks.some(c=>c.name==='presentation:disposal'&&c.state==='passed'));
+});
+test('host-stamped conformance still rejects a slot hook and an invalid stamp',async()=>{
+ const {useRpc}=await import('@get-bb/plugin-sdk/app');
+ const hook=await runHostedPresentationConformance({pluginId:'plan-graph',register:stampServer,mountContentScript:c=>registerPresentation(c,{...registration,load:async()=>function Bad(){useRpc('scene');return React.createElement('p',null,'bad');}}),stamps:[{schema:ref.schema,data:ref.data,identity:source}]});
+ assert.equal(hook.passed,false);assert.ok(hook.checks.some(c=>c.state==='failed'&&c.name.includes('mode:')));
+ const invalid=await runHostedPresentationConformance({pluginId:'plan-graph',register:stampServer,mountContentScript:content,stamps:[{schema:'Not A Schema',data:{},identity:source}]});
+ assert.equal(invalid.passed,false);assert.ok(invalid.checks.some(c=>c.name==='presentation:stamp-0:ref'&&c.state==='failed'));
 });
