@@ -31,3 +31,7 @@ The owner-bound client settles locally within 5 seconds and bounds its serialize
 Consumer discovery calls `plugins.list` once per pass, probes running plugins with concurrency four, and admits at most 256 plugins per pass, disclosing truncation. Triggers: filter open, explicit refresh, focus/reconnect or plugin lifecycle. No healthy polling. Consumers keep unavailable selected filters active and suppress unverified rows rather than displaying the full census. Batch revisions must agree or the whole condition is retried by explicit refresh. `refreshAt` requests one collection-level deadline, paused while hidden, for cases such as snooze expiry.
 
 Entries: root (Zod only), `/bb` (injected SDK, type-only SDK dependency), `/testing` (source conformance). No React dependency. Source conformance, host fake tests, package pack tests and live composition proof are separate evidence levels.
+
+Package 0.3.0 adds the pure `/tags` entry documented in the README. Filtering
+and values wire v1 and existing exports are unchanged. Helpers preserve ordered
+title tags; they introduce no supplier, collection, storage or lifecycle.
