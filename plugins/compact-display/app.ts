@@ -70,14 +70,6 @@ export default definePluginApp((app) => {
     }
 }
 
-/* Markdown tables deliberately break out of the native column. BB writes this
-   variable inline on each breakout wrapper as it measures available room.
-   Override it there, not on an ancestor, so resize measurements cannot undo the
-   cap. 100% means the local text column; BB's inner table retains x scrolling. */
-[data-thread-window] [style*="--md-table-breakout-max"] {
-    --md-table-breakout-max: 100% !important;
-}
-
 /* Composer density shares the same sheet as the thread measure above. */
 [data-promptbox-action-row] {
     padding: 0 0.25rem;

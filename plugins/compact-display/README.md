@@ -1,8 +1,7 @@
 # Compact display
 
 Enable **Compact display** in BB's Plugins settings to keep thread conversations
-and their composers within a centered responsive column, constrain wide Markdown tables
-to that column with horizontal scrolling, and reduce the prompt editor's maximum
+and their composers within a centered responsive column and reduce the prompt editor's maximum
 height and spacing. The height cap respects BB's corrected shell height when a
 keyboard shrinks the visible area, as well as the native editor's available-height
 budget. Long drafts scroll inside the editor. Narrow panes and mobile screens still shrink to fit. The
@@ -50,14 +49,12 @@ The override dependencies are:
 | --- | --- | --- |
 | Update-ready notification | `[data-sidebar="sidebar"]` links to `/settings/update` or `/settings/updates` with `data-testid="sidebar-updates-badge-*"`; progress uses `[data-icon="Loading"]` | Hides ready notification badges after settings load; keeps running-update progress, Updates navigation, and the settings page available. Older UI without the badge marker is not covered. |
 | Thread/composer maximum | `data-thread-window` and the `max-w-[760px]` class | Establishes a named inline-size container and caps both native columns at 760/1080/1440px together; excludes home/settings and uncapped embedded panels. |
-| Table containment | `data-thread-window` and inline `--md-table-breakout-max` | Overrides BB's measured breakout limit on the wrapper itself; the native inner table keeps horizontal scrolling. |
 | Composer spacing | `data-promptbox-action-row` | Reduces action-row padding for all composers. |
 | Composer height | `data-promptbox-editor-scroll`, `--bb-shell-height`, and `--composer-editor-available-height` | Caps height at the smaller of 30dvh minus 3rem, 30% of the corrected shell height minus 3rem, and BB's available editor height. Falls back to viewport units when no corrected height exists. Reduces top padding. |
 | Mobile typing size | Native `input`, `textarea`, `select`, and editable `contenteditable` attributes in the app document | Enforces a 16px floor with `!important` against compact field utilities; applies to coarse pointers in any orientation or widths below 768px. Does not enter iframe documents or shadow roots. |
 
-BB already caps ordinary thread columns at 760px. The table rule closes its
-intentional wider-table exception. The separate native `--md-content-w` value
-controls table minimum sizing, not the thread maximum; it is left intact.
+Tables and figures retain BB's native breakout sizing and can extend beyond the
+text column. Compact display does not override the native table breakout limit.
 If BB changes these attributes, classes, or table layout, update this plugin;
 no fork patch is needed. Check a wide table, a narrow split pane, mobile, a new
 thread, composer expansion, and disabling/re-enabling the plugin after updates.

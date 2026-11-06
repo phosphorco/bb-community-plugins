@@ -28,7 +28,7 @@
   },
   "bb": {
     "name": "Compact display",
-    "description": "Adapt thread columns to 760, 1080, or 1440px, contain wide tables, and reduce prompt editor height and spacing. Disable to restore BB defaults.",
+    "description": "Adapt thread columns to 760, 1080, or 1440px and reduce prompt editor height and spacing. Disable to restore BB defaults.",
     "branding": {
       "icon": "Minimize2"
     },
