@@ -6,7 +6,7 @@ import type { ClientFactSdk } from "../extraction/client-fact-source.ts";
 
 type Handler = Parameters<BbPluginApi["http"]["route"]>[2];
 const configured = { sourceNamespace: "bb-production", sourceEpoch: "epoch-explicit" };
-const requestBody = (id = "thread-codex") => ({ version: 1,
+const requestBody = (id = "thread-codex") => ({ version: 2,
   expectedSource: { namespace: configured.sourceNamespace, epoch: configured.sourceEpoch },
   conversations: [{ id, cursor: null }], discovery: null });
 function request(body: unknown = requestBody(), options: { signal?: AbortSignal; headers?: Record<string, string>; raw?: string } = {}) {
@@ -67,7 +67,7 @@ async function body(response: Response) { return await response.json() as Record
 
 test("fixed native-token route and explicit settings register without defaults or source work", () => {
   const f = fixture();
-  assert.deepEqual(f.registration, { method: "POST", path: "/client-facts/v1/read", auth: "token" });
+  assert.deepEqual(f.registration, { method: "POST", path: "/client-facts/v2/read", auth: "token" });
   assert.deepEqual(Object.keys(f.descriptors), ["sourceNamespace", "sourceEpoch"]);
   assert.ok(Object.values(f.descriptors).every(value => value.type === "string" && !("default" in value)));
   assert.equal(f.calls.length, 0);
@@ -100,7 +100,7 @@ test("native Claude seq 66 and Codex seq 61 accepted events produce exact canoni
     assert.equal(turn.sequence, provider === "claude" ? 66 : 61);
     assert.equal(turn.session.id, `native-${provider}-session`);
     assert.equal(value.coverage.complete, false);
-    assert.equal(value.coverage.claudeHttpTurn, "unsupported");
+    assert.equal(value.coverage.claudeHttpTurn, "response_identity_partial");
   }
 });
 
@@ -161,7 +161,7 @@ test("source conflict/failure responses are finite and release admission after s
   f.overrideEvents(undefined);
   f.overrideGet(async () => { throw new Error("arbitrary operational backend failure"); });
   const unavailable = await f.invoke(request()); assert.equal(unavailable.status, 502);
-  assert.deepEqual(Object.keys((await body(unavailable)).error), ["code", "message"]);
+  assert.deepEqual(Object.keys((await body(unavailable)).error), ["code", "message", "conversation"]);
   assert.deepEqual(f.errors, ["Client-fact source read failed: arbitrary operational backend failure"]);
   f.overrideGet(undefined); assert.equal((await f.invoke(request())).status, 200);
 });
@@ -176,7 +176,7 @@ test("unpaired UTF-16 surrogates in either configured source field fail before S
   for (const value of ["broken-\ud800", "broken-\udc00", "\ud800\ud800", "\udc00\ud800", "🧪\udfff"]) {
     for (const field of ["sourceNamespace", "sourceEpoch"] as const) {
       const f = fixture(); f.setConfig({ ...configured, [field]: value });
-      const response = await f.invoke(request({ ...requestBody(), expectedSource: null }));
+      const response = await f.invoke(request(requestBody()));
       assert.equal(response.status, 503); assert.equal((await body(response)).error.code, "source_unconfigured");
       assert.equal(f.calls.length, 0);
     }
@@ -189,7 +189,7 @@ test("unpaired UTF-16 in request identity fields is a closed-input error before 
     { ...requestBody(), expectedSource: { namespace: invalid, epoch: "epoch" } },
     { ...requestBody(), expectedSource: { namespace: "namespace", epoch: invalid } },
     requestBody(invalid),
-    { ...requestBody(), conversations: [{ id: "thread-codex", cursor: { sequence: 1, eventId: invalid } }] },
+    { ...requestBody(), conversations: [{ id: "thread-codex", cursor: { sequence: 1, eventId: invalid, eventType: "thread/identity", disposition: "fact" } }] },
   ];
   for (const value of examples) {
     const response = await f.invoke(request(value));
@@ -228,15 +228,74 @@ test("valid non-BMP identities round-trip and retain the 256 UTF-16-unit boundar
     type: "turn/input/accepted", scope: { kind: "turn", turnId: "turn-🧪" },
     data: { providerThreadId: native, clientRequestId: "request-🧪" } }];
   f.overrideEvents(async () => accepted(width256));
-  const response = await f.invoke(request({ ...requestBody(), expectedSource: null }));
+  const response = await f.invoke(request({ ...requestBody(), expectedSource: { namespace: width256, epoch: "época-🧪" } }));
   assert.equal(response.status, 200);
   const value = await body(response);
   assert.deepEqual(value.source, { namespace: width256, epoch: "época-🧪" });
   assert.equal(value.facts.find((fact: any) => fact.kind === "turn_input").session.id, width256);
   f.overrideEvents(async () => accepted(width258));
-  assert.equal((await f.invoke(request({ ...requestBody(), expectedSource: null }))).status, 502);
+  assert.equal((await f.invoke(request({ ...requestBody(), expectedSource: { namespace: width256, epoch: "época-🧪" } }))).status, 502);
   f.setConfig({ sourceNamespace: width258, sourceEpoch: "epoch" });
   const before = f.calls.length;
-  assert.equal((await f.invoke(request({ ...requestBody(), expectedSource: null }))).status, 503);
+  assert.equal((await f.invoke(request({ ...requestBody(), expectedSource: { namespace: width256, epoch: "época-🧪" } }))).status, 503);
   assert.equal(f.calls.length, before);
+});
+
+test("V2 has one live route and rejects old versions, duplicate keys and non-JSON whitespace", async () => {
+  const f = fixture();
+  assert.equal(f.registration!.path, "/client-facts/v2/read");
+  const valid = JSON.stringify(requestBody());
+  const examples = [
+    { raw: valid.replace('"version":2', '"version":1'), code: "invalid_request" },
+    { raw: valid.replace('"version":2', '"version":2,"version":2'), code: "invalid_json" },
+    { raw: valid.replace('"namespace":"bb-production"', '"namespace":"bb-production","namespace":"other"'), code: "invalid_json" },
+    { raw: valid.replace('"id":"thread-codex"', '"id":"thread-codex","\\u0069d":"other"'), code: "invalid_json" },
+    { raw: valid + " {}", code: "invalid_json" },
+    { raw: "\u00a0" + valid, code: "invalid_json" },
+    { raw: '{"version":1e400}', code: "invalid_json" },
+    { raw: JSON.stringify({ ...requestBody(), extra: Array(14).fill(0).reduce(value => [value], 0 as unknown) }), code: "invalid_json" },
+  ];
+  for (const example of examples) {
+    const response = await f.invoke(request(undefined, { raw: example.raw }));
+    assert.equal(response.status, 400, example.raw);
+    const value = await body(response);
+    assert.equal(value.version, 2); assert.equal(value.error.code, example.code); assert.equal(value.error.conversation, null);
+  }
+  assert.equal(f.calls.length, 0);
+});
+
+test("valid escaped identities parse without changing quote or backslash bytes", async () => {
+  const f = fixture(), id = 'thread-"quoted"-\\-🧪';
+  f.overrideEvents(async () => []);
+  const response = await f.invoke(request(requestBody(id)));
+  assert.equal(response.status, 200);
+  assert.equal((await body(response)).facts[0].conversation, id);
+});
+
+test("leading UTF-8 BOM remains invalid JSON and performs no SDK work", async () => {
+  const f = fixture(), content = new TextEncoder().encode(JSON.stringify(requestBody()));
+  const wire = new Uint8Array(3 + content.byteLength);
+  wire.set([0xef, 0xbb, 0xbf]); wire.set(content, 3);
+  const raw = new Request("http://127.0.0.1/api/v1/plugins/analytics/http" + CLIENT_FACT_READ_PATH, {
+    method: "POST", headers: { "content-type": "application/json" }, body: wire,
+  });
+  const response = await f.invoke(raw);
+  assert.equal(response.status, 400);
+  assert.equal((await body(response)).error.code, "invalid_json");
+  assert.equal(f.calls.length, 0, "wire normalization must not admit a source read");
+  assert.equal((await f.invoke(request())).status, 200, "ordinary JSON remains valid");
+});
+
+test("finite selected operation context does not relabel global authentication failures", async () => {
+  const f = fixture();
+  f.overrideGet(async () => { throw new Error("ordinary selected source failure"); });
+  let response = await f.invoke(request());
+  assert.equal((await body(response)).error.conversation, "thread-codex");
+  f.overrideGet(async () => { throw Object.assign(new Error("native SDK authorization failed"), { status: 403 }); });
+  response = await f.invoke(request());
+  assert.equal(response.status, 502); assert.equal((await body(response)).error.conversation, null);
+  f.overrideGet(undefined);
+  f.overrideEvents(async () => [{ id: "wrong", seq: 1, type: "turn/input/accepted", threadId: "other", data: {} }]);
+  response = await f.invoke(request());
+  assert.equal(response.status, 409); assert.equal((await body(response)).error.conversation, "thread-codex");
 });
