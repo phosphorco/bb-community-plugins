@@ -422,14 +422,14 @@ jobs:
             turn-results-artifacts.json
           if-no-files-found: warn
 
-      - name: Publish context recognition and cross references through trusted publishers
-        if: ${{ !inputs.dry_run && (steps.release.outputs.plugin == 'bb-context-recognition' || steps.release.outputs.plugin == 'bb-cross-references') && steps.release.outputs.pinned_next != 'true' }}
+      - name: Publish through trusted publishers
+        if: ${{ !inputs.dry_run && (steps.release.outputs.plugin == 'bb-context-recognition' || steps.release.outputs.plugin == 'bb-cross-references' || steps.release.outputs.plugin == 'bb-thread-attachments') && steps.release.outputs.pinned_next != 'true' }}
         # These packages must fail closed if its configured GitHub OIDC trust is missing.
         # Keep NPM_TOKEN available to other packages; never pass it to this step.
         shell: bash
         run: |
           case "$RELEASE_WORKSPACE" in
-            @phosphorco/bb-context-recognition|@phosphorco/bb-cross-references) ;;
+            @phosphorco/bb-context-recognition|@phosphorco/bb-cross-references|@phosphorco/bb-thread-attachments) ;;
             *) echo 'Unexpected trusted-publishing workspace' >&2; exit 1 ;;
           esac
           npm publish --ignore-scripts --access public --provenance --workspace "$RELEASE_WORKSPACE" --tag "$RELEASE_DIST_TAG"
@@ -439,7 +439,7 @@ jobs:
           NODE_AUTH_TOKEN: ''
 
       - name: Publish public package
-        if: ${{ !inputs.dry_run && steps.release.outputs.plugin != 'bb-context-recognition' && steps.release.outputs.plugin != 'bb-cross-references' && steps.release.outputs.plugin != 'bb-markdown' && steps.release.outputs.pinned_next != 'true' }}
+        if: ${{ !inputs.dry_run && steps.release.outputs.plugin != 'bb-context-recognition' && steps.release.outputs.plugin != 'bb-cross-references' && steps.release.outputs.plugin != 'bb-thread-attachments' && steps.release.outputs.plugin != 'bb-markdown' && steps.release.outputs.pinned_next != 'true' }}
         # The repository is public, so every release carries SLSA provenance.
         run: npm publish --ignore-scripts --access public --provenance --workspace "$RELEASE_WORKSPACE" --tag "$RELEASE_DIST_TAG"
         env:
