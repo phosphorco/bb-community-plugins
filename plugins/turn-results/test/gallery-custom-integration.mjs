@@ -355,26 +355,37 @@ test('actual app readiness/realm/revision/retry fences, four resources and quiet
 });
 
 test('outside-list native chrome preserves loaded image Open while unrelated fresh history is held', async () => {
-  const f = await fixture(2, true, { owner: 'turn-result-images', fileRoute: true, loadedImage: true, nativeItems: true }); let release = () => {};
+  const f = await fixture(2, true, { owner: 'turn-result-images', fileRoute: true, loadedImage: true, nativeItems: true, captureRuntime: true });
+  const original = f.sdk.threads.timeline; let release = () => {}, started = 0, phase = 'initial loaded/idle pair';
   try {
-    await until(() => document.querySelector('[data-result-key="row-0"] img'));
+    // Establish both healthy source rows before introducing unrelated churn.
+    // Seeing only row-0 does not establish that row-1's initial work drained.
+    await until(() => document.querySelectorAll('[data-result-key] img').length === 2
+      && f.runtime().stats().running === 0 && f.runtime().stats().queued === 0 && f.runtime().stats().historyReads === 0);
     const image = document.querySelector('[data-result-key="row-0"] img'), url = image.src;
     const card = image.closest('[data-result-key]'), shell = card.closest('[data-turn-results-gallery]');
-    const original = f.sdk.threads.timeline; let started = 0;
-    f.sdk.threads.timeline = async input => { started++; await new Promise(resolve => { release = resolve; }); return original(input); };
+    const held = new Promise(resolve => { release = resolve; });
+    phase = 'unrelated history dispatch';
+    f.sdk.threads.timeline = async input => { started++; await held; return original(input); };
     await act(async () => { document.querySelector('[data-timeline-row-id="opaque-1"] > button').firstChild.data = 'Other turn changed'; await tick(170); });
     await until(() => started === 1);
+    phase = 'healthy direct Open while history held';
     const chrome = document.querySelector('[data-native-chrome]');
     await act(async () => { chrome.firstChild.replaceWith(document.createElement('div')); await tick(10); });
     await act(async () => image.closest('button').click());
     assert.equal(f.fileOpenCalls.length, 1, 'unrelated outside-list chrome cannot revoke a healthy loaded image Open');
     assert.equal(card.querySelector('[data-turn-result-open-status]'), null);
     assert.equal(card.querySelector('img'), image); assert.equal(image.src, url); assert.equal(card.closest('[data-turn-results-gallery]'), shell);
+    phase = 'unrelated row recovery';
     f.sdk.threads.timeline = original; await act(async () => { release(); await tick(); });
     await until(() => document.querySelector('[data-result-key="row-1"] img'));
     assert.equal(started, 1); assert.equal(card.querySelector('img'), image); assert.equal(image.src, url);
     assert.deepEqual(f.mediaCounts(), { calls: 2, fetches: 2 }, 'proof/chrome does not reload verified image bytes');
-  } finally { release(); await f.dispose(); }
+  } finally {
+    console.log('OUTSIDE_CHROME_PROGRESS', JSON.stringify({ phase, started, media: f.mediaCounts(), runtime: f.runtime().stats(), opens: f.fileOpenCalls.length }));
+    // Restore before releasing every held caller, including on assertion failure.
+    f.sdk.threads.timeline = original; release(); await f.dispose();
+  }
 });
 
 test('one dated-image gesture checks fresh proof then opens once without losing its loaded Blob', async () => {
