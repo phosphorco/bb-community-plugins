@@ -2,6 +2,36 @@
 import { loadPluginApp, renderSlot } from "@get-bb/plugin-sdk/testing/app";
 import appDefinition from "../app.tsx";
 import { templatesContract } from "../rpc-contract.ts";
+import { templateScreens } from "../ui/deferred-screen.tsx";
+
+// Only the saved-request fixture opts in. Observe without replacing the promise
+// React receives, changing its result, or admitting the form earlier.
+if (window.__templatesRecoveryDiagnostics) {
+  const load = templateScreens.run;
+  let loaderCall = 0;
+  const record = (event: string, call: number) => {
+    try {
+      console.debug("templates-recovery-loader", JSON.stringify({
+        event,
+        call,
+        at: new Date().toISOString(),
+        elapsedMs: performance.now(),
+      }));
+    } catch { /* Diagnostics must not change loader results. */ }
+  };
+  templateScreens.run = () => {
+    const call = ++loaderCall;
+    record("begin", call);
+    try {
+      const pending = load();
+      void pending.then(() => record("settled", call), () => record("rejected", call));
+      return pending;
+    } catch (error) {
+      record("threw", call);
+      throw error;
+    }
+  };
+}
 const app = await loadPluginApp(appDefinition);
 const methods = [
   ...Object.keys(templatesContract),
@@ -104,6 +134,7 @@ window.templatesHarness = {
 };
 declare global {
   interface Window {
+    __templatesRecoveryDiagnostics?: boolean;
     templatesHarness: {
       mount(panel?: boolean | "settings"): void;
       unmount(): void;

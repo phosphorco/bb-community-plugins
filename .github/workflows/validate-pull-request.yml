@@ -88,12 +88,14 @@ jobs:
       - name: Test
         run: npm run test
 
-      - name: Retain Templates Prompt failure diagnostics
+      - name: Retain Templates browser failure diagnostics
         if: failure()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: templates-prompt-diagnostics-${{ github.run_id }}-${{ github.run_attempt }}
-          path: /tmp/templates-browser-evidence/templates-prompt/
+          name: templates-browser-diagnostics-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            /tmp/templates-browser-evidence/templates-prompt/
+            /tmp/templates-browser-evidence/templates-recovery/
           if-no-files-found: ignore
           retention-days: 7
 

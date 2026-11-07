@@ -21,17 +21,48 @@ export async function browserSavedRequestRecovery() {
   let owned: ReturnType<typeof acquireOwnedBrowser> | undefined;
   const bodyFailure: { failed: boolean; error?: unknown } = { failed: false };
   const held = new Set<() => void>();
+  let releaseReason: "after-reload" | "cleanup" = "after-reload";
   const started = performance.now();
-  const phase = (name: string, detail: Record<string, unknown> = {}) =>
-    phaseReady &&
-    appendFileSync(
-      join(artifacts, "phases.jsonl"),
-      JSON.stringify({
+  const fixtureRun = crypto.randomUUID();
+  let mode: "setup" | "direct" | "native" | "cleanup" = "setup";
+  let phaseCount = 0, phaseBytes = 0, tailBytes = 0, dropped = 0;
+  const tail: string[] = [];
+  const phase = (name: string, detail: Record<string, unknown> = {}) => {
+    if (!phaseReady) return;
+    try {
+      const line = JSON.stringify({
+        ...detail,
+        fixtureRun,
+        ciRun: process.env.GITHUB_RUN_ID ?? null,
+        ciAttempt: process.env.GITHUB_RUN_ATTEMPT ?? null,
+        at: new Date().toISOString(),
+        mode,
         phase: name,
         elapsedMs: performance.now() - started,
-        ...detail,
-      }) + "\n",
-    );
+      });
+      // Bound disk output and the console failure tail, including browser stderr.
+      const bytes = Buffer.byteLength(line);
+      if (bytes > 8192) { dropped++; return; }
+      tail.push(line);
+      tailBytes += bytes;
+      while (tail.length > 32 || tailBytes > 16384)
+        tailBytes -= Buffer.byteLength(tail.shift()!);
+      if (phaseCount >= 2048 || phaseBytes + bytes + 1 > 1024 * 1024) {
+        dropped++;
+        return;
+      }
+      appendFileSync(join(artifacts, "phases.jsonl"), line + "\n");
+      phaseCount++;
+      phaseBytes += bytes + 1;
+    } catch { dropped++; /* Observability must not replace body/cleanup errors. */ }
+  };
+  const failureTail = () => {
+    try {
+      console.error("Saved-request diagnostic tail:", JSON.stringify({
+        fixtureRun, mode, dropped, phases: tail.map((line) => JSON.parse(line)),
+      }));
+    } catch { /* Preserve the original failure. */ }
+  };
   const step = async <T>(name: string, action: () => Promise<T>) => {
     phase(`${name}:start`);
     try {
@@ -74,53 +105,88 @@ export async function browserSavedRequestRecovery() {
     phase("build:done");
     let cut = false,
       captured: LaunchRequest | null = null;
+    let httpSequence = 0;
     const server = Bun.serve({
       hostname: "127.0.0.1",
       port: 0,
       async fetch(request) {
         const url = new URL(request.url);
-        if (url.pathname.startsWith("/rpc/")) {
-          try {
-            const method = decodeURIComponent(url.pathname.slice(5)),
-              input = await request.json();
-            phase("rpc", { method });
-            if (method === "launch" && cut) {
-              captured = launchRequestSchema.parse(input);
-              return await new Promise<Response>((resolve) => {
-                const release = () => {
-                  held.delete(release);
-                  resolve(
-                    Response.json(
-                      { error: "Fixture request cut before launch handler" },
-                      { status: 503 },
-                    ),
-                  );
-                };
-                held.add(release);
-              });
-            }
-            const handler = fixture.handlers[method];
-            if (!handler) throw new Error(`Unknown ${method}`);
-            return Response.json(await handler(input));
-          } catch (error) {
-            return Response.json(
-              { error: error instanceof Error ? error.message : String(error) },
-              { status: 500 },
-            );
+        const facts = {
+          httpId: ++httpSequence, requestMode: mode,
+          path: url.pathname, method: request.method,
+        };
+        let status: number | null = null, aborted = false;
+        let rpcMethod: string | null = null;
+        const abort = () => {
+          if (!aborted) {
+            aborted = true;
+            phase("http:aborted", facts);
+            if (url.pathname.startsWith("/rpc/"))
+              phase("rpc:aborted", { ...facts, rpcMethod });
           }
+        };
+        request.signal.addEventListener("abort", abort, { once: true });
+        phase("http:begin", facts);
+        if (request.signal.aborted) abort();
+        const response = (value: Response) => { status = value.status; return value; };
+        try {
+          if (url.pathname.startsWith("/rpc/")) {
+            try {
+              const method = decodeURIComponent(url.pathname.slice(5));
+              rpcMethod = method;
+              phase("rpc:begin", { ...facts, rpcMethod });
+              const input = await request.json();
+              phase("rpc", { method });
+              if (method === "launch" && cut) {
+                captured = launchRequestSchema.parse(input);
+                return await new Promise<Response>((resolve) => {
+                  const release = () => {
+                    held.delete(release);
+                    phase("held:released", { ...facts, reason: releaseReason, remaining: held.size });
+                    resolve(
+                      response(Response.json(
+                        { error: "Fixture request cut before launch handler" },
+                        { status: 503 },
+                      )),
+                    );
+                  };
+                  held.add(release);
+                  phase("held:begin", { ...facts, pending: held.size });
+                });
+              }
+              const handler = fixture.handlers[method];
+              if (!handler) throw new Error(`Unknown ${method}`);
+              return response(Response.json(await handler(input)));
+            } catch (error) {
+              phase("rpc:error", { ...facts, rpcMethod, errorType: error instanceof Error ? error.name : typeof error });
+              return response(Response.json(
+                { error: error instanceof Error ? error.message : String(error) },
+                { status: 500 },
+              ));
+            } finally {
+              phase("rpc:end", { ...facts, rpcMethod, status, aborted });
+            }
+          }
+          if (url.pathname === "/" + basename(bundle.script))
+            return response(new Response(await readFile(bundle.script), {
+              headers: { "content-type": "text/javascript" },
+            }));
+          if (bundle.css && url.pathname === "/" + basename(bundle.css))
+            return response(new Response(await readFile(bundle.css), {
+              headers: { "content-type": "text/css" },
+            }));
+          return response(new Response(
+            `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1">${bundle.css ? `<link rel="stylesheet" href="/${basename(bundle.css)}">` : ""}<style>:root{--background:#171922;--foreground:#d4d5e2;--muted-foreground:#a1a4bb;--border:#373a4c;--primary:#b7a3ed;--primary-foreground:#191529}body{font:14px system-ui;margin:24px;max-width:900px;background:var(--background);color:var(--foreground)}</style></head><body><script>window.__templatesRecoveryDiagnostics=true</script><script type="module" src="/${basename(bundle.script)}"></script></body></html>`,
+            { headers: { "content-type": "text/html" } },
+          ));
+        } catch (error) {
+          phase("http:error", { ...facts, error: error instanceof Error ? error.message : String(error) });
+          throw error;
+        } finally {
+          request.signal.removeEventListener("abort", abort);
+          // End means the handler returned, not proof that Chromium received it.
+          phase("http:end", { ...facts, status, aborted });
         }
-        if (url.pathname === "/" + basename(bundle.script))
-          return new Response(await readFile(bundle.script), {
-            headers: { "content-type": "text/javascript" },
-          });
-        if (bundle.css && url.pathname === "/" + basename(bundle.css))
-          return new Response(await readFile(bundle.css), {
-            headers: { "content-type": "text/css" },
-          });
-        return new Response(
-          `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1">${bundle.css ? `<link rel="stylesheet" href="/${basename(bundle.css)}">` : ""}<style>:root{--background:#171922;--foreground:#d4d5e2;--muted-foreground:#a1a4bb;--border:#373a4c;--primary:#b7a3ed;--primary-foreground:#191529}body{font:14px system-ui;margin:24px;max-width:900px;background:var(--background);color:var(--foreground)}</style></head><body><script type="module" src="/${basename(bundle.script)}"></script></body></html>`,
-          { headers: { "content-type": "text/html" } },
-        );
       },
     });
     steps.unshift({
@@ -141,12 +207,29 @@ export async function browserSavedRequestRecovery() {
       ),
       errors: string[] = [],
       evidence: unknown[] = [];
-    page.on("pageerror", (error) => errors.push(error.message));
+    page.on("pageerror", (error) => {
+      errors.push(error.message);
+      phase("page:error", { error: error.message });
+    });
+    page.on("requestfailed", (request) => {
+      try {
+        phase("page:request-failed", {
+          path: new URL(request.url()).pathname,
+          method: request.method(), error: request.failure()?.errorText ?? null,
+        });
+      } catch { /* Diagnostics must not introduce an unhandled event error. */ }
+    });
+    page.on("console", (message) => {
+      const text = message.text();
+      if (text.startsWith("templates-recovery-loader "))
+        phase("page:loader", { event: text.slice(0, 1024) });
+    });
     page.on("close", () => phase("page:close"));
     page.on("crash", () => phase("page:crash"));
     browser.on("disconnected", () => phase("browser:disconnected"));
     await step("goto", () => page.goto(`http://127.0.0.1:${server.port}`));
     for (const native of [false, true]) {
+      mode = native ? "native" : "direct";
       phase("mode", { native });
       await step("select", () =>
         page.getByRole("button", { name: /PR Review/ }).click(),
@@ -189,6 +272,7 @@ export async function browserSavedRequestRecovery() {
       fixture.wire.switchActor("ada");
       await step("reload", () => page.reload());
       cut = false;
+      releaseReason = "after-reload";
       for (const release of [...held]) release();
       await step("reselect", () =>
         page.getByRole("button", { name: /PR Review/ }).click(),
@@ -267,15 +351,23 @@ export async function browserSavedRequestRecovery() {
       error: error instanceof Error ? error.stack : String(error),
     });
     console.error("Saved-request browser body failed before cleanup:", error);
+    failureTail();
     bodyFailure.failed = true;
     bodyFailure.error = error;
   } finally {
+    mode = "cleanup";
+    releaseReason = "cleanup";
     for (const release of [...held]) release();
-    await cleanupPromptFixture({
-      browser: owned?.owner,
-      bodyFailure,
-      steps,
-      phase,
-    });
+    try {
+      await cleanupPromptFixture({
+        browser: owned?.owner,
+        bodyFailure,
+        steps,
+        phase,
+      });
+    } catch (error) {
+      failureTail();
+      throw error;
+    }
   }
 }
