@@ -1,6 +1,6 @@
 {
   "name": "@phosphorco/bb-thread-attachments",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "type": "module",
   "license": "MIT",
   "description": "Versioned shared thread attachment facts and atomic family operations for independent BB presentations.",
