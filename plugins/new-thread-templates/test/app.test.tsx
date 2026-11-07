@@ -629,10 +629,13 @@ test("required validation retains values and focuses first invalid field; textar
     await act(async () => {
       t.slot.getByRole("button", { name: "Start thread" }).click();
     });
+    // The first poll precedes the focus animation frame. Diffing two DOM nodes
+    // on that expected mismatch makes Bun traverse React's attached graph and
+    // blocks the frame. Keep the exact identity oracle, with a boolean diff.
     await waitFor(() =>
-      expect(document.activeElement).toBe(
-        t.slot.getByLabelText(/Pull request URL/),
-      ),
+      expect(
+        document.activeElement === t.slot.getByLabelText(/Pull request URL/),
+      ).toBe(true),
     );
     expect(t.slot.getAllByText("Required").length).toBeGreaterThan(0);
     await fillReview(t.slot);
