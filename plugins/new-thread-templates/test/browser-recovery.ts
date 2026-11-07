@@ -29,10 +29,27 @@ function isRecoveryDiagnostic(value: unknown, run: string): boolean {
         !["headers", "json-complete", "adapter-return"].includes(fact.stage as string) ||
         !Number.isSafeInteger(fact.call) || (fact.call as number) < 1 || (fact.call as number) > 64 ||
         !Number.isSafeInteger(fact.status) || (fact.status as number) < 100 || (fact.status as number) > 599) return false;
-  } else if (fact.kind === "dom") {
-    const booleans = ["formPresent", "personalLoading", "resumePresent", "resumeDisabled"];
-    keys = [...common, ...booleans];
-    if (!booleans.every((key) => typeof fact[key] === "boolean")) return false;
+  } else if (fact.kind === "exposure") {
+    keys = [...common, "n", "r", "f"];
+    const n = fact.n, r = fact.r, f = fact.f;
+    if (!Array.isArray(n) || n.length !== 10 ||
+        !n.every((x) => Number.isSafeInteger(x) && x >= 0 && x <= 512) || n[9] > 7 ||
+        !Array.isArray(r) || r.length > 4 || !Array.isArray(f) || f.length > 4 ||
+        n[1] > n[0] || n[2] + n[3] > n[0] ||
+        n[4] !== Math.max(0, n[1] - 8) ||
+        r.length !== Math.min(4, n[2]) || f.length !== Math.min(4, n[3]) ||
+        n[5] !== n[2] - r.length || n[6] !== n[3] - f.length) return false;
+    for (const candidate of [...r, ...f]) {
+      if (!Array.isArray(candidate) || candidate.length !== 7 ||
+          !candidate.every(Number.isSafeInteger)) return false;
+      const [marker, role, name, mask, box, depth, visibility] = candidate;
+      if (marker < 1 || marker > 9 || role < 0 || role > 2 || name < 0 || name > 2 ||
+          mask < 0 || mask > 1023 || box < 0 || box > 15 || depth < 1 || depth > 32 ||
+          visibility < 0 || visibility > 3 ||
+          ((mask & 32) !== 0 && depth !== 32) ||
+          ((mask & 128) !== 0) !== (name === 0) ||
+          ((mask & 256) !== 0) !== (role === 0)) return false;
+    }
   } else return false;
   const actual = Object.keys(fact);
   return actual.length === keys.length && actual.every((key) => keys.includes(key));
