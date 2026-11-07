@@ -11,6 +11,33 @@ import { launchRequestSchema, type LaunchRequest } from "../rpc-contract.ts";
 import { acquireOwnedBrowser } from "./browser-owned.ts";
 import { cleanupPromptFixture } from "./browser-prompt-cleanup.ts";
 
+/** Closed synthetic sideband schema; never accepts product RPC inputs/results. */
+function isRecoveryDiagnostic(value: unknown, run: string): boolean {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const fact = value as Record<string, unknown>;
+  const common = ["run", "doc", "seq", "at", "elapsedMs", "kind"];
+  if (fact.run !== run || typeof fact.doc !== "string" ||
+      !/^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/.test(fact.doc) ||
+      !Number.isSafeInteger(fact.seq) || (fact.seq as number) < 1 || (fact.seq as number) > 64 ||
+      !Number.isSafeInteger(fact.at) || (fact.at as number) < 1 ||
+      typeof fact.elapsedMs !== "number" || !Number.isFinite(fact.elapsedMs) ||
+      fact.elapsedMs < 0 || fact.elapsedMs > 120000) return false;
+  let keys: string[];
+  if (fact.kind === "rpc") {
+    keys = [...common, "method", "stage", "call", "status"];
+    if (!["bb-identity.v1.state.load", "recentLaunches", "launchStatus"].includes(fact.method as string) ||
+        !["headers", "json-complete", "adapter-return"].includes(fact.stage as string) ||
+        !Number.isSafeInteger(fact.call) || (fact.call as number) < 1 || (fact.call as number) > 64 ||
+        !Number.isSafeInteger(fact.status) || (fact.status as number) < 100 || (fact.status as number) > 599) return false;
+  } else if (fact.kind === "dom") {
+    const booleans = ["formPresent", "personalLoading", "resumePresent", "resumeDisabled"];
+    keys = [...common, ...booleans];
+    if (!booleans.every((key) => typeof fact[key] === "boolean")) return false;
+  } else return false;
+  const actual = Object.keys(fact);
+  return actual.length === keys.length && actual.every((key) => keys.includes(key));
+}
+
 export async function browserSavedRequestRecovery() {
   const artifacts = join(
     process.env.BB_THREAD_STORAGE ?? "/tmp/templates-browser-evidence",
@@ -106,11 +133,47 @@ export async function browserSavedRequestRecovery() {
     let cut = false,
       captured: LaunchRequest | null = null;
     let httpSequence = 0;
+    let sidebandRequests = 0, sidebandBytes = 0;
     const server = Bun.serve({
       hostname: "127.0.0.1",
       port: 0,
       async fetch(request) {
         const url = new URL(request.url);
+        // This route has no access to product handlers, cut requests or saved state.
+        if (url.pathname === "/__recovery-diagnostic") {
+          if (++sidebandRequests > 256 || sidebandBytes >= 128 * 1024)
+            return new Response(null, { status: 429 });
+          if (request.method !== "POST" || !request.body)
+            return new Response(null, { status: 400 });
+          const reader = request.body.getReader();
+          const chunks: Uint8Array[] = [];
+          let bytes = 0;
+          try {
+            for (;;) {
+              const next = await reader.read();
+              if (next.done) break;
+              bytes += next.value.byteLength;
+              sidebandBytes += next.value.byteLength;
+              if (bytes > 768 || sidebandBytes > 128 * 1024) {
+                void reader.cancel().catch(() => {});
+                return new Response(null, { status: 413 });
+              }
+              chunks.push(next.value);
+            }
+            const body = new Uint8Array(bytes);
+            let offset = 0;
+            for (const chunk of chunks) { body.set(chunk, offset); offset += chunk.byteLength; }
+            const fact: unknown = JSON.parse(new TextDecoder().decode(body));
+            if (!isRecoveryDiagnostic(fact, fixtureRun))
+              return new Response(null, { status: 400 });
+            phase("page:sideband", { fact });
+            return new Response(null, { status: 204 });
+          } catch {
+            return new Response(null, { status: 400 });
+          } finally {
+            try { reader.releaseLock(); } catch { /* Diagnostic stream only. */ }
+          }
+        }
         const facts = {
           httpId: ++httpSequence, requestMode: mode,
           path: url.pathname, method: request.method,
@@ -176,7 +239,7 @@ export async function browserSavedRequestRecovery() {
               headers: { "content-type": "text/css" },
             }));
           return response(new Response(
-            `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1">${bundle.css ? `<link rel="stylesheet" href="/${basename(bundle.css)}">` : ""}<style>:root{--background:#171922;--foreground:#d4d5e2;--muted-foreground:#a1a4bb;--border:#373a4c;--primary:#b7a3ed;--primary-foreground:#191529}body{font:14px system-ui;margin:24px;max-width:900px;background:var(--background);color:var(--foreground)}</style></head><body><script>window.__templatesRecoveryDiagnostics=true</script><script type="module" src="/${basename(bundle.script)}"></script></body></html>`,
+            `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1">${bundle.css ? `<link rel="stylesheet" href="/${basename(bundle.css)}">` : ""}<style>:root{--background:#171922;--foreground:#d4d5e2;--muted-foreground:#a1a4bb;--border:#373a4c;--primary:#b7a3ed;--primary-foreground:#191529}body{font:14px system-ui;margin:24px;max-width:900px;background:var(--background);color:var(--foreground)}</style></head><body><script>window.__templatesRecoveryDiagnostics=true;window.__templatesRecoveryRun=${JSON.stringify(fixtureRun)}</script><script type="module" src="/${basename(bundle.script)}"></script></body></html>`,
             { headers: { "content-type": "text/html" } },
           ));
         } catch (error) {
