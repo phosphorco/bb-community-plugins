@@ -1,0 +1,155 @@
+name: Stage reviewed thread attachments
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: Candidate has no npm write; stage needs a separate finite effect grant
+        type: choice
+        options: [candidate, stage]
+        default: candidate
+        required: true
+      workflow_sha:
+        description: Full independently reviewed workflow/helper commit (must equal dispatch SHA)
+        type: string
+        required: true
+      candidate_run:
+        description: Stage only; successful candidate run at this same workflow commit
+        type: string
+      candidate_sha256:
+        description: Stage only; full reviewed retained tarball SHA256
+        type: string
+      candidate_sha512:
+        description: Stage only; full reviewed retained tarball SHA512 (128 hex characters)
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+# One lane, including candidate runs; never cancel a possibly dispatched write.
+concurrency:
+  group: bb-thread-attachments-0.1.0-stage
+  cancel-in-progress: false
+
+jobs:
+  candidate:
+    name: Retain candidate without npm write
+    if: github.repository == 'phosphorco/bb-community-plugins' && inputs.mode == 'candidate'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out reviewed workflow and helpers
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Fence helper revision and run focused negative checks
+        env:
+          EXPECTED_WORKFLOW: ${{ inputs.workflow_sha }}
+        run: |
+          test "$GITHUB_SHA" = "$EXPECTED_WORKFLOW"
+          test "$(git rev-parse HEAD)" = "$EXPECTED_WORKFLOW"
+          PYTHONDONTWRITEBYTECODE=1 python3 .github/scripts/test-thread-attachments-stage.py
+      - name: Check out fixed reviewed package and lock
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: 93ac7456f429ada7e369aeba89d816928ed05884
+          path: reviewed-source
+          persist-credentials: false
+      - name: Acquire the reviewed SDK artifact
+        shell: bash
+        run: |
+          mkdir sdk-artifacts candidate
+          archive='get-bb-plugin-sdk-0.6.52+phosphor.975e38f02f1a.sdk.12eb78c20820.tgz'
+          base='https://github.com/phosphorco/bb-fork/releases/download/sdk-0.6.52-phosphor.975e38f02f1a'
+          curl --fail --location "$base/$archive" --output "sdk-artifacts/$archive"
+          curl --fail --location "$base/$archive.provenance.json" --output "sdk-artifacts/$archive.provenance.json"
+          printf '%s  %s\n' 'f9bca05575191c8e9be5bf8d641755dbea95cd00853869e9e472b428c366d5ae' "sdk-artifacts/$archive" | sha256sum --check
+          printf '%s  %s\n' '4b531f886692b34d66fb97bda8178f8d666a9bd3692d853379f45992d8591bb7' "sdk-artifacts/$archive.provenance.json" | sha256sum --check
+      - name: Set up supported Node
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - name: Use exactly inspected npm
+        run: npm install --global npm@11.19.1
+      - name: Locked reviewed package build and checks
+        working-directory: reviewed-source
+        run: |
+          npm ci
+          npm run build --workspace @phosphorco/bb-thread-attachments
+          npm run test --workspace @phosphorco/bb-thread-attachments
+          npm run typecheck --workspace @phosphorco/bb-thread-attachments
+          npm pack --ignore-scripts --json --workspace @phosphorco/bb-thread-attachments --pack-destination ../candidate
+      - name: Verify exact payload and retain full digest receipt
+        env:
+          EXPECTED_WORKFLOW: ${{ inputs.workflow_sha }}
+        run: |
+          python3 .github/scripts/thread-attachments-stage.py candidate --source reviewed-source --output candidate --workflow-sha "$EXPECTED_WORKFLOW"
+      - name: Retain immutable candidate before any stage effect
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: attachment-stage-candidate
+          path: |
+            candidate/phosphorco-bb-thread-attachments-0.1.0.tgz
+            candidate/candidate.json
+          if-no-files-found: error
+          retention-days: 14
+
+  stage:
+    name: Stage retained candidate
+    if: github.repository == 'phosphorco/bb-community-plugins' && inputs.mode == 'stage'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
+      id-token: write # Provenance signing, not npm management authentication.
+    steps:
+      - name: Check out reviewed workflow and helpers
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Fence original single-attempt workflow revision
+        env:
+          EXPECTED_WORKFLOW: ${{ inputs.workflow_sha }}
+        run: |
+          test "$GITHUB_SHA" = "$EXPECTED_WORKFLOW"
+          test "$(git rev-parse HEAD)" = "$EXPECTED_WORKFLOW"
+          test "$GITHUB_RUN_ATTEMPT" = 1
+          PYTHONDONTWRITEBYTECODE=1 python3 .github/scripts/test-thread-attachments-stage.py
+      - name: Check out fixed reviewed package and lock for verification only
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: 93ac7456f429ada7e369aeba89d816928ed05884
+          path: reviewed-source
+          persist-credentials: false
+      - name: Set up supported Node and existing registry credential
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '24'
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+      - name: Use exactly inspected npm
+        run: npm install --global npm@11.19.1
+      - name: Download reviewed candidate, fence absence, stage once and verify download
+        env:
+          EXPECTED_WORKFLOW: ${{ inputs.workflow_sha }}
+          CANDIDATE_RUN: ${{ inputs.candidate_run }}
+          CANDIDATE_SHA256: ${{ inputs.candidate_sha256 }}
+          CANDIDATE_SHA512: ${{ inputs.candidate_sha512 }}
+          GH_TOKEN: ${{ github.token }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NPM_CONFIG_FETCH_RETRIES: '0'
+        run: |
+          python3 .github/scripts/thread-attachments-stage.py stage --source reviewed-source --output stage-evidence --workflow-sha "$EXPECTED_WORKFLOW" --candidate-run "$CANDIDATE_RUN" --sha256 "$CANDIDATE_SHA256" --sha512 "$CANDIDATE_SHA512"
+      - name: Retain intent, exact payload and outcome even after errors
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: attachment-stage-attempt-${{ github.run_id }}
+          path: stage-evidence/
+          if-no-files-found: warn
+          retention-days: 14
