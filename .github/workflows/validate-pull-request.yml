@@ -45,6 +45,9 @@ jobs:
       - name: Install locked dependencies
         run: npm ci
 
+      - name: Install locked Playwright Chromium and system dependencies
+        run: node node_modules/@playwright/test/cli.js install --with-deps chromium
+
       - name: Build libraries for package tests
         run: |
           npm run build --workspace @phosphorco/bb-identity
