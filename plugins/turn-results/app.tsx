@@ -10,6 +10,16 @@ import type { GalleryOpenPort, GalleryOpenOutcome } from './gallery/view.tsx';
 import { untilAborted } from './gallery/lifetime.ts';
 import type { GalleryAnchor, GalleryTimelinePort } from './gallery/anchors.ts';
 import './app.css';
+
+function threadChangeNeedsProof(event: unknown): boolean {
+  if (!event || typeof event !== 'object' || !('entity' in event) || event.entity !== 'thread'
+    || !('changes' in event) || !Array.isArray(event.changes) || !event.changes.length) return true;
+  // Positive public change kinds only. Never infer unchanged history from a
+  // sequence watermark: backfills/rewrites can retain it. Mixed/unknown kinds
+  // and older payloads without change kinds keep conservative invalidation.
+  return event.changes.some(kind => !['title-changed', 'read-state-changed', 'pin-state-changed', 'queue-changed'].includes(kind));
+}
+
 interface HeaderPreload {
   demand?(ids: readonly string[]): void;
   proof?(result: { anchors: readonly GalleryAnchor[]; continued: boolean; capacity: boolean }): void;
@@ -329,7 +339,7 @@ export default definePluginApp(app => {
       };
       const stops: (() => void)[] = [];
       try {
-        stops.push(sdk.subscribe({ event: 'thread:changed', threadId, callback: stop }));
+        stops.push(sdk.subscribe({ event: 'thread:changed', threadId, callback(event) { if (threadChangeNeedsProof(event)) stop(); } }));
         stops.push(sdk.subscribe({ event: 'system:config-changed', callback: stop }));
         stops.push(sdk.subscribe({ event: 'realtime:connection', callback(event) {
           if (!live) return;
@@ -661,6 +671,7 @@ export default definePluginApp(app => {
       try {
         subscriptions.push(sdk.subscribe({ event: 'thread:changed', threadId, callback(event) {
           if (typeof event?.id === 'string' && event.id !== threadId) return;
+          if (!threadChangeNeedsProof(event)) return;
           // Backfill may retain timelineSequence; unknown changes are hard too.
           semanticChanged();
         } }));

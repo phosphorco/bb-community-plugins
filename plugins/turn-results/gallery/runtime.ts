@@ -35,7 +35,7 @@ export interface GalleryPresentationRoot {
 }
 interface TurnEntry {
   key: string; threadId: string; anchor: GalleryAnchor; after: { seq: number; key: string } | undefined; store: Store<TurnSnapshot>; refs: number; visible: number;
-  dirty: boolean; phase: 'read' | 'source'; controller: AbortController | null; afterOwner: string | null;
+  dirty: boolean; phase: 'read' | 'source'; controller: AbortController | null; afterOwner: string | null; suspendedWork: boolean;
   debts: Map<string, 'source' | 'selection' | 'selection-fresh' | 'selection-parked'>; enumerateRetries: Set<string>; debtBudget: number; bytes: number; cursorCharge: number;
   collection: TurnCollection | null; collectionBytes: number;
   speculative: number;
@@ -108,7 +108,10 @@ export function createGalleryRuntime(sdk: Sdk, workOwner: GalleryWorkOwner = cre
     discoveryGeneration++;
     for (const entry of turns.values()) {
       retireSourceWindow(entry);
-      if (entry.refs && entry.visible) { entry.dirty = true; entry.afterOwner = null; }
+      if (entry.refs) {
+        if (entry.visible) { entry.dirty = true; entry.afterOwner = null; }
+        else entry.suspendedWork = true; // A real generation change survives invisible retained demand.
+      }
     }
     discoveryController?.abort(); discovering = null;
     sources = null; discoveryCursor = null; discoveryCapacity = false; metadataDebt = null; descriptorDebt.clear(); publishReady(new Set());
@@ -192,7 +195,9 @@ export function createGalleryRuntime(sdk: Sdk, workOwner: GalleryWorkOwner = cre
     const raw = await untilAborted(call, signal);
     signal.throwIfAborted(); return raw;
   }
-  function backendFor(call: (method: string, input: unknown, signal: AbortSignal) => Promise<unknown>): GalleryBackend { return {
+  function backendFor(call: (method: string, input: unknown, signal: AbortSignal) => Promise<unknown>): Omit<GalleryBackend, 'apply'> & {
+    apply(page: GalleryPage, signal: AbortSignal): Promise<{ state: 'committed' | 'unchanged'; observationsChanged?: boolean }>;
+  } { return {
     async prepare(threadId, owner, turnId, signal) { return OwnerPreparationSchema.parse(await call(GALLERY_METHODS.prepare, { threadId, owner, turnId }, signal)); },
     async pending(input, signal) { return PendingGalleryOutputSchema.parse(await call(GALLERY_METHODS.pending, input, signal)); },
     async knownIdentities(threadId, owner, refs, signal) {
@@ -201,9 +206,9 @@ export function createGalleryRuntime(sdk: Sdk, workOwner: GalleryWorkOwner = cre
     async read(threadId, turnId, signal, after) { return readSchema.parse(await call(GALLERY_METHODS.read, { threadId, ...(turnId ? { turnId } : {}), ...(after ? { after } : {}) }, signal)) as GalleryRead; },
     async stage(threadId, owner, id, signal) { return StageRecordSchema.parse(await call(GALLERY_METHODS.stage, { threadId, owner, id }, signal)) as StageRecord | null; },
     async apply(page: GalleryPage, signal) {
-      const result = z.object({ state: z.enum(['committed', 'unchanged', 'capacity', 'conflict', 'revalidate']), reason: z.string().optional() }).parse(await call(GALLERY_METHODS.apply, page, signal));
+      const result = z.object({ state: z.enum(['committed', 'unchanged', 'capacity', 'conflict', 'revalidate']), reason: z.string().optional(), observationsChanged: z.boolean().optional() }).parse(await call(GALLERY_METHODS.apply, page, signal));
       if (result.state !== 'committed' && result.state !== 'unchanged') throw Error(`History ${result.state}: ${result.reason ?? 'continuation was not committed'}`);
-      return { state: result.state };
+      return { state: result.state, ...(result.observationsChanged === undefined ? {} : { observationsChanged: result.observationsChanged }) };
     },
   }; }
   const backend = backendFor(rpc);
@@ -280,7 +285,7 @@ export function createGalleryRuntime(sdk: Sdk, workOwner: GalleryWorkOwner = cre
         if (!prepared || rejected) throw Error('Owner preparation is not current.');
         try {
           const result = await rawBackend.apply({ ...page, expectedInvalidationVersion: barrier }, supplied);
-          check(supplied); changed ||= result?.state !== 'unchanged'; return result;
+          check(supplied); changed ||= result?.state !== 'unchanged' && result?.observationsChanged !== false; return result;
         } catch (error) {
           rejected = true; retireSourceWindow(entry); throw error;
         }
@@ -776,6 +781,7 @@ export function createGalleryRuntime(sdk: Sdk, workOwner: GalleryWorkOwner = cre
   }
   workOwner.attachTurnStarter(startTurn);
   function reset(entry: TurnEntry) {
+    entry.suspendedWork = false;
     retireSourceWindow(entry);
     if (entry.collection) { retireCollection(entry); entry.controller?.abort('collection-reset'); }
     entry.dirty = true; entry.phase = 'read'; entry.afterOwner = null; entry.debts.clear(); entry.enumerateRetries.clear(); entry.debtBudget = GALLERY_RUNTIME_LIMITS.automaticDebtUnits;
@@ -977,7 +983,7 @@ export function createGalleryRuntime(sdk: Sdk, workOwner: GalleryWorkOwner = cre
           readComplete: false, passive() {}, visible(_next: boolean) {}, more() {}, dispose() {},
         };
         entry = { key, threadId: anchor.threadId, anchor: { ...anchor }, after, store: new Store(initial), refs: 0, visible: 0, dirty: true, phase: 'read',
-          controller: null, afterOwner: null, debts: new Map(), enumerateRetries: new Set(), debtBudget: GALLERY_RUNTIME_LIMITS.automaticDebtUnits, bytes: initialBytes, cursorCharge, collection: null, collectionBytes: 0, speculative: 0, passive: false, sourceGeneration: 0, sourceActive: false, preparationBytes: 0, windowBytes: 0, window: null };
+          controller: null, afterOwner: null, suspendedWork: false, debts: new Map(), enumerateRetries: new Set(), debtBudget: GALLERY_RUNTIME_LIMITS.automaticDebtUnits, bytes: initialBytes, cursorCharge, collection: null, collectionBytes: 0, speculative: 0, passive: false, sourceGeneration: 0, sourceActive: false, preparationBytes: 0, windowBytes: 0, window: null };
         turns.set(key, entry); bytes += entry.bytes;
       }
       const owned = entry;
@@ -1000,8 +1006,16 @@ export function createGalleryRuntime(sdk: Sdk, workOwner: GalleryWorkOwner = cre
         get readComplete() { return owned.phase === 'source' && !owned.store.state.limited; }, passive,
         visible(next: boolean) { if (!live || shown === next) return; shown = next; owned.visible += next ? 1 : -1;
           if (speculative) owned.speculative += next ? 1 : -1;
-          if (!owned.visible) { retireSourceWindow(owned); retireCollection(owned); owned.controller?.abort(); unqueue(owned); stopUnusedDiscovery(); }
-          else { demandDescriptors(); reset(owned); enqueue(owned); } },
+          if (!owned.visible) {
+            owned.suspendedWork ||= !!owned.controller || owned.dirty;
+            retireSourceWindow(owned); retireCollection(owned); owned.controller?.abort(); unqueue(owned); stopUnusedDiscovery();
+          } else {
+            // Proof suspension is not evidence of changed supplier data. Keep
+            // a completed pass; explicit invalidation still resets it, and
+            // interrupted work restarts safely when demand returns.
+            if (owned.suspendedWork) { demandDescriptors(); reset(owned); }
+            enqueue(owned);
+          } },
         more() { if (!live) return; demandDescriptors(); reset(owned); enqueue(owned); },
         dispose() {
           if (!live) return; live = false; if (!active) return; owned.refs--; leases--; if (shown) owned.visible--;
@@ -1009,7 +1023,10 @@ export function createGalleryRuntime(sdk: Sdk, workOwner: GalleryWorkOwner = cre
             // Unadopted speculative values have no last-good display lifetime.
             passive();
           }
-          if (!owned.refs || !owned.visible) { retireSourceWindow(owned); retireCollection(owned); owned.controller?.abort(); unqueue(owned); stopUnusedDiscovery(); }
+          if (!owned.refs || !owned.visible) {
+            owned.suspendedWork ||= !!owned.controller || owned.dirty;
+            retireSourceWindow(owned); retireCollection(owned); owned.controller?.abort(); unqueue(owned); stopUnusedDiscovery();
+          }
           // Refresh LRU position only on lease retirement, never on idle ticks.
           turns.delete(key); turns.set(key, owned); collect();
         } };
