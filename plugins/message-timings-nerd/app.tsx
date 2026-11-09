@@ -55,6 +55,7 @@ function TimingMount({ threadId }: PluginThreadHeaderActionProps) {
         if (!failed) retryCount.current = 0;
       } catch {
         if (!disposed) {
+          activity.unavailable();
           // A failed read must not remove stable footers or change row heights.
           // Same-bundle reloads can retain this frontend while replacing the
           // backend handle. Recover one transient read without a polling loop.

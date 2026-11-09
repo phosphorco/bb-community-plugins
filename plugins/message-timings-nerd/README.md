@@ -20,6 +20,15 @@ and `10m since previous message · 7m after agent finished` below the follow-up.
 Hover a label for the full local date and time. Timing labels appear automatically
 when the plugin is enabled; there is no per-thread toggle.
 
+The Activity row above an eligible composer keeps its intrinsic responsive space
+from this plugin's mount, including while loading. It distinguishes loading,
+no activity in loaded history, partial history, and unavailable updates without
+inventing zero activity or complete-history coverage. Failed updates retain any
+last loaded activity; successful reads clear the unavailable state even when the
+data is unchanged. Pending questions/approvals still control composer eligibility.
+This does not reserve space before the plugin mounts or stabilize other plugins'
+contributions. No fixed height or maximum-history spacer is used.
+
 ## Develop
 
 From this repository, run:
