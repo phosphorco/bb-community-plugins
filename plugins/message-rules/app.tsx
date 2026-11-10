@@ -25,6 +25,7 @@ export default definePluginApp((app) => {
       ),
       [signal, setSignal] = useState({ revision: 0, discoverFiles: true }),
       [error, setError] = useState<string | null>(null),
+      [projectRetry, setProjectRetry] = useState(0),
       [projectLookup, setProjectLookup] = useState<LookupState>({
         status: "loading",
       });
@@ -54,7 +55,7 @@ export default definePluginApp((app) => {
       return () => {
         current = false;
       };
-    }, [sdk, connection]);
+    }, [sdk, connection, projectRetry]);
     useRealtime("changed", (event: unknown) => {
       if (!event || typeof event !== "object") return;
       if ("projectId" in event && event.projectId !== projectId) return;
@@ -82,7 +83,10 @@ export default definePluginApp((app) => {
     );
     return (
       <>
-        {error && <p role="alert">{error}</p>}
+        {error && <p role="alert">Project list unavailable: {error}{" "}
+          <button disabled={projectLookup.status === "loading"}
+            onClick={() => setProjectRetry((n) => n + 1)}>Retry project list</button>
+        </p>}
         <Panel
           client={client}
           projectId={projectId}

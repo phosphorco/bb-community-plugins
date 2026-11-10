@@ -75,3 +75,34 @@ test("one global deadline stops promise-only fixture work at the next boundary w
     db.close();
   }
 });
+
+test("absolute deadline denies the next partition permit before reserving or invoking; before-deadline control completes", async () => {
+  for (const advance of [0, 1001]) {
+    const db = new Database(":memory:"), store = createStore(db);
+    createGlobalCatalog(store);
+    let p = store.get(G)!;
+    p = store.configure(G, p.revision, { ...p.config, connection: { ...p.config.connection, timeoutMs: 1000, maxWireBytes: 1700 } });
+    p = store.saveGroup(G, p.revision, { ...newGroup("all"), enabled: true, match: { kind: "all", children: [] } });
+    for (const id of ["one", "two"]) {
+      const r = { ...jevRule(id), groupId: "all" };
+      r.criteria[0]!.instructions = id.repeat(250);
+      p = store.saveRule(G, p.revision, r);
+    }
+    const bytes = source("fixture").replace("expected_rules: [avoid-status-pings]", "expected_rules: [one, two]");
+    p = store.discover(G, p.revision, [{ occurrenceId: "fixture", path: "fixture.md", groupId: "all", projectId: "project", logicalId: "fixture", source: bytes, hash: sha256(bytes), enabled: true, missing: false, error: null }]);
+    const realNow = Date.now; let now = realNow(), calls = 0;
+    Date.now = () => now;
+    const service = createSuiteService(store, () => async wire => { calls++; now += advance; return answer(wire); }, count);
+    try {
+      const run = service.start(G, "partition-deadline", savedBasis(p), {});
+      await waitUntil(() => !!store.run(run.id)?.quiescent);
+      const done = store.run(run.id)!;
+      assert.equal(calls, advance ? 1 : 2);
+      assert.equal(done.status, advance ? "cancelled" : "complete");
+      assert.equal(done.frozen.denominator, 1);
+      assert.equal(done.results[0]!.evaluation!.policy, advance ? "unknown" : "reject");
+      assert.deepEqual(done.results[0]!.evaluation!.advice.length, advance ? 0 : 1);
+      assert.equal((db.prepare("SELECT count(*) n FROM mr_attempts").get() as any).n, calls);
+    } finally { Date.now = realNow; await service.dispose(); db.close(); }
+  }
+});

@@ -3,6 +3,22 @@ import assert from "node:assert/strict";
 import { renderToStaticMarkup } from "react-dom/server";
 import { GroupEditor, RuleEditor } from "../../ui/rule-editor.tsx";
 import { newGroup, newRule } from "../../contracts/model.ts";
+test("two editors of the same rule have independent native radio groups and accessible labels", () => {
+  const rule = newRule("same-rule", "group");
+  const html = renderToStaticMarkup(<>
+    <RuleEditor rule={rule} groups={[newGroup("group")]} onChange={() => {}} />
+    <RuleEditor rule={rule} groups={[newGroup("group")]} onChange={() => {}} />
+  </>);
+  const names = [...html.matchAll(/<input\b[^>]*type="radio"[^>]*>/g)]
+    .map((m) => /\bname="([^"]+)"/.exec(m[0])?.[1]);
+  assert.equal(names.length, 6);
+  assert.equal(new Set(names).size, 2, "each editor owns one native radio group");
+  const ids = [...html.matchAll(/\sid="([^"]+)"/g)].map((m) => m[1]);
+  assert.equal(new Set(ids).size, ids.length, "label/description IDs are instance-unique");
+  for (const match of html.matchAll(/aria-(?:labelledby|describedby)="([^"]+)"/g)) {
+    for (const id of match[1]!.split(" ")) assert.ok(ids.includes(id));
+  }
+});
 test("project completion distinguishes duplicate names by IDs and retains unavailable raw predicates", () => {
   const group = {
     ...newGroup("scope"),

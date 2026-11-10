@@ -24,6 +24,7 @@ export type Snapshot = {
   basis: string | null;
   run: Run | null;
   acknowledgedRun?: Run;
+  savedOccurrenceId?: string;
   readError: string | null;
   connection: { configured: boolean; tokenAccounting: boolean; mode: string };
   delivery: { state: string; reason: string };

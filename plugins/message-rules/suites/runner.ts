@@ -151,6 +151,10 @@ export function createSuiteService(
         }
         const inner = transportFor(run);
         const transport: Transport = (wire, signal, dispatch) => {
+          // Immediate promises can cross the deadline before its timer runs.
+          // Deny a fresh permit at every partition, before any reservation.
+          if (Date.now() >= deadlineAt) abort.abort();
+          if (signal.aborted) throw Error("Test all cancelled or time budget exhausted.");
           const attempt = store.attempt(
             run.id,
             owner,

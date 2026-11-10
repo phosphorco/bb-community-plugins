@@ -22,7 +22,27 @@ export function createMessageRules(
     fetcher?: typeof fetch;
   } = {},
 ) {
-  const identityResult = bindBbIdentity(bb);
+  // Publish only our authoring contract. Identity's own internal RPCs retain
+  // their registration policy, and all calls still use its bound handlers.
+  const identityResult = bindBbIdentity({
+    ...bb,
+    rpc: {
+      ...bb.rpc,
+      register: (registered, handlers, options) =>
+        bb.rpc.register(
+          registered,
+          handlers,
+          Object.is(registered, contract)
+            ? {
+                ...options,
+                experimental_discoverable: true,
+                experimental_description:
+                  "Global Message Rules authoring and saved tests. projectId is message-rules-global. Saving does not enable live message enforcement.",
+              }
+            : options,
+        ),
+    },
+  });
   if (!identityResult.ok) throw Error(identityResult.error.message);
   const identity = identityResult.value;
   const settings = bb.settings.define({
@@ -86,6 +106,7 @@ export function createMessageRules(
     projectId: string,
     discoverFiles = false,
     requestId?: string,
+    runId?: string,
   ) {
     let p = store.get(projectId);
     const location = p ? canonical(fileLocation(p.config)) : "";
@@ -124,8 +145,11 @@ export function createMessageRules(
           .prepare("SELECT id FROM mr_runs WHERE project_id=? AND request_id=?")
           .get(projectId, requestId) as { id: string } | undefined)
       : undefined;
+    const acknowledgedRun = requested ? store.run(requested.id) : runId ? store.run(runId) : null;
+    if (acknowledgedRun && acknowledgedRun.frozen.projectId !== projectId)
+      throw Error("Run does not belong to this catalog.");
     return snapshotSchema.parse({
-      ...(requested ? { acknowledgedRun: store.run(requested.id) } : {}),
+      ...(acknowledgedRun ? { acknowledgedRun } : {}),
       project: p,
       ...(projectId === GLOBAL_CATALOG ? { catalog: catalog.info() } : {}),
       basis: p ? savedBasis(p) : null,
@@ -153,7 +177,7 @@ export function createMessageRules(
   const handlers: IdentityRpcHandlers<typeof contract> = {
     snapshot: {
       origin: "interactive-user",
-      handle: async (i) => snapshot(i.projectId, i.discoverFiles, i.requestId),
+      handle: async (i) => snapshot(i.projectId, i.discoverFiles, i.requestId, i.runId),
     },
     configure: {
       origin: "interactive-user",
@@ -235,9 +259,13 @@ export function createMessageRules(
             throw Error("Choose a saved group.");
         }
         await files.save(sourceId, i.path, i.source, i.hash, i.location);
+        let savedSourceOccurrenceId: string | undefined;
         if (i.projectId === GLOBAL_CATALOG) {
           const p = await files.discover(sourceId);
-          const o = p.occurrences.find((o) => o.path === i.path)!;
+          const o = p.occurrences.find((o) => o.path === i.path &&
+            (!o.sourceProjectId || o.sourceProjectId === sourceId));
+          if (!o) throw Error("Saved test could not be rediscovered at its source. Refresh before continuing.");
+          savedSourceOccurrenceId = o.occurrenceId;
           if (i.groupId) {
             catalog.assign(sourceId, o.occurrenceId, i.groupId);
             if (sourceId === GLOBAL_CATALOG)
@@ -254,7 +282,10 @@ export function createMessageRules(
         }
         const next = await snapshot(i.projectId, true);
         publish(i.projectId);
-        return next;
+        const saved = next.project?.occurrences.find((o) =>
+          (o.sourceProjectId ?? GLOBAL_CATALOG) === sourceId &&
+          (o.sourceOccurrenceId ?? o.occurrenceId) === savedSourceOccurrenceId);
+        return { ...next, ...(saved ? { savedOccurrenceId: saved.occurrenceId } : {}) };
       },
     },
     toggleTest: {
@@ -346,7 +377,7 @@ export function createMessageRules(
         if (!run || run.frozen.projectId !== i.projectId)
           throw Error("Run does not belong to this project.");
         service.cancel(i.runId);
-        return snapshot(i.projectId);
+        return snapshot(i.projectId, false, undefined, i.runId);
       },
     },
   };
