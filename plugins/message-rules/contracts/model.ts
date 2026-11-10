@@ -1,5 +1,7 @@
 import { z } from "zod";
-export const VERSION = "message-rules-v1.4";
+// Captured evaluation semantics are part of savedBasis. Advance this whenever
+// validation or decisions change so old observations cannot look current.
+export const VERSION = "message-rules-v1.5";
 export const Id = z.string().regex(/^[a-z][a-z0-9-]{0,79}$/);
 const text = z.string().max(65536);
 export type Predicate =
