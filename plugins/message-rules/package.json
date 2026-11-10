@@ -1,0 +1,97 @@
+{
+  "name": "@phosphorco/bb-plugin-message-rules",
+  "version": "0.1.0",
+  "type": "module",
+  "license": "MIT",
+  "description": "Authored message rules and saved regression tests with shared-context JEV evaluation.",
+  "engines": {
+    "bb": ">=0.46.1 <1.0.0",
+    "bbPluginSdk": ">=0.6.52"
+  },
+  "bb": {
+    "name": "Message Rules",
+    "description": "Configure message rules and run saved tests.",
+    "server": "./server.ts",
+    "app": "./app.tsx",
+    "branding": {
+      "icon": "./icons/message-rules.svg"
+    },
+    "skills": [
+      "skills"
+    ]
+  },
+  "files": [
+    "dist/",
+    "icons/",
+    "skills/",
+    "fixtures/",
+    "README.md",
+    "LICENSE",
+    "server.ts",
+    "app.tsx",
+    "app.css",
+    "ui-suite-server.ts",
+    "suite-rpc-contract.ts",
+    "contracts/",
+    "evaluation/",
+    "files/",
+    "state/",
+    "suites/",
+    "admission/",
+    "receipts/",
+    "ui/",
+    "tsconfig.json",
+    "tools/build.mjs"
+  ],
+  "dependencies": {
+    "yaml": "2.8.1",
+    "remark-parse": "11.0.0",
+    "unified": "11.0.5",
+    "zod": "4.6.7",
+    "@codemirror/view": "6.38.6",
+    "@codemirror/state": "6.5.2",
+    "@codemirror/lang-markdown": "6.3.4",
+    "@phosphorco/bb-identity": "0.2.1",
+    "@codemirror/language": "6.13.1",
+    "@lezer/highlight": "1.2.5"
+  },
+  "devDependencies": {
+    "@get-bb/plugin-sdk": "0.6.52",
+    "@types/node": "^22",
+    "@types/react": "19.2.2",
+    "@types/react-dom": "19.2.2",
+    "@types/better-sqlite3": "^7.6.12",
+    "better-sqlite3": "^12.0.0",
+    "react": "19.2.1",
+    "react-dom": "19.2.1",
+    "typescript": "^5.9.3",
+    "hono": "^4.11.9",
+    "@playwright/test": "1.63.0",
+    "tsx": "4.20.6",
+    "bb-app": "0.46.2-nightly.39036585709.1"
+  },
+  "scripts": {
+    "build": "node tools/build.mjs",
+    "typecheck": "tsc --noEmit",
+    "test": "node tools/oracle.mjs all",
+    "oracle:scaffold": "node tools/oracle.mjs scaffold",
+    "oracle:sdk": "node tools/oracle.mjs sdk",
+    "oracle:sdk-ui": "node tools/oracle.mjs sdk-ui",
+    "oracle:contracts": "node tools/oracle.mjs contracts",
+    "oracle:witnesses": "node tools/oracle.mjs witnesses",
+    "oracle:evaluation": "node tools/oracle.mjs evaluation",
+    "oracle:files": "node tools/oracle.mjs files",
+    "oracle:state": "node tools/oracle.mjs state",
+    "oracle:suites": "node tools/oracle.mjs suites",
+    "oracle:ui": "node tools/oracle.mjs ui",
+    "oracle:admission": "node tools/oracle.mjs admission",
+    "oracle:receipts": "node tools/oracle.mjs receipts",
+    "oracle:ui-suite": "node tools/oracle.mjs ui-suite",
+    "oracle:parity": "node tools/oracle.mjs parity",
+    "oracle:recovery": "node tools/oracle.mjs recovery",
+    "oracle:composition": "node tools/oracle.mjs composition",
+    "oracle:capability-harness": "node tools/oracle.mjs capability-harness",
+    "oracle:delivery": "node tools/oracle.mjs delivery",
+    "oracle:repository": "node tools/repository.mjs"
+  }
+}

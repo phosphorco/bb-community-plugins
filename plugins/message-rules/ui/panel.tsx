@@ -1,0 +1,1133 @@
+import {
+  lazy,
+  Suspense,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
+import type { ReactNode } from "react";
+import type { Client, Draft, Snapshot } from "./types.ts";
+import {
+  confirmsWrite,
+  operationKey,
+  reconcileDrafts,
+  keepNewerSavedInputs,
+  settleDraft,
+  type WriteIntent,
+} from "./writes.ts";
+import { hasRelevantDrafts } from "./drafts.ts";
+import { RuleEditor, GroupEditor } from "./rule-editor.tsx";
+import {
+  newRule,
+  newGroup,
+  defaultConnection,
+  fileLocation,
+} from "../contracts/model.ts";
+import type { Rule, RuleGroup, FileLocation } from "../contracts/model.ts";
+import { fixtureTemplate } from "../contracts/template.ts";
+const CodeEditor = lazy(() => import("./editor.tsx"));
+const statusLabel = {
+  pass: "Passed",
+  fail: "Failed",
+  error: "Error",
+  unknown: "Unresolved",
+};
+export type PanelProps = {
+  client: Client;
+  projectId: string | null;
+  projects: { id: string; name: string }[];
+  selectProject: (id: string) => void;
+  subPath: string;
+  navigate: (path: string) => void;
+  refreshSignal: number;
+  discoverFiles?: boolean;
+  drafts: Map<string, Draft>;
+};
+export function Panel({
+  client,
+  projectId,
+  projects,
+  selectProject,
+  subPath,
+  navigate,
+  refreshSignal,
+  discoverFiles = true,
+  drafts,
+}: PanelProps) {
+  const [snapshot, setSnapshot] = useState<Snapshot | null>(null),
+    [readError, setReadError] = useState<string | null>(null),
+    [writeError, setWriteError] = useState<{
+      message: string;
+      operation: string;
+      attempt?: number;
+      intent?: WriteIntent;
+      dialog?: "add" | "connection";
+    } | null>(null),
+    [busy, setBusy] = useState(false),
+    [draftRevision, setDraftRevision] = useState(0),
+    [connectionOpen, setConnectionOpen] = useState(false),
+    [adding, setAdding] = useState<"rule" | "test" | "group" | null>(null),
+    [addName, setAddName] = useState(""),
+    [addError, setAddError] = useState<string | null>(null),
+    [creationLocation, setCreationLocation] = useState<FileLocation | null>(
+      null,
+    ),
+    [readAttempt, setReadAttempt] = useState(0);
+  const latestSnapshot = useRef<Snapshot | null>(null);
+  const acceptSnapshot = useCallback((incoming: Snapshot) => {
+    const next = keepNewerSavedInputs(latestSnapshot.current, incoming);
+    latestSnapshot.current = next;
+    setSnapshot(next);
+    return next;
+  }, []);
+  const readGeneration = useRef(0),
+    mounted = useRef(true),
+    scope = useRef(projectId),
+    loadedScope = useRef(projectId),
+    mutationAttempt = useRef(0),
+    lastSignal = useRef(refreshSignal),
+    fullRead = useRef<{
+      projectId: string;
+      promise: Promise<Snapshot | undefined>;
+    } | null>(null);
+  scope.current = projectId;
+  const p = snapshot?.project;
+  const refresh = useCallback(
+    (discover = true): Promise<Snapshot | undefined> => {
+      if (!projectId) return Promise.resolve(undefined);
+      if (!discover && fullRead.current?.projectId === projectId)
+        return fullRead.current.promise;
+      const pending = (async () => {
+        const generation = ++readGeneration.current;
+        try {
+          const incoming = await client.call("snapshot", {
+            projectId,
+            discoverFiles: discover,
+          });
+          if (
+            mounted.current &&
+            scope.current === projectId &&
+            generation === readGeneration.current
+          ) {
+            const next = acceptSnapshot(incoming);
+            if (reconcileDrafts(drafts, next)) setDraftRevision((n) => n + 1);
+            setWriteError((old) =>
+              old?.intent && confirmsWrite(old.intent, next) ? null : old,
+            );
+            setReadError(null);
+            setReadAttempt((n) =>
+              next.readError ? (discover ? n + 1 : n) : 0,
+            );
+            return next;
+          }
+        } catch (e) {
+          if (
+            mounted.current &&
+            scope.current === projectId &&
+            generation === readGeneration.current
+          ) {
+            setReadError(String(e));
+            setReadAttempt((n) => n + 1);
+          }
+        }
+      })();
+      if (discover) {
+        fullRead.current = { projectId, promise: pending };
+        void pending
+          .finally(() => {
+            if (fullRead.current?.promise === pending) fullRead.current = null;
+          })
+          .catch(() => {});
+      }
+      return pending;
+    },
+    [client, projectId, drafts, acceptSnapshot],
+  );
+  useEffect(() => {
+    mounted.current = true;
+    if (loadedScope.current !== projectId) {
+      loadedScope.current = projectId;
+      setWriteError(null);
+      setReadError(null);
+      setReadAttempt(0);
+      setBusy(false);
+    }
+    latestSnapshot.current = null;
+    setSnapshot(null);
+    void refresh();
+    return () => {
+      mounted.current = false;
+      readGeneration.current++;
+    };
+  }, [refresh]);
+  useEffect(() => {
+    if (lastSignal.current === refreshSignal) return;
+    lastSignal.current = refreshSignal;
+    void refresh(discoverFiles);
+  }, [refresh, refreshSignal, discoverFiles]);
+  useEffect(() => {
+    const handler = () => {
+      if (!document.hidden) void refresh();
+    };
+    document.addEventListener("visibilitychange", handler);
+    return () => document.removeEventListener("visibilitychange", handler);
+  }, [refresh]);
+  const hasReadFailure = !!(readError || snapshot?.readError);
+  useEffect(() => {
+    if (!hasReadFailure || busy || document.hidden) return;
+    const timer = setTimeout(
+      () => {
+        if (!document.hidden) void refresh();
+      },
+      Math.min(15000, 1000 * 2 ** Math.min(readAttempt, 4)),
+    );
+    return () => clearTimeout(timer);
+  }, [hasReadFailure, readAttempt, busy, refresh]);
+  const updateDraft = () => setDraftRevision((x) => x + 1);
+  const key = (kind: string, id: string) => projectId + ":" + kind + ":" + id;
+  const selectedType = subPath.startsWith("group/")
+      ? "group"
+      : subPath.startsWith("rule/")
+        ? "rule"
+        : subPath.startsWith("test/")
+          ? "test"
+          : null,
+    id = decodeURIComponent(subPath.slice(subPath.indexOf("/") + 1));
+  const selectedGroup =
+    selectedType === "group" ? p?.groups.find((g) => g.id === id) : null;
+  const selectedRule =
+      selectedType === "rule" ? p?.rules.find((x) => x.id === id) : null,
+    selectedTest =
+      selectedType === "test"
+        ? p?.occurrences.find((x) => x.occurrenceId === id)
+        : null;
+  const selectedKey = selectedGroup
+    ? key("group", selectedGroup.id)
+    : selectedRule
+      ? key("rule", selectedRule.id)
+      : selectedTest
+        ? key("test", selectedTest.occurrenceId)
+        : null;
+  const selectedSource = selectedGroup
+    ? JSON.stringify(selectedGroup)
+    : selectedRule
+      ? JSON.stringify(selectedRule)
+      : (selectedTest?.source ?? "");
+  const currentDraft = selectedKey ? drafts.get(selectedKey) : undefined;
+  const current = currentDraft?.value ?? selectedSource;
+  const dirty = current !== selectedSource;
+  const relevant = hasRelevantDrafts(projectId, p, drafts);
+  const run = snapshot?.run,
+    stale = !!run && run.frozen.basis !== snapshot?.basis;
+  const pass = run?.results.filter((x) => x.status === "pass").length ?? 0,
+    total =
+      run?.frozen.denominator ??
+      p?.occurrences.filter((x) => x.enabled).length ??
+      0;
+  const result = selectedTest
+    ? run?.results.find((x) => x.occurrenceId === selectedTest.occurrenceId)
+    : undefined;
+  function edit(value: string) {
+    if (!selectedKey) return;
+    const old = drafts.get(selectedKey);
+    drafts.set(selectedKey, {
+      ...old,
+      value,
+      base: old?.base ?? selectedSource,
+      hash: old?.hash ?? selectedTest?.hash ?? null,
+      location:
+        old?.location ??
+        (selectedTest && p ? fileLocation(p.config) : undefined),
+      kind: selectedGroup ? "group" : selectedRule ? "rule" : "test",
+      enabled:
+        selectedGroup?.enabled ??
+        selectedRule?.enabled ??
+        selectedTest?.enabled ??
+        false,
+    });
+    updateDraft();
+  }
+  async function action(
+    method: string,
+    input: Record<string, unknown>,
+    dialog?: "add" | "connection",
+  ) {
+    if (!projectId) return;
+    ++readGeneration.current;
+    const attempt = ++mutationAttempt.current;
+    const intent: WriteIntent = { projectId, method, input };
+    const operation = operationKey(intent);
+    setBusy(true);
+    try {
+      const next = await client.call(method, { projectId, ...input });
+      if (!mounted.current || scope.current !== projectId) return next;
+      acceptSnapshot(next);
+      if (reconcileDrafts(drafts, next)) updateDraft();
+      // Acknowledged saved inputs are presented immediately; delayed reads cannot regress them.
+      setWriteError((old) =>
+        old?.operation === operation && (old.attempt ?? 0) <= attempt
+          ? null
+          : old,
+      );
+      return next;
+    } catch (e) {
+      if (mounted.current && scope.current === projectId)
+        setWriteError((old) =>
+          old?.operation === operation && (old.attempt ?? 0) > attempt
+            ? old
+            : {
+                message: e instanceof Error ? e.message : String(e),
+                operation,
+                attempt,
+                intent,
+                dialog,
+              },
+        );
+      // Read the authoritative revisions without replaying the failed write.
+      // Its error remains separate until the same write is confirmed.
+      if (mounted.current && scope.current === projectId) {
+        const next = await refresh();
+        if (next && confirmsWrite(intent, next)) return next;
+      }
+      return undefined;
+    } finally {
+      if (mounted.current && scope.current === projectId) setBusy(false);
+    }
+  }
+  async function save() {
+    if (!p || !selectedKey) return;
+    const method = selectedGroup
+      ? "saveGroup"
+      : selectedRule
+        ? "saveRule"
+        : "saveFile";
+    const input = selectedGroup
+      ? { revision: p.revision, group: JSON.parse(current) }
+      : selectedRule
+        ? { revision: p.revision, rule: JSON.parse(current) }
+        : {
+            path: selectedTest!.path,
+            source: current,
+            hash: currentDraft?.hash ?? selectedTest!.hash,
+            location: currentDraft?.location ?? fileLocation(p.config),
+          };
+    const pending = {
+      submitted: current,
+      intent: { projectId: projectId!, method, input },
+    };
+    const draft = drafts.get(selectedKey);
+    if (draft) drafts.set(selectedKey, { ...draft, pending });
+    const next = await action(method, input);
+    if (next) {
+      settleDraft(drafts, selectedKey, pending, next, true);
+      if (mounted.current && scope.current === projectId) updateDraft();
+    }
+  }
+  const select = (kind: string, id: string) =>
+    navigate(kind + "/" + encodeURIComponent(id));
+  return (
+    <div className="mr-root" data-draft-revision={draftRevision}>
+      <header className="mr-header">
+        <h1>Message Rules</h1>
+        <div className="mr-toolbar">
+          <label className="mr-project">
+            <span className="mr-sr">Project</span>
+            <select
+              aria-label="Project"
+              value={projectId ?? ""}
+              onChange={(e) => selectProject(e.target.value)}
+            >
+              <option value="">Choose project</option>
+              {projects.map((x) => (
+                <option key={x.id} value={x.id}>
+                  {x.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <span className="mr-count" role="status">
+            {run?.status === "running"
+              ? "Running…"
+              : run
+                ? total
+                  ? `${pass} / ${total} passed${stale ? " · Stale" : ""}`
+                  : `No enabled tests${stale ? " · Stale" : ""}`
+                : `${total} enabled`}
+          </span>
+          <button
+            className="mr-primary"
+            disabled={busy || !p || relevant || run?.quiescent === false}
+            aria-describedby={relevant ? "mr-draft-reason" : undefined}
+            onClick={() =>
+              void action("startSuite", {
+                requestId: crypto.randomUUID(),
+                basis: snapshot!.basis,
+                hasRelevantDrafts: relevant,
+              })
+            }
+          >
+            ▶ Test
+          </button>
+        </div>
+      </header>
+      <p className="mr-notice" role="status">
+        Preview/observe · Message filtering is inactive. Group scopes apply to
+        saved tests; no queue or sender effects are enabled.
+      </p>
+      {relevant && (
+        <p className="mr-notice" id="mr-draft-reason">
+          Save or discard group, enabled rule and test drafts before Test.
+        </p>
+      )}
+      {(readError || snapshot?.readError) && (
+        <p className="mr-error" role="alert">
+          {readError || snapshot?.readError}{" "}
+          <button onClick={() => void refresh()}>Retry read</button>
+        </p>
+      )}
+      {writeError &&
+        !(adding && writeError.dialog === "add") &&
+        !(connectionOpen && writeError.dialog === "connection") && (
+          <p className="mr-error" role="alert">
+            {writeError.message}{" "}
+            <button onClick={() => void refresh()}>
+              Read current saved inputs
+            </button>
+          </p>
+        )}
+      {!!snapshot?.unresolved.length && (
+        <p className="mr-notice" role="status">
+          {snapshot.unresolved.length} prior call outcome(s) remain unknown and
+          reserved against the suite call limit. An explicit new Test does not
+          replay them.
+        </p>
+      )}
+      {run?.error && (
+        <p className="mr-error" role="status">
+          {run.error}
+        </p>
+      )}
+      <div className="mr-workspace">
+        <aside className="mr-list" aria-label="Rules and tests">
+          <div className="mr-list-group">
+            <div className="mr-section-heading">
+              <h2>Rules</h2>
+              <button
+                className="mr-link"
+                disabled={!p || busy}
+                onClick={() => {
+                  setAdding("group");
+                  setAddError(null);
+                  setAddName("");
+                }}
+              >
+                + Group
+              </button>
+              <button
+                className="mr-link"
+                disabled={!p?.groups.length || busy}
+                onClick={() => {
+                  setAdding("rule");
+                  setAddError(null);
+                  setAddName("");
+                }}
+              >
+                + Add
+              </button>
+            </div>
+            {p?.groups
+              .slice()
+              .sort((a, b) => a.order - b.order || a.id.localeCompare(b.id))
+              .map((g) => (
+                <div className="mr-rule-group" key={g.id}>
+                  <InboxRow
+                    name={g.title}
+                    selected={selectedGroup?.id === g.id}
+                    enabled={g.enabled}
+                    kind="group"
+                    onSelect={() => select("group", g.id)}
+                    onToggle={() =>
+                      void action("saveGroup", {
+                        revision: p.revision,
+                        group: { ...g, enabled: !g.enabled },
+                      })
+                    }
+                    disabled={busy}
+                  />
+                  <div className="mr-child-rules">
+                    {p.rules
+                      .filter((r) => r.groupId === g.id)
+                      .sort(
+                        (a, b) => a.order - b.order || a.id.localeCompare(b.id),
+                      )
+                      .map((r) => (
+                        <InboxRow
+                          key={r.id}
+                          name={r.title}
+                          selected={selectedRule?.id === r.id}
+                          enabled={r.enabled}
+                          kind="rule"
+                          onSelect={() => select("rule", r.id)}
+                          onToggle={() =>
+                            void action("saveRule", {
+                              revision: p.revision,
+                              rule: { ...r, enabled: !r.enabled },
+                            })
+                          }
+                          disabled={busy}
+                        />
+                      ))}
+                  </div>
+                </div>
+              ))}
+            {!p?.rules.length && (
+              <p className="mr-note">Add a rule to get started.</p>
+            )}
+          </div>
+          <div className="mr-list-group">
+            <div className="mr-section-heading">
+              <h2>Tests</h2>
+              <button
+                className="mr-link"
+                disabled={!p || busy}
+                onClick={() => {
+                  setAdding("test");
+                  setAddError(null);
+                  setCreationLocation(p ? fileLocation(p.config) : null);
+                  setAddName("");
+                }}
+              >
+                + Add
+              </button>
+            </div>
+            {p?.occurrences.map((o) => {
+              const r = run?.results.find(
+                (x) => x.occurrenceId === o.occurrenceId,
+              );
+              const draft = drafts.get(key("test", o.occurrenceId));
+              const edited = !!draft && draft.value !== draft.base;
+              return (
+                <InboxRow
+                  key={o.occurrenceId}
+                  name={o.path}
+                  selected={selectedTest?.occurrenceId === o.occurrenceId}
+                  enabled={o.enabled}
+                  kind="test"
+                  status={
+                    !o.enabled
+                      ? "disabled"
+                      : edited
+                        ? "draft"
+                        : stale
+                          ? "stale"
+                          : o.error
+                            ? "error"
+                            : (r?.status ?? "untested")
+                  }
+                  onSelect={() => select("test", o.occurrenceId)}
+                  onToggle={() =>
+                    void action("toggleTest", {
+                      revision: p.revision,
+                      occurrenceId: o.occurrenceId,
+                      enabled: !o.enabled,
+                    })
+                  }
+                  disabled={busy}
+                />
+              );
+            })}
+            {!p?.occurrences.length && (
+              <p className="mr-note">Saved Markdown tests appear here.</p>
+            )}
+          </div>
+          <button
+            className="mr-link mr-connection"
+            onClick={() => setConnectionOpen(true)}
+          >
+            ♧ JEV connection
+          </button>
+        </aside>
+        <section className="mr-inspector" aria-label="Rule and test editor">
+          {selectedGroup || selectedRule || selectedTest ? (
+            <>
+              <div className="mr-editor-header">
+                <h2>
+                  <span aria-hidden="true">▤</span>{" "}
+                  {selectedGroup?.title ??
+                    selectedRule?.title ??
+                    selectedTest?.path}
+                  {dirty && <span className="mr-draft"> · Draft</span>}
+                </h2>
+                <div className="mr-inline">
+                  {dirty && (
+                    <>
+                      <button
+                        disabled={busy}
+                        onClick={() => {
+                          drafts.delete(selectedKey!);
+                          updateDraft();
+                        }}
+                      >
+                        Discard
+                      </button>
+                      <button
+                        className="mr-primary"
+                        disabled={busy}
+                        onClick={() => void save()}
+                      >
+                        Save
+                      </button>
+                    </>
+                  )}
+                  {(selectedRule || selectedGroup) && (
+                    <details className="mr-menu">
+                      <summary
+                        aria-label={
+                          selectedGroup ? "Group actions" : "Rule actions"
+                        }
+                      >
+                        •••
+                      </summary>
+                      <button
+                        onClick={() =>
+                          void action(
+                            selectedGroup ? "deleteGroup" : "deleteRule",
+                            {
+                              revision: p!.revision,
+                              ...(selectedGroup
+                                ? { groupId: selectedGroup.id }
+                                : { ruleId: selectedRule!.id }),
+                            },
+                          ).then((next) => {
+                            if (next) navigate("");
+                          })
+                        }
+                      >
+                        Delete {selectedGroup ? "group" : "rule"}
+                      </button>
+                    </details>
+                  )}
+                </div>
+              </div>
+              {selectedGroup ? (
+                <GroupEditor
+                  group={JSON.parse(current) as RuleGroup}
+                  onChange={(g) => edit(JSON.stringify(g))}
+                />
+              ) : selectedRule ? (
+                <RuleEditor
+                  groups={p!.groups}
+                  rule={JSON.parse(current) as Rule}
+                  onChange={(rule) => edit(JSON.stringify(rule))}
+                />
+              ) : (
+                <div className="mr-test-split">
+                  <div className="mr-source">
+                    <Suspense
+                      fallback={
+                        <textarea
+                          aria-label="Test source"
+                          value={current}
+                          onChange={(e) => edit(e.target.value)}
+                        />
+                      }
+                    >
+                      <CodeEditor
+                        label="Test source"
+                        value={current}
+                        onChange={edit}
+                      />
+                    </Suspense>
+                  </div>
+                  <section
+                    className="mr-results"
+                    aria-label="Selected test results"
+                  >
+                    <h2
+                      className={
+                        result?.status === "fail" || result?.status === "error"
+                          ? "mr-negative"
+                          : result?.status === "pass"
+                            ? "mr-positive"
+                            : ""
+                      }
+                    >
+                      {dirty
+                        ? "Draft · not tested"
+                        : stale
+                          ? "Stale result"
+                          : result
+                            ? statusLabel[result.status]
+                            : selectedTest?.error
+                              ? "Error"
+                              : "Not tested"}
+                    </h2>
+                    <p>
+                      {dirty
+                        ? "Results below belong to the saved source. Save or discard this draft before Test."
+                        : (selectedTest?.error ??
+                          result?.reason ??
+                          "Run Test to evaluate the saved source.")}
+                    </p>
+                    {result?.evaluation && (
+                      <>
+                        {result.evaluation.groups?.map((g) => (
+                          <p className="mr-note" key={g.id}>
+                            {g.title} ·{" "}
+                            {
+                              {
+                                "in-scope": "In scope",
+                                "outside-scope": "Outside scope",
+                                disabled: "Disabled",
+                                "scope-unavailable": "Scope unavailable",
+                              }[g.status]
+                            }
+                          </p>
+                        ))}
+                        <h3>Rule results</h3>
+                        <table>
+                          <tbody>
+                            {result.evaluation.rules.map((r) => (
+                              <tr key={r.id}>
+                                <th scope="row">{r.title}</th>
+                                <td>
+                                  {r.status === "not-applicable"
+                                    ? "Not applicable"
+                                    : r.status === "unknown"
+                                      ? "Unresolved"
+                                      : r.status === "reject"
+                                        ? "Rejected"
+                                        : "Allowed"}
+                                </td>
+                                <td>
+                                  <button
+                                    className="mr-link"
+                                    onClick={() => select("rule", r.id)}
+                                  >
+                                    Open
+                                  </button>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                        <h3>Advice</h3>
+                        {result.evaluation.advice.length ? (
+                          result.evaluation.advice.map((a) => (
+                            <p key={a.ruleIds.join(",")}>{a.text}</p>
+                          ))
+                        ) : (
+                          <p className="mr-note">None returned.</p>
+                        )}
+                        <details>
+                          <summary>Observations</summary>
+                          <pre>
+                            {JSON.stringify(result.evaluation, null, 2)}
+                          </pre>
+                        </details>
+                      </>
+                    )}
+                  </section>
+                </div>
+              )}
+            </>
+          ) : (
+            <div className="mr-empty">
+              <h2>
+                {p
+                  ? "Select a rule or saved test"
+                  : "Choose a project and test directory"}
+              </h2>
+              <p>
+                Rules above, saved tests below. Selecting either opens it here.
+              </p>
+              {!p && (
+                <button
+                  className="mr-link"
+                  onClick={() => setConnectionOpen(true)}
+                >
+                  Set up Message Rules
+                </button>
+              )}
+            </div>
+          )}
+        </section>
+      </div>
+      {run?.status === "running" && (
+        <button
+          className="mr-cancel"
+          onClick={() => void action("cancelSuite", { runId: run.id })}
+        >
+          Cancel run
+        </button>
+      )}
+      <span className="mr-sr" role="status" aria-live="polite">
+        {run && run.status !== "running"
+          ? `Test ${run.status}. ${pass} of ${total} passed.`
+          : ""}
+      </span>
+      {adding && (
+        <Modal
+          label={
+            adding === "group"
+              ? "Add group"
+              : adding === "rule"
+                ? "Add rule"
+                : "Add test"
+          }
+          close={() => setAdding(null)}
+        >
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (!p) return;
+              const id = addName
+                .toLowerCase()
+                .replace(/\.md$/, "")
+                .replace(/[^a-z0-9-]/g, "-");
+              if (!/^[a-z][a-z0-9-]{0,79}$/.test(id)) {
+                setAddError("Use a name beginning with a letter.");
+                return;
+              }
+              const creation =
+                adding === "group"
+                  ? action(
+                      "saveGroup",
+                      {
+                        revision: p.revision,
+                        group: {
+                          ...newGroup(id),
+                          title: addName,
+                          order: p.groups.length,
+                          match: {
+                            kind: "all",
+                            children: [
+                              {
+                                kind: "condition",
+                                field: "project_id",
+                                operator: "equals",
+                                value: projectId!,
+                                insensitive: false,
+                              },
+                              {
+                                kind: "condition",
+                                field: "destination_thread_id",
+                                operator: "equals",
+                                value: "",
+                                insensitive: false,
+                              },
+                            ],
+                          },
+                        },
+                      },
+                      "add",
+                    )
+                  : adding === "rule"
+                    ? action(
+                        "saveRule",
+                        {
+                          revision: p.revision,
+                          rule: {
+                            ...newRule(
+                              id,
+                              selectedGroup?.id ?? p.groups[0]!.id,
+                            ),
+                            title: addName,
+                            order: p.rules.length,
+                          },
+                        },
+                        "add",
+                      )
+                    : action(
+                        "saveFile",
+                        {
+                          path: id + ".md",
+                          source: fixtureTemplate(id),
+                          hash: null,
+                          location: creationLocation,
+                        },
+                        "add",
+                      );
+              void creation.then((next) => {
+                if (!next) return;
+                setAddError(null);
+                setAdding(null);
+                const o = next.project?.occurrences.find(
+                  (x) => x.path === id + ".md",
+                );
+                select(
+                  adding === "group"
+                    ? "group"
+                    : adding === "rule"
+                      ? "rule"
+                      : "test",
+                  adding === "test" ? o!.occurrenceId : id,
+                );
+              });
+            }}
+          >
+            <h2>
+              {adding === "group"
+                ? "Add group"
+                : adding === "rule"
+                  ? "Add rule"
+                  : "Add test"}
+            </h2>
+            <label>
+              Name{" "}
+              <input
+                autoFocus
+                required
+                value={addName}
+                onChange={(e) => {
+                  setAddName(e.target.value);
+                  setAddError(null);
+                }}
+              />
+            </label>
+            {(addError || writeError?.dialog === "add") && (
+              <p role="alert" className="mr-error">
+                {addError ?? writeError?.message}
+              </p>
+            )}
+            <div className="mr-inline">
+              <button type="button" onClick={() => setAdding(null)}>
+                Cancel
+              </button>
+              <button className="mr-primary" disabled={busy}>
+                Add
+              </button>
+            </div>
+          </form>
+        </Modal>
+      )}
+      {connectionOpen && (
+        <ConnectionDialog
+          snapshot={snapshot}
+          projectId={projectId}
+          error={
+            writeError?.dialog === "connection" ? writeError.message : null
+          }
+          close={() => setConnectionOpen(false)}
+          save={async (values) => {
+            const next = await action("configure", values, "connection");
+            if (next) setConnectionOpen(false);
+          }}
+        />
+      )}
+    </div>
+  );
+}
+function InboxRow({
+  name,
+  selected,
+  enabled,
+  kind,
+  status,
+  onSelect,
+  onToggle,
+  disabled,
+}: {
+  name: string;
+  selected: boolean;
+  enabled: boolean;
+  kind: string;
+  status?: string;
+  onSelect: () => void;
+  onToggle: () => void;
+  disabled: boolean;
+}) {
+  return (
+    <div className={"mr-row" + (selected ? " mr-selected" : "")}>
+      <button
+        className="mr-row-select"
+        onClick={onSelect}
+        aria-current={selected ? "page" : undefined}
+      >
+        {kind === "test" && (
+          <span className={"mr-status mr-status-" + status} aria-label={status}>
+            {status === "pass"
+              ? "✓"
+              : status === "fail" || status === "error"
+                ? "⊗"
+                : status === "unknown"
+                  ? "?"
+                  : "−"}
+          </span>
+        )}
+        <span>{name}</span>
+      </button>
+      <button
+        role="switch"
+        aria-checked={enabled}
+        aria-label={"Enable " + name}
+        className="mr-switch"
+        disabled={disabled}
+        onClick={onToggle}
+      >
+        <span />
+      </button>
+    </div>
+  );
+}
+function ConnectionDialog({
+  snapshot,
+  projectId,
+  close,
+  save,
+  error,
+}: {
+  snapshot: Snapshot | null;
+  projectId: string | null;
+  close: () => void;
+  save: (v: Record<string, unknown>) => Promise<void>;
+  error: string | null;
+}) {
+  const [host, setHost] = useState(snapshot?.project?.config.hostId ?? ""),
+    [root, setRoot] = useState(snapshot?.project?.config.root ?? ""),
+    [config, setConfig] = useState(
+      snapshot?.project?.config.connection ?? defaultConnection,
+    );
+
+  return (
+    <Modal label="JEV connection" close={close}>
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          void save({
+            revision: snapshot?.project?.revision ?? null,
+            hostId: host,
+            root,
+            connection: config,
+          });
+        }}
+      >
+        <h2>JEV connection</h2>
+        <p>
+          {snapshot?.connection.mode === "injected"
+            ? "Controlled test transport is active."
+            : snapshot?.connection.configured
+              ? "Message Rules API key is configured."
+              : "Add your Message Rules API key in Settings → Plugins → Message Rules."}
+        </p>
+        {!snapshot?.connection.tokenAccounting && (
+          <p>
+            Context fit is checked by JEV. Byte and call limits are engineering
+            bounds, not exact token counts. An over-limit response is unresolved
+            and may incur spend; no automatic retry.
+          </p>
+        )}
+        <label>
+          Host ID{" "}
+          <input
+            autoFocus
+            required
+            value={host}
+            onChange={(e) => setHost(e.target.value)}
+          />
+        </label>
+        <label>
+          Test directory{" "}
+          <input
+            required
+            placeholder="/absolute/project/.bb/message-rules/tests"
+            value={root}
+            onChange={(e) => setRoot(e.target.value)}
+          />
+        </label>
+        <label>
+          Model{" "}
+          <select
+            value={config.model}
+            onChange={(e) =>
+              setConfig({
+                ...config,
+                model: e.target.value as typeof config.model,
+              })
+            }
+          >
+            <option>jev-1.14.0</option>
+            <option>jev-1.13.0</option>
+          </select>
+        </label>
+        <details>
+          <summary>Run limits</summary>
+          {(
+            [
+              "maxCalls",
+              "maxWireBytes",
+              "timeoutMs",
+              "maxResponseBytes",
+            ] as const
+          ).map((k) => (
+            <label key={k}>
+              {k}
+              <input
+                type="number"
+                min={1}
+                value={config[k]}
+                onChange={(e) =>
+                  setConfig({ ...config, [k]: Number(e.target.value) })
+                }
+              />
+            </label>
+          ))}
+        </details>
+        <p className="mr-note">
+          Saved files use hash-guarded replacement. An arbitrary external editor
+          can still race a save. No live inference quality or cost has been
+          measured.
+        </p>
+        <p className="mr-note">{snapshot?.delivery.reason}</p>
+        {error && (
+          <p role="alert" className="mr-error">
+            {error}
+          </p>
+        )}
+        <div className="mr-inline">
+          <button type="button" onClick={close}>
+            Close
+          </button>
+          <button className="mr-primary" disabled={!projectId}>
+            Save
+          </button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+function Modal({
+  label,
+  close,
+  children,
+}: {
+  label: string;
+  close: () => void;
+  children: ReactNode;
+}) {
+  const ref = useRef<HTMLDialogElement>(null);
+  useLayoutEffect(() => {
+    const previous = document.activeElement as HTMLElement | null;
+    ref.current?.showModal();
+    return () => {
+      ref.current?.close();
+      if (previous?.isConnected) previous.focus();
+    };
+  }, []);
+  return (
+    <dialog
+      ref={ref}
+      className="mr-dialog"
+      aria-label={label}
+      onCancel={(event) => {
+        event.preventDefault();
+        close();
+      }}
+    >
+      {children}
+    </dialog>
+  );
+}
