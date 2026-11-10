@@ -1,10 +1,19 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { isValidElement, type ReactNode } from "react";
-import { Predicates, RuleEditor } from "../../ui/rule-editor.tsx";
+import { createElement, isValidElement, type ReactNode } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { Predicates, RuleEditor as ProductRuleEditor } from "../../ui/rule-editor.tsx";
 import { match, validateRule, type Predicate } from "../../contracts/model.ts";
 import { captured, jevRule, answer, count } from "../helpers.ts";
 import { evaluate } from "../../evaluation/evaluator.ts";
+// Capture handler-bearing product elements inside a real React render so its
+// mounted-instance hooks run under React, rather than calling hooks standalone.
+function RuleEditor(props: Parameters<typeof ProductRuleEditor>[0]) {
+  let tree: ReactNode;
+  function Capture() { tree = ProductRuleEditor(props); return null; }
+  renderToStaticMarkup(createElement(Capture));
+  return tree!;
+}
 function nodes(node: ReactNode): any[] {
   if (Array.isArray(node)) return node.flatMap(nodes);
   if (!isValidElement(node)) return [];

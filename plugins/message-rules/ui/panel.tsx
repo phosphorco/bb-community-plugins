@@ -102,9 +102,9 @@ export function Panel({
   scope.current = projectId;
   const p = snapshot?.project;
   const refresh = useCallback(
-    (discover = true, requestId?: string): Promise<Snapshot | undefined> => {
+    (discover = true, requestId?: string, runId?: string): Promise<Snapshot | undefined> => {
       if (!projectId) return Promise.resolve(undefined);
-      if (!requestId && !discover && fullRead.current?.projectId === projectId)
+      if (!requestId && !runId && !discover && fullRead.current?.projectId === projectId)
         return fullRead.current.promise;
       const pending = (async () => {
         const generation = ++readGeneration.current;
@@ -113,6 +113,7 @@ export function Panel({
             projectId,
             discoverFiles: discover,
             ...(requestId ? { requestId } : {}),
+            ...(runId ? { runId } : {}),
           });
           if (
             mounted.current &&
@@ -385,6 +386,7 @@ export function Panel({
         const next = await refresh(
           true,
           method === "startSuite" ? String(input.requestId) : undefined,
+          method === "cancelSuite" ? String(input.runId) : undefined,
         );
         if (next && confirmsWrite(intent, next)) return next;
       }
@@ -572,7 +574,7 @@ export function Panel({
                 ? `Running ${run.results.length} / ${total}…`
                 : run
                   ? total
-                    ? `${pass} / ${total} passed${stale ? " · Stale" : ""}${run.status !== "complete" ? " · " + (run.status === "cancelled" ? "Cancelled" : "Stopped") : ""}`
+                    ? `${relevant ? "Saved: " : ""}${pass} / ${total} passed${stale ? " · Stale" : ""}${run.status !== "complete" ? " · " + (run.status === "cancelled" ? "Cancelled" : "Stopped") : ""}`
                     : `No enabled tests${stale ? " · Stale" : ""}`
                   : `${total} enabled`}
             </span>
@@ -849,7 +851,7 @@ export function Panel({
                           : stale
                             ? "Stale result"
                             : result
-                              ? statusLabel[result.status]
+                              ? `${relevant ? "Saved · " : ""}${statusLabel[result.status]}`
                               : selectedTest?.error
                                 ? "Error"
                                 : "Not tested"}
@@ -1071,18 +1073,19 @@ export function Panel({
                       );
               void creation.then((next) => {
                 if (!next) return;
+                if (adding === "test" && !next.savedOccurrenceId) {
+                  setAddError("Test was saved but its exact identity is unavailable. Refresh before continuing; do not create it again.");
+                  return;
+                }
                 setAddError(null);
                 setAdding(null);
-                const o = next.project?.occurrences.find(
-                  (x) => x.path === id + ".md" && x.groupId === contextGroupId,
-                );
                 select(
                   adding === "group"
                     ? "group"
                     : adding === "rule"
                       ? "rule"
                       : "test",
-                  adding === "test" ? o!.occurrenceId : id,
+                  adding === "test" ? next.savedOccurrenceId! : id,
                 );
               });
             }}

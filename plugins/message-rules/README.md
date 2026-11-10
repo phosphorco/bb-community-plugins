@@ -28,13 +28,17 @@ IDs stay unchanged unless colliding. A deterministic suffix resolves collisions,
 
 Legacy test ownership is recorded in `mr_test_owners`: a unique group referenced by `expected_rules`, otherwise the first legacy group by order/ID. A source without groups gets a disabled Imported tests group. If an empty recorded legacy default is deliberately deleted before later discovery, new files are placed in a visible disabled source-scoped import group. The UI shows this choice, original project, host and directory for every selected test. **Imported tests and compatibility** explains the policy. The searchable **Test group** field and **Move test** action change organization without changing source bytes or evaluation filters. Newly discovered files without an owner appear in a disabled Imported tests group until assigned. This ownership does not limit evaluation. Fixture `project_id`, when supplied, is authoritative; otherwise imported tests keep their source project ID. New files without a known source project have unavailable project identity until explicitly authored; the catalog ID never masquerades as a BB project.
 
-A global run uses one shared call budget (minimum legacy limits on migration), one overall configured time limit, bounded responses and durable attempt reservations. With differing legacy models, the first source by ID supplies the model; original configurations remain preserved. Unknown legacy effects count against the global call limit and unquiesced legacy owners block global work. Plugin/process replacement never automatically replays paid attempts. New explicit runs retain saved bytes/revisions and the immutable denominator, cancellation and lost-ack reconciliation contracts. Start responses and read-only `snapshot` requests with `requestId` include an exact `acknowledgedRun` independently of the latest `run`, so retry A can reconcile A after B completes or discovery becomes unavailable without replacing the current display or invoking new work. An incomplete/cancelled run retains pending fixtures as untested.
+A global run uses one shared call budget (minimum legacy limits on migration), one overall configured time limit, bounded responses and durable attempt reservations. With differing legacy models, the first source by ID supplies the model; original configurations remain preserved. Unknown legacy effects count against the global call limit and unquiesced legacy owners block global work. Plugin/process replacement never automatically replays paid attempts. New explicit runs retain saved bytes/revisions and the immutable denominator, cancellation and lost-ack reconciliation contracts. Start responses and read-only `snapshot` requests with `requestId` include an exact `acknowledgedRun` independently of the latest `run`. Cancellation responses and metadata-only reads with `runId` likewise acknowledge that exact target, so retry A can reconcile A after B completes or discovery becomes unavailable without replacing the current display or invoking new work. An incomplete/cancelled run retains pending fixtures as untested.
 
 The public registry SDK is pinned to **0.6.52**, including a distinct registry
 lock entry instead of accidentally resolving the workspace's Phosphor SDK
 artifact. The build CLI is exactly `bb-app@0.46.2-nightly.39036585709.1`, whose
 SDK is 0.6.52. `@phosphorco/bb-identity@0.2.1` supplies invocation attribution;
-project data is shared, rather than personal/view-as state.
+catalog data is shared, rather than personal/view-as state.
+
+## Agent authoring
+
+The installed [message-rules skill](skills/message-rules/SKILL.md) documents the global editor and validated CLI workflow. Use `bb plugin rpc list message-rules --json` and `bb plugin rpc inspect message-rules saveRule --json` for current method descriptions and JSON schemas. Read `snapshot` with `{ "projectId": "message-rules-global", "discoverFiles": false }` through `bb plugin rpc call ... --input-file /absolute/request.json --json`. Despite its historical field name, RPC `projectId` is the catalog address, not an evaluation scope. Authorized writes use the current outer catalog revision, complete group/rule values, and exact file hashes/locations. Conflicts require rereading and reconciliation. Discoverability changes no permission or enforcement policy. `startSuite` is explicit potentially paid work; reconcile an uncertain start by reading `snapshot` with the original `requestId` and its exact `acknowledgedRun`.
 
 ## Author tests
 
@@ -94,7 +98,7 @@ rule/criterion/revision/input hash. Questions name their selected references and
 coverage; a shared state is not a confidentiality boundary. All mandatory
 questions must complete. Unavailable context, malformed answers, timeouts and
 incomplete partitions remain unresolved. Score/choice probabilities and
-confidence are retained; v1 reduction uses the configured metric, not an invented
+confidence are retained. Choice must name a highest-probability option (ties allowed); Score must agree with the weighted level mean within `0.02 × topLevel + 0.005` for independently rounded fields. Contradictions remain unknown with no final advice. These checks follow the provider [Choice](https://docs.typesafe.ai/primitives/choice#response-structure) and [Score](https://docs.typesafe.ai/primitives/score#response-structure) definitions; v1 reduction uses the configured metric, not an invented
 confidence threshold. There is no separate service question-count cap.
 
 Real HTTP transport uses `https://api.typesafe.ai/v1/systemone` with only this
@@ -106,7 +110,7 @@ When supplied, a verified counter enforces model per-request and per-question to
 ## Saved runs, drafts and recovery
 
 Test freezes exact enabled occurrence membership, source bytes/hashes, rules,
-configuration and versions before acknowledgement. Invalid/missing enabled files
+configuration and versions before acknowledgement. The absolute global deadline is checked before every partition permit as well as between fixtures. Invalid/missing enabled files
 count as error results. Disabled files are excluded. The visible total belongs
 to that captured run, even if files or switches change during execution. Current
 saved inputs with another fingerprint mark the result stale; a visible draft is
@@ -171,9 +175,9 @@ No fork or service changes are needed. Plugin installation/reload and source pub
 
 ## Rule groups and preview rollout
 
-Every rule belongs to a visible group. Edit the group Scope to select project/thread IDs or titles; enable the group independently of child switches. The group gate runs on available routing metadata before child evaluation, history capture or JEV. Outside-scope, disabled or unassigned rules perform no work and cause no effects. Missing scope metadata stays visibly unresolved and performs no work for that group. An empty All conditions predicate matches every project/thread, so prefer exact IDs for a small rollout. New groups default disabled; the Add group form starts with the selected project and a blank destination ID, which matches no normal thread until deliberately edited.
+Every rule belongs to a visible group. Edit the group Scope to select project/thread IDs or titles; enable the group independently of child switches. The group gate runs on available routing metadata before child evaluation, history capture or JEV. Outside-scope, disabled or unassigned rules perform no work and cause no effects. Missing scope metadata stays visibly unresolved and performs no work for that group. An empty All conditions predicate matches every project/thread, so prefer exact IDs for a small rollout. New groups default disabled with an empty All conditions predicate (Any project); add explicit scope before deliberately enabling a restricted rollout.
 
-Group edits have their own revisions, conflict protection, draft barriers and frozen suite membership. They stale existing results. Child predicates remain independent. Schema v1 projects migrate with a disabled “Imported rules · scope required” group; earlier immutable runs are retained and never replayed. Schema v3 adds durable attempt context: fixture occurrence/source/basis and exact rule/criterion/revision/input/partition bindings are reserved with the wire request before invocation. Fixture front matter may supply `sender_id`, `destination_id` and `project_title` for scoped tests. The project ID comes from the actual selected suite project, not fixture override.
+Group edits have their own revisions, conflict protection, draft barriers and frozen suite membership. They stale existing results. Child predicates remain independent. Schema v1 projects migrate with a disabled “Imported rules · scope required” group; earlier immutable runs are retained and never replayed. Schema v3 adds durable attempt context: fixture occurrence/source/basis and exact rule/criterion/revision/input/partition bindings are reserved with the wire request before invocation. Fixture front matter may supply `sender_id`, `destination_id` and `project_title` for scoped tests. Fixture `project_id` supplies explicit project identity; otherwise imported tests retain their source project identity. New global fixtures without it have unavailable project identity. The global catalog address is never used as a BB project.
 
 This slice is explicitly **preview/observe**: editor/testbench only, with no automatic live observer, native dispatch hooks, queue mutation, rejection or sender advice effects. A test rejection describes the fixture result. Active plugin-only install/reload and the first small scope are owner-coordinated; installing does not prove behavioral compatibility or full delivery.
 

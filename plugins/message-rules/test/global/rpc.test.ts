@@ -6,10 +6,34 @@ import { createStore } from "../../state/store.ts";
 import { createMessageRules } from "../../ui-suite-server.ts";
 import { GLOBAL_CATALOG as G } from "../../contracts/catalog.ts";
 import { defaultConnection, newGroup, newRule } from "../../contracts/model.ts";
-import { snapshotSchema } from "../../suite-rpc-contract.ts";
+import { contract, snapshotSchema } from "../../suite-rpc-contract.ts";
 import { memoryFiles, waitUntil } from "../helpers.ts";
 const bytes = (id: string) =>
   `---\nversion: 1\nid: ${id}\nexpect: reject\nexpected_rules: [both]\n---\n# Message\nhello\n\n# Expected advice\nShared advice\n`;
+test("authoring RPC discovery publishes real schemas while preserving validation and internal registration policy", async () => {
+  const fake = createFakePluginHost({ pluginId: "message-rules" });
+  const db = new Database(":memory:");
+  fake.bb.storage.database = () => db;
+  createMessageRules(fake.bb);
+  const published = fake.harness.inspection.registrations.experimental_publishedRpcMethods;
+  assert.deepEqual(published.map((m) => m.method).sort(), Object.keys(contract).sort());
+  const save = published.find((m) => m.method === "saveRule")!;
+  assert.match(save.methodDescription!, /current catalog revision/);
+  assert.ok(save.inputSchema.properties);
+  assert.match(JSON.stringify(save.inputSchema), /groupId/);
+  assert.match(JSON.stringify(save.inputSchema), /criteria/);
+  const snapshot = await fake.harness.behavior.callRpc("snapshot", { projectId: G, discoverFiles: false }) as any;
+  const before = snapshot.project.revision;
+  await assert.rejects(() => fake.harness.behavior.callRpc("saveRule", {
+    projectId: G, revision: before, rule: { id: "incomplete" },
+  }));
+  const after = await fake.harness.behavior.callRpc("snapshot", { projectId: G, discoverFiles: false }) as any;
+  assert.equal(after.project.revision, before);
+  assert.deepEqual(after.project.rules, []);
+  assert.ok(Object.values(fake.harness.inspection.registrations.hooks).every((h) => h === null));
+  await fake.harness.lifecycle.dispose();
+  db.close();
+});
 test("public global RPC: per-source discovery/recovery, group-owned save, contextual identity, one frozen run, no send or inference", async () => {
   const fake = createFakePluginHost({ pluginId: "message-rules" }),
     db = new Database(":memory:"),

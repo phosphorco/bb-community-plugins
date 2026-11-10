@@ -71,8 +71,10 @@ export function confirmsWrite(w: WriteIntent, s: Snapshot): boolean {
       (s.acknowledgedRun ?? s.run)?.requestId === w.input.requestId &&
       (s.acknowledgedRun ?? s.run)?.frozen.basis === w.input.basis
     );
-  if (w.method === "cancelSuite")
-    return s.run?.id === w.input.runId && s.run?.status !== "running";
+  if (w.method === "cancelSuite") {
+    const target = s.acknowledgedRun?.id === w.input.runId ? s.acknowledgedRun : s.run;
+    return target?.id === w.input.runId && target?.status !== "running";
+  }
   if (w.method === "deleteRule")
     return !s.project.rules.some((r) => r.id === w.input.ruleId);
   if (w.method === "deleteGroup")

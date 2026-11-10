@@ -8,13 +8,18 @@ const project = z.object({ projectId: z.string().min(1).max(200) });
 const json = z.unknown();
 export const contract = {
   snapshot: {
+    experimental_description:
+      "Read the global catalog, current saved basis, latest run and unresolved effects. Set discoverFiles false for metadata only; requestId reconciles that exact start; runId reads an exact cancellation target without starting work.",
     input: project.extend({
       discoverFiles: z.boolean().default(true),
       requestId: z.string().optional(),
+      runId: z.string().optional(),
     }),
     output: json,
   },
   configure: {
+    experimental_description:
+      "Update global connection limits and the default host/absolute fixture directory using the current catalog revision. Existing imported locations remain in place.",
     input: project.extend({
       revision: z.number().int().nullable(),
       hostId: z.string().min(1),
@@ -24,22 +29,32 @@ export const contract = {
     output: json,
   },
   saveGroup: {
+    experimental_description:
+      "Create or replace a group using the current catalog revision and complete group value. New groups should remain disabled until deliberately scoped.",
     input: project.extend({ revision: z.number().int(), group: GroupSchema }),
     output: json,
   },
   deleteGroup: {
+    experimental_description:
+      "Delete a group using the current catalog revision. Nonempty groups must be resolved first.",
     input: project.extend({ revision: z.number().int(), groupId: z.string() }),
     output: json,
   },
   saveRule: {
+    experimental_description:
+      "Create or replace a rule using the current catalog revision and complete rule value. A rule belongs to a saved group; saving does not enforce live messages.",
     input: project.extend({ revision: z.number().int(), rule: RuleSchema }),
     output: json,
   },
   deleteRule: {
+    experimental_description:
+      "Delete a rule using the current catalog revision.",
     input: project.extend({ revision: z.number().int(), ruleId: z.string() }),
     output: json,
   },
   saveFile: {
+    experimental_description:
+      "Save a direct Markdown fixture with its expected hash and exact host/root/location revision. Include occurrenceId for existing tests and groupId for new tests. Never replay an uncertain write.",
     input: project.extend({
       occurrenceId: z.string().optional(),
       groupId: z.string().optional(),
@@ -55,6 +70,8 @@ export const contract = {
     output: json,
   },
   toggleTest: {
+    experimental_description:
+      "Change enabled suite membership using the current catalog revision and stable occurrence ID. Does not rewrite fixture bytes.",
     input: project.extend({
       revision: z.number().int(),
       occurrenceId: z.string(),
@@ -63,6 +80,8 @@ export const contract = {
     output: json,
   },
   assignTest: {
+    experimental_description:
+      "Move test organization to a saved group using the current catalog revision. Ownership does not restrict evaluation or change fixture project identity.",
     input: project.extend({
       revision: z.number().int(),
       occurrenceId: z.string(),
@@ -71,6 +90,8 @@ export const contract = {
     output: json,
   },
   startSuite: {
+    experimental_description:
+      "Explicitly start Test all over every enabled saved fixture and applicable group. May invoke paid configured JEV. Supply saved basis, unique requestId and truthful draft state; reconcile unknown outcomes with snapshot requestId.",
     input: project.extend({
       requestId: z.string().min(1).max(200),
       basis: z.string(),
@@ -78,7 +99,12 @@ export const contract = {
     }),
     output: json,
   },
-  cancelSuite: { input: project.extend({ runId: z.string() }), output: json },
+  cancelSuite: {
+    experimental_description:
+      "Persist cancellation of the specified global run. Cancellation does not prove remote effects stopped and never authorizes replay.",
+    input: project.extend({ runId: z.string() }),
+    output: json,
+  },
 } as const;
 
 // Validate authoritative snapshots on both the server and browser boundaries.
@@ -227,4 +253,5 @@ const baseSnapshotSchema = z.object({
 
 export const snapshotSchema = baseSnapshotSchema.extend({
   acknowledgedRun: baseSnapshotSchema.shape.run.unwrap().optional(),
+  savedOccurrenceId: z.string().optional(),
 });

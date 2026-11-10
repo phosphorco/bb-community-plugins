@@ -6,7 +6,7 @@ import { createStore } from "../../state/store.ts";
 import { createMessageRules } from "../../ui-suite-server.ts";
 import { snapshotSchema } from "../../suite-rpc-contract.ts";
 import { GLOBAL_CATALOG as G } from "../../contracts/catalog.ts";
-import { defaultConnection, newGroup, newRule } from "../../contracts/model.ts";
+import { defaultConnection, newGroup, newRule, fileLocation } from "../../contracts/model.ts";
 import { sha256 } from "../../contracts/hash.ts";
 import { waitUntil } from "../helpers.ts";
 const fixture = (id: string, message = id) =>
@@ -233,6 +233,12 @@ test("review: lost acknowledgement A after completed B and unavailable discovery
       ),
     );
     assert.equal(retry.run!.id, b.id, "latest presentation remains B");
+    const cancelled = await h.rpc("cancelSuite", { runId: a.id });
+    assert.equal(cancelled.acknowledgedRun!.id, a.id);
+    assert.equal(cancelled.run!.id, b.id);
+    const cancellationRead = await h.rpc("snapshot", { runId: a.id, discoverFiles: false });
+    assert.ok(confirmsWrite({ projectId: G, method: "cancelSuite", input: { runId: a.id } }, cancellationRead));
+    assert.ok(!confirmsWrite({ projectId: G, method: "cancelSuite", input: { runId: "other" } }, cancellationRead));
     assert.equal(h.calls(), 0);
     assert.equal(
       (h.db.prepare("SELECT count(*) n FROM mr_runs").get() as any).n,
@@ -241,6 +247,27 @@ test("review: lost acknowledgement A after completed B and unavailable discovery
   } finally {
     await h.dispose();
   }
+});
+
+test("creating a global namesake in an empty group returns its exact identity and preserves imported owners", async () => {
+  const h = await host();
+  try {
+    let s = await h.rpc("snapshot");
+    const imports = structuredClone(s.project!.occurrences);
+    s = await h.rpc("configure", { revision: s.project!.revision, hostId: "h", root: "/global", connection: defaultConnection });
+    s = await h.rpc("saveGroup", { revision: s.project!.revision, group: newGroup("new-empty") });
+    s = await h.rpc("saveFile", { groupId: "new-empty", path: "same.md", source: fixture("new-local"), hash: null, location: fileLocation(s.project!.config) });
+    const saved = s.project!.occurrences.find(o => o.occurrenceId === s.savedOccurrenceId)!;
+    assert.ok(saved);
+    assert.equal(saved.groupId, "new-empty");
+    assert.equal(saved.path, "same.md");
+    assert.equal(saved.location!.root, "/global");
+    assert.equal(saved.source, fixture("new-local"));
+    for (const imported of imports) assert.deepEqual(s.project!.occurrences.find(o => o.occurrenceId === imported.occurrenceId), imported);
+    assert.deepEqual(h.writes, ["/global/same.md"]);
+    const reread = await h.rpc("snapshot");
+    assert.equal(reread.project!.occurrences.find(o => o.occurrenceId === saved.occurrenceId)!.groupId, "new-empty");
+  } finally { await h.dispose(); }
 });
 
 test("review: enabled tests owned by a disabled group still evaluate another applicable group, with bytes/context/location preserved", async () => {

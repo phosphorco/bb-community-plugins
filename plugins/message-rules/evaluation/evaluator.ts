@@ -239,11 +239,20 @@ export function decode(raw: unknown, p: Partition) {
         )
       )
         throw Error("Invalid score/legend.");
+      // Provider Score is the mean of its level distribution. Allow small
+      // independently rounded values, but never contradictory metrics.
+      const mean = domain.reduce((sum, k) =>
+        sum + Number(k) * (a.probabilities as Record<string, number>)[k]!, 0);
+      if (Math.abs(a.score - mean) > 0.02 * (q.criteria.length - 1) + 0.005)
+        throw Error("Inconsistent score/probabilities.");
       reject =
         q.comparison === "gte" ? a.score >= q.rejectAt : a.score <= q.rejectAt;
     } else {
       if (typeof a.choice !== "string" || !domain.includes(a.choice))
         throw Error("Invalid choice.");
+      const probabilities = a.probabilities as Record<string, number>;
+      if (domain.some((k) => probabilities[k]! > probabilities[a.choice as string]! + 1e-9))
+        throw Error("Inconsistent choice/probabilities.");
       reject = q.rejectChoices.includes(a.choice);
     }
     return { binding: b, observation: a, reject };

@@ -20,6 +20,7 @@ export function RuleEditor({
   projectLookup?: LookupState;
   onChange: (r: Rule) => void;
 }) {
+  const actionId = useId();
   const patch = (p: Partial<Rule>) => onChange({ ...rule, ...p });
   return (
     <div className="mr-rule-form">
@@ -61,7 +62,7 @@ export function RuleEditor({
       <section className="mr-form-card" aria-label="What this rule checks">
         <h3>What this rule checks</h3>
         <ActionChoices
-          id={`mr-action-${rule.id}`}
+          id={`mr-action-${actionId}`}
           value={rule.action}
           onChange={(action) => patch({ action })}
         />
