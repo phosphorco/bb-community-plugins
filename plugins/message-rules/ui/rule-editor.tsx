@@ -24,113 +24,135 @@ export function RuleEditor({
           onChange={(e) => patch({ title: e.target.value })}
         />
       </label>
-      <label className="mr-field">
-        <span>Group</span>
-        <select
-          value={rule.groupId}
-          onChange={(e) => patch({ groupId: e.target.value })}
-        >
-          {groups.map((g) => (
-            <option key={g.id} value={g.id}>
-              {g.title}
-              {!g.enabled ? " · disabled" : ""}
-            </option>
-          ))}
-        </select>
-      </label>
-      <div className="mr-field">
-        <span>Match</span>
-        <Predicates value={rule.match} onChange={(match) => patch({ match })} />
-      </div>
-      <label className="mr-field">
-        <span>Action</span>
-        <select
-          value={rule.action}
-          onChange={(e) => patch({ action: e.target.value as Rule["action"] })}
-        >
-          <option value="jev">Check with JEV</option>
-          <option value="reject">Reject with advice</option>
-          <option value="batch">Include in next batch</option>
-        </select>
-      </label>
-      {rule.action === "batch" && (
-        <p className="mr-note">
-          Saved tests show intended membership. Native all-sender delivery
-          remains unproved.
-        </p>
-      )}
-      {rule.action === "jev" && (
-        <>
-          {rule.criteria.map((q, i) => (
-            <CriterionEditor
-              key={q.id}
-              criterion={q}
-              onChange={(next) =>
-                patch({
-                  criteria: rule.criteria.map((x, n) => (n === i ? next : x)),
-                })
-              }
-              onRemove={() =>
-                patch({ criteria: rule.criteria.filter((_, n) => n !== i) })
-              }
-            />
-          ))}
-          <button
-            className="mr-link"
-            onClick={() =>
-              patch({
-                criteria: [
-                  ...rule.criteria,
-                  {
-                    id: unusedQuestionId(rule.criteria),
-                    type: "choice",
-                    instructions: "",
-                    criteria: {
-                      yes: "The condition is present.",
-                      no: "The condition is absent.",
-                    },
-                    rejectChoices: ["yes"],
-                    context: {
-                      message: true,
-                      senderHistory: 0,
-                      destinationHistory: 0,
-                      requireComplete: true,
-                    },
-                  },
-                ],
-              })
+      <section
+        className="mr-form-card mr-scope-card"
+        aria-label="When this rule applies"
+      >
+        <h3>When this rule applies</h3>
+        <label className="mr-field">
+          <span>Group</span>
+          <select
+            value={rule.groupId}
+            onChange={(e) => patch({ groupId: e.target.value })}
+          >
+            {groups.map((g) => (
+              <option key={g.id} value={g.id}>
+                {g.title}
+                {!g.enabled ? " · disabled" : ""}
+              </option>
+            ))}
+          </select>
+        </label>
+        <div className="mr-field">
+          <span>Match</span>
+          <Predicates
+            value={rule.match}
+            onChange={(match) => patch({ match })}
+          />
+        </div>
+      </section>
+      <section className="mr-form-card" aria-label="What this rule checks">
+        <h3>What this rule checks</h3>
+        <label className="mr-field">
+          <span>Action</span>
+          <select
+            value={rule.action}
+            onChange={(e) =>
+              patch({ action: e.target.value as Rule["action"] })
             }
           >
-            + Question
-          </button>
-          <label className="mr-field">
-            <span>Reject when</span>
-            <select
-              value={rule.reduction}
-              onChange={(e) =>
-                patch({ reduction: e.target.value as Rule["reduction"] })
+            <option value="jev">Check with JEV</option>
+            <option value="reject">Reject with advice</option>
+            <option value="batch">Include in next batch</option>
+          </select>
+        </label>
+        {rule.action === "batch" && (
+          <p className="mr-note">
+            Saved tests show intended membership. Native all-sender delivery
+            remains unproved.
+          </p>
+        )}
+        {rule.action === "jev" && (
+          <>
+            {rule.criteria.map((q, i) => (
+              <CriterionEditor
+                key={q.id}
+                criterion={q}
+                onChange={(next) =>
+                  patch({
+                    criteria: rule.criteria.map((x, n) => (n === i ? next : x)),
+                  })
+                }
+                onRemove={() =>
+                  patch({ criteria: rule.criteria.filter((_, n) => n !== i) })
+                }
+              />
+            ))}
+            <button
+              className="mr-link"
+              onClick={() =>
+                patch({
+                  criteria: [
+                    ...rule.criteria,
+                    {
+                      id: unusedQuestionId(rule.criteria),
+                      type: "choice",
+                      instructions: "",
+                      criteria: {
+                        yes: "The condition is present.",
+                        no: "The condition is absent.",
+                      },
+                      rejectChoices: ["yes"],
+                      context: {
+                        message: true,
+                        senderHistory: 0,
+                        destinationHistory: 0,
+                        requireComplete: true,
+                      },
+                    },
+                  ],
+                })
               }
             >
-              <option value="any">Any question matches</option>
-              <option value="all">All questions match</option>
-            </select>
+              + Question
+            </button>
+            <label className="mr-field">
+              <span>Reject when</span>
+              <select
+                value={rule.reduction}
+                onChange={(e) =>
+                  patch({ reduction: e.target.value as Rule["reduction"] })
+                }
+              >
+                <option value="any">Any question matches</option>
+                <option value="all">All questions match</option>
+              </select>
+            </label>
+          </>
+        )}
+      </section>
+      <section
+        className={
+          "mr-form-card " + (rule.action === "batch" ? "" : "mr-outcome-card")
+        }
+        aria-label="Test outcome"
+      >
+        <h3>Test outcome</h3>
+        {rule.action !== "batch" && (
+          <label className="mr-field">
+            <span>Reply to sender</span>
+            <textarea
+              rows={3}
+              value={rule.advice}
+              onChange={(e) => patch({ advice: e.target.value })}
+            />
           </label>
-        </>
-      )}
-      {rule.action !== "batch" && (
-        <label className="mr-field">
-          <span>Reply to sender</span>
-          <textarea
-            rows={3}
-            value={rule.advice}
-            onChange={(e) => patch({ advice: e.target.value })}
-          />
-        </label>
-      )}
-      <div className="mr-field">
-        <span>If uncertain</span>
-        <span>Hold for review</span>
-      </div>
+        )}
+        <div className="mr-field">
+          <span>If uncertain</span>
+          <span>Hold for review</span>
+        </div>
+      </section>
     </div>
   );
 }
@@ -512,23 +534,32 @@ export function GroupEditor({
           onChange={(e) => onChange({ ...group, title: e.target.value })}
         />
       </label>
-      <div className="mr-field">
-        <span>Scope</span>
-        <Predicates
-          scopeOnly
-          value={group.match}
-          onChange={(match) => onChange({ ...group, match })}
-        />
-      </div>
-      <p className="mr-note">
-        This scope gates every child rule before history reads or JEV. Unknown
-        metadata and outside-scope messages do no work and cause no effects. An
-        empty “All conditions” matches every project/thread.
-      </p>
-      <p className="mr-note">
-        Preview/observe only. Message delivery is unchanged; rejection and
-        sender advice are test results, not message effects.
-      </p>
+      <section
+        className="mr-form-card mr-scope-card"
+        aria-label="Where rules apply"
+      >
+        <h3>Where rules apply</h3>
+        <div className="mr-field">
+          <span>Scope</span>
+          <Predicates
+            scopeOnly
+            value={group.match}
+            onChange={(match) => onChange({ ...group, match })}
+          />
+        </div>
+        <p className="mr-note">
+          Every child rule uses this scope first. Outside-scope messages and
+          unavailable metadata skip evaluation. Empty “All conditions” matches
+          every project and thread.
+        </p>
+      </section>
+      <aside className="mr-scope-flow" aria-label="Scope evaluation order">
+        <span>Group scope</span>
+        <span aria-hidden="true">→</span>
+        <span>Child rule checks</span>
+        <span aria-hidden="true">→</span>
+        <span>Test results &amp; advice</span>
+      </aside>
     </div>
   );
 }

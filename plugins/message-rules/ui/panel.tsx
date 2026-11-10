@@ -229,6 +229,27 @@ export function Panel({
   const result = selectedTest
     ? run?.results.find((x) => x.occurrenceId === selectedTest.occurrenceId)
     : undefined;
+  const suiteTone =
+    relevant ||
+    stale ||
+    (run && run.status !== "complete") ||
+    run?.results.some((r) => r.status === "unknown")
+      ? "pending"
+      : !run || !total
+        ? "neutral"
+        : pass === total
+          ? "pass"
+          : "fail";
+  const resultTone =
+    dirty || stale || result?.status === "unknown"
+      ? "pending"
+      : result?.status === "pass"
+        ? "pass"
+        : result?.status === "fail" ||
+            result?.status === "error" ||
+            selectedTest?.error
+          ? "fail"
+          : "neutral";
   function edit(value: string) {
     if (!selectedKey) return;
     const old = drafts.get(selectedKey);
@@ -347,7 +368,7 @@ export function Panel({
               ))}
             </select>
           </label>
-          <span className="mr-count" role="status">
+          <span className={"mr-count mr-tone-" + suiteTone} role="status">
             {run?.status === "running"
               ? "Running…"
               : run
@@ -373,8 +394,11 @@ export function Panel({
         </div>
       </header>
       <p className="mr-notice" role="status">
-        Preview/observe · Message filtering is inactive. Group scopes apply to
-        saved tests; no queue or sender effects are enabled.
+        <strong>Preview / observe</strong>
+        <span>
+          Message filtering is inactive. Scopes, rejection and advice apply to
+          saved tests only.
+        </span>
       </p>
       {relevant && (
         <p className="mr-notice" id="mr-draft-reason">
@@ -554,7 +578,9 @@ export function Panel({
             <>
               <div className="mr-editor-header">
                 <h2>
-                  <span aria-hidden="true">▤</span>{" "}
+                  <span className="mr-editor-kind" aria-hidden="true">
+                    {selectedGroup ? "◎" : selectedRule ? "≡" : "▤"}
+                  </span>{" "}
                   {selectedGroup?.title ??
                     selectedRule?.title ??
                     selectedTest?.path}
@@ -625,6 +651,10 @@ export function Panel({
               ) : (
                 <div className="mr-test-split">
                   <div className="mr-source">
+                    <div className="mr-source-heading">
+                      {dirty ? "Draft source" : "Saved test"}
+                      <span>Markdown</span>
+                    </div>
                     <Suspense
                       fallback={
                         <textarea
@@ -645,83 +675,125 @@ export function Panel({
                     className="mr-results"
                     aria-label="Selected test results"
                   >
-                    <h2
-                      className={
-                        result?.status === "fail" || result?.status === "error"
-                          ? "mr-negative"
-                          : result?.status === "pass"
-                            ? "mr-positive"
-                            : ""
-                      }
-                    >
-                      {dirty
-                        ? "Draft · not tested"
-                        : stale
-                          ? "Stale result"
-                          : result
-                            ? statusLabel[result.status]
-                            : selectedTest?.error
-                              ? "Error"
-                              : "Not tested"}
-                    </h2>
-                    <p>
-                      {dirty
-                        ? "Results below belong to the saved source. Save or discard this draft before Test."
-                        : (selectedTest?.error ??
-                          result?.reason ??
-                          "Run Test to evaluate the saved source.")}
-                    </p>
+                    <div className={"mr-result-summary mr-tone-" + resultTone}>
+                      <h2>
+                        <span aria-hidden="true">
+                          {dirty
+                            ? "✎"
+                            : stale
+                              ? "◷"
+                              : result?.status === "pass"
+                                ? "✓"
+                                : result?.status === "fail" ||
+                                    result?.status === "error" ||
+                                    selectedTest?.error
+                                  ? "⊗"
+                                  : "?"}
+                        </span>{" "}
+                        {dirty
+                          ? "Draft · not tested"
+                          : stale
+                            ? "Stale result"
+                            : result
+                              ? statusLabel[result.status]
+                              : selectedTest?.error
+                                ? "Error"
+                                : "Not tested"}
+                      </h2>
+                      <p>
+                        {dirty
+                          ? "Results below belong to the saved source. Save or discard this draft before Test."
+                          : stale
+                            ? "Saved inputs have changed. These results belong to the previous run."
+                            : (selectedTest?.error ??
+                              result?.reason ??
+                              "Run Test to evaluate the saved source.")}
+                      </p>
+                      {stale && !dirty && selectedTest?.error && (
+                        <p role="alert" className="mr-current-error">
+                          {selectedTest.error}
+                        </p>
+                      )}
+                      {stale && !dirty && result && (
+                        <p className="mr-previous-result">
+                          Previous run · {statusLabel[result.status]}
+                          <br />
+                          {result.reason}
+                        </p>
+                      )}
+                    </div>
                     {result?.evaluation && (
                       <>
-                        {result.evaluation.groups?.map((g) => (
-                          <p className="mr-note" key={g.id}>
-                            {g.title} ·{" "}
-                            {
+                        <div className="mr-scope-results">
+                          {result.evaluation.groups?.map((g) => (
+                            <p className="mr-scope-result" key={g.id}>
+                              <span aria-hidden="true">
+                                {g.status === "in-scope" ? "◎" : "−"}
+                              </span>{" "}
+                              {g.title} ·{" "}
                               {
-                                "in-scope": "In scope",
-                                "outside-scope": "Outside scope",
-                                disabled: "Disabled",
-                                "scope-unavailable": "Scope unavailable",
-                              }[g.status]
-                            }
-                          </p>
-                        ))}
-                        <h3>Rule results</h3>
-                        <table>
-                          <tbody>
-                            {result.evaluation.rules.map((r) => (
-                              <tr key={r.id}>
-                                <th scope="row">{r.title}</th>
-                                <td>
-                                  {r.status === "not-applicable"
-                                    ? "Not applicable"
-                                    : r.status === "unknown"
-                                      ? "Unresolved"
-                                      : r.status === "reject"
-                                        ? "Rejected"
-                                        : "Allowed"}
-                                </td>
-                                <td>
-                                  <button
-                                    className="mr-link"
-                                    onClick={() => select("rule", r.id)}
-                                  >
-                                    Open
-                                  </button>
-                                </td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                        <h3>Advice</h3>
-                        {result.evaluation.advice.length ? (
-                          result.evaluation.advice.map((a) => (
-                            <p key={a.ruleIds.join(",")}>{a.text}</p>
-                          ))
-                        ) : (
-                          <p className="mr-note">None returned.</p>
-                        )}
-                        <details>
+                                {
+                                  "in-scope": "In scope",
+                                  "outside-scope": "Outside scope",
+                                  disabled: "Disabled",
+                                  "scope-unavailable": "Scope unavailable",
+                                }[g.status]
+                              }
+                            </p>
+                          ))}
+                        </div>
+                        <section
+                          className="mr-result-card"
+                          aria-label="Rule results"
+                        >
+                          <h3>Rule results</h3>
+                          <table>
+                            <tbody>
+                              {result.evaluation.rules.map((r) => (
+                                <tr key={r.id}>
+                                  <th scope="row">{r.title}</th>
+                                  <td>
+                                    <span
+                                      className={
+                                        "mr-rule-verdict mr-verdict-" + r.status
+                                      }
+                                    >
+                                      {r.status === "not-applicable"
+                                        ? "Not applicable"
+                                        : r.status === "unknown"
+                                          ? "Unresolved"
+                                          : r.status === "reject"
+                                            ? "Rejected"
+                                            : "Allowed"}
+                                    </span>
+                                  </td>
+                                  <td>
+                                    <button
+                                      className="mr-link"
+                                      onClick={() => select("rule", r.id)}
+                                    >
+                                      Open
+                                    </button>
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </section>
+                        <section
+                          className="mr-result-card mr-advice-card"
+                          aria-label="Advice"
+                        >
+                          <h3>Advice</h3>
+                          {result.evaluation.advice.length ? (
+                            result.evaluation.advice.map((a) => (
+                              <p key={a.ruleIds.join(",")}>{a.text}</p>
+                            ))
+                          ) : (
+                            <p className="mr-note">None returned.</p>
+                          )}
+                        </section>
+                        <details className="mr-observations">
                           <summary>Observations</summary>
                           <pre>
                             {JSON.stringify(result.evaluation, null, 2)}
@@ -940,21 +1012,32 @@ function InboxRow({
   disabled: boolean;
 }) {
   return (
-    <div className={"mr-row" + (selected ? " mr-selected" : "")}>
+    <div
+      className={"mr-row" + (selected ? " mr-selected" : "")}
+      data-enabled={enabled}
+    >
       <button
         className="mr-row-select"
         onClick={onSelect}
         aria-current={selected ? "page" : undefined}
       >
         {kind === "test" && (
-          <span className={"mr-status mr-status-" + status} aria-label={status}>
+          <span
+            className={"mr-status mr-status-" + status}
+            aria-label={status}
+            title={status}
+          >
             {status === "pass"
               ? "✓"
               : status === "fail" || status === "error"
                 ? "⊗"
                 : status === "unknown"
                   ? "?"
-                  : "−"}
+                  : status === "stale"
+                    ? "◷"
+                    : status === "draft"
+                      ? "✎"
+                      : "−"}
           </span>
         )}
         <span>{name}</span>
@@ -1122,6 +1205,21 @@ function Modal({
       ref={ref}
       className="mr-dialog"
       aria-label={label}
+      onKeyDown={(event) => {
+        if (event.key === "Escape") {
+          // Keep both halves of Escape inside the modal; host keyup shortcuts
+          // must not act on the restored opener after native cancel closes it.
+          event.preventDefault();
+          event.stopPropagation();
+        }
+      }}
+      onKeyUp={(event) => {
+        if (event.key === "Escape") {
+          event.preventDefault();
+          event.stopPropagation();
+          close();
+        }
+      }}
       onCancel={(event) => {
         event.preventDefault();
         close();

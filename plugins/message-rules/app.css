@@ -7,6 +7,11 @@
   color: var(--foreground);
   font-size: 14px;
   position: relative;
+  --mr-surface: var(--card, var(--background));
+  --mr-scope: color-mix(in srgb, var(--attention) 13%, var(--mr-surface));
+  --mr-pending: color-mix(in srgb, var(--warning) 14%, var(--mr-surface));
+  --mr-pass: color-mix(in srgb, var(--success) 13%, var(--mr-surface));
+  --mr-fail: color-mix(in srgb, var(--destructive) 9%, var(--mr-surface));
 }
 .mr-root * {
   box-sizing: border-box;
@@ -17,6 +22,10 @@
 .mr-root textarea {
   font: inherit;
   color: inherit;
+  border: 1px solid var(--border);
+  background: var(--background);
+  border-radius: 6px;
+  padding: 7px 10px;
 }
 .mr-root button {
   cursor: pointer;
@@ -25,28 +34,20 @@
   cursor: default;
   opacity: 0.5;
 }
-.mr-root button,
-.mr-root input,
-.mr-root select,
-.mr-root textarea {
-  border: 1px solid var(--border);
-  background: var(--background);
-  border-radius: 6px;
-  padding: 7px 10px;
-}
+
 .mr-root :focus-visible {
   outline: 2px solid var(--ring, var(--primary));
   outline-offset: 2px;
 }
 .mr-root .mr-primary {
-  background: var(--primary);
+  background: color-mix(in srgb, var(--primary) 70%, var(--foreground));
   color: var(--primary-foreground);
   border-color: var(--primary);
   font-weight: 600;
   padding: 9px 20px;
 }
 .mr-root .mr-link {
-  color: var(--primary);
+  color: var(--foreground);
   border: 0;
   background: transparent;
   padding: 4px;
@@ -59,6 +60,7 @@
   gap: 20px;
   padding: 16px 20px;
   border-bottom: 1px solid var(--border);
+  background: var(--mr-surface);
 }
 .mr-header h1 {
   font-size: 26px;
@@ -78,6 +80,10 @@
 .mr-count {
   font-weight: 600;
   white-space: nowrap;
+  padding: 7px 12px;
+  border: 1px solid var(--border);
+  border-radius: 99px;
+  font-size: 13px;
 }
 .mr-project select {
   max-width: 180px;
@@ -85,35 +91,40 @@
 .mr-workspace {
   flex: 1;
   display: grid;
-  grid-template-columns: minmax(230px, 26%) minmax(0, 1fr);
+  grid-template-columns: minmax(250px, 27%) minmax(0, 1fr);
   min-height: 0;
-  border: 1px solid var(--border);
-  border-radius: 8px;
+  border: 0;
+  border-radius: 0;
   overflow: hidden;
-  margin: 0 0 1px;
+  margin: 0;
+  background: var(--muted);
 }
 .mr-list {
-  padding: 18px 12px 16px;
+  padding: 16px 12px;
   display: flex;
   flex-direction: column;
   border-right: 1px solid var(--border);
   overflow: auto;
   min-height: 0;
+  gap: 16px;
 }
 .mr-section-heading {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 6px 12px;
+  padding: 0 7px 10px;
+  gap: 6px;
 }
 .mr-section-heading h2 {
   margin: 0;
-  font-size: 20px;
+  font-size: 16px;
+  flex: 1;
+  font-weight: 650;
 }
 .mr-list-group + .mr-list-group {
-  margin-top: 28px;
+  margin-top: 0;
   border-top: 1px solid var(--border);
-  padding-top: 24px;
+  padding-top: 12px;
 }
 .mr-row {
   display: flex;
@@ -122,13 +133,17 @@
   gap: 6px;
   padding: 0 8px;
   border-radius: 7px;
+  border: 1px solid transparent;
 }
 .mr-row + .mr-row {
   border-top: 1px solid var(--border);
+  border-top-color: var(--border);
 }
 .mr-row.mr-selected {
   background: var(--accent);
   color: var(--accent-foreground);
+  border-color: color-mix(in srgb, var(--primary) 35%, var(--border));
+  box-shadow: inset 3px 0 var(--primary);
 }
 .mr-row-select {
   min-width: 0;
@@ -182,17 +197,18 @@
 .mr-status {
   width: 20px;
   flex-shrink: 0;
-  font-size: 20px;
+  font-size: 17px;
   text-align: center;
   font-weight: 500;
+  line-height: 22px;
 }
-.mr-status-pass,
-.mr-positive {
-  color: var(--success, var(--primary));
+.mr-status-pass {
+  color: var(--foreground);
+  background: var(--mr-pass);
+  border-radius: 50%;
 }
 .mr-status-fail,
-.mr-status-error,
-.mr-negative {
+.mr-status-error {
   color: var(--destructive);
 }
 .mr-status-disabled,
@@ -212,23 +228,26 @@
   min-width: 0;
   min-height: 0;
   overflow: auto;
+  background: var(--muted);
 }
 .mr-editor-header {
-  margin: 0 20px;
-  padding: 18px 0 20px;
+  margin: 0;
+  padding: 18px 22px;
   border-bottom: 1px solid var(--border);
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+  background: var(--mr-surface);
 }
 .mr-editor-header h2 {
-  font-size: 21px;
+  font-size: 20px;
   margin: 0;
   overflow-wrap: anywhere;
   display: flex;
   gap: 10px;
   align-items: center;
+  line-height: 1.4;
 }
 .mr-editor-header h2 > span:first-child {
   font-size: 28px;
@@ -236,21 +255,37 @@
 }
 .mr-draft {
   font-size: 13px;
-  color: var(--muted-foreground);
+  color: var(--foreground);
   font-weight: 400;
+  background: var(--mr-pending);
+  border-radius: 6px;
+  padding: 3px 7px;
+  white-space: nowrap;
 }
 .mr-test-split {
   flex: 1;
   min-height: 0;
   display: grid;
-  grid-template-columns: minmax(0, 58%) minmax(0, 42%);
-  padding: 0 18px 20px;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr);
+  padding: 20px;
+  gap: 18px;
+  align-items: start;
+  grid-auto-rows: max-content;
+  align-content: start;
 }
 .mr-source {
   min-height: 400px;
   min-width: 0;
   border-right: 1px solid var(--border);
   padding-right: 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--mr-surface);
+  overflow: hidden;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  height: clamp(400px, 65vh, 620px);
 }
 .mr-source > textarea {
   width: 100%;
@@ -258,21 +293,25 @@
   font-family: monospace;
 }
 .mr-code {
-  height: 100%;
-  min-height: 400px;
+  flex: 1;
+  height: auto;
+  min-height: 0;
+  overflow: hidden;
 }
 .mr-results {
-  padding: 18px 16px 0;
+  padding: 0;
   min-width: 0;
-  overflow: auto;
+  overflow: visible;
 }
 .mr-results h2 {
-  font-size: 22px;
+  font-size: 20px;
   margin: 0 0 12px;
+  font-weight: 650;
 }
 .mr-results h3 {
-  font-size: 18px;
-  margin: 30px 0 12px;
+  font-size: 15px;
+  margin: 0 0 12px;
+  font-weight: 650;
 }
 .mr-results p {
   line-height: 1.5;
@@ -285,10 +324,11 @@
 }
 .mr-results td,
 .mr-results th {
-  padding: 9px 5px;
+  padding: 10px 4px;
   border-bottom: 1px solid var(--border);
   text-align: left;
   vertical-align: top;
+  overflow-wrap: anywhere;
 }
 .mr-results th {
   font-weight: 600;
@@ -310,7 +350,7 @@
   font-size: 13px;
 }
 .mr-rule-form {
-  padding: 24px;
+  padding: 22px;
   overflow: auto;
 }
 .mr-field {
@@ -380,6 +420,10 @@
 }
 .mr-empty {
   padding: 40px;
+  margin: 20px;
+  background: var(--mr-surface);
+  border: 1px dashed var(--border);
+  border-radius: 10px;
 }
 .mr-empty h2 {
   font-size: 20px;
@@ -457,12 +501,6 @@
     grid-template-columns: 1fr;
   }
   .mr-source {
-    border-right: 0;
-    border-bottom: 1px solid var(--border);
-    padding: 0;
-    min-height: 300px;
-  }
-  .mr-code {
     min-height: 300px;
   }
   .mr-field {
@@ -551,4 +589,280 @@
   margin-left: 12px;
   border-left: 1px solid var(--border);
   padding-left: 4px;
+}
+
+/* Task surfaces use live palette roles; tinted areas retain foreground contrast. */
+
+.mr-notice {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  background: var(--mr-scope);
+  border-bottom-color: color-mix(in srgb, var(--attention) 35%, var(--border));
+  line-height: 1.5;
+}
+.mr-notice strong {
+  white-space: nowrap;
+}
+
+.mr-list-group {
+  background: var(--mr-surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px 6px 6px;
+}
+
+.mr-rule-group + .mr-rule-group {
+  margin-top: 10px;
+}
+.mr-rule-group > .mr-row {
+  background: var(--mr-scope);
+}
+
+.mr-row:hover {
+  background: var(--muted);
+}
+
+.mr-row[data-enabled="false"] .mr-row-select {
+  color: var(--muted-foreground);
+}
+.mr-status-stale,
+.mr-status-draft,
+.mr-status-unknown {
+  color: var(--foreground);
+  background: var(--mr-pending);
+  border-radius: 50%;
+}
+
+.mr-root .mr-connection {
+  margin-top: auto;
+  padding: 4px 8px 0 !important;
+}
+
+.mr-editor-header h2 > .mr-editor-kind {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  flex-shrink: 0;
+  background: var(--mr-scope);
+  border: 1px solid color-mix(in srgb, var(--attention) 35%, var(--border));
+  border-radius: 8px;
+  font-size: 23px;
+}
+
+.mr-form-card {
+  background: var(--mr-surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 20px;
+  margin: 0 0 18px;
+}
+.mr-form-card h3 {
+  margin: 0 0 20px;
+  font-size: 16px;
+  font-weight: 650;
+}
+.mr-form-card > :last-child {
+  margin-bottom: 0;
+}
+.mr-scope-card {
+  background: var(--mr-scope);
+  border-color: color-mix(in srgb, var(--attention) 40%, var(--border));
+  border-top: 3px solid var(--attention);
+}
+.mr-outcome-card {
+  background: var(--mr-fail);
+  border-top: 3px solid var(--destructive);
+}
+.mr-scope-flow {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 2px 8px;
+  color: var(--foreground);
+  font-size: 13px;
+}
+.mr-scope-flow > span:nth-child(even) {
+  color: var(--foreground);
+}
+
+.mr-source-heading {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  font-weight: 600;
+  border-bottom: 1px solid var(--border);
+}
+.mr-source-heading span {
+  font-size: 12px;
+  color: var(--muted-foreground);
+  font-weight: 400;
+}
+.mr-source:focus-within {
+  outline: 2px solid var(--ring, var(--primary));
+  outline-offset: 2px;
+}
+
+.mr-result-summary,
+.mr-result-card {
+  background: var(--mr-surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 18px;
+  margin-bottom: 14px;
+}
+.mr-result-summary {
+  border-left-width: 4px;
+}
+.mr-tone-pending {
+  background: var(--mr-pending);
+  border-color: color-mix(in srgb, var(--warning) 55%, var(--border));
+}
+.mr-tone-pass {
+  background: var(--mr-pass);
+  border-color: color-mix(in srgb, var(--success) 55%, var(--border));
+}
+.mr-tone-fail {
+  background: var(--mr-fail);
+  border-color: color-mix(in srgb, var(--destructive) 55%, var(--border));
+}
+
+.mr-result-summary p {
+  margin: 0;
+}
+.mr-result-summary .mr-previous-result {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+  font-size: 12px;
+}
+.mr-scope-results {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0 2px 14px;
+}
+.mr-scope-result {
+  margin: 0;
+  font-size: 12px;
+  color: var(--foreground);
+}
+
+.mr-results tr:last-child td,
+.mr-results tr:last-child th {
+  border-bottom: 0;
+}
+.mr-rule-verdict {
+  font-size: 12px;
+}
+.mr-verdict-reject {
+  font-weight: 650;
+  text-decoration: underline;
+  text-decoration-color: var(--destructive);
+  text-decoration-thickness: 2px;
+  text-underline-offset: 4px;
+}
+.mr-verdict-unknown {
+  background: var(--mr-pending);
+}
+.mr-advice-card {
+  background: var(--mr-scope);
+  border-left: 4px solid var(--attention);
+}
+.mr-advice-card p:last-child {
+  margin-bottom: 0;
+}
+.mr-observations {
+  padding: 0 4px;
+  font-size: 12px;
+  color: var(--foreground);
+}
+
+@media (max-width: 1150px) {
+  .mr-test-split {
+    grid-template-columns: 1fr;
+  }
+  .mr-form-card .mr-field {
+    grid-template-columns: 100px minmax(0, 1fr);
+  }
+}
+@media (max-width: 650px) {
+  .mr-notice {
+    flex-wrap: wrap;
+    gap: 2px;
+    padding: 10px 12px;
+  }
+  .mr-workspace {
+    display: flex;
+  }
+  .mr-list {
+    padding: 10px;
+    gap: 10px;
+    max-height: 285px;
+  }
+  .mr-list-group + .mr-list-group {
+    margin-top: 0;
+  }
+  .mr-editor-header {
+    padding: 14px;
+    margin: 0;
+  }
+  .mr-editor-header h2 {
+    font-size: 17px;
+  }
+  .mr-rule-form,
+  .mr-test-split {
+    padding: 12px;
+  }
+  .mr-form-card {
+    padding: 14px;
+  }
+  .mr-condition > select {
+    max-width: 100%;
+  }
+  .mr-condition > label {
+    white-space: nowrap;
+  }
+  .mr-results {
+    padding: 0;
+  }
+  .mr-result-summary,
+  .mr-result-card {
+    padding: 14px;
+  }
+  .mr-scope-flow {
+    gap: 8px;
+  }
+  .mr-empty {
+    margin: 12px;
+    padding: 24px;
+  }
+}
+
+.mr-result-summary .mr-current-error {
+  margin-top: 12px;
+  color: var(--destructive-text, var(--foreground));
+  font-weight: 600;
+}
+
+.mr-result-card .mr-link {
+  text-decoration: underline;
+  text-decoration-color: var(--primary);
+  text-underline-offset: 3px;
+}
+
+@media (max-width: 650px) {
+  .mr-toolbar {
+    gap: 8px;
+  }
+  .mr-project select {
+    max-width: 110px;
+  }
+  .mr-count {
+    padding: 6px 8px;
+  }
 }
