@@ -1,4 +1,4 @@
-# Thread metrics wire v1 (@phosphorco/bb-thread-metrics 0.2.0 candidate)
+# Thread metrics wire v1 (@phosphorco/bb-thread-metrics 0.2.3)
 
 | Supplier owns | Package owns | Host owns |
 | --- | --- | --- |
@@ -430,7 +430,7 @@ coverage cannot carry `descendants.exact=true`; other supplier membership
 attestations still require evidence the codec cannot reconstruct.
 
 
-### Unique seven-day root inputs (unpublished0.2 producer extension)
+### Unique seven-day root inputs (package0.2 producer extension)
 
 Optional `heatInputs` is a unique all-window root-family table captured in the SAME durable rank publication as `heat`. It is independent of `rows`, whose actual fold activity covers only72h and whose money may be newer. Never join current display money into captured ranks by ID, infer missing activity timestamps, or compare cross-epoch money as equal. Each input carries its financial `asOf`, config revision, explicit attested root topology, root-domain dollar/weighted ranks and all three decisions. `family.dollarRanks/scoreRanks` retain their original scoped meaning; root ranks live only under `heat`. Unknown metadata remains absent/null; title/native personal-or-project navigation is only bounded already-collected data, not identity/membership proof.
 
@@ -480,7 +480,7 @@ Settings Save CAS remains keyed by config version, not publication sequence;
 settings published metadata must describe the exact held publication/config.
 
 
-### Retained snapshot client session (unpublished0.2)
+### Retained snapshot client session (package0.2)
 
 The optional `/bb` `createRecentSnapshotSession(ownerBoundClient)` helper is an
 imperative admission and ordering boundary, owned by the existing selected-source
@@ -525,7 +525,7 @@ interest without clearing the lineage. Only admitted observations may feed Heat
 owner-generation transitions. Publication identity is independent of matching
 Save config bytes/version, which the retained Heat adapter must still check.
 
-These are client source conformance guarantees, not released pins, native
+These are client conformance guarantees, not proof of installed pins, native
 resource adoption, host latency/freshness or live bytes/time acceptance. No
 existing consumer is switched merely by exporting this helper.
 
@@ -557,3 +557,49 @@ Consumers preserve the completed projection and its actual timestamp, display un
 codes as plain text, and never turn a missing reason into zero, a source gap or
 an inferred per-ID backlog. Code meaning, priority and evidence freshness remain
 supplier/adopter conformance obligations; a codec cannot establish the claim from a code string.
+
+## Conditional recent rows (package0.2.3)
+
+The optional `recentRowsV1` capability advertises **a distinct**
+`threadMetricsRecentRowsV1({ifRevision?})` method, alongside required legacy
+`recentSnapshotV1`. Existing v1 methods and meaning do not change. Full and
+whole-publication-unchanged responses are the existing exact v1 shapes and
+bounds. A new publication with proven identical rows may instead return all
+current full-snapshot metadata, `rowsUnchanged:true` and the exact requested
+`baseRevision`, omitting `rows` entirely. Unfetched or missing rows are never an
+empty array. Fresh asOf, publication identity, population/coverage, pending,
+availability, config, heat and other metadata remain authoritative.
+
+The ordinary client exposes `recentRows`; a session opts in only through the
+separate `recentRowsSnapshot` source property after capability negotiation.
+Existing callers passing a client directly to the session remain v1-only.
+
+A caller may name only its actual admitted immutable snapshot revision for the
+same selected source. The shared session reconstructs against exactly that
+baseline, validates the complete current metadata/retained-row combination and
+then retains the same row array. It preserves ordinary publication watermarks,
+late-result/source/mount/abort fences and actual read admission. Missing or
+mismatched baseline fails the current read, retaining the last good observation;
+the next existing scheduled read requests full content. Any failed current rows-mode
+observation conservatively retires conditional eligibility, including malformed
+echoes and owner-side adapter rejection; it does not classify ordinary faults as
+unsupported or hide the failed observation. Absent method or
+unsupported wire version fails first, then uses a full legacy read on the next
+existing admission. No hidden second RPC or retry loop is added. Ordinary
+reactivation permits renegotiated optimization again, without resetting lineage.
+
+The supplier must prove exact row equality for the claimed baseline. Ledger
+keeps only one digest and an owner/sequence equality interval, hashes once per
+hydration/publication, and does no hashing/SQL/materialization on this read.
+Every row byte participates, including order, revision, prices, heat, coverage
+and activity times. Row changes, writer changes or rollback reset the interval;
+restart forgets the old interval and sends full content for uncertain baselines.
+It retains no per-client history. This does not change clipping/carry/expiry,
+publication transactions, budgets or materialization demand.
+
+The existing4MiB full-output/aggregate-row/per-row bounds remain; reuse adds no
+bytes to full responses. Headers are byte/shape admitted by the owner and the
+consumer validates them against its retained rows. Negotiation/source/client
+code in this paragraph is included in package0.2.3. Installed0.2.2 remains
+unchanged; exact registry identity, consumer adoption and runtime qualification
+require their separate release and adopter evidence.

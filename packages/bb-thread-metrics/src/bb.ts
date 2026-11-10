@@ -1,3 +1,5 @@
+import {RECENT_ROWS_METHOD,recentRowsInputSchema,validateRecentRowsHeader} from './index.js';
+import type {RecentRowsResult} from './index.js';
 import { z } from 'zod';
 import type { BbPluginApi, JsonValue, StandardSchemaV1 } from '@get-bb/plugin-sdk';
 import type { PluginBrowserBbSdk } from '@get-bb/plugin-sdk/app';
@@ -34,11 +36,14 @@ export interface MetricsPort {
  read(input:ReadInput):Promise<ReadResult>;
  detail?(input:DetailInput):Promise<DetailResult>;
  recentSnapshot?(input:RecentSnapshotInput):Promise<RecentSnapshotResult>;
+ recentRows?(input:RecentSnapshotInput):Promise<RecentRowsResult>;
  heatSettings?:HeatSettingsPort;
 }
 export function registerThreadMetricsOwner(bb:Pick<BbPluginApi,'rpc'>,port:MetricsPort):void{
  const capabilities=capabilitiesSchema.parse(port.capabilities);
  if(Boolean(capabilities.recentSnapshotV1)!==Boolean(port.recentSnapshot))throw new Error('Recent snapshot capability/handler mismatch');
+ if(Boolean(capabilities.recentRowsV1)!==Boolean(port.recentRows))throw new Error('Recent rows capability/handler mismatch');
+ if(capabilities.recentRowsV1&&!capabilities.recentSnapshotV1)throw new Error('Recent rows requires legacy snapshot fallback');
  if(Boolean(capabilities.heatSettingsV1)!==Boolean(port.heatSettings))throw new Error('Heat settings capability/handler mismatch');
  if(capabilities.detail!==Boolean(port.detail))throw new Error('Detail capability/handler mismatch');
  const describe=()=>({protocol:'bb-thread-metrics' as const,versions:[1],capabilities});
@@ -60,6 +65,14 @@ export function registerThreadMetricsOwner(bb:Pick<BbPluginApi,'rpc'>,port:Metri
  if(port.recentSnapshot)bb.rpc.register({threadMetricsRecentSnapshotV1:{input:sdkSchema(recentSnapshotInputSchema,RECENT_LIMITS.inputBytes),output:sdkSchema(z.unknown())}},{threadMetricsRecentSnapshotV1:async(raw:unknown)=>{
   const input=parseBounded(recentSnapshotInputSchema,raw,RECENT_LIMITS.inputBytes);return validateRecentSnapshot(input,await port.recentSnapshot!(input));
  }},{experimental_discoverable:true});
+ if(port.recentRows)bb.rpc.register({[RECENT_ROWS_METHOD]:{input:sdkSchema(recentRowsInputSchema,RECENT_LIMITS.inputBytes),output:sdkSchema(z.unknown())}},{[RECENT_ROWS_METHOD]:async(raw:unknown)=>{
+  const input=parseBounded(recentRowsInputSchema,raw,RECENT_LIMITS.inputBytes);
+  // Reuse headers need the caller's baseline for semantic reconstruction. The
+  // owner validates full replies normally and bounds/decodes header replies.
+  const result=await port.recentRows!(input);
+  if('rowsUnchanged' in result){return validateRecentRowsHeader(input,result);}
+  return validateRecentSnapshot(input,result);
+ }},{experimental_discoverable:true});
  if(port.detail)bb.rpc.register({threadMetricsDetailV1:{input:sdkSchema(detailInputSchema,LIMITS.inputBytes),output:sdkSchema(z.unknown())}},{threadMetricsDetailV1:async(raw:unknown)=>{
   const input=parseBounded(detailInputSchema,raw,LIMITS.inputBytes);return validateDetailResult(input,await port.detail!(input));
  }},{experimental_discoverable:true});
@@ -72,6 +85,7 @@ export function createThreadMetricsClient(sdk:MetricsSdk,pluginId:string){
  return {
   pluginId,
   async describe(signal?:AbortSignal){const raw=await call(METHODS.describe,{},signal);return negotiateVersion(parseBounded(describeEnvelopeSchema,raw,LIMITS.describeBytes));},
+  async recentRows(raw:RecentSnapshotInput={},signal?:AbortSignal){const input=parseBounded(recentRowsInputSchema,raw,RECENT_LIMITS.inputBytes);return parseBounded(z.unknown(),await call(RECENT_ROWS_METHOD,input,signal),RECENT_LIMITS.bytes);},
   async recentSnapshot(raw:RecentSnapshotInput={},signal?:AbortSignal){const input=parseBounded(recentSnapshotInputSchema,raw,RECENT_LIMITS.inputBytes);return validateRecentSnapshot(input,await call(METHODS.recentSnapshot,input,signal));},
   async read(raw:ReadInput,signal?:AbortSignal){const input=parseBounded(readInputSchema,raw,LIMITS.inputBytes);return validateReadResult(input,await call(METHODS.read,input,signal));},
   async detail(raw:DetailInput,signal?:AbortSignal){const input=parseBounded(detailInputSchema,raw,LIMITS.inputBytes);return validateDetailResult(input,await call(METHODS.detail,input,signal));},
