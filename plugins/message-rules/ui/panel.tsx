@@ -76,7 +76,7 @@ export function Panel({
     [creationLocation, setCreationLocation] = useState<FileLocation | null>(
       null,
     ),
-    [testGroupChoice, setTestGroupChoice] = useState(""),
+    [testGroupChoice, setTestGroupChoice] = useState<string | null>(null),
     [readAttempt, setReadAttempt] = useState(0);
   const latestSnapshot = useRef<Snapshot | null>(null);
   const acceptSnapshot = useCallback((incoming: Snapshot) => {
@@ -220,7 +220,7 @@ export function Panel({
     p?.occurrences.filter(
       (o) => (o.groupId ?? p.groups[0]?.id) === contextGroupId,
     ) ?? [];
-  useEffect(() => setTestGroupChoice(""), [selectedTest?.occurrenceId]);
+  useEffect(() => setTestGroupChoice(null), [selectedTest?.occurrenceId]);
   const selectedKey = selectedGroup
     ? key("group", selectedGroup.id)
     : selectedRule
@@ -750,7 +750,7 @@ export function Panel({
                       </strong>
                       <SearchValue
                         label="Test group"
-                        value={testGroupChoice || contextGroupId || ""}
+                        value={testGroupChoice ?? contextGroupId ?? ""}
                         options={p!.groups.map((g) => ({
                           id: g.id,
                           name: g.title,
@@ -767,7 +767,7 @@ export function Panel({
                                 occurrenceId: selectedTest!.occurrenceId,
                                 groupId: testGroupChoice,
                               }).then((next) => {
-                                if (next) setTestGroupChoice("");
+                                if (next) setTestGroupChoice(null);
                               })
                             }
                           >

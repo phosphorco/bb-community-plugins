@@ -21,8 +21,17 @@ test("project completion distinguishes duplicate names by IDs and retains unavai
   const html = renderToStaticMarkup(
     <GroupEditor group={group} projects={projects} onChange={() => {}} />,
   );
-  assert.match(html, /value="one" label="Duplicate · one"/);
-  assert.match(html, /value="two" label="Duplicate · two"/);
+  const search = renderToStaticMarkup(
+    <GroupEditor
+      group={{ ...group, match: { ...group.match, value: "Duplicate" } }}
+      projects={projects}
+      onChange={() => {}}
+    />,
+  );
+  assert.match(search, /data-value="one"/);
+  assert.match(search, /data-value="two"/);
+  assert.match(search, /role="combobox"/);
+  assert.match(search, /aria-autocomplete="list"/);
   assert.match(html, /value="unavailable-id"/);
   assert.match(html, /Raw value · no available match/);
   const title = renderToStaticMarkup(
@@ -38,7 +47,7 @@ test("project completion distinguishes duplicate names by IDs and retains unavai
   assert.match(title, /Multiple projects share this name; use Project ID/);
   const rules = renderToStaticMarkup(
     <RuleEditor
-      rule={newRule("rule", "g-one")}
+      rule={newRule("rule", "Same")}
       groups={[
         { ...newGroup("g-one"), title: "Same" },
         { ...newGroup("g-two"), title: "Same" },
@@ -46,6 +55,6 @@ test("project completion distinguishes duplicate names by IDs and retains unavai
       onChange={() => {}}
     />,
   );
-  assert.match(rules, /value="g-one" label="Same · disabled · g-one"/);
-  assert.match(rules, /value="g-two" label="Same · disabled · g-two"/);
+  assert.match(rules, /data-value="g-one"/);
+  assert.match(rules, /data-value="g-two"/);
 });

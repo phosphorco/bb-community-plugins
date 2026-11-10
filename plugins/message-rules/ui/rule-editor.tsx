@@ -1,4 +1,4 @@
-import { useId } from "react";
+import { useId, useState, useRef, useEffect } from "react";
 import type {
   Rule,
   RuleGroup,
@@ -658,8 +658,7 @@ function ActionChoices({
   );
 }
 
-// Native completion keeps keyboard, screen-reader and raw-value editing behavior.
-// IDs are values; labels carry names and IDs so duplicate names never alias IDs.
+// IDs are values. Names remain searchable labels; raw values stay editable.
 export function SearchValue({
   label,
   value,
@@ -674,28 +673,127 @@ export function SearchValue({
   titleValue?: boolean;
 }) {
   const id = useId();
+  const list = useRef<HTMLSpanElement>(null);
+  const [expanded, setExpanded] = useState(false),
+    [active, setActive] = useState(-1);
+  useEffect(() => {
+    const menu = list.current,
+      option = menu?.children[active] as HTMLElement | undefined;
+    if (!expanded || !menu || !option) return;
+    if (option.offsetTop < menu.scrollTop) menu.scrollTop = option.offsetTop;
+    else if (
+      option.offsetTop + option.offsetHeight >
+      menu.scrollTop + menu.clientHeight
+    )
+      menu.scrollTop =
+        option.offsetTop + option.offsetHeight - menu.clientHeight;
+  }, [expanded, active]);
+  const needle = value.toLowerCase();
+  const matches = options.filter(
+    (p) =>
+      p.id.toLowerCase().includes(needle) ||
+      p.name.toLowerCase().includes(needle),
+  );
+  const candidates = matches.slice(0, 20);
   const found = options.filter((p) =>
     titleValue ? p.name === value : p.id === value,
   );
+  const choose = (p: { id: string; name: string }) => {
+    onChange(titleValue ? p.name : p.id);
+    setExpanded(false);
+    setActive(-1);
+  };
   return (
     <span className="mr-search-value">
       <input
+        role="combobox"
         aria-label={label}
         aria-describedby={id + "-hint"}
-        list={id}
+        aria-autocomplete="list"
+        aria-expanded={expanded}
+        aria-controls={id + "-options"}
+        aria-activedescendant={
+          expanded && active >= 0 && candidates[active]
+            ? id + "-option-" + active
+            : undefined
+        }
+        autoComplete="off"
         value={value}
         placeholder="Search name or ID"
-        onChange={(e) => onChange(e.target.value)}
+        onFocus={() => {
+          setExpanded(true);
+          setActive(-1);
+        }}
+        onBlur={() => setExpanded(false)}
+        onChange={(e) => {
+          onChange(e.target.value);
+          setExpanded(true);
+          setActive(-1);
+        }}
+        onKeyDown={(e) => {
+          if (e.key === "Escape" && expanded) {
+            e.preventDefault();
+            e.stopPropagation();
+            setExpanded(false);
+            setActive(-1);
+          }
+          if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+            e.preventDefault();
+            setExpanded(true);
+            if (candidates.length)
+              setActive((n) =>
+                e.key === "ArrowDown"
+                  ? (n + 1) % candidates.length
+                  : n <= 0
+                    ? candidates.length - 1
+                    : n - 1,
+              );
+          }
+          if (
+            e.key === "Enter" &&
+            expanded &&
+            active >= 0 &&
+            candidates[active]
+          ) {
+            e.preventDefault();
+            choose(candidates[active]!);
+          }
+        }}
       />
-      <datalist id={id}>
-        {options.map((p) => (
-          <option
+      <span
+        ref={list}
+        id={id + "-options"}
+        role="listbox"
+        aria-label={label + " suggestions"}
+        hidden={!expanded}
+        className="mr-search-options"
+      >
+        {candidates.map((p, i) => (
+          <span
+            role="option"
+            id={id + "-option-" + i}
             key={p.id}
-            value={titleValue ? p.name : p.id}
-            label={p.name + " · " + p.id}
-          />
+            aria-selected={i === active}
+            data-value={titleValue ? p.name : p.id}
+            className="mr-search-option"
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => choose(p)}
+          >
+            <strong>{p.name}</strong>
+            <small>{p.id}</small>
+          </span>
         ))}
-      </datalist>
+        {!candidates.length && (
+          <span className="mr-search-empty">
+            No available match. Raw values remain valid.
+          </span>
+        )}
+        {matches.length > 20 && (
+          <span className="mr-search-empty">
+            Showing 20 of {matches.length}. Refine your search.
+          </span>
+        )}
+      </span>
       <small id={id + "-hint"}>
         {found.length === 1
           ? found[0]!.name + " · " + found[0]!.id
