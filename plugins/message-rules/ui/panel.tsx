@@ -4,10 +4,12 @@ import {
   useCallback,
   useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
 } from "react";
 import type { ReactNode } from "react";
+import type { Occurrence, Run } from "../state/store.ts";
 import type { Client, Draft, Snapshot } from "./types.ts";
 import {
   confirmsWrite,
@@ -18,7 +20,7 @@ import {
   type WriteIntent,
 } from "./writes.ts";
 import { hasRelevantDrafts } from "./drafts.ts";
-import { RuleEditor, GroupEditor } from "./rule-editor.tsx";
+import { RuleEditor, GroupEditor, SearchValue } from "./rule-editor.tsx";
 import {
   newRule,
   newGroup,
@@ -37,8 +39,8 @@ const statusLabel = {
 export type PanelProps = {
   client: Client;
   projectId: string | null;
+  legacyProjectId?: string;
   projects: { id: string; name: string }[];
-  selectProject: (id: string) => void;
   subPath: string;
   navigate: (path: string) => void;
   refreshSignal: number;
@@ -48,8 +50,8 @@ export type PanelProps = {
 export function Panel({
   client,
   projectId,
+  legacyProjectId,
   projects,
-  selectProject,
   subPath,
   navigate,
   refreshSignal,
@@ -74,6 +76,7 @@ export function Panel({
     [creationLocation, setCreationLocation] = useState<FileLocation | null>(
       null,
     ),
+    [testGroupChoice, setTestGroupChoice] = useState(""),
     [readAttempt, setReadAttempt] = useState(0);
   const latestSnapshot = useRef<Snapshot | null>(null);
   const acceptSnapshot = useCallback((incoming: Snapshot) => {
@@ -194,7 +197,14 @@ export function Panel({
         : subPath.startsWith("test/")
           ? "test"
           : null,
-    id = decodeURIComponent(subPath.slice(subPath.indexOf("/") + 1));
+    rawId = decodeURIComponent(subPath.slice(subPath.indexOf("/") + 1)),
+    id =
+      snapshot?.catalog?.aliases.find(
+        (a) =>
+          a.projectId === legacyProjectId &&
+          a.kind === selectedType &&
+          a.oldId === rawId,
+      )?.id ?? rawId;
   const selectedGroup =
     selectedType === "group" ? p?.groups.find((g) => g.id === id) : null;
   const selectedRule =
@@ -203,6 +213,14 @@ export function Panel({
       selectedType === "test"
         ? p?.occurrences.find((x) => x.occurrenceId === id)
         : null;
+  const contextGroupId =
+    selectedGroup?.id ?? selectedRule?.groupId ?? selectedTest?.groupId;
+  const contextGroup = p?.groups.find((g) => g.id === contextGroupId);
+  const ownedTests =
+    p?.occurrences.filter(
+      (o) => (o.groupId ?? p.groups[0]?.id) === contextGroupId,
+    ) ?? [];
+  useEffect(() => setTestGroupChoice(""), [selectedTest?.occurrenceId]);
   const selectedKey = selectedGroup
     ? key("group", selectedGroup.id)
     : selectedRule
@@ -226,6 +244,44 @@ export function Panel({
       run?.frozen.denominator ??
       p?.occurrences.filter((x) => x.enabled).length ??
       0;
+  const duplicateNames = useMemo(() => {
+    const groups = new Map<string, number>(),
+      rules = new Map<string, number>(),
+      files = new Map<string, number>();
+    for (const g of p?.groups ?? [])
+      groups.set(g.title, (groups.get(g.title) ?? 0) + 1);
+    for (const r of p?.rules ?? []) {
+      const key = r.groupId + "\0" + r.title;
+      rules.set(key, (rules.get(key) ?? 0) + 1);
+    }
+    for (const o of ownedTests) files.set(o.path, (files.get(o.path) ?? 0) + 1);
+    return { groups, rules, files };
+  }, [p, contextGroupId]);
+  const resultMap = useMemo(
+    () => new Map(run?.results.map((r) => [r.occurrenceId, r])),
+    [run],
+  );
+  const testsByGroup = useMemo(() => {
+    const map = new Map<string, Occurrence[]>();
+    for (const o of p?.occurrences ?? []) {
+      const id = o.groupId ?? p?.groups[0]?.id ?? "";
+      const list = map.get(id) ?? [];
+      list.push(o);
+      map.set(id, list);
+    }
+    return map;
+  }, [p]);
+  const rulesByGroup = useMemo(() => {
+    const map = new Map<string, Rule[]>();
+    for (const r of p?.rules ?? []) {
+      const list = map.get(r.groupId) ?? [];
+      list.push(r);
+      map.set(r.groupId, list);
+    }
+    for (const list of map.values())
+      list.sort((a, b) => a.order - b.order || a.id.localeCompare(b.id));
+    return map;
+  }, [p]);
   const result = selectedTest
     ? run?.results.find((x) => x.occurrenceId === selectedTest.occurrenceId)
     : undefined;
@@ -260,7 +316,9 @@ export function Panel({
       hash: old?.hash ?? selectedTest?.hash ?? null,
       location:
         old?.location ??
-        (selectedTest && p ? fileLocation(p.config) : undefined),
+        (selectedTest && p
+          ? (selectedTest.location ?? fileLocation(p.config))
+          : undefined),
       kind: selectedGroup ? "group" : selectedRule ? "rule" : "test",
       enabled:
         selectedGroup?.enabled ??
@@ -329,10 +387,14 @@ export function Panel({
       : selectedRule
         ? { revision: p.revision, rule: JSON.parse(current) }
         : {
+            occurrenceId: selectedTest!.occurrenceId,
             path: selectedTest!.path,
             source: current,
             hash: currentDraft?.hash ?? selectedTest!.hash,
-            location: currentDraft?.location ?? fileLocation(p.config),
+            location:
+              currentDraft?.location ??
+              selectedTest?.location ??
+              fileLocation(p.config),
           };
     const pending = {
       submitted: current,
@@ -350,49 +412,6 @@ export function Panel({
     navigate(kind + "/" + encodeURIComponent(id));
   return (
     <div className="mr-root" data-draft-revision={draftRevision}>
-      <header className="mr-header">
-        <h1>Message Rules</h1>
-        <div className="mr-toolbar">
-          <label className="mr-project">
-            <span className="mr-sr">Project</span>
-            <select
-              aria-label="Project"
-              value={projectId ?? ""}
-              onChange={(e) => selectProject(e.target.value)}
-            >
-              <option value="">Choose project</option>
-              {projects.map((x) => (
-                <option key={x.id} value={x.id}>
-                  {x.name}
-                </option>
-              ))}
-            </select>
-          </label>
-          <span className={"mr-count mr-tone-" + suiteTone} role="status">
-            {run?.status === "running"
-              ? "Running…"
-              : run
-                ? total
-                  ? `${pass} / ${total} passed${stale ? " · Stale" : ""}`
-                  : `No enabled tests${stale ? " · Stale" : ""}`
-                : `${total} enabled`}
-          </span>
-          <button
-            className="mr-primary"
-            disabled={busy || !p || relevant || run?.quiescent === false}
-            aria-describedby={relevant ? "mr-draft-reason" : undefined}
-            onClick={() =>
-              void action("startSuite", {
-                requestId: crypto.randomUUID(),
-                basis: snapshot!.basis,
-                hasRelevantDrafts: relevant,
-              })
-            }
-          >
-            ▶ Test
-          </button>
-        </div>
-      </header>
       <p className="mr-notice" role="status">
         <strong>Preview / observe</strong>
         <span>
@@ -467,7 +486,12 @@ export function Panel({
               .map((g) => (
                 <div className="mr-rule-group" key={g.id}>
                   <InboxRow
-                    name={g.title}
+                    name={
+                      g.title +
+                      ((duplicateNames.groups.get(g.title) ?? 0) > 1
+                        ? " · " + g.id
+                        : "")
+                    }
                     selected={selectedGroup?.id === g.id}
                     enabled={g.enabled}
                     kind="group"
@@ -480,29 +504,43 @@ export function Panel({
                     }
                     disabled={busy}
                   />
+                  <p
+                    className="mr-group-summary"
+                    aria-label={g.title + " test summary"}
+                  >
+                    {groupSummary(
+                      testsByGroup.get(g.id) ?? [],
+                      resultMap,
+                      stale,
+                      drafts,
+                      projectId!,
+                    )}
+                  </p>
                   <div className="mr-child-rules">
-                    {p.rules
-                      .filter((r) => r.groupId === g.id)
-                      .sort(
-                        (a, b) => a.order - b.order || a.id.localeCompare(b.id),
-                      )
-                      .map((r) => (
-                        <InboxRow
-                          key={r.id}
-                          name={r.title}
-                          selected={selectedRule?.id === r.id}
-                          enabled={r.enabled}
-                          kind="rule"
-                          onSelect={() => select("rule", r.id)}
-                          onToggle={() =>
-                            void action("saveRule", {
-                              revision: p.revision,
-                              rule: { ...r, enabled: !r.enabled },
-                            })
-                          }
-                          disabled={busy}
-                        />
-                      ))}
+                    {(rulesByGroup.get(g.id) ?? []).map((r) => (
+                      <InboxRow
+                        key={r.id}
+                        name={
+                          r.title +
+                          ((duplicateNames.rules.get(
+                            r.groupId + "\0" + r.title,
+                          ) ?? 0) > 1
+                            ? " · " + r.id
+                            : "")
+                        }
+                        selected={selectedRule?.id === r.id}
+                        enabled={r.enabled}
+                        kind="rule"
+                        onSelect={() => select("rule", r.id)}
+                        onToggle={() =>
+                          void action("saveRule", {
+                            revision: p.revision,
+                            rule: { ...r, enabled: !r.enabled },
+                          })
+                        }
+                        disabled={busy}
+                      />
+                    ))}
                   </div>
                 </div>
               ))}
@@ -510,23 +548,54 @@ export function Panel({
               <p className="mr-note">Add a rule to get started.</p>
             )}
           </div>
+          <div className="mr-test-all" aria-label="All groups test run">
+            <span className={"mr-count mr-tone-" + suiteTone} role="status">
+              {run?.status === "running"
+                ? `Running ${run.results.length} / ${total}…`
+                : run
+                  ? total
+                    ? `${pass} / ${total} passed${stale ? " · Stale" : ""}${run.status !== "complete" ? " · " + (run.status === "cancelled" ? "Cancelled" : "Stopped") : ""}`
+                    : `No enabled tests${stale ? " · Stale" : ""}`
+                  : `${total} enabled`}
+            </span>
+            <button
+              className="mr-primary"
+              disabled={busy || !p || relevant || run?.quiescent === false}
+              aria-describedby={relevant ? "mr-draft-reason" : undefined}
+              onClick={() =>
+                void action("startSuite", {
+                  requestId: crypto.randomUUID(),
+                  basis: snapshot!.basis,
+                  hasRelevantDrafts: relevant,
+                })
+              }
+            >
+              ▶ Test all
+            </button>
+          </div>
           <div className="mr-list-group">
             <div className="mr-section-heading">
               <h2>Tests</h2>
               <button
                 className="mr-link"
-                disabled={!p || busy}
+                disabled={!p || !contextGroup || busy}
                 onClick={() => {
                   setAdding("test");
                   setAddError(null);
-                  setCreationLocation(p ? fileLocation(p.config) : null);
+                  setCreationLocation(
+                    ownedTests[0]?.location ??
+                      (p ? fileLocation(p.config) : null),
+                  );
                   setAddName("");
                 }}
               >
                 + Add
               </button>
             </div>
-            {p?.occurrences.map((o) => {
+            {contextGroup && (
+              <p className="mr-context-label">{contextGroup.title}</p>
+            )}
+            {ownedTests.map((o) => {
               const r = run?.results.find(
                 (x) => x.occurrenceId === o.occurrenceId,
               );
@@ -535,7 +604,13 @@ export function Panel({
               return (
                 <InboxRow
                   key={o.occurrenceId}
-                  name={o.path}
+                  name={
+                    o.path +
+                    ((duplicateNames.files.get(o.path) ?? 0) > 1
+                      ? " · " +
+                        (o.projectId ?? o.sourceProjectId ?? o.occurrenceId)
+                      : "")
+                  }
                   selected={selectedTest?.occurrenceId === o.occurrenceId}
                   enabled={o.enabled}
                   kind="test"
@@ -553,7 +628,7 @@ export function Panel({
                   onSelect={() => select("test", o.occurrenceId)}
                   onToggle={() =>
                     void action("toggleTest", {
-                      revision: p.revision,
+                      revision: p!.revision,
                       occurrenceId: o.occurrenceId,
                       enabled: !o.enabled,
                     })
@@ -562,10 +637,26 @@ export function Panel({
                 />
               );
             })}
-            {!p?.occurrences.length && (
-              <p className="mr-note">Saved Markdown tests appear here.</p>
+            {!ownedTests.length && (
+              <p className="mr-note">
+                {contextGroup
+                  ? "No saved tests in this group. Add a Markdown test."
+                  : "Select a group or child rule to see its tests."}
+              </p>
             )}
           </div>
+          {snapshot?.catalog && (
+            <details className="mr-catalog-notes">
+              <summary>Imported tests and compatibility</summary>
+              {snapshot.catalog.notes.map((note) => (
+                <p key={note}>{note}</p>
+              ))}
+              <p>
+                Each test shows its recorded group, project and original host
+                path.
+              </p>
+            </details>
+          )}
           <button
             className="mr-link mr-connection"
             onClick={() => setConnectionOpen(true)}
@@ -639,11 +730,13 @@ export function Panel({
               </div>
               {selectedGroup ? (
                 <GroupEditor
+                  projects={projects}
                   group={JSON.parse(current) as RuleGroup}
                   onChange={(g) => edit(JSON.stringify(g))}
                 />
               ) : selectedRule ? (
                 <RuleEditor
+                  projects={projects}
                   groups={p!.groups}
                   rule={JSON.parse(current) as Rule}
                   onChange={(rule) => edit(JSON.stringify(rule))}
@@ -651,6 +744,48 @@ export function Panel({
               ) : (
                 <div className="mr-test-split">
                   <div className="mr-source">
+                    <div className="mr-test-identity">
+                      <strong>
+                        Group: {contextGroup?.title ?? "Unassigned"}
+                      </strong>
+                      <SearchValue
+                        label="Test group"
+                        value={testGroupChoice || contextGroupId || ""}
+                        options={p!.groups.map((g) => ({
+                          id: g.id,
+                          name: g.title,
+                        }))}
+                        onChange={setTestGroupChoice}
+                      />
+                      {testGroupChoice &&
+                        testGroupChoice !== contextGroupId && (
+                          <button
+                            disabled={busy}
+                            onClick={() =>
+                              void action("assignTest", {
+                                revision: p!.revision,
+                                occurrenceId: selectedTest!.occurrenceId,
+                                groupId: testGroupChoice,
+                              }).then((next) => {
+                                if (next) setTestGroupChoice("");
+                              })
+                            }
+                          >
+                            Move test
+                          </button>
+                        )}
+                      <span>{selectedTest?.ownership ?? "Legacy test"}</span>
+                      <span>
+                        Project:{" "}
+                        {selectedTest?.projectId ??
+                          "From fixture project_id; otherwise unavailable"}
+                      </span>
+                      <span>
+                        {selectedTest?.location?.hostId ?? p?.config.hostId} ·{" "}
+                        {selectedTest?.location?.root ?? p?.config.root}/
+                        {selectedTest?.path}
+                      </span>
+                    </div>
                     <div className="mr-source-heading">
                       {dirty ? "Draft source" : "Saved test"}
                       <span>Markdown</span>
@@ -809,11 +944,12 @@ export function Panel({
             <div className="mr-empty">
               <h2>
                 {p
-                  ? "Select a rule or saved test"
-                  : "Choose a project and test directory"}
+                  ? "Select a group, rule or saved test"
+                  : "Loading shared rule groups…"}
               </h2>
               <p>
-                Rules above, saved tests below. Selecting either opens it here.
+                All groups are shared. A group’s scope can restrict projects.
+                Select a group or child rule to see its tests.
               </p>
               {!p && (
                 <button
@@ -863,6 +999,15 @@ export function Panel({
                 setAddError("Use a name beginning with a letter.");
                 return;
               }
+              if (
+                (adding === "group" && p.groups.some((g) => g.id === id)) ||
+                (adding === "rule" && p.rules.some((r) => r.id === id))
+              ) {
+                setAddError(
+                  "This ID already exists. Choose another name; saved items were not changed.",
+                );
+                return;
+              }
               const creation =
                 adding === "group"
                   ? action(
@@ -873,25 +1018,7 @@ export function Panel({
                           ...newGroup(id),
                           title: addName,
                           order: p.groups.length,
-                          match: {
-                            kind: "all",
-                            children: [
-                              {
-                                kind: "condition",
-                                field: "project_id",
-                                operator: "equals",
-                                value: projectId!,
-                                insensitive: false,
-                              },
-                              {
-                                kind: "condition",
-                                field: "destination_thread_id",
-                                operator: "equals",
-                                value: "",
-                                insensitive: false,
-                              },
-                            ],
-                          },
+                          match: { kind: "all", children: [] },
                         },
                       },
                       "add",
@@ -902,10 +1029,7 @@ export function Panel({
                         {
                           revision: p.revision,
                           rule: {
-                            ...newRule(
-                              id,
-                              selectedGroup?.id ?? p.groups[0]!.id,
-                            ),
+                            ...newRule(id, contextGroup?.id ?? p.groups[0]!.id),
                             title: addName,
                             order: p.rules.length,
                           },
@@ -915,6 +1039,7 @@ export function Panel({
                     : action(
                         "saveFile",
                         {
+                          groupId: contextGroupId,
                           path: id + ".md",
                           source: fixtureTemplate(id),
                           hash: null,
@@ -927,7 +1052,7 @@ export function Panel({
                 setAddError(null);
                 setAdding(null);
                 const o = next.project?.occurrences.find(
-                  (x) => x.path === id + ".md",
+                  (x) => x.path === id + ".md" && x.groupId === contextGroupId,
                 );
                 select(
                   adding === "group"
@@ -1228,4 +1353,42 @@ function Modal({
       {children}
     </dialog>
   );
+}
+
+function groupSummary(
+  tests: Occurrence[],
+  results: Map<string, NonNullable<Run["results"][number]>>,
+  stale: boolean,
+  drafts: Map<string, Draft>,
+  catalogId: string,
+) {
+  const enabled = tests.filter((o) => o.enabled);
+  const states = new Map<string, number>();
+  for (const o of enabled) {
+    const d = drafts.get(catalogId + ":test:" + o.occurrenceId);
+    const state = o.error
+      ? "error"
+      : d && d.value !== d.base
+        ? "draft"
+        : stale
+          ? "stale"
+          : (results.get(o.occurrenceId)?.status ?? "untested");
+    states.set(state, (states.get(state) ?? 0) + 1);
+  }
+  const labels: Record<string, string> = {
+    pass: "passed",
+    fail: "failed",
+    error: "errors",
+    unknown: "unknown",
+    untested: "not tested",
+    stale: "stale",
+    draft: "draft",
+  };
+  return [
+    enabled.length + " enabled",
+    ...Array.from(states, ([state, count]) => count + " " + labels[state]),
+    ...(tests.length > enabled.length
+      ? [tests.length - enabled.length + " disabled"]
+      : []),
+  ].join(" · ");
 }

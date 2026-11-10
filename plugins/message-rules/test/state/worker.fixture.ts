@@ -1,3 +1,4 @@
+import { createGlobalCatalog } from "../../state/global.ts";
 import Database from "better-sqlite3";
 import { createStore } from "../../state/store.ts";
 import { createFiles } from "../../files/files.ts";
@@ -31,6 +32,9 @@ await createFiles(
   memoryFiles({ "one.md": source("one") }).port,
   store,
 ).discover("project");
+const projectId =
+  process.argv[3] === "global" ? "message-rules-global" : "project";
+if (projectId === "message-rules-global") createGlobalCatalog(store);
 let resume: () => void;
 const paused = new Promise<void>((resolve) => {
   resume = resolve;
@@ -47,8 +51,8 @@ const service = createSuiteService(
   },
   count,
 );
-const p = store.get("project")!;
-const run = service.start("project", "process-run", savedBasis(p), {});
+const p = store.get(projectId)!;
+const run = service.start(projectId, "process-run", savedBasis(p), {});
 process.on("message", async (msg) => {
   if (msg === "resume") resume();
   if (msg === "finish") {

@@ -1,7 +1,7 @@
 # Message Rules
 
 A standalone community plugin with an inbox-style rule editor, plain authored
-Markdown tests, and one explicit **Test** action over the enabled saved suite.
+Markdown tests, and one explicit **Test all** action over all enabled saved tests.
 
 **Delivery status:** the editor, file adapter, shared evaluator and suite service
 are implemented. Full original all-eligible-sender delivery, safe mixed-original
@@ -14,21 +14,21 @@ route's limitation, not exhaustion of every public-plugin alternative.
 
 ## Configure
 
-Open **Message Rules**, select a project, then **JEV connection**. Supply the exact
-host ID and an absolute POSIX directory on that host, for example
-`/your/project/.bb/message-rules/tests`. Only direct `.md` children are discovered.
-The host must be connected. Project and selected-item identity live in the public panel subpath, so responsive remounts and deep links retain scope. Missing or incomplete directory reads preserve the
-last authoritative members and explain the failure.
+Open **Message Rules** to see the shared global catalog immediately, independently of BB's current project. Group scopes own project restrictions. **+ Group** creates a disabled **Any project** group; add project/thread conditions as needed, save, and deliberately enable it. Project conditions offer name/ID completion backed by BB projects; ID predicates persist actual IDs. Raw values remain editable. Duplicate names are disambiguated by IDs; unavailable projects remain raw values, never silently replaced. Rule group assignment is searchable by name/ID.
 
-Use **+ Group** to create a disabled group, edit its Scope to the intended project/thread IDs, save, and deliberately enable it. Then use **+ Add** to create child rules; each rule retains its own conditions and switch. Imported rules start in a disabled scope-required group.
+Select a group or child rule to see only that group's tests. Compact group summaries distinguish enabled, passed, failed, errors, disabled, stale, draft and unknown results. **Test all**, below the groups, captures enabled fixtures across all groups and one complete saved catalog. Ownership organizes tests; every fixture evaluates every applicable group/rule. An expected rejection can pass. Historical results never become current merely because another group is selected.
 
-Each project owns its groups, rules, suite location, enable sidecar and run history in the
-plugin's SQLite database. A suite-location change requires disabling existing
-occurrences first. Files remain ordinary authored/Git files; switches do not
-rewrite them. New files, including malformed files, default enabled. Deleted
-enabled files remain error tombstones until restored or explicitly disabled.
-A unique stable ID supports an unambiguous rename. Duplicate IDs and ambiguous
-renames remain visible errors; they never silently reduce the denominator.
+Use **JEV connection** for the global connection limits and a host/absolute test directory. Existing authored files remain in their original host directories. New tests use the selected group's existing directory when available, otherwise the configured default directory. Only direct `.md` children are discovered. Missing/incomplete discovery retains saved occurrences and blocks a new run until recovery. Switches never rewrite Markdown. Deleted enabled files remain error tombstones; invalid and duplicate-ID files remain in the denominator.
+
+### Migration and compatibility
+
+Storage schema4 adds one global catalog and an immutable `mr_legacy_catalog_backup` of each raw legacy row. Legacy project rows, original configurations, paths, bytes, hashes, enable state, runs/results and paid-attempt records remain in place. Previously project-local groups receive an exact project-ID guard unless already guarded; existing scopes, child predicates, criteria/advice and enable states are retained. Missing legacy group references migrate into disabled import groups. No imported group is broadened or newly enabled.
+
+IDs stay unchanged unless colliding. A deterministic suffix resolves collisions, and the persisted `global-catalog-v1` receipt maps source project, kind and old ID to global ID. Names never determine identity. Legacy `/project/<id>/group|rule|test/<id>` panel links resolve through this map. Colliding legacy expected rule IDs are translated with the frozen source map without editing fixture bytes. New templates use `rule_catalog: global`; adding this field explicitly selects global expected-rule IDs, including cross-source references whose text would otherwise be a legacy alias. Original per-source rule order is preserved when assigning global order. Old source catalog writes are rejected with an explanation directing editing to the global catalog.
+
+Legacy test ownership is recorded in `mr_test_owners`: a unique group referenced by `expected_rules`, otherwise the first legacy group by order/ID. A source without groups gets a disabled Imported tests group. The UI shows this choice, original project, host and directory for every selected test. **Imported tests and compatibility** explains the policy. The searchable **Test group** field and **Move test** action change organization without changing source bytes or evaluation filters. Newly discovered files without an owner appear in a disabled Imported tests group until assigned. This ownership does not limit evaluation. Fixture `project_id`, when supplied, is authoritative; otherwise imported tests keep their source project ID. New files without a known source project have unavailable project identity until explicitly authored; the catalog ID never masquerades as a BB project.
+
+A global run uses one shared call budget (minimum legacy limits on migration), one overall configured time limit, bounded responses and durable attempt reservations. With differing legacy models, the first source by ID supplies the model; original configurations remain preserved. Unknown legacy effects count against the global call limit and unquiesced legacy owners block global work. Plugin/process replacement never automatically replays paid attempts. New explicit runs retain saved bytes/revisions and the immutable denominator, cancellation and lost-ack reconciliation contracts. An incomplete/cancelled run retains pending fixtures as untested.
 
 The public registry SDK is pinned to **0.6.52**, including a distinct registry
 lock entry instead of accidentally resolving the workspace's Phosphor SDK

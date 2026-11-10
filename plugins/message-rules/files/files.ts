@@ -131,6 +131,7 @@ export function createFiles(port: FilePort, store: Store) {
       }
       if (old) used.add(old.occurrenceId);
       return {
+        ...old,
         ...f,
         occurrenceId: old?.occurrenceId ?? randomUUID(),
         enabled: old?.enabled ?? true,

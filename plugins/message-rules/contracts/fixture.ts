@@ -8,6 +8,7 @@ const metaSchema = z
   .object({
     version: z.literal(1),
     id: Id,
+    project_id: z.string().min(1).nullable().optional(),
     project_title: z.string().nullable().default(null),
     sender_id: z.string().nullable().default(null),
     destination_id: z.string().nullable().default(null),
@@ -15,6 +16,7 @@ const metaSchema = z
     destination_title: z.string().nullable().default(null),
     expect: z.enum(["allow", "reject", "unknown"]),
     expected_rules: z.array(Id).optional(),
+    rule_catalog: z.enum(["global", "legacy"]).optional(),
     expected_batch: z.array(Id).optional(),
   })
   .strict();
@@ -121,6 +123,7 @@ export function parseFixture(source: string): Fixture {
     meta,
     queued,
     capture: {
+      ...(meta.project_id !== undefined ? {projectId: meta.project_id} : {}),
       projectTitle: meta.project_title,
       message: sections.get("Message")!,
       senderTitle: meta.sender_title,

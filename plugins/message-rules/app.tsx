@@ -1,6 +1,5 @@
 import {
   definePluginApp,
-  useBbContext,
   useBbNavigate,
   useRpc,
   useSdk,
@@ -19,7 +18,6 @@ export default definePluginApp((app) => {
   function MessageRules({ subPath }: PluginNavPanelProps) {
     const rpc = useRpc<typeof contract>(),
       sdk = useSdk(),
-      context = useBbContext(),
       navigate = useBbNavigate(),
       connection = useRealtimeConnectionState();
     const [projects, setProjects] = useState<{ id: string; name: string }[]>(
@@ -27,10 +25,8 @@ export default definePluginApp((app) => {
       ),
       [signal, setSignal] = useState({ revision: 0, discoverFiles: true }),
       [error, setError] = useState<string | null>(null);
-    const route = panelScope(subPath, context.projectId),
+    const route = panelScope(subPath, null),
       projectId = route.projectId;
-    const chooseProject = (id: string) =>
-      navigate.toPluginPanel("rules", { subPath: panelPath(id || null) });
     const choosePath = (path: string) =>
       navigate.toPluginPanel("rules", { subPath: panelPath(projectId, path) });
     const live = useRef(true),
@@ -83,8 +79,8 @@ export default definePluginApp((app) => {
         <Panel
           client={client}
           projectId={projectId}
+          legacyProjectId={route.legacyProjectId}
           projects={projects}
-          selectProject={chooseProject}
           subPath={route.path}
           navigate={choosePath}
           refreshSignal={signal.revision}
@@ -107,7 +103,7 @@ export default definePluginApp((app) => {
     component: () => (
       <p>
         Set the Message Rules JEV API key in this plugin’s settings. Open
-        Message Rules to select a project, host, test directory, model, and run
+        Message Rules to manage shared groups, host directories, model, and run
         limits. Tests use saved revisions. Explicit configured JEV checks can
         use provider context checking when a verified local counter is
         unavailable; engineering/call limits and no implicit retry still apply.

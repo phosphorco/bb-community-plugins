@@ -95,6 +95,7 @@ export function createSuiteService(
   };
   async function execute(run: Run, abort: AbortController) {
     let unknown = false;
+    const deadline = run.frozen.projectId === "message-rules-global" ? setTimeout(() => abort.abort(), run.frozen.config.connection.timeoutMs) : null;
     try {
       for (const o of run.frozen.occurrences) {
         if (abort.signal.aborted) break;
@@ -111,6 +112,9 @@ export function createSuiteService(
         let fixture;
         try {
           fixture = parseFixture(o.source);
+          // Legacy fixture bytes stay untouched; collisions resolve in the frozen source mapping.
+          if (fixture.meta.expected_rules && o.ruleAliases && fixture.meta.rule_catalog !== "global")
+            fixture.meta.expected_rules = fixture.meta.expected_rules.map((id) => o.ruleAliases![id] ?? id);
           const unknownIds = fixture.meta.expected_rules?.filter(
             (id) => !run.frozen.rules.some((r) => r.id === id),
           );
@@ -169,11 +173,11 @@ export function createSuiteService(
           );
         };
         const evaluation = await evaluateScoped(
-          { ...fixture.capture, projectId: run.frozen.projectId },
+          { ...fixture.capture, projectId: fixture.meta.project_id !== undefined ? fixture.meta.project_id : (o.projectId !== undefined ? o.projectId : run.frozen.projectId) },
           run.frozen.groups ?? [],
           run.frozen.rules,
           run.frozen.config.connection,
-          async () => ({ ...fixture.capture, projectId: run.frozen.projectId }),
+          async () => ({ ...fixture.capture, projectId: fixture.meta.project_id !== undefined ? fixture.meta.project_id : (o.projectId !== undefined ? o.projectId : run.frozen.projectId) }),
           transport,
           abort.signal,
           countTokens,
@@ -219,6 +223,7 @@ export function createSuiteService(
         e instanceof Error ? e.message : String(e),
       );
     } finally {
+      if (deadline) clearTimeout(deadline);
       store.quiesce(run.id, owner);
       workers.delete(run.id);
       emit(run.frozen.projectId, true);

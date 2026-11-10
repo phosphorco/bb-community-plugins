@@ -928,3 +928,81 @@
   font-size: 13px;
   color: var(--muted-foreground);
 }
+
+/* The canvas is quiet; scope, outcome and result cards carry the meaning. */
+.mr-workspace,
+.mr-inspector {
+  background: var(--background);
+}
+.mr-list {
+  background: color-mix(in srgb, var(--muted) 25%, var(--background));
+}
+.mr-root {
+  --mr-scope: color-mix(in srgb, var(--primary) 5%, var(--mr-surface));
+}
+.mr-scope-card {
+  border-color: var(--border);
+  border-top-color: color-mix(in srgb, var(--primary) 45%, var(--border));
+}
+.mr-notice {
+  background: var(--mr-surface);
+  border-bottom-color: var(--border);
+}
+.mr-test-all {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 0 6px;
+}
+.mr-test-all .mr-count {
+  white-space: normal;
+  border: 0;
+  border-radius: 6px;
+  padding: 5px 7px;
+}
+.mr-test-all .mr-primary {
+  flex: 1;
+  white-space: nowrap;
+}
+.mr-group-summary,
+.mr-context-label {
+  color: var(--muted-foreground);
+  font-size: 12px;
+  line-height: 1.5;
+  padding: 2px 8px;
+  margin: 4px 0;
+  overflow-wrap: anywhere;
+}
+.mr-search-value {
+  display: grid;
+  flex: 1;
+  gap: 5px;
+  min-width: 130px;
+}
+.mr-search-value input {
+  width: 100%;
+  min-width: 0;
+}
+.mr-search-value small {
+  color: var(--muted-foreground);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.mr-test-identity {
+  display: grid;
+  gap: 4px;
+  padding: 12px 16px;
+  font-size: 12px;
+  border-bottom: 1px solid var(--border);
+  overflow-wrap: anywhere;
+}
+.mr-source:has(.mr-test-identity) {
+  height: clamp(480px, 75vh, 740px);
+}
+.mr-catalog-notes {
+  font-size: 12px;
+  color: var(--muted-foreground);
+  padding: 0 8px;
+  line-height: 1.5;
+}

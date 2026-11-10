@@ -1,3 +1,4 @@
+import { useId } from "react";
 import type {
   Rule,
   RuleGroup,
@@ -9,9 +10,11 @@ export function RuleEditor({
   rule,
   onChange,
   groups,
+  projects = [],
 }: {
   rule: Rule;
   groups: RuleGroup[];
+  projects?: { id: string; name: string }[];
   onChange: (r: Rule) => void;
 }) {
   const patch = (p: Partial<Rule>) => onChange({ ...rule, ...p });
@@ -31,21 +34,20 @@ export function RuleEditor({
         <h3>When this rule applies</h3>
         <label className="mr-field">
           <span>Group</span>
-          <select
+          <SearchValue
+            label="Rule group"
             value={rule.groupId}
-            onChange={(e) => patch({ groupId: e.target.value })}
-          >
-            {groups.map((g) => (
-              <option key={g.id} value={g.id}>
-                {g.title}
-                {!g.enabled ? " · disabled" : ""}
-              </option>
-            ))}
-          </select>
+            options={groups.map((g) => ({
+              id: g.id,
+              name: g.title + (!g.enabled ? " · disabled" : ""),
+            }))}
+            onChange={(groupId) => patch({ groupId })}
+          />
         </label>
         <div className="mr-field">
           <span>Match</span>
           <Predicates
+            projects={projects}
             value={rule.match}
             onChange={(match) => patch({ match })}
           />
@@ -152,10 +154,12 @@ export function Predicates({
   value,
   onChange,
   scopeOnly = false,
+  projects = [],
   onRemove,
 }: {
   value: Predicate;
   scopeOnly?: boolean;
+  projects?: { id: string; name: string }[];
   onRemove?: () => void;
   onChange: (p: Predicate) => void;
 }) {
@@ -191,11 +195,21 @@ export function Predicates({
           <option value="contains">contains</option>
           <option value="equals">equals</option>
         </select>
-        <input
-          aria-label="Condition text"
-          value={value.value}
-          onChange={(e) => onChange({ ...value, value: e.target.value })}
-        />
+        {value.field === "project_id" || value.field === "project_title" ? (
+          <SearchValue
+            label="Condition text"
+            value={value.value}
+            options={projects}
+            titleValue={value.field === "project_title"}
+            onChange={(text) => onChange({ ...value, value: text })}
+          />
+        ) : (
+          <input
+            aria-label="Condition text"
+            value={value.value}
+            onChange={(e) => onChange({ ...value, value: e.target.value })}
+          />
+        )}
         <label>
           <input
             type="checkbox"
@@ -216,6 +230,7 @@ export function Predicates({
       <div className="mr-predicate">
         <span>Not</span>
         <Predicates
+          projects={projects}
           scopeOnly={scopeOnly}
           value={value.child}
           onRemove={remove}
@@ -249,6 +264,7 @@ export function Predicates({
       {value.children.map((p, i) => (
         <div className="mr-condition-wrap" key={i}>
           <Predicates
+            projects={projects}
             scopeOnly={scopeOnly}
             value={p}
             onRemove={() => removeChild(i)}
@@ -513,8 +529,10 @@ function CriterionEditor({
 export function GroupEditor({
   group,
   onChange,
+  projects = [],
 }: {
   group: RuleGroup;
+  projects?: { id: string; name: string }[];
   onChange: (g: RuleGroup) => void;
 }) {
   return (
@@ -531,10 +549,14 @@ export function GroupEditor({
         aria-label="Where rules apply"
       >
         <h3>Where rules apply</h3>
+        {group.match.kind === "all" && !group.match.children.length && (
+          <p className="mr-note">Any project</p>
+        )}
         <div className="mr-field">
           <span>Scope</span>
           <Predicates
             scopeOnly
+            projects={projects}
             value={group.match}
             onChange={(match) => onChange({ ...group, match })}
           />
@@ -633,5 +655,56 @@ function ActionChoices({
         ))}
       </div>
     </fieldset>
+  );
+}
+
+// Native completion keeps keyboard, screen-reader and raw-value editing behavior.
+// IDs are values; labels carry names and IDs so duplicate names never alias IDs.
+export function SearchValue({
+  label,
+  value,
+  options,
+  onChange,
+  titleValue = false,
+}: {
+  label: string;
+  value: string;
+  options: { id: string; name: string }[];
+  onChange: (v: string) => void;
+  titleValue?: boolean;
+}) {
+  const id = useId();
+  const found = options.filter((p) =>
+    titleValue ? p.name === value : p.id === value,
+  );
+  return (
+    <span className="mr-search-value">
+      <input
+        aria-label={label}
+        aria-describedby={id + "-hint"}
+        list={id}
+        value={value}
+        placeholder="Search name or ID"
+        onChange={(e) => onChange(e.target.value)}
+      />
+      <datalist id={id}>
+        {options.map((p) => (
+          <option
+            key={p.id}
+            value={titleValue ? p.name : p.id}
+            label={p.name + " · " + p.id}
+          />
+        ))}
+      </datalist>
+      <small id={id + "-hint"}>
+        {found.length === 1
+          ? found[0]!.name + " · " + found[0]!.id
+          : found.length > 1
+            ? "Multiple projects share this name; use Project ID for exact scope."
+            : value
+              ? "Raw value · no available match"
+              : "Search by name or ID; raw predicates remain valid."}
+      </small>
+    </span>
   );
 }

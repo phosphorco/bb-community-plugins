@@ -38,6 +38,8 @@ export const contract = {
   },
   saveFile: {
     input: project.extend({
+      occurrenceId: z.string().optional(),
+      groupId: z.string().optional(),
       path: z.string().min(1).max(200),
       source: z.string().max(262144),
       hash: z.string().nullable(),
@@ -54,6 +56,14 @@ export const contract = {
       revision: z.number().int(),
       occurrenceId: z.string(),
       enabled: z.boolean(),
+    }),
+    output: json,
+  },
+  assignTest: {
+    input: project.extend({
+      revision: z.number().int(),
+      occurrenceId: z.string(),
+      groupId: z.string(),
     }),
     output: json,
   },
@@ -78,6 +88,19 @@ const occurrenceSchema = z.object({
   missing: z.boolean(),
   source: z.string().nullable(),
   error: z.string().nullable(),
+  groupId: z.string().optional(),
+  projectId: z.string().nullable().optional(),
+  sourceProjectId: z.string().optional(),
+  sourceOccurrenceId: z.string().optional(),
+  location: z
+    .object({
+      hostId: z.string(),
+      root: z.string(),
+      revision: z.number().int(),
+    })
+    .optional(),
+  ownership: z.string().optional(),
+  ruleAliases: z.record(z.string(), z.string()).optional(),
 });
 const configSchema = z.object({
   locationRevision: z.number().int().nonnegative().default(0),
@@ -137,6 +160,25 @@ const frozenSchema = z.object({
   actor: z.unknown(),
 });
 export const snapshotSchema = z.object({
+  catalog: z
+    .object({
+      aliases: z.array(
+        z.object({
+          projectId: z.string(),
+          kind: z.enum(["group", "rule", "test"]),
+          oldId: z.string(),
+          id: z.string(),
+        }),
+      ),
+      sources: z.array(
+        z.object({
+          projectId: z.string(),
+          defaultGroupId: z.string().nullable(),
+        }),
+      ),
+      notes: z.array(z.string()),
+    })
+    .optional(),
   project: z
     .object({
       id: z.string(),

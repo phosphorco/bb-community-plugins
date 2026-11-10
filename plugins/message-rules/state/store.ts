@@ -13,6 +13,7 @@ import type {
   RuleGroup,
   Connection,
   Evaluation,
+  FileLocation,
 } from "../contracts/model.ts";
 export type SuiteConfig = {
   hostId: string;
@@ -29,6 +30,13 @@ export type Occurrence = {
   missing: boolean;
   source: string | null;
   error: string | null;
+  groupId?: string;
+  projectId?: string | null;
+  sourceProjectId?: string;
+  sourceOccurrenceId?: string;
+  location?: FileLocation;
+  ownership?: string;
+  ruleAliases?: Record<string, string>;
 };
 export type TestResult = {
   occurrenceId: string;
@@ -85,7 +93,7 @@ export function createStore(db: Database.Database) {
   const schema = db
     .prepare("SELECT value FROM mr_metadata WHERE key='schema-version'")
     .get() as { value: string } | undefined;
-  if (schema && !["1", "2", "3"].includes(schema.value))
+  if (schema && !["1", "2", "3", "4"].includes(schema.value))
     throw Error(
       "Unsupported Message Rules storage version " +
         schema.value +
@@ -117,7 +125,7 @@ export function createStore(db: Database.Database) {
         "ALTER TABLE mr_attempts ADD COLUMN context TEXT NOT NULL DEFAULT '{}'",
       );
     db.prepare(
-      "UPDATE mr_metadata SET value='3' WHERE key='schema-version'",
+      "UPDATE mr_metadata SET value=CASE WHEN value='4' THEN '4' ELSE '3' END WHERE key='schema-version'",
     ).run();
   })();
   type Row = {
@@ -240,9 +248,9 @@ export function createStore(db: Database.Database) {
     },
     removeGroup(id: string, revision: number, groupId: string) {
       return write(id, revision, (p) => {
-        if (p.rules.some((r) => r.groupId === groupId))
+        if (p.rules.some((r) => r.groupId === groupId) || p.occurrences.some((o) => o.groupId === groupId))
           throw new Conflict(
-            "Move or delete child rules before deleting this group.",
+            "Move child rules and owned tests before deleting this group.",
           );
         p.groups = p.groups.filter((g) => g.id !== groupId);
       });
@@ -311,9 +319,9 @@ export function createStore(db: Database.Database) {
         if (
           db
             .prepare(
-              "SELECT id FROM mr_runs WHERE project_id=? AND quiescent=0",
+              "SELECT id FROM mr_runs WHERE quiescent=0 AND (project_id=? OR project_id='message-rules-global' OR ?='message-rules-global')",
             )
-            .get(frozen.projectId)
+            .get(frozen.projectId, frozen.projectId)
         )
           throw new Conflict(
             "A run still owns this suite. Cancel and wait for local workers to stop; unresolved prior ownership requires recovery.",
@@ -360,9 +368,9 @@ export function createStore(db: Database.Database) {
         const exposure = (
           db
             .prepare(
-              "SELECT count(*) n FROM mr_attempts a JOIN mr_runs r ON r.id=a.run_id WHERE r.project_id=? AND a.run_id<>? AND a.state IN ('unknown','invocation-owned')",
+              "SELECT count(*) n FROM mr_attempts a JOIN mr_runs r ON r.id=a.run_id WHERE (r.project_id=? OR ?='message-rules-global') AND a.run_id<>? AND a.state IN ('unknown','invocation-owned')",
             )
-            .get(r.frozen.projectId, runId) as { n: number }
+            .get(r.frozen.projectId, r.frozen.projectId, runId) as { n: number }
         ).n;
         if (n + exposure >= r.frozen.config.connection.maxCalls)
           throw Error("Run call budget exhausted.");
@@ -460,9 +468,9 @@ export function createStore(db: Database.Database) {
     unresolved(projectId: string) {
       return db
         .prepare(
-          "SELECT a.id,a.state,a.request_hash FROM mr_attempts a JOIN mr_runs r ON r.id=a.run_id WHERE r.project_id=? AND a.state IN ('unknown','invocation-owned')",
+          "SELECT a.id,a.state,a.request_hash FROM mr_attempts a JOIN mr_runs r ON r.id=a.run_id WHERE (r.project_id=? OR ?='message-rules-global') AND a.state IN ('unknown','invocation-owned')",
         )
-        .all(projectId);
+        .all(projectId, projectId);
     },
   };
 }

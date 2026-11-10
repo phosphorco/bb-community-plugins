@@ -30,9 +30,19 @@ function target(w: WriteIntent, s: Snapshot) {
   const p = s.project;
   if (!p || p.id !== w.projectId) return null;
   if (w.method === "saveFile") {
-    if (canonical(fileLocation(p.config)) !== canonical(w.input.location))
+    const o = p.occurrences.find((o) =>
+      w.input.occurrenceId
+        ? o.occurrenceId === w.input.occurrenceId
+        : o.path === w.input.path &&
+          canonical(o.location ?? fileLocation(p.config)) ===
+            canonical(w.input.location),
+    );
+    if (
+      !o ||
+      canonical(o.location ?? fileLocation(p.config)) !==
+        canonical(w.input.location)
+    )
       return null;
-    const o = p.occurrences.find((o) => o.path === w.input.path);
     return o && typeof o.source === "string" && !o.missing
       ? { value: o.source!, hash: o.hash }
       : null;
@@ -67,6 +77,11 @@ export function confirmsWrite(w: WriteIntent, s: Snapshot): boolean {
     return !s.project.rules.some((r) => r.id === w.input.ruleId);
   if (w.method === "deleteGroup")
     return !s.project.groups.some((g) => g.id === w.input.groupId);
+  if (w.method === "assignTest")
+    return (
+      s.project.occurrences.find((o) => o.occurrenceId === w.input.occurrenceId)
+        ?.groupId === w.input.groupId
+    );
   if (w.method === "toggleTest")
     return (
       s.project.occurrences.find((o) => o.occurrenceId === w.input.occurrenceId)

@@ -8,6 +8,7 @@ import { evaluate } from "../../evaluation/evaluator.ts";
 function nodes(node: ReactNode): any[] {
   if (Array.isArray(node)) return node.flatMap(nodes);
   if (!isValidElement(node)) return [];
+  if (typeof node.type === "function" && node.type.name === "SearchValue") return []; // Hook-based completion is verified with the mounted global UI.
   if (typeof node.type === "function")
     return nodes((node.type as any)(node.props));
   return [node, ...nodes((node.props as any).children)];

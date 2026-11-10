@@ -1,3 +1,4 @@
+import { GLOBAL_CATALOG as G } from "../../contracts/catalog.ts";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import Database from "better-sqlite3";
@@ -19,6 +20,11 @@ test("actual factory -> public RPC -> identity -> files/state/suite composition;
     db = new Database(":memory:");
   fake.bb.storage.database = () => db;
   const mem = memoryFiles({ "one.md": source("one") });
+  for (const [name, value] of mem.values)
+    mem.values.set(
+      name,
+      value.replace("version: 1", "version: 1\nproject_id: project"),
+    );
   for (const name of ["list", "read", "write", "mkdir"] as const)
     fake.harness.inspection.sdk.stub("files." + name, mem.port[name] as never);
   const product = createMessageRules(fake.bb, {
@@ -28,12 +34,12 @@ test("actual factory -> public RPC -> identity -> files/state/suite composition;
   const rpc = async (method: string, input: object) =>
     snapshotSchema.parse(
       await fake.harness.behavior.callRpc(method, {
-        projectId: "project",
+        projectId: G,
         ...input,
       }),
     );
   let s = await rpc("configure", {
-    revision: null,
+    revision: product.store.get(G)!.revision,
     hostId: "host-proof",
     root: "/tests",
     connection: defaultConnection,
@@ -57,7 +63,7 @@ test("actual factory -> public RPC -> identity -> files/state/suite composition;
     basis: s.basis,
     hasRelevantDrafts: false,
   });
-  await waitUntil(() => !!product.store.latest("project")?.quiescent);
+  await waitUntil(() => !!product.store.latest(G)?.quiescent);
   s = await rpc("snapshot", {});
   assert.equal(s.run!.results[0]!.status, "pass");
   assert.equal(s.run!.frozen.denominator, 1);
@@ -109,6 +115,11 @@ test("configured factory's real HTTP boundary dispatches an explicit scoped Test
       "destination_id: other-thread\nsender_title: null",
     ),
   });
+  for (const [name, value] of mem.values)
+    mem.values.set(
+      name,
+      value.replace("version: 1", "version: 1\nproject_id: project"),
+    );
   for (const name of ["list", "read", "write", "mkdir"] as const)
     fake.harness.inspection.sdk.stub("files." + name, mem.port[name] as never);
   let calls = 0;
@@ -132,12 +143,12 @@ test("configured factory's real HTTP boundary dispatches an explicit scoped Test
   const rpc = async (method: string, input: object) =>
     snapshotSchema.parse(
       await fake.harness.behavior.callRpc(method, {
-        projectId: "project",
+        projectId: G,
         ...input,
       }),
     );
   let s = await rpc("configure", {
-    revision: null,
+    revision: product.store.get(G)!.revision,
     hostId: "host-proof",
     root: "/tests",
     connection: defaultConnection,
@@ -167,7 +178,7 @@ test("configured factory's real HTTP boundary dispatches an explicit scoped Test
     basis: s.basis,
     hasRelevantDrafts: false,
   });
-  await waitUntil(() => !!product.store.latest("project")?.quiescent);
+  await waitUntil(() => !!product.store.latest(G)?.quiescent);
   s = await rpc("snapshot", {});
   assert.equal(calls, 1);
   assert.equal(s.connection.tokenAccounting, false);
@@ -177,8 +188,9 @@ test("configured factory's real HTTP boundary dispatches an explicit scoped Test
     "pass",
   );
   assert.equal(
-    s.run!.results.find((r) => r.path === "outside.md")!.evaluation!.groups![0]!
-      .status,
+    s
+      .run!.results.find((r) => r.path === "outside.md")!
+      .evaluation!.groups!.find((g) => g.id === testGroup.id)!.status,
     "outside-scope",
   );
   assert.equal(

@@ -1,3 +1,4 @@
+import { GLOBAL_CATALOG as G } from "../../contracts/catalog.ts";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import Database from "better-sqlite3";
@@ -35,6 +36,11 @@ test("two progress subscribers do not rescan files per result; only explicit/sta
     reads++;
     return read(a);
   };
+  for (const [name, value] of mem.values)
+    mem.values.set(
+      name,
+      value.replace("version: 1", "version: 1\nproject_id: project"),
+    );
   for (const name of ["list", "read", "write", "mkdir"] as const)
     fake.harness.inspection.sdk.stub("files." + name, mem.port[name] as never);
   const product = createMessageRules(fake.bb, {
@@ -43,11 +49,11 @@ test("two progress subscribers do not rescan files per result; only explicit/sta
   });
   const rpc = async (method: string, input: object) =>
     (await fake.harness.behavior.callRpc(method, {
-      projectId: "project",
+      projectId: G,
       ...input,
     })) as any;
   let s = await rpc("configure", {
-    revision: null,
+    revision: product.store.get(G)!.revision,
     hostId: "h",
     root: "/tests",
     connection: defaultConnection,
@@ -60,7 +66,7 @@ test("two progress subscribers do not rescan files per result; only explicit/sta
   assert.equal(reads, n);
   const pending: Promise<unknown>[] = [];
   const unsubscribe = product.service.subscribe((projectId, discover) => {
-    assert.equal(projectId, "project");
+    assert.equal(projectId, G);
     pending.push(
       product.snapshot(projectId, discover),
       product.snapshot(projectId, discover),
@@ -71,11 +77,11 @@ test("two progress subscribers do not rescan files per result; only explicit/sta
     basis: s.basis,
     hasRelevantDrafts: false,
   });
-  await waitUntil(() => !!product.store.latest("project")?.quiescent);
+  await waitUntil(() => !!product.store.latest(G)?.quiescent);
   await Promise.all(pending);
   assert.equal(reads, 3 * n);
   assert.equal(lists, 3);
-  assert.equal(product.store.latest("project")!.results.length, n);
+  assert.equal(product.store.latest(G)!.results.length, n);
   const baseline = reads;
   for (let i = 0; i < 10; i++) await rpc("snapshot", { discoverFiles: false });
   assert.equal(reads, baseline);

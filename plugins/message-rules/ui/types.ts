@@ -19,6 +19,7 @@ export type ProjectState = {
   occurrences: Occurrence[];
 };
 export type Snapshot = {
+  catalog?: import("../contracts/catalog.ts").CatalogInfo;
   project: ProjectState | null;
   basis: string | null;
   run: Run | null;
