@@ -1,3 +1,4 @@
+import "./thread-width.css";
 import { useEffect } from "react";
 import { definePluginApp, useSettings } from "@get-bb/plugin-sdk/app";
 
@@ -44,33 +45,8 @@ export default definePluginApp((app) => {
     display: none !important;
 }
 
-/* Thread measure: BB currently uses this utility on both the timeline column
-   and its composer footer. Scope to thread windows so settings/home stay native.
-   Use a named container: BB's nested page containers must not determine the
-   breakpoints, and a wide viewport must not widen a narrow split pane.
-   max-width (rather than width) preserves narrow panes and mobile layouts. */
-[data-thread-window] {
-    container-type: inline-size;
-    container-name: bb-compact-thread;
-}
-
-[data-thread-window] [class~="max-w-[760px]"] {
-    max-width: 760px !important;
-}
-
-@container bb-compact-thread (min-width: 1080px) {
-    [data-thread-window] [class~="max-w-[760px]"] {
-        max-width: 1080px !important;
-    }
-}
-
-@container bb-compact-thread (min-width: 1440px) {
-    [data-thread-window] [class~="max-w-[760px]"] {
-        max-width: 1440px !important;
-    }
-}
-
-/* Composer density shares the same sheet as the thread measure above. */
+/* Thread measure lives in thread-width.css, also the native appearance theme. */
+/* Composer density retains its app-lifecycle stylesheet. */
 [data-promptbox-action-row] {
     padding: 0 0.25rem;
 }
