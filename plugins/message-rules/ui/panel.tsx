@@ -1,3 +1,5 @@
+import { groupDraftCounts, groupSummary } from "./summary.ts";
+import { resolvePanelId } from "./route.ts";
 import {
   lazy,
   Suspense,
@@ -10,7 +12,7 @@ import {
 } from "react";
 import type { ReactNode } from "react";
 import type { Occurrence, Run } from "../state/store.ts";
-import type { Client, Draft, Snapshot } from "./types.ts";
+import type { Client, Draft, Snapshot, LookupState } from "./types.ts";
 import {
   confirmsWrite,
   operationKey,
@@ -41,6 +43,7 @@ export type PanelProps = {
   projectId: string | null;
   legacyProjectId?: string;
   projects: { id: string; name: string }[];
+  projectLookup?: LookupState;
   subPath: string;
   navigate: (path: string) => void;
   refreshSignal: number;
@@ -52,6 +55,7 @@ export function Panel({
   projectId,
   legacyProjectId,
   projects,
+  projectLookup,
   subPath,
   navigate,
   refreshSignal,
@@ -98,9 +102,9 @@ export function Panel({
   scope.current = projectId;
   const p = snapshot?.project;
   const refresh = useCallback(
-    (discover = true): Promise<Snapshot | undefined> => {
+    (discover = true, requestId?: string): Promise<Snapshot | undefined> => {
       if (!projectId) return Promise.resolve(undefined);
-      if (!discover && fullRead.current?.projectId === projectId)
+      if (!requestId && !discover && fullRead.current?.projectId === projectId)
         return fullRead.current.promise;
       const pending = (async () => {
         const generation = ++readGeneration.current;
@@ -108,6 +112,7 @@ export function Panel({
           const incoming = await client.call("snapshot", {
             projectId,
             discoverFiles: discover,
+            ...(requestId ? { requestId } : {}),
           });
           if (
             mounted.current &&
@@ -198,13 +203,12 @@ export function Panel({
           ? "test"
           : null,
     rawId = decodeURIComponent(subPath.slice(subPath.indexOf("/") + 1)),
-    id =
-      snapshot?.catalog?.aliases.find(
-        (a) =>
-          a.projectId === legacyProjectId &&
-          a.kind === selectedType &&
-          a.oldId === rawId,
-      )?.id ?? rawId;
+    id = resolvePanelId(
+      snapshot?.catalog?.aliases,
+      legacyProjectId,
+      selectedType,
+      rawId,
+    );
   const selectedGroup =
     selectedType === "group" ? p?.groups.find((g) => g.id === id) : null;
   const selectedRule =
@@ -271,6 +275,17 @@ export function Panel({
     }
     return map;
   }, [p]);
+  const savedTestsByGroup = useMemo(() => {
+    const map = new Map<string, Occurrence[]>();
+    for (const o of run?.frozen.occurrences ?? []) {
+      const id = o.groupId ?? "";
+      const list = map.get(id) ?? [];
+      list.push(o);
+      map.set(id, list);
+    }
+    return map;
+  }, [run]);
+  const groupDrafts = groupDraftCounts(p, drafts, projectId!);
   const rulesByGroup = useMemo(() => {
     const map = new Map<string, Rule[]>();
     for (const r of p?.rules ?? []) {
@@ -283,7 +298,7 @@ export function Panel({
     return map;
   }, [p]);
   const result = selectedTest
-    ? run?.results.find((x) => x.occurrenceId === selectedTest.occurrenceId)
+    ? resultMap.get(selectedTest.occurrenceId)
     : undefined;
   const suiteTone =
     relevant ||
@@ -367,7 +382,10 @@ export function Panel({
       // Read the authoritative revisions without replaying the failed write.
       // Its error remains separate until the same write is confirmed.
       if (mounted.current && scope.current === projectId) {
-        const next = await refresh();
+        const next = await refresh(
+          true,
+          method === "startSuite" ? String(input.requestId) : undefined,
+        );
         if (next && confirmsWrite(intent, next)) return next;
       }
       return undefined;
@@ -510,10 +528,10 @@ export function Panel({
                   >
                     {groupSummary(
                       testsByGroup.get(g.id) ?? [],
+                      savedTestsByGroup.get(g.id) ?? [],
                       resultMap,
                       stale,
-                      drafts,
-                      projectId!,
+                      groupDrafts.get(g.id) ?? 0,
                     )}
                   </p>
                   <div className="mr-child-rules">
@@ -596,9 +614,7 @@ export function Panel({
               <p className="mr-context-label">{contextGroup.title}</p>
             )}
             {ownedTests.map((o) => {
-              const r = run?.results.find(
-                (x) => x.occurrenceId === o.occurrenceId,
-              );
+              const r = resultMap.get(o.occurrenceId);
               const draft = drafts.get(key("test", o.occurrenceId));
               const edited = !!draft && draft.value !== draft.base;
               return (
@@ -731,12 +747,14 @@ export function Panel({
               {selectedGroup ? (
                 <GroupEditor
                   projects={projects}
+                  projectLookup={projectLookup}
                   group={JSON.parse(current) as RuleGroup}
                   onChange={(g) => edit(JSON.stringify(g))}
                 />
               ) : selectedRule ? (
                 <RuleEditor
                   projects={projects}
+                  projectLookup={projectLookup}
                   groups={p!.groups}
                   rule={JSON.parse(current) as Rule}
                   onChange={(rule) => edit(JSON.stringify(rule))}
@@ -750,6 +768,7 @@ export function Panel({
                       </strong>
                       <SearchValue
                         label="Test group"
+                        entity="group"
                         value={testGroupChoice ?? contextGroupId ?? ""}
                         options={p!.groups.map((g) => ({
                           id: g.id,
@@ -943,13 +962,16 @@ export function Panel({
           ) : (
             <div className="mr-empty">
               <h2>
-                {p
-                  ? "Select a group, rule or saved test"
-                  : "Loading shared rule groups…"}
+                {p && legacyProjectId && selectedType && id === null
+                  ? "This legacy link is unavailable"
+                  : p
+                    ? "Select a group, rule or saved test"
+                    : "Loading shared rule groups…"}
               </h2>
               <p>
-                All groups are shared. A group’s scope can restrict projects.
-                Select a group or child rule to see its tests.
+                {p && legacyProjectId && selectedType && id === null
+                  ? `No ${selectedType} mapping exists for ${legacyProjectId} / ${rawId}. Choose an item from the shared catalog.`
+                  : "All groups are shared. A group’s scope can restrict projects. Select a group or child rule to see its tests."}
               </p>
               {!p && (
                 <button
@@ -1353,42 +1375,4 @@ function Modal({
       {children}
     </dialog>
   );
-}
-
-function groupSummary(
-  tests: Occurrence[],
-  results: Map<string, NonNullable<Run["results"][number]>>,
-  stale: boolean,
-  drafts: Map<string, Draft>,
-  catalogId: string,
-) {
-  const enabled = tests.filter((o) => o.enabled);
-  const states = new Map<string, number>();
-  for (const o of enabled) {
-    const d = drafts.get(catalogId + ":test:" + o.occurrenceId);
-    const state = o.error
-      ? "error"
-      : d && d.value !== d.base
-        ? "draft"
-        : stale
-          ? "stale"
-          : (results.get(o.occurrenceId)?.status ?? "untested");
-    states.set(state, (states.get(state) ?? 0) + 1);
-  }
-  const labels: Record<string, string> = {
-    pass: "passed",
-    fail: "failed",
-    error: "errors",
-    unknown: "unknown",
-    untested: "not tested",
-    stale: "stale",
-    draft: "draft",
-  };
-  return [
-    enabled.length + " enabled",
-    ...Array.from(states, ([state, count]) => count + " " + labels[state]),
-    ...(tests.length > enabled.length
-      ? [tests.length - enabled.length + " disabled"]
-      : []),
-  ].join(" · ");
 }

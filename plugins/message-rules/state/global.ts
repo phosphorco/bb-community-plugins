@@ -184,10 +184,19 @@ export function createGlobalCatalog(store: Store) {
       .get(sourceId, o.occurrenceId) as
       | { group_id: string; reason: string }
       | undefined;
-    if (saved) return { groupId: saved.group_id, reason: saved.reason };
+    if (
+      saved &&
+      store.get(GLOBAL_CATALOG)!.groups.some((g) => g.id === saved.group_id)
+    )
+      return { groupId: saved.group_id, reason: saved.reason };
     const meta = info();
     const entry = meta.sources.find((s) => s.projectId === sourceId);
     let groupId = entry?.defaultGroupId;
+    if (
+      groupId &&
+      !store.get(GLOBAL_CATALOG)!.groups.some((g) => g.id === groupId)
+    )
+      groupId = undefined;
     let reason = "Legacy fallback: first group by order and ID";
     try {
       const f = parseFixture(o.source ?? "");
@@ -214,45 +223,59 @@ export function createGlobalCatalog(store: Store) {
         reason = "Legacy mapping: unique expected-rule group";
       }
     } catch {}
-    if (!groupId && sourceId === GLOBAL_CATALOG) {
+    if (!groupId) {
+      const key = "import-test-group:" + sourceId;
       const record = db
-        .prepare(
-          "SELECT value FROM mr_metadata WHERE key='unassigned-test-group'",
-        )
-        .get() as { value: string } | undefined;
+        .prepare("SELECT value FROM mr_metadata WHERE key=?")
+        .get(key) as { value: string } | undefined;
       groupId = record?.value;
       if (
         !groupId ||
         !store.get(GLOBAL_CATALOG)!.groups.some((g) => g.id === groupId)
       ) {
         const p = store.get(GLOBAL_CATALOG)!;
-        groupId = "unassigned-tests";
+        groupId =
+          sourceId === GLOBAL_CATALOG
+            ? "unassigned-tests"
+            : "imported-tests-" + fingerprint(sourceId).slice(0, 12);
         for (let n = 1; p.groups.some((g) => g.id === groupId); n++)
-          groupId = "unassigned-tests-" + n;
-        const group = {
+          groupId =
+            "imported-tests-" + fingerprint({ sourceId, n }).slice(0, 12);
+        const match: Predicate =
+          sourceId === GLOBAL_CATALOG
+            ? { kind: "all", children: [] }
+            : {
+                kind: "condition",
+                field: "project_id",
+                operator: "equals",
+                value: sourceId,
+                insensitive: false,
+              };
+        store.saveGroup(GLOBAL_CATALOG, p.revision, {
           ...newGroup(groupId),
-          title: "Imported tests · choose a group",
+          title:
+            sourceId === GLOBAL_CATALOG
+              ? "Imported tests · choose a group"
+              : "Imported tests · " + sourceId,
           order: p.groups.length,
-          match: { kind: "all" as const, children: [] },
-        };
-        store.saveGroup(GLOBAL_CATALOG, p.revision, group);
+          match,
+        });
         db.prepare(
-          "INSERT INTO mr_metadata VALUES('unassigned-test-group',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-        ).run(groupId);
+          "INSERT INTO mr_metadata VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+        ).run(key, groupId);
       }
       reason =
-        "External file import: explicit assignment required; organized in a disabled import group";
+        sourceId === GLOBAL_CATALOG
+          ? "External file import: explicit assignment required; organized in a disabled import group"
+          : "Legacy default group was removed; organized in a disabled import group";
     }
     if (!groupId)
       throw new Conflict(
         "Assign a group to the test before discovery: " + o.path,
       );
-    db.prepare("INSERT INTO mr_test_owners VALUES(?,?,?,?)").run(
-      sourceId,
-      o.occurrenceId,
-      groupId,
-      reason,
-    );
+    db.prepare(
+      "INSERT INTO mr_test_owners VALUES(?,?,?,?) ON CONFLICT(source_id,occurrence_id) DO UPDATE SET group_id=excluded.group_id,reason=excluded.reason",
+    ).run(sourceId, o.occurrenceId, groupId, reason);
     return { groupId, reason };
   }
   const sync = db.transaction(() => {

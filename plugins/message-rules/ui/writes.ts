@@ -68,8 +68,8 @@ export function confirmsWrite(w: WriteIntent, s: Snapshot): boolean {
   if (s.project?.id !== w.projectId) return false;
   if (w.method === "startSuite")
     return (
-      s.run?.requestId === w.input.requestId &&
-      s.run?.frozen.basis === w.input.basis
+      (s.acknowledgedRun ?? s.run)?.requestId === w.input.requestId &&
+      (s.acknowledgedRun ?? s.run)?.frozen.basis === w.input.basis
     );
   if (w.method === "cancelSuite")
     return s.run?.id === w.input.runId && s.run?.status !== "running";

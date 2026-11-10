@@ -10,7 +10,7 @@ import type { PluginNavPanelProps } from "@get-bb/plugin-sdk/app";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { panelPath, panelScope } from "./ui/route.ts";
 import { Panel } from "./ui/panel.tsx";
-import type { Draft, Snapshot } from "./ui/types.ts";
+import type { Draft, Snapshot, LookupState } from "./ui/types.ts";
 import { contract, snapshotSchema } from "./suite-rpc-contract.ts";
 import "./app.css";
 export default definePluginApp((app) => {
@@ -24,28 +24,35 @@ export default definePluginApp((app) => {
         [],
       ),
       [signal, setSignal] = useState({ revision: 0, discoverFiles: true }),
-      [error, setError] = useState<string | null>(null);
+      [error, setError] = useState<string | null>(null),
+      [projectLookup, setProjectLookup] = useState<LookupState>({
+        status: "loading",
+      });
     const route = panelScope(subPath, null),
       projectId = route.projectId;
     const choosePath = (path: string) =>
       navigate.toPluginPanel("rules", { subPath: panelPath(projectId, path) });
-    const live = useRef(true),
-      previousConnection = useRef(connection);
+    const previousConnection = useRef(connection);
     useEffect(() => {
-      live.current = true;
+      let current = true;
+      setProjectLookup({ status: "loading" });
       void sdk.projects.list().then(
         (p) => {
-          if (live.current) {
+          if (current) {
             setProjects(p);
             setError(null);
+            setProjectLookup({ status: "ready" });
           }
         },
         (e) => {
-          if (live.current) setError(String(e));
+          if (current) {
+            setError(String(e));
+            setProjectLookup({ status: "error", message: String(e) });
+          }
         },
       );
       return () => {
-        live.current = false;
+        current = false;
       };
     }, [sdk, connection]);
     useRealtime("changed", (event: unknown) => {
@@ -81,6 +88,7 @@ export default definePluginApp((app) => {
           projectId={projectId}
           legacyProjectId={route.legacyProjectId}
           projects={projects}
+          projectLookup={projectLookup}
           subPath={route.path}
           navigate={choosePath}
           refreshSignal={signal.revision}

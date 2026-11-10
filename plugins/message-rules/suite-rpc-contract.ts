@@ -8,7 +8,10 @@ const project = z.object({ projectId: z.string().min(1).max(200) });
 const json = z.unknown();
 export const contract = {
   snapshot: {
-    input: project.extend({ discoverFiles: z.boolean().default(true) }),
+    input: project.extend({
+      discoverFiles: z.boolean().default(true),
+      requestId: z.string().optional(),
+    }),
     output: json,
   },
   configure: {
@@ -159,7 +162,7 @@ const frozenSchema = z.object({
   denominator: z.number().int().nonnegative(),
   actor: z.unknown(),
 });
-export const snapshotSchema = z.object({
+const baseSnapshotSchema = z.object({
   catalog: z
     .object({
       aliases: z.array(
@@ -220,4 +223,8 @@ export const snapshotSchema = z.object({
   }),
   delivery: z.object({ state: z.string(), reason: z.string() }),
   unresolved: z.array(z.unknown()),
+});
+
+export const snapshotSchema = baseSnapshotSchema.extend({
+  acknowledgedRun: baseSnapshotSchema.shape.run.unwrap().optional(),
 });

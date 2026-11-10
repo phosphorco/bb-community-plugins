@@ -78,6 +78,14 @@ for (const global of [false, true])
       const done = await wait("quiesced");
       assert.equal(done.calls, 1);
       assert.equal(done.run.quiescent, true);
+      assert.equal(done.run.status, old.status);
+      assert.equal(done.run.frozen.denominator, old.frozen.denominator);
+      assert.equal(done.run.inputHash, old.inputHash);
+      assert.deepEqual(
+        done.run.results,
+        old.results,
+        "late old-owner response cannot replace results after recovery",
+      );
       assert.equal(replacements, 0);
       await replacement.dispose();
     } finally {

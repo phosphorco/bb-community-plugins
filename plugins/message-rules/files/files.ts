@@ -109,7 +109,14 @@ export function createFiles(port: FilePort, store: Store) {
         }
       }),
     );
-    const previous = p.occurrences;
+    // The global row also contains imported occurrences. Reconcile only the
+    // scanned source; a relative filename is never a cross-source identity.
+    const previous = p.occurrences.filter(
+      (o) => !o.sourceProjectId || o.sourceProjectId === projectId,
+    );
+    const foreign = p.occurrences.filter(
+      (o) => o.sourceProjectId && o.sourceProjectId !== projectId,
+    );
     const used = new Set<string>();
     const occurrences: Occurrence[] = fresh.map((f) => {
       let old = previous.find((o) => o.path === f.path);
@@ -170,8 +177,9 @@ export function createFiles(port: FilePort, store: Store) {
       throw new Conflict(
         "Saved inputs changed during directory discovery. Refresh to retry.",
       );
-    if (canonical(occurrences) !== canonical(previous))
-      return store.discover(projectId, p.revision, occurrences);
+    const merged = [...foreign, ...occurrences];
+    if (canonical(merged) !== canonical(p.occurrences))
+      return store.discover(projectId, p.revision, merged);
     return p;
   }
   const discover = (projectId: string) => {

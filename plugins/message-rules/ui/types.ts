@@ -23,6 +23,7 @@ export type Snapshot = {
   project: ProjectState | null;
   basis: string | null;
   run: Run | null;
+  acknowledgedRun?: Run;
   readError: string | null;
   connection: { configured: boolean; tokenAccounting: boolean; mode: string };
   delivery: { state: string; reason: string };
@@ -40,4 +41,9 @@ export type Draft = {
   conflict?: string;
   location?: FileLocation;
   pending?: import("./writes.ts").PendingSave;
+};
+
+export type LookupState = {
+  status: "loading" | "ready" | "error";
+  message?: string;
 };

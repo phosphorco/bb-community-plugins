@@ -1046,3 +1046,61 @@
   padding: 10px;
   font-size: 12px;
 }
+
+/* Predicate controls share one geometry; native check/radio/switch sizes stay native. */
+.mr-root select,
+.mr-root input:not([type="checkbox"]):not([type="radio"]) {
+  height: max(38px, calc(1.5em + 16px));
+  line-height: 1.5;
+  padding: 7px 10px;
+}
+.mr-condition {
+  align-items: flex-start;
+}
+.mr-condition > label {
+  display: inline-flex;
+  align-items: center;
+  min-height: max(38px, calc(1.5em + 16px));
+}
+.mr-condition > button {
+  min-height: max(38px, calc(1.5em + 16px));
+}
+.mr-search-options {
+  top: max(38px, calc(1.5em + 16px));
+}
+.mr-comparison-select {
+  display: inline-block;
+  position: relative;
+  width: max(112px, 7.5em);
+  height: max(38px, calc(1.5em + 16px));
+  flex: 0 0 max(112px, 7.5em);
+}
+.mr-root .mr-comparison-select select {
+  opacity: 0;
+  width: 100%;
+  height: 100%;
+  cursor: pointer;
+}
+.mr-comparison-face {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--background);
+  pointer-events: none;
+}
+.mr-comparison-equals {
+  font-size: 28px;
+  font-weight: 500;
+  line-height: 1;
+}
+.mr-comparison-select:has(select:focus-visible) {
+  outline: 2px solid var(--ring, var(--primary));
+  outline-offset: 2px;
+  border-radius: 6px;
+}

@@ -33,7 +33,7 @@ test("project completion distinguishes duplicate names by IDs and retains unavai
   assert.match(search, /role="combobox"/);
   assert.match(search, /aria-autocomplete="list"/);
   assert.match(html, /value="unavailable-id"/);
-  assert.match(html, /Raw value · no available match/);
+  assert.match(html, /Raw value · no known project ID/);
   const title = renderToStaticMarkup(
     <GroupEditor
       group={{
@@ -57,4 +57,32 @@ test("project completion distinguishes duplicate names by IDs and retains unavai
   );
   assert.match(rules, /data-value="g-one"/);
   assert.match(rules, /data-value="g-two"/);
+});
+
+test("lookup loading/error/empty states never masquerade as zero query matches", () => {
+  for (const status of ["loading", "error"] as const) {
+    const html = renderToStaticMarkup(
+      <GroupEditor
+        group={{
+          ...newGroup("raw"),
+          match: {
+            kind: "condition",
+            field: "project_id",
+            operator: "equals",
+            value: "preview",
+            insensitive: false,
+          },
+        }}
+        projects={[]}
+        projectLookup={{ status, message: "Project service unavailable" }}
+        onChange={() => {}}
+      />,
+    );
+    assert.match(
+      html,
+      status === "loading" ? /Loading projects/ : /Project list unavailable/,
+    );
+    assert.doesNotMatch(html, /No matching projects|No available match/);
+    assert.match(html, /value="preview"/);
+  }
 });

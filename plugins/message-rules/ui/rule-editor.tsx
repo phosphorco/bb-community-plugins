@@ -1,3 +1,4 @@
+import type { LookupState } from "./types.ts";
 import { useId, useState, useRef, useEffect } from "react";
 import type {
   Rule,
@@ -11,10 +12,12 @@ export function RuleEditor({
   onChange,
   groups,
   projects = [],
+  projectLookup,
 }: {
   rule: Rule;
   groups: RuleGroup[];
   projects?: { id: string; name: string }[];
+  projectLookup?: LookupState;
   onChange: (r: Rule) => void;
 }) {
   const patch = (p: Partial<Rule>) => onChange({ ...rule, ...p });
@@ -36,6 +39,7 @@ export function RuleEditor({
           <span>Group</span>
           <SearchValue
             label="Rule group"
+            entity="group"
             value={rule.groupId}
             options={groups.map((g) => ({
               id: g.id,
@@ -48,6 +52,7 @@ export function RuleEditor({
           <span>Match</span>
           <Predicates
             projects={projects}
+            projectLookup={projectLookup}
             value={rule.match}
             onChange={(match) => patch({ match })}
           />
@@ -155,11 +160,13 @@ export function Predicates({
   onChange,
   scopeOnly = false,
   projects = [],
+  projectLookup,
   onRemove,
 }: {
   value: Predicate;
   scopeOnly?: boolean;
   projects?: { id: string; name: string }[];
+  projectLookup?: LookupState;
   onRemove?: () => void;
   onChange: (p: Predicate) => void;
 }) {
@@ -182,22 +189,40 @@ export function Predicates({
           <option value="sender_thread_id">Sender thread ID</option>
           <option value="destination_thread_id">Destination thread ID</option>
         </select>
-        <select
-          aria-label="Comparison"
-          value={value.operator}
-          onChange={(e) =>
-            onChange({
-              ...value,
-              operator: e.target.value as typeof value.operator,
-            })
+        <span
+          className="mr-comparison-select"
+          title={
+            value.operator === "equals" ? "Equals exactly" : "Contains text"
           }
         >
-          <option value="contains">contains</option>
-          <option value="equals">equals</option>
-        </select>
+          <span className="mr-comparison-face" aria-hidden="true">
+            <span
+              className={
+                value.operator === "equals" ? "mr-comparison-equals" : ""
+              }
+            >
+              {value.operator === "equals" ? "=" : "Contains"}
+            </span>
+            <span>⌄</span>
+          </span>
+          <select
+            aria-label="Comparison"
+            value={value.operator}
+            onChange={(e) =>
+              onChange({
+                ...value,
+                operator: e.target.value as typeof value.operator,
+              })
+            }
+          >
+            <option value="contains">Contains text</option>
+            <option value="equals">= Equals exactly</option>
+          </select>
+        </span>
         {value.field === "project_id" || value.field === "project_title" ? (
           <SearchValue
             label="Condition text"
+            lookupState={projectLookup}
             value={value.value}
             options={projects}
             titleValue={value.field === "project_title"}
@@ -231,6 +256,7 @@ export function Predicates({
         <span>Not</span>
         <Predicates
           projects={projects}
+          projectLookup={projectLookup}
           scopeOnly={scopeOnly}
           value={value.child}
           onRemove={remove}
@@ -265,6 +291,7 @@ export function Predicates({
         <div className="mr-condition-wrap" key={i}>
           <Predicates
             projects={projects}
+            projectLookup={projectLookup}
             scopeOnly={scopeOnly}
             value={p}
             onRemove={() => removeChild(i)}
@@ -530,9 +557,11 @@ export function GroupEditor({
   group,
   onChange,
   projects = [],
+  projectLookup,
 }: {
   group: RuleGroup;
   projects?: { id: string; name: string }[];
+  projectLookup?: LookupState;
   onChange: (g: RuleGroup) => void;
 }) {
   return (
@@ -557,6 +586,7 @@ export function GroupEditor({
           <Predicates
             scopeOnly
             projects={projects}
+            projectLookup={projectLookup}
             value={group.match}
             onChange={(match) => onChange({ ...group, match })}
           />
@@ -665,12 +695,16 @@ export function SearchValue({
   options,
   onChange,
   titleValue = false,
+  lookupState = { status: "ready" },
+  entity = "project",
 }: {
   label: string;
   value: string;
   options: { id: string; name: string }[];
   onChange: (v: string) => void;
   titleValue?: boolean;
+  lookupState?: LookupState;
+  entity?: "project" | "group";
 }) {
   const id = useId();
   const list = useRef<HTMLSpanElement>(null);
@@ -698,6 +732,31 @@ export function SearchValue({
   const found = options.filter((p) =>
     titleValue ? p.name === value : p.id === value,
   );
+  const listState =
+    lookupState.status === "loading"
+      ? options.length
+        ? `Refreshing ${entity}s… Showing the last loaded list.`
+        : `Loading ${entity}s… Raw values remain editable.`
+      : lookupState.status === "error"
+        ? `${entity === "project" ? "Project" : "Group"} list unavailable. ${lookupState.message ?? "Try again after reconnecting."}${options.length ? " Showing the last loaded list." : " Raw values remain editable."}`
+        : null;
+  const queryHint =
+    listState ??
+    (expanded
+      ? !value
+        ? options.length
+          ? `Search ${options.length} ${entity}s by name or ID.`
+          : `No ${entity}s available. Raw values remain valid.`
+        : matches.length
+          ? `${matches.length} matching ${entity}${matches.length === 1 ? "" : "s"}. Select a result.`
+          : `No matching ${entity}s. Refine the search or keep this raw value.`
+      : found.length === 1
+        ? found[0]!.name + " · " + found[0]!.id
+        : found.length > 1
+          ? "Multiple projects share this name; use Project ID for exact scope."
+          : value
+            ? `Raw value · no known ${entity} ID`
+            : "Search by name or ID; raw predicates remain valid.");
   const choose = (p: { id: string; name: string }) => {
     onChange(titleValue ? p.name : p.id);
     setExpanded(false);
@@ -720,6 +779,7 @@ export function SearchValue({
         autoComplete="off"
         value={value}
         placeholder="Search name or ID"
+        onClick={() => setExpanded(true)}
         onFocus={() => {
           setExpanded(true);
           setActive(-1);
@@ -783,7 +843,12 @@ export function SearchValue({
             <small>{p.id}</small>
           </span>
         ))}
-        {!candidates.length && (
+        {listState && (
+          <span className="mr-search-empty" role="status">
+            {listState}
+          </span>
+        )}
+        {!candidates.length && lookupState.status === "ready" && (
           <span className="mr-search-empty">
             No available match. Raw values remain valid.
           </span>
@@ -794,15 +859,7 @@ export function SearchValue({
           </span>
         )}
       </span>
-      <small id={id + "-hint"}>
-        {found.length === 1
-          ? found[0]!.name + " · " + found[0]!.id
-          : found.length > 1
-            ? "Multiple projects share this name; use Project ID for exact scope."
-            : value
-              ? "Raw value · no available match"
-              : "Search by name or ID; raw predicates remain valid."}
-      </small>
+      <small id={id + "-hint"}>{queryHint}</small>
     </span>
   );
 }

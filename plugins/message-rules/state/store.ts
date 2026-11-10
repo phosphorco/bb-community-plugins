@@ -138,7 +138,8 @@ export function createStore(db: Database.Database) {
   };
   const get = (id: string) => {
     const r = db.prepare("SELECT * FROM mr_projects WHERE id=?").get(id) as
-      Row | undefined;
+      | Row
+      | undefined;
     return r
       ? {
           id,
@@ -204,7 +205,8 @@ export function createStore(db: Database.Database) {
   });
   const run = (id: string) => {
     const r = db.prepare("SELECT * FROM mr_runs WHERE id=?").get(id) as
-      Record<string, unknown> | undefined;
+      | Record<string, unknown>
+      | undefined;
     return r ? runRow(r) : null;
   };
   return {
@@ -217,11 +219,18 @@ export function createStore(db: Database.Database) {
           p.config.hostId !== config.hostId ||
           p.config.root !== config.root
         ) {
-          if (p.occurrences.some((x) => x.enabled))
+          if (
+            p.occurrences.some(
+              (x) =>
+                x.enabled && (!x.sourceProjectId || x.sourceProjectId === id),
+            )
+          )
             throw new Conflict(
               "Disable or explicitly resolve existing tests before changing suite location.",
             );
-          p.occurrences = [];
+          p.occurrences = p.occurrences.filter(
+            (o) => o.sourceProjectId && o.sourceProjectId !== id,
+          );
         }
         const changed =
           p.config.hostId !== config.hostId || p.config.root !== config.root;
@@ -248,7 +257,10 @@ export function createStore(db: Database.Database) {
     },
     removeGroup(id: string, revision: number, groupId: string) {
       return write(id, revision, (p) => {
-        if (p.rules.some((r) => r.groupId === groupId) || p.occurrences.some((o) => o.groupId === groupId))
+        if (
+          p.rules.some((r) => r.groupId === groupId) ||
+          p.occurrences.some((o) => o.groupId === groupId)
+        )
           throw new Conflict(
             "Move child rules and owned tests before deleting this group.",
           );
@@ -308,7 +320,8 @@ export function createStore(db: Database.Database) {
               "SELECT * FROM mr_runs WHERE project_id=? AND request_id=?",
             )
             .get(frozen.projectId, requestId) as
-            Record<string, unknown> | undefined;
+            | Record<string, unknown>
+            | undefined;
         if (old) {
           if (old.input_hash !== inputHash)
             throw new Conflict(
@@ -393,7 +406,8 @@ export function createStore(db: Database.Database) {
       const a = db
         .prepare("SELECT * FROM mr_attempts WHERE id=?")
         .get(attemptId) as
-        { run_id: string; state: string; owner: string } | undefined;
+        | { run_id: string; state: string; owner: string }
+        | undefined;
       const r = a && run(a.run_id);
       if (
         !a ||

@@ -23,3 +23,18 @@ export function panelScope(path: string, fallback: string | null) {
     return { projectId: null, path: "" };
   }
 }
+
+export function resolvePanelId(
+  aliases: import("../contracts/catalog.ts").CatalogInfo["aliases"] | undefined,
+  legacyProjectId: string | undefined,
+  kind: string | null,
+  rawId: string,
+): string | null {
+  if (!legacyProjectId) return rawId;
+  return (
+    aliases?.find(
+      (a) =>
+        a.projectId === legacyProjectId && a.kind === kind && a.oldId === rawId,
+    )?.id ?? null
+  );
+}

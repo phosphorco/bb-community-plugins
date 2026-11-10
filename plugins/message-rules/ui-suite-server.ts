@@ -82,7 +82,11 @@ export function createMessageRules(
     bb.realtime.publish("changed", { projectId, discoverFiles });
   const unsubscribe = service.subscribe(publish);
   const fileErrors = new Map<string, { location: string; message: string }>();
-  async function snapshot(projectId: string, discoverFiles = false) {
+  async function snapshot(
+    projectId: string,
+    discoverFiles = false,
+    requestId?: string,
+  ) {
     let p = store.get(projectId);
     const location = p ? canonical(fileLocation(p.config)) : "";
     const prior = fileErrors.get(projectId);
@@ -115,7 +119,13 @@ export function createMessageRules(
         });
       }
     const configured = await settings.get();
+    const requested = requestId
+      ? (store.db
+          .prepare("SELECT id FROM mr_runs WHERE project_id=? AND request_id=?")
+          .get(projectId, requestId) as { id: string } | undefined)
+      : undefined;
     return snapshotSchema.parse({
+      ...(requested ? { acknowledgedRun: store.run(requested.id) } : {}),
       project: p,
       ...(projectId === GLOBAL_CATALOG ? { catalog: catalog.info() } : {}),
       basis: p ? savedBasis(p) : null,
@@ -143,7 +153,7 @@ export function createMessageRules(
   const handlers: IdentityRpcHandlers<typeof contract> = {
     snapshot: {
       origin: "interactive-user",
-      handle: async (i) => snapshot(i.projectId, i.discoverFiles),
+      handle: async (i) => snapshot(i.projectId, i.discoverFiles, i.requestId),
     },
     configure: {
       origin: "interactive-user",
@@ -314,7 +324,7 @@ export function createMessageRules(
         if (prior) {
           const run = store.run(prior.id)!;
           service.start(i.projectId, i.requestId, i.basis, run.frozen.actor);
-          return snapshot(i.projectId);
+          return snapshot(i.projectId, false, i.requestId);
         }
         await discover(i.projectId);
         const actor = await invocation.person();
@@ -322,7 +332,7 @@ export function createMessageRules(
         try {
           service.start(i.projectId, i.requestId, i.basis, actor.value.actor);
           publish(i.projectId);
-          return snapshot(i.projectId);
+          return snapshot(i.projectId, false, i.requestId);
         } finally {
           actor.value.dispose();
         }
