@@ -109,6 +109,11 @@ When supplied, a verified counter enforces model per-request and per-question to
 
 ## Saved runs, drafts and recovery
 
+Captured evaluator version `message-rules-v1.5` adds metric/distribution consistency
+validation. Earlier saved runs remain immutable historical evidence and appear
+stale even with unchanged catalog/fixture inputs; they are never automatically
+re-evaluated or replayed. Fixture format and storage schema are unchanged.
+
 Test freezes exact enabled occurrence membership, source bytes/hashes, rules,
 configuration and versions before acknowledgement. The absolute global deadline is checked before every partition permit as well as between fixtures. Invalid/missing enabled files
 count as error results. Disabled files are excluded. The visible total belongs

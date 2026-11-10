@@ -28,6 +28,7 @@ import {
   newGroup,
   defaultConnection,
   fileLocation,
+  VERSION,
 } from "../contracts/model.ts";
 import type { Rule, RuleGroup, FileLocation } from "../contracts/model.ts";
 import { fixtureTemplate } from "../contracts/template.ts";
@@ -860,7 +861,9 @@ export function Panel({
                         {dirty
                           ? "Results below belong to the saved source. Save or discard this draft before Test."
                           : stale
-                            ? "Saved inputs have changed. These results belong to the previous run."
+                            ? run?.frozen.version !== VERSION
+                              ? `Evaluator version changed from ${run?.frozen.version} to ${VERSION}. These historical results have not been re-evaluated.`
+                              : "Saved inputs have changed. These results belong to the previous run."
                             : (selectedTest?.error ??
                               result?.reason ??
                               "Run Test to evaluate the saved source.")}
