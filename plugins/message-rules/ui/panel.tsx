@@ -396,8 +396,8 @@ export function Panel({
       <p className="mr-notice" role="status">
         <strong>Preview / observe</strong>
         <span>
-          Message filtering is inactive. Scopes, rejection and advice apply to
-          saved tests only.
+          Message filtering is inactive. Scopes, rejection, advice and batch
+          membership apply to saved tests only.
         </span>
       </p>
       {relevant && (

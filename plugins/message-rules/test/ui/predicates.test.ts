@@ -108,3 +108,63 @@ test("actual delete/add question control preserves unique IDs and exact survivin
   );
   assert.ok(input);
 });
+
+test("action radios explain each choice and switch only action, retaining authored details", () => {
+  let rule: import("../../contracts/model.ts").Rule = {
+    ...jevRule(),
+    advice: "Keep this authored reply",
+    groupId: "authored-group",
+    revision: 17,
+  };
+  const original = structuredClone(rule);
+  for (const action of ["batch", "reject", "jev"] as const) {
+    const tree = nodes(
+      RuleEditor({
+        rule,
+        groups: [],
+        onChange: (next) => {
+          rule = next;
+        },
+      }),
+    );
+    const radios = tree.filter(
+      (n) => n.type === "input" && n.props.type === "radio",
+    );
+    assert.deepEqual(
+      radios.map((n) => n.props.value),
+      ["jev", "reject", "batch"],
+    );
+    assert.equal(radios.filter((n) => n.props.checked).length, 1);
+    for (const radio of radios) {
+      assert.ok(
+        tree.some(
+          (n) =>
+            n.props.id === radio.props["aria-labelledby"] && n.props.children,
+        ),
+      );
+      assert.ok(
+        tree.some(
+          (n) =>
+            n.props.id === radio.props["aria-describedby"] && n.props.children,
+        ),
+      );
+    }
+    radios.find((n) => n.props.value === action).props.onChange();
+    assert.deepEqual(rule, { ...original, action });
+    const updated = nodes(RuleEditor({ rule, groups: [], onChange: () => {} }));
+    assert.equal(
+      updated.some(
+        (n) =>
+          n.type === "textarea" &&
+          n.props.value === original.criteria[0]!.instructions,
+      ),
+      action === "jev",
+    );
+    assert.equal(
+      updated.some(
+        (n) => n.type === "textarea" && n.props.value === original.advice,
+      ),
+      action !== "batch",
+    );
+  }
+});

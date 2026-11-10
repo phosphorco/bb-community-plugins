@@ -53,19 +53,11 @@ export function RuleEditor({
       </section>
       <section className="mr-form-card" aria-label="What this rule checks">
         <h3>What this rule checks</h3>
-        <label className="mr-field">
-          <span>Action</span>
-          <select
-            value={rule.action}
-            onChange={(e) =>
-              patch({ action: e.target.value as Rule["action"] })
-            }
-          >
-            <option value="jev">Check with JEV</option>
-            <option value="reject">Reject with advice</option>
-            <option value="batch">Include in next batch</option>
-          </select>
-        </label>
+        <ActionChoices
+          id={`mr-action-${rule.id}`}
+          value={rule.action}
+          onChange={(action) => patch({ action })}
+        />
         {rule.action === "batch" && (
           <p className="mr-note">
             Saved tests show intended membership. Native all-sender delivery
@@ -569,4 +561,77 @@ export function unusedQuestionId(criteria: { id: string }[]) {
   let n = 1;
   while (used.has("question-" + n)) n++;
   return "question-" + n;
+}
+
+const actions = [
+  {
+    value: "jev",
+    title: "Check with JEV",
+    description:
+      "Ask your questions about the message and context. Reject when the answers match your criteria.",
+    path: "M8 10h8M8 14h4M20 11a8 8 0 0 1-8 8H5l-3 3V11a9 9 0 0 1 18 0Z",
+  },
+  {
+    value: "reject",
+    title: "Reject with advice",
+    description:
+      "Reject matching messages directly, with your reply explaining what the sender should change.",
+    path: "M8 3h8l5 5v8l-5 5H8l-5-5V8l5-5ZM9 9l6 6M15 9l-6 6",
+  },
+  {
+    value: "batch",
+    title: "Include in next batch",
+    description:
+      "Mark matching messages for the next batch. Saved tests preview intended membership.",
+    path: "M5 3h14M5 7h14M3 11h18v10H3V11Zm0 0 5 5h8l5-5",
+  },
+] as const;
+
+function ActionChoices({
+  id,
+  value,
+  onChange,
+}: {
+  id: string;
+  value: Rule["action"];
+  onChange: (action: Rule["action"]) => void;
+}) {
+  return (
+    <fieldset className="mr-action-choices">
+      <legend>Action</legend>
+      <div className="mr-action-grid">
+        {actions.map((action) => (
+          <label className="mr-action-choice" key={action.value}>
+            <input
+              type="radio"
+              name={id}
+              value={action.value}
+              checked={value === action.value}
+              aria-labelledby={`${id}-${action.value}-title`}
+              aria-describedby={`${id}-${action.value}-description`}
+              onChange={() => onChange(action.value)}
+            />
+            <span className="mr-action-content">
+              <svg
+                className="mr-action-icon"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.75"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <path d={action.path} />
+              </svg>
+              <strong id={`${id}-${action.value}-title`}>{action.title}</strong>
+              <span id={`${id}-${action.value}-description`}>
+                {action.description}
+              </span>
+            </span>
+          </label>
+        ))}
+      </div>
+    </fieldset>
+  );
 }
