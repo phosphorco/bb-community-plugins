@@ -5,7 +5,8 @@ and their composers within a centered responsive column and reduce the prompt ed
 height and spacing. The height cap respects BB's corrected shell height when a
 keyboard shrinks the visible area, as well as the native editor's available-height
 budget. Long drafts scroll inside the editor. Narrow panes and mobile screens still shrink to fit. The
-column maximum includes its padding. Disable the plugin to restore BB's defaults.
+column maximum includes its padding. To restore BB's defaults, select **Default**
+in Appearance and disable the plugin.
 
 In **Settings → Plugins → Compact display**, **Hide update-ready notifications**
 is on by default. Turn it off to show the sidebar's update-ready link again.
@@ -32,11 +33,29 @@ so sidebars and split panes count against the available space. Both conversation
 and composer use the same breakpoints, without viewport listeners or observers.
 
 This is the shared home for our CSS overrides of native BB UI. Keep these rules
-in the single stylesheet in `app.ts`, with their DOM dependencies and interactions
+in `app.ts` and the shared `thread-width.css`, with their DOM dependencies and interactions
 documented together. Styles for UI owned by other plugins remain with those plugins.
 
-The plugin mounts one inline stylesheet through the public content-script SDK
-and removes it when disabled, unloaded, or reloaded. BB owns the boolean setting's
+Thread width is in `thread-width.css`, imported by the app so BB owns its stylesheet
+load and removal on disable/reload. The same file is a public native appearance
+theme: **Default + wide thread columns**. Selecting it in Settings → Appearance
+keeps the Default palette and code themes, and allows BB's existing appearance
+cache to apply the pane-responsive widths before app rendering on subsequent
+loads of that client. No plugin script, timer or observer restores it.
+
+Appearance is shared by this deployment. The theme ID is
+`plugin:compact-display:wide-default`. Selecting another palette also selects
+another theme: its early widths require a matching wide variant; Compact's app
+stylesheet still supplies the later fallback. A new client, cleared or denied
+local storage, and the first load before appearance has been confirmed can still
+start at native width. This is a returning-client improvement, not a universal
+first-paint guarantee. If Compact is disabled while its theme is selected, native
+appearance resolves the unavailable theme to Default on its next configuration
+read; cached CSS can precede that read. Select Default explicitly when retiring
+the wide layout.
+
+The plugin mounts its other overrides in one inline stylesheet through the public
+content-script SDK and removes it when disabled, unloaded, or reloaded. BB owns the boolean setting's
 control and persistence; one app-wide component uses the SDK settings hook to
 apply its value to the stylesheet through a document attribute. It retains the
 last applied preference if settings are temporarily unavailable and removes the attribute
