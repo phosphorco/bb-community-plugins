@@ -29,6 +29,7 @@
    never mounts. The native navigation DOM and surrounding workspace stay put. */
 [data-testid="app-nav-rail"] {
     --bb-rail-preparation: 1;
+    --bb-rail-alternate-access: 1;
 }
 
 [data-testid="app-nav-rail"] nav[aria-label="Primary navigation"] {
@@ -86,4 +87,77 @@
 [data-bb-rail-preparation-status][hidden],
 [data-testid="app-nav-rail"] nav:has(> div:not([data-bb-rail-preparation-status]) :focus) [data-bb-rail-preparation-status] {
     display: none;
+}
+
+/* Only a completely installed access toggle opts into this presentation.
+   Old controllers and controller-absent pages retain the eight-second escape. */
+[data-testid="app-nav-rail"][data-bb-rail-alternate]:has(nav > [data-bb-rail-access-status] input[data-bb-rail-access-toggle]) nav[aria-label="Primary navigation"] {
+    visibility: visible;
+    animation: none;
+}
+
+[data-testid="app-nav-rail"][data-bb-rail-alternate]:has(nav > [data-bb-rail-access-status] input[data-bb-rail-access-toggle]) nav::after,
+[data-testid="app-nav-rail"][data-bb-rail-alternate] [data-bb-rail-access-status]::before {
+    display: none;
+}
+
+[data-testid="app-nav-rail"][data-bb-rail-alternate] nav > [data-bb-rail-access-status]:not([hidden]) {
+    display: flex !important;
+    flex-direction: column;
+    align-items: center;
+    justify-content: flex-start;
+    gap: 4px;
+    width: 100%;
+    min-height: 72px;
+    padding-block: 4px;
+    font-size: 10px;
+    visibility: visible;
+}
+
+[data-bb-rail-access-status] label {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    cursor: pointer;
+}
+
+[data-bb-rail-access-status] input,
+[data-bb-rail-access-status] button {
+    accent-color: var(--primary);
+    color: var(--foreground);
+}
+
+[data-bb-rail-access-status] button {
+    text-decoration: underline;
+    cursor: pointer;
+}
+
+[data-bb-rail-access-status] input:focus-visible,
+[data-bb-rail-access-status] button:focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+}
+
+[data-testid="app-nav-rail"][data-bb-rail-alternate]:has(nav > [data-bb-rail-access-status] input[data-bb-rail-access-toggle]) nav > [data-bb-rail-native-list] {
+    display: none !important;
+}
+
+[data-testid="app-nav-rail"][data-bb-rail-alternate] nav:has(> [data-bb-rail-access-status] input[data-bb-rail-access-toggle]:checked) > [data-bb-rail-native-list] {
+    display: flex !important;
+    position: absolute;
+    inset-inline-start: 0;
+    inset-block-start: 72px;
+    z-index: 30;
+    width: 100%;
+    max-height: min(640px, calc(100% - 80px), calc(100dvh - 160px));
+    flex: none;
+    overflow-y: auto;
+    padding-block: 4px;
+    visibility: visible;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--popover);
+    color: var(--popover-foreground);
+    box-shadow: 0 4px 12px color-mix(in srgb, var(--foreground) 15%, transparent);
 }
