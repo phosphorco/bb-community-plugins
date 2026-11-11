@@ -23,3 +23,67 @@
         max-width: 1440px !important;
     }
 }
+
+/* Selected native appearance can arrive before plugin JavaScript. Prepare only
+   the icon rail, with an independent eight-second CSS escape if Sidebar Sync
+   never mounts. The native navigation DOM and surrounding workspace stay put. */
+[data-testid="app-nav-rail"] {
+    --bb-rail-preparation: 1;
+}
+
+[data-testid="app-nav-rail"] nav[aria-label="Primary navigation"] {
+    position: relative;
+    visibility: hidden;
+    animation: bb-rail-available 8s step-end forwards;
+}
+
+@keyframes bb-rail-available {
+    from { visibility: hidden; }
+    to { visibility: visible; }
+}
+
+@keyframes bb-rail-loading {
+    from { visibility: visible; }
+    to { visibility: hidden; }
+}
+
+[data-testid="app-nav-rail"] nav[aria-label="Primary navigation"]::after {
+    content: "Loading";
+    position: absolute;
+    top: 8px;
+    width: 100%;
+    text-align: center;
+    font-size: 10px;
+    visibility: visible;
+    animation: bb-rail-loading 8s step-end forwards;
+}
+
+[data-testid="app-nav-rail"][data-bb-rail-controller] nav::after,
+[data-testid="app-nav-rail"][data-bb-rail-state="ready"] nav::after,
+[data-testid="app-nav-rail"][data-bb-rail-state="fallback"] nav::after,
+[data-testid="app-nav-rail"] nav:has(> div:not([data-bb-rail-preparation-status]) :focus)::after {
+    display: none;
+}
+
+[data-testid="app-nav-rail"][data-bb-rail-state="ready"] nav,
+[data-testid="app-nav-rail"][data-bb-rail-state="fallback"] nav,
+[data-testid="app-nav-rail"] nav:has(> div:not([data-bb-rail-preparation-status]) :focus) {
+    visibility: visible;
+    animation: none;
+}
+
+[data-bb-rail-preparation-status] {
+    visibility: visible;
+    min-height: 32px;
+    padding-block: 4px;
+}
+
+[data-bb-rail-state="pending"] [data-bb-rail-preparation-status]::before {
+    content: "Loading";
+    display: block;
+}
+
+[data-bb-rail-preparation-status][hidden],
+[data-testid="app-nav-rail"] nav:has(> div:not([data-bb-rail-preparation-status]) :focus) [data-bb-rail-preparation-status] {
+    display: none;
+}

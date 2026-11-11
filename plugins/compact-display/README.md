@@ -43,6 +43,23 @@ keeps the Default palette and code themes, and allows BB's existing appearance
 cache to apply the pane-responsive widths before app rendering on subsequent
 loads of that client. No plugin script, timer or observer restores it.
 
+The same selected appearance includes bounded preparation of the utmost-left
+icon rail. It displays Loading while native registration and Sidebar Sync's
+confirmed personal arrangement settle. Thread contents, the composer and sidebar
+header stay available. Sidebar Sync supplies accessible **Show** and **Retry**
+actions and releases the rail when the committed native buttons match the
+confirmed arrangement. If that plugin is absent or stalled, the stylesheet
+independently exposes native rail controls after eight seconds from application
+to that navigation element. The preparation status has its own footer slot.
+Existing native focus also exposes the rail. No native button is replaced.
+
+This uses `data-testid="app-nav-rail"`, its primary navigation landmark,
+`data-nav-rail-item` and real button `aria-busy` semantics. The two plugins share
+only a documented presentation handshake through `--bb-rail-preparation` and
+`data-bb-rail-*` attributes. Sidebar Sync retains identity and layout ownership.
+Its readiness observer is scoped to unresolved navigation, and stops after
+readiness or teardown. New legitimate contributions stay live after release.
+
 Appearance is shared by this deployment. The theme ID is
 `plugin:compact-display:wide-default`. Selecting another palette also selects
 another theme: its early widths require a matching wide variant; Compact's app
