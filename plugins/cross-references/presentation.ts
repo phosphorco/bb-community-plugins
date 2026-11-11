@@ -175,3 +175,25 @@ export function mentionExcerptParts(item: MentionItem): { before: string; match:
   const { text, matchSpan } = item.excerpt;
   return { before: text.slice(0, matchSpan.start), match: text.slice(matchSpan.start, matchSpan.end), after: text.slice(matchSpan.end) };
 }
+
+/** Snippets are raw source slices; show them the way the message reads, keeping the highlight. */
+export function cleanInlineMarkdown(text: string): string {
+  return text
+    .replace(/!?\[([^\]\n]*)\]\((?:[^()\s]|\([^()\s]*\))*\)/g, "$1")
+    .replace(/`([^`\n]*)`/g, "$1")
+    .replace(/\*\*(?=\S)([^*\n]*?\S)\*\*/g, "$1");
+}
+export function excerptDisplay(parts: { before: string; match: string; after: string }) {
+  let { before, match, after } = parts;
+  const open = /\[([^\]\n]*)\]\($/.exec(before);
+  if (open && after.startsWith(")")) { before = before.slice(0, open.index); match = open[1] || match; after = after.slice(1); }
+  else if (before.endsWith("[")) {
+    const close = /^\]\((?:[^()\s]|\([^()\s]*\))*\)/.exec(after);
+    if (close) { before = before.slice(0, -1); after = after.slice(close[0].length); }
+  }
+  // Emphasis or code wrapping exactly the highlighted text would otherwise leave stray delimiters.
+  for (const mark of ["**", "`", "*"]) {
+    if (before.endsWith(mark) && after.startsWith(mark)) { before = before.slice(0, -mark.length); after = after.slice(mark.length); break; }
+  }
+  return { before: cleanInlineMarkdown(before), match: cleanInlineMarkdown(match) || match, after: cleanInlineMarkdown(after) };
+}

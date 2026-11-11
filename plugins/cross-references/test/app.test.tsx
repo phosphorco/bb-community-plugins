@@ -481,6 +481,7 @@ async function mountMentionPanel(subPath: string, handler: (request: UiRequest) 
   const app = await loadPluginApp(() => import("../app.tsx"));
   const registration = app.navPanels.find(panel => panel.id === "mentions")!;
   const slot = renderSlot(registration, { subPath }, { sdk: mentionSdk(handler), openUrl: () => true });
+  await slot.findByLabelText("Find mentions of a resource or URL", {}, { timeout: 1000 });
   return { slot, registration };
 }
 function lookupOption(relation: "self" | "github-pr-family" = "self") {
