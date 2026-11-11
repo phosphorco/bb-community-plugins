@@ -49,6 +49,7 @@
     "LICENSE",
     "server.ts",
     "app.tsx",
+    "mentions-body.tsx",
     "app.css",
     "assistant-links.ts",
     "assistant-link-collector.ts",
