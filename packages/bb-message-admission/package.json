@@ -1,0 +1,24 @@
+{
+  "name": "@phosphorco/bb-message-admission",
+  "version": "0.1.0-alpha.1",
+  "type": "module",
+  "license": "MIT",
+  "description": "Bounded native message admission protocol, injected BB binding and conformance driver.",
+  "author": "Phosphor",
+  "repository": {"type":"git","url":"git+https://github.com/phosphorco/bb-community-plugins.git","directory":"packages/bb-message-admission"},
+  "exports": {
+    "./protocol": {"types":"./dist/types/protocol.d.ts","import":"./dist/protocol.js"},
+    "./bb": {"types":"./dist/types/bb.d.ts","import":"./dist/bb.js"},
+    "./testing": {"types":"./dist/types/testing.d.ts","import":"./dist/testing.js"}
+  },
+  "files": ["dist/","fixtures/","README.md","CONTRACT.md","LICENSE"],
+  "publishConfig": {"access":"public","tag":"next"},
+  "dependencies": {"zod":"4.6.7"},
+  "devDependencies": {"bun":"1.3.14","typescript":"5.9.3","@get-bb/plugin-sdk":"0.6.52"},
+  "scripts": {
+    "build":"bun tools/build.mjs && tsc -p tsconfig.declarations.json",
+    "typecheck":"tsc --noEmit",
+    "test":"npm run build && node --test test/*.test.mjs",
+    "test:packed-consumer":"node tools/packed-consumer.mjs"
+  }
+}

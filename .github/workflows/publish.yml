@@ -35,6 +35,7 @@ on:
           - bb-thread-filters
           - bb-inbox-rows
           - bb-thread-attachments
+          - bb-message-admission
       dry_run:
         type: boolean
         default: false
@@ -90,6 +91,7 @@ on:
       - "bb-thread-filters/v*"
       - "bb-inbox-rows/v*"
       - "bb-thread-attachments/v*"
+      - "bb-message-admission/v*"
 
 permissions:
   contents: read
@@ -184,18 +186,19 @@ jobs:
             bb-thread-metrics) workspace="@phosphorco/bb-thread-metrics" ;;
             bb-inbox-rows) workspace="@phosphorco/bb-inbox-rows" ;;
             bb-thread-attachments) workspace="@phosphorco/bb-thread-attachments" ;;
+            bb-message-admission) workspace="@phosphorco/bb-message-admission" ;;
             bb-thread-filters) workspace="@phosphorco/bb-thread-filters" ;;
             bb-thread-context) workspace="@phosphorco/bb-thread-context" ;;
             bb-thread-membership) workspace="@phosphorco/bb-thread-membership" ;;
             *) echo "Unsupported release plugin: $plugin" >&2; exit 1 ;;
           esac
           case "$plugin" in
-            bb-identity|bb-provider-settings|bb-context-recognition|bb-turn-results|bb-markdown|bb-cross-references|bb-agent-connection|bb-people-accounts|bb-usage-algebra|bb-thread-metrics|bb-thread-membership|bb-thread-context|bb-thread-filters|bb-inbox-rows|bb-thread-attachments) path="packages/$plugin" ;;
+            bb-identity|bb-provider-settings|bb-context-recognition|bb-turn-results|bb-markdown|bb-cross-references|bb-agent-connection|bb-people-accounts|bb-usage-algebra|bb-thread-metrics|bb-thread-membership|bb-thread-context|bb-thread-filters|bb-inbox-rows|bb-thread-attachments|bb-message-admission) path="packages/$plugin" ;;
             *) path="plugins/$plugin" ;;
           esac
           package_version="$(npm pkg get version --workspace "$workspace" | node -e 'let input=""; process.stdin.on("data", chunk => input += chunk); process.stdin.on("end", () => console.log(Object.values(JSON.parse(input))[0]))')"
           # Attribution contract candidates publish under next until their stable release.
-          if [ "$plugin" = "bb-people-accounts" ] && [[ "$package_version" == *-* ]]; then
+          if { [ "$plugin" = "bb-people-accounts" ] || [ "$plugin" = "bb-message-admission" ]; } && [[ "$package_version" == *-* ]]; then
             dist_tag=next
           fi
           if [ "$plugin" = bb-thread-membership ]; then
@@ -284,7 +287,9 @@ jobs:
         # Packages test against their own dist, and plugins import the workspace-linked packages' dist.
         shell: bash
         run: |
-          if [ "${{ steps.release.outputs.plugin }}" = bb-markdown ]; then
+          if [ "${{ steps.release.outputs.plugin }}" = bb-message-admission ]; then
+            npm run build --workspace packages/bb-message-admission
+          elif [ "${{ steps.release.outputs.plugin }}" = bb-markdown ]; then
             # Its runtime dependencies are exact registry packages; no sibling draft emission is needed.
             npm run build --workspace packages/bb-markdown
           else
