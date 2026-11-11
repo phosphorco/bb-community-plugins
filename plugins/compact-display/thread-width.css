@@ -27,6 +27,10 @@
 /* Selected native appearance can arrive before plugin JavaScript. Prepare only
    the icon rail, with an independent eight-second CSS escape if Sidebar Sync
    never mounts. The native navigation DOM and surrounding workspace stay put. */
+[data-thread-list-placeholder="loading"] [data-sidebar="navigation-loading-row"] > * {
+    animation: none !important;
+}
+
 [data-testid="app-nav-rail"] {
     --bb-rail-preparation: 1;
     --bb-rail-alternate-access: 1;
@@ -48,15 +52,32 @@
     to { visibility: hidden; }
 }
 
+@keyframes bb-rail-preparation-pulse {
+    50% { opacity: 0.35; }
+}
+
+[data-testid="app-nav-rail"] nav[aria-label="Primary navigation"]::after,
+[data-bb-rail-state="pending"] [data-bb-rail-preparation-status]::before {
+    content: "" / "Loading navigation";
+    display: block;
+    box-sizing: border-box;
+    width: 20px;
+    height: 20px;
+    margin-inline: auto;
+    border: 2px solid currentColor;
+    border-radius: 5px;
+    color: var(--muted-foreground);
+    background: linear-gradient(currentColor, currentColor) center 5px / 8px 2px no-repeat,
+        linear-gradient(currentColor, currentColor) center 10px / 8px 2px no-repeat;
+    opacity: 0.6;
+}
+
 [data-testid="app-nav-rail"] nav[aria-label="Primary navigation"]::after {
-    content: "Loading";
     position: absolute;
     top: 8px;
-    width: 100%;
-    text-align: center;
-    font-size: 10px;
+    inset-inline: 0;
     visibility: visible;
-    animation: bb-rail-loading 8s step-end forwards;
+    animation: bb-rail-loading 8s step-end forwards, bb-rail-preparation-pulse 1.6s ease-in-out infinite;
 }
 
 [data-testid="app-nav-rail"][data-bb-rail-controller] nav::after,
@@ -80,8 +101,16 @@
 }
 
 [data-bb-rail-state="pending"] [data-bb-rail-preparation-status]::before {
-    content: "Loading";
-    display: block;
+    animation: bb-rail-preparation-pulse 1.6s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    [data-testid="app-nav-rail"] nav[aria-label="Primary navigation"]::after {
+        animation: bb-rail-loading 8s step-end forwards;
+    }
+    [data-bb-rail-state="pending"] [data-bb-rail-preparation-status]::before {
+        animation: none;
+    }
 }
 
 [data-bb-rail-preparation-status][hidden],
