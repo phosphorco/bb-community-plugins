@@ -2,7 +2,7 @@ export { createGalleryRuntime } from './runtime.ts';
 export { createRoot } from 'react-dom/client';
 export { navigateResult } from '@phosphorco/bb-turn-results/bb';
 import type { BbNavigate, useSdk } from '@get-bb/plugin-sdk/app';
-import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react';
+import { useEffect, useId, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { useSelector } from '@tanstack/react-store';
 import { canonicalByteLength, canonicalJson } from '@phosphorco/bb-turn-results';
 import { navigateResult } from '@phosphorco/bb-turn-results/bb';
@@ -386,7 +386,7 @@ function GalleryContents({ resource, runtime, sdk, navigate, current, displayCur
   actionScope?: GalleryActionScope | undefined; requestOpen?: GalleryOpenPort | undefined;
   displayCurrent(): boolean;
 }) {
-  const state = useSelector(resource.store), container = useRef<HTMLElement>(null);
+  const state = useSelector(resource.store), container = useRef<HTMLElement>(null), errorId = useId();
   // Partial membership cannot suppress another source or declare a contested
   // group. Show each positive independently until complete membership exists.
   const rows = state.loaded ? projectResults(state.rows)
@@ -413,7 +413,14 @@ function GalleryContents({ resource, runtime, sdk, navigate, current, displayCur
     return { key: result.key, ...memory.spans.get(result.key)! };
   }), columns);
   if (!hasContent) return state.error && state.rows.length === 0
-    ? <p className="tr-error" role="status">Saved results could not be loaded.</p> : null;
+    ? <div className="tr-error-anchor" role="status"><div className="tr-error">
+      <button type="button" aria-label="Saved results could not be loaded." aria-describedby={errorId}>
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.75" aria-hidden="true">
+          <circle cx="12" cy="12" r="9" /><path d="M12 7v6m0 3v1" />
+        </svg>
+      </button>
+      <span id={errorId} className="tr-error-details" role="tooltip">Saved results could not be loaded. {state.error}</span>
+    </div></div> : null;
   return <section ref={container} className="tr-gallery" aria-label="Turn results">
     <div className="tr-grid" style={{ gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))` }}>
       {rows.map((result, index) => { const place = packing.placements[index]!;
