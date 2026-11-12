@@ -44,6 +44,88 @@ catalog data is shared, rather than personal/view-as state.
 
 The installed [message-rules skill](skills/message-rules/SKILL.md) documents the global editor and validated CLI workflow. Use `bb plugin rpc list message-rules --json` and `bb plugin rpc inspect message-rules saveRule --json` for current method descriptions and JSON schemas. Read `snapshot` with `{ "projectId": "message-rules-global", "discoverFiles": false }` through `bb plugin rpc call ... --input-file /absolute/request.json --json`. Despite its historical field name, RPC `projectId` is the catalog address, not an evaluation scope. Authorized writes use the current outer catalog revision, complete group/rule values, and exact file hashes/locations. Conflicts require rereading and reconciliation. Discoverability changes no permission or enforcement policy. `startSuite` is explicit potentially paid work; reconcile an uncertain start by reading `snapshot` with the original `requestId` and its exact `acknowledgedRun`.
 
+## Enforcement status and recent native decisions
+
+The always-visible enforcement banner reads the authoritative Message Rules
+publication pointer. **Not enforcing** requires a confirmed pointer with no
+enforcing publication. Loading, an unknown pointer, a failed read, or a persisted
+publication without confirmed current-generation readiness shows unknown or
+unavailable status. A ready enforcing banner names the actual frozen project IDs
+(and known names), publication ID, configuration version and evaluator version.
+This global authoring panel does not assert that BB's current project is enrolled.
+Saving, rule switches, **Test selected**, **Test all** and JEV configuration never
+enroll a project or update the frozen publication.
+
+Open **Recent native decisions**, then **Read recent decisions**. **Refresh**
+reads the newest page; **More** replaces it with older retained callbacks. There
+is no history polling or history read on typing. Errors retain the last successful
+page with a stale-page explanation. Expand a callback to inspect source and
+destination IDs/names, declared user/machine/agent metadata, original input,
+frozen publication and group scopes, native assessments, every cause and all
+advice, operation ID, feedback and delivery. Local MR evaluation is separate from
+the current native outcome. The banner's latest policy can differ from a
+callback's frozen publication. Native acceptance, delivery and verified feedback
+consumption are distinct states.
+
+Coverage is **MR evaluator callbacks retained here**, not an exhaustive host audit.
+Inputs before an MR callback, missing/deactivated plugins, other providers and
+operational exemptions may be absent. Accepted preparations are not rejected
+history. No table means no retained callbacks; a read failure is a separate error.
+The reader does not initialize/fence the evaluator ledger, recheck operations,
+evaluate, send feedback, publish or invoke JEV. Existing table rows are unchanged.
+
+The same read-only path is discoverable through the existing CLI. Method
+availability depends on the installed version; source and controlled tests do
+not establish a loaded UI or live activation. Inspect it first:
+
+```sh
+bb plugin rpc inspect message-rules listRecentDecisions --json
+bb plugin rpc call message-rules listRecentDecisions --input-file /absolute/recent-decisions.json --json
+```
+
+For the newest page, `/absolute/recent-decisions.json` contains:
+
+```json
+{"limit":10}
+```
+
+For More, use the returned `nextCursor` verbatim as `before` (example cursor):
+
+```json
+{"limit":10,"before":"123"}
+```
+
+Cursors are positive SQLite rowid strings, not assessment IDs, operation IDs or
+timestamps. The reader uses `rowid < before ORDER BY rowid DESC LIMIT limit+1`,
+with `limit` 1..25 (default 10), and at most four concurrent public native
+`lookupOperation` calls, one per valid returned callback. There are no full scans.
+To debug a known callback/operation from a page, take its `assessmentId`, retain
+its `operation.namespace` and `operation.operationId`, and use the same command
+with this exact indexed lookup input:
+
+```json
+{"limit":1,"assessmentId":"the-retained-assessment-id"}
+```
+
+**Read callback detail** performs that exact read in the UI. It uses the frozen
+binding's operation key and checks native operation, original revision and request
+fingerprint even when large presentation fields were omitted. Never substitute a
+local allow/reject result for a missing, malformed, failed or unavailable native
+record. Exact lookup requires `limit:1` and no `before`; no match returns an empty
+page. For a known publication operation, the separate `lookupTestPublication`
+RPC still reconciles its original `{testProjectId,scope:"test-project",requestId}`;
+it does not run a new publication. Inspect that method before using it.
+
+Responses are bounded to 512 KiB per page and at most 256 KiB per row (smaller on
+multi-row pages). A native record that cannot fit is explicitly unavailable,
+without a partial verdict or silently truncated causes/advice; exact callback
+lookup provides the larger detail budget or an explicit size refusal. Raw original
+JSON has a labeled 8192-character excerpt limit. Frozen journal JSON is bounded
+to 1 MiB per selected row. Malformed/older bindings retain row identity and
+phase/path diagnostics without invented native identity. Publication policy bytes
+and connection configuration are excluded, including from malformed-JSON error
+fragments; useful nonsecret original/source/feedback/delivery diagnostics remain.
+
 ## Author tests
 
 ```markdown

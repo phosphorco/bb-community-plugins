@@ -71,7 +71,9 @@
     "hono": "^4.11.9",
     "@playwright/test": "1.63.0",
     "tsx": "4.20.6",
-    "bb-app": "0.46.2-nightly.39036585709.1"
+    "bb-app": "0.46.2-nightly.39036585709.1",
+    "jsdom": "26.1.0",
+    "@types/jsdom": "21.1.7"
   },
   "scripts": {
     "build": "node tools/build.mjs",

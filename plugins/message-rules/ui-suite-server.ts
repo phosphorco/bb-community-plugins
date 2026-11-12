@@ -179,6 +179,7 @@ export function createMessageRules(
       );
   };
   const handlers: IdentityRpcHandlers<typeof contract> = {
+    listRecentDecisions: { origin: "interactive-user", handle: input => admission.listRecentDecisions(input) },
     snapshot: {
       origin: "interactive-user",
       handle: async (i) => snapshot(i.projectId, i.discoverFiles, i.requestId, i.runId),

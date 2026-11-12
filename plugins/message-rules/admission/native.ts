@@ -12,6 +12,8 @@ import { createAdmissionLedger } from "./ledger.ts";
 import { createAdmissionEvaluator } from "./evaluator.ts";
 import { nativeEvaluator } from "./native-evaluator.ts";
 import { policyBytes, type AdmissionSnapshot } from "./snapshot.ts";
+import { listRecentDecisions } from "./decisions.ts";
+import type { RecentDecisionsInput } from "./decisions-contract.ts";
 export const ADMISSION_PROVIDER = "message-rules";
 export type TestPublicationRequest = {
   testProjectId: string;
@@ -219,5 +221,11 @@ export function createNativeAdmission(
       try {await binding.client.unregisterEvaluator({version:1,registrationId:registration.registrationId,generation:registration.generation});}
       catch(error) { registrationError="Native unregister outcome unknown; lifecycle must reconcile. "+errorText(error); }
   }
-  return {ready,state,start,previewPlacement,publishTestPolicy:(input:TestPublicationRequest)=>publish(input),deactivateTestPolicy:(input:TestPublicationRequest)=>publish(input,true),lookupTestPublication:lookup,dispose,get ledger(){return ledger;}};
+  return {ready,state,start,previewPlacement,
+    listRecentDecisions:(input:RecentDecisionsInput)=>listRecentDecisions(store.db,input,async()=>{
+      await ready;
+      if(disposed||binding?.status!=="available") throw Error(binding?.status!=="available"?binding?.detail??"Native admission unavailable.":"Admission plugin disposed.");
+      return binding.client;
+    }),
+    publishTestPolicy:(input:TestPublicationRequest)=>publish(input),deactivateTestPolicy:(input:TestPublicationRequest)=>publish(input,true),lookupTestPublication:lookup,dispose,get ledger(){return ledger;}};
 }

@@ -1104,3 +1104,49 @@
   outline-offset: 2px;
   border-radius: 6px;
 }
+
+.mr-recent-decisions {
+  flex: 0 0 auto;
+  padding: 10px 20px;
+  border-bottom: 1px solid var(--border);
+  max-height: 45vh;
+  overflow: auto;
+  overflow-wrap: anywhere;
+}
+.mr-recent-decisions summary {
+  cursor: pointer;
+  line-height: 1.6;
+}
+.mr-recent-decisions section {
+  padding: 10px 0;
+}
+.mr-native-decision {
+  border-top: 1px solid var(--border);
+  padding: 10px 0;
+  margin-top: 10px;
+}
+.mr-native-decision dl {
+  display: grid;
+  grid-template-columns: minmax(100px, 150px) minmax(0, 1fr);
+  gap: 6px 12px;
+}
+.mr-native-decision dd {
+  margin: 0;
+}
+.mr-native-decision pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+}
+.mr-native-decision p,
+.mr-native-decision li {
+  white-space: pre-wrap;
+}
+.mr-native-assessment {
+  border-left: 2px solid var(--border);
+  padding-left: 12px;
+}
+.mr-notice span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}

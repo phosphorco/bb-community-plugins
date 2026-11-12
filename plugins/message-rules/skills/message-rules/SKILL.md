@@ -80,7 +80,8 @@ because an unrelated read succeeded. Location changes invalidate old editors.
 External editors can race the host's hash check/replacement; this is not atomic
 filesystem CAS.
 
-Absent/incompatible native hosts remain preview/observe, with no fallback
+Absent/incompatible native hosts retain the editor and saved tests; enforcement
+status is unavailable until the authoritative pointer is known. There is no fallback
 production dispatch hook or plugin-owned queue mutation. A capable host registers
 the optional native evaluator; saving/migration/Test all never activates it.
 Initial activation is only through explicit testing-project RPCs:
@@ -136,3 +137,62 @@ version or uncertain rebind leaves readiness unavailable. No poller or blind
 retry is provided. Repeating a user publication request remains read-only
 reconciliation; it does not itself rebind a generation. A deliberately new
 publication request requires the original user-authorized scope and current CAS.
+
+
+## Read-only native decision inspection
+
+The enforcement banner always distinguishes confirmed **Not enforcing** from
+loading/unknown/unavailable status. A persisted publication alone does not prove
+current-generation readiness. Ready enforcement names the frozen publication,
+configuration/evaluator version and actual enrolled project IDs/names. The
+shared global authoring panel never asserts current-project enrollment. Saving,
+switches, Test selected/all and JEV configuration do not enroll anything.
+
+Open **Recent native decisions** and click **Read recent decisions**. Expand a
+callback for all native assessments/causes/advice, source/destination IDs and
+names, declared actor metadata, operation ID, frozen publication/scope/version,
+feedback and delivery. Local evaluation is diagnostic, never native finality.
+**Refresh** reads the newest page; **More** replaces it with older callbacks.
+Read failures retain the previous page with an explicit stale-page explanation.
+There is no polling or read on typing. Source/tests do not prove the installed
+UI has been activated; inspect installed methods first:
+
+```sh
+bb plugin rpc inspect message-rules listRecentDecisions --json
+bb plugin rpc call message-rules listRecentDecisions --input-file /absolute/recent-decisions.json --json
+```
+
+The newest-page file is exactly `{"limit":10}`. For More, use
+`{"limit":10,"before":"123"}`, replacing `123` with the returned `nextCursor`
+verbatim. Cursors are positive rowid strings, not assessment-ID sort keys.
+`limit` is 1..25 (default 10); SELECT reads at most 26 rows using rowid keyset,
+and public native lookups use at most four concurrent calls. No full scans.
+
+For a known operation shown in a page, retain its exact `operation` key and use
+its callback's `assessmentId` with the same CLI command and exact indexed input:
+`{"limit":1,"assessmentId":"the-retained-assessment-id"}`. Do not include
+`before`. The UI's **Read callback detail** uses this path. Native operation,
+request fingerprint and original revision must match the frozen binding even
+when large display fields were omitted. No match is an empty page. Missing or
+failed native lookup is unknown, never local success. For a known publication
+operation, inspect `lookupTestPublication` and reconcile its original
+`{testProjectId,scope:"test-project",requestId}` without a new publication ID.
+
+Coverage is **MR evaluator callbacks retained here**, not an exhaustive host
+audit: inputs before the callback, missing/deactivated plugins, other providers
+and operational exemptions may be absent. Accepted preparations are not rejected
+history. No ledger table is an explicit no-retained-callbacks result; read
+failure is distinct. Reads never initialize/fence the ledger, evaluate, recheck,
+submit feedback, publish, enroll or invoke paid JEV. They work after reload
+before the next callback.
+
+The 512 KiB page budget and maximum 256 KiB row budget preserve complete bounded
+native records or report explicit unavailable/size refusal, never partial causes
+or advice presented as complete. Multi-row pages have smaller row budgets;
+exact callback detail has the larger budget. Raw original JSON excerpts are
+labeled when truncated (8192 characters). Frozen JSON parsing is bounded to
+1 MiB per selected row. Older/malformed bindings retain useful identity and
+phase/path diagnostics without invented native identities or raw policy parse
+fragments. Full frozen policy/connection bytes are excluded; the current policy
+in the banner may differ from a callback's frozen publication. Delivery and
+feedback consumption require their own actual recorded states.

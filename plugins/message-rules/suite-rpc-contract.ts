@@ -1,5 +1,6 @@
 import { z } from "zod";
-import { PreviewPlacementResultV1Schema, PublicationV1Schema } from "@phosphorco/bb-message-admission/protocol";
+import { publicPublicationSchema, recentDecisionsInputSchema, recentDecisionsRpcSchema } from "./admission/decisions-contract.ts";
+import { PreviewPlacementResultV1Schema } from "@phosphorco/bb-message-admission/protocol";
 import {
   ConnectionSchema,
   RuleSchema,
@@ -8,6 +9,11 @@ import {
 const project = z.object({ projectId: z.string().min(1).max(200) });
 const json = z.unknown();
 export const contract = {
+  listRecentDecisions: {
+    experimental_description: "Read a bounded rowid-keyset page of MR evaluator callbacks retained here, with current public native operation lookup. Read-only; no evaluation, inference, recheck, feedback or enrollment. This is not an exhaustive host audit.",
+    input: recentDecisionsInputSchema,
+    output: recentDecisionsRpcSchema,
+  },
   snapshot: {
     experimental_description:
       "Read the global catalog, current saved basis, latest run and unresolved effects. Set discoverFiles false for metadata only; requestId reconciles that exact start; runId reads an exact cancellation target without starting work.",
@@ -259,7 +265,7 @@ const baseSnapshotSchema = z.object({
     tokenAccounting: z.boolean(),
     mode: z.string(),
   }),
-  delivery: z.object({ state: z.string(), reason: z.string(), activeKnown:z.boolean().optional(),generationReady:z.boolean().optional(),activePublication:PublicationV1Schema.nullable().optional() }),
+  delivery: z.object({ state: z.string(), reason: z.string(), activeKnown:z.boolean().optional(),generationReady:z.boolean().optional(),activePublication:publicPublicationSchema.nullable().optional() }),
   unresolved: z.array(z.unknown()),
 });
 

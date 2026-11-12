@@ -1,4 +1,6 @@
 import { groupDraftCounts, groupSummary } from "./summary.ts";
+import { EnforcementBanner } from "./enforcement-banner.tsx";
+import { RecentNativeDecisions } from "./recent-decisions.tsx";
 import { resolvePanelId } from "./route.ts";
 import {
   lazy,
@@ -433,16 +435,8 @@ export function Panel({
     navigate(kind + "/" + encodeURIComponent(id));
   return (
     <div className="mr-root" data-draft-revision={draftRevision}>
-      <p className="mr-notice" role="status">
-        <strong>{snapshot?.delivery.activeKnown && snapshot.delivery.generationReady && snapshot.delivery.activePublication?.enrollment.mode === "enforce" ? "Testing-project policy" : snapshot?.delivery.state === "unavailable" ? "Policy status unavailable" : "Preview / observe"}</strong>
-        <span>
-          {snapshot?.delivery.activeKnown && snapshot.delivery.generationReady && snapshot.delivery.activePublication?.enrollment.mode === "enforce"
-            ? `Active policy ${snapshot.delivery.activePublication.publication.publicationId} · ${snapshot.delivery.activePublication.evaluatorVersion} · testing project ${snapshot.delivery.activePublication.enrollment.projectIds.join(", ")}. Saved edits are separate until explicitly published.`
-            : snapshot?.delivery.state === "unavailable"
-              ? `${snapshot.delivery.activePublication ? `Persisted policy ${snapshot.delivery.activePublication.publication.publicationId}; current generation is not confirmed ready. ` : ""}${snapshot.delivery.reason}`
-              : "Message filtering is inactive in preview. Scopes, rejection, advice and batch membership apply to saved tests only."}
-        </span>
-      </p>
+      <EnforcementBanner delivery={snapshot?.delivery} readError={readError} projects={projects} />
+      <RecentNativeDecisions client={client} />
       {relevant && (
         <p className="mr-notice" id="mr-draft-reason">
           Save or discard group, enabled rule and test drafts before Test.
