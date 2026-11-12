@@ -178,3 +178,38 @@ test("action radios explain each choice and switch only action, retaining author
     );
   }
 });
+
+test("rule editor follows filter, optional classifier, then action without changing saved matching semantics", () => {
+  for (const check of ["always", "jev"] as const) {
+    for (const reduction of ["any", "all"] as const) {
+      let rule: import("../../contracts/model.ts").Rule = { ...jevRule(), action: "reject", check, reduction };
+      const original = structuredClone(rule);
+      let changes = 0;
+      const tree = nodes(RuleEditor({ rule, groups: [], onChange: next => { changes++; rule = next; } }));
+      assert.equal(changes, 0, "rendering does not migrate or save a rule");
+      assert.deepEqual(rule, original);
+      assert.deepEqual(tree.filter(n => n.type === "h3").map(n => n.props.children), ["Filter messages", "Classifier", "Action when matched"]);
+      const classifier = tree.find(n => n.type === "label" && n.props.className === "mr-classifier-toggle");
+      assert.ok(classifier);
+      const checkbox = nodes(classifier).find(n => n.type === "input");
+      assert.equal(checkbox.props.checked, check === "jev");
+      const question = tree.findIndex(n => n.type === "textarea" && n.props.value === original.criteria[0]!.instructions);
+      const radio = tree.findIndex(n => n.type === "input" && n.props.type === "radio");
+      assert.ok(radio > tree.findIndex(n => n === checkbox), "keyboard order reaches classifier before action cards");
+      if (check === "jev") {
+        assert.ok(question > 0 && question < radio);
+        const reductionControl = tree.find(n => n.type === "select" && nodes(n).some(option => option.type === "option" && option.props.children === "Any question matches"));
+        assert.ok(reductionControl);
+        assert.equal(reductionControl.props.value, reduction);
+        assert.deepEqual(nodes(reductionControl).filter(n => n.type === "option").map(n => n.props.value), ["any", "all"]);
+      } else {
+        assert.equal(question, -1);
+        assert.ok(tree.some(n => n.type === "p" && String(n.props.children).includes("Matching the group scope and rule filter is enough")));
+      }
+      checkbox.props.onChange({ target: { checked: check !== "jev" } });
+      assert.deepEqual(rule, { ...original, check: check === "jev" ? "always" : "jev" });
+      assert.deepEqual(rule.criteria, original.criteria);
+      assert.deepEqual(rule.match, original.match);
+    }
+  }
+});

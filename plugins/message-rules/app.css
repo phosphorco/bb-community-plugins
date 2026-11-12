@@ -1150,3 +1150,44 @@
   min-width: 0;
   overflow-wrap: anywhere;
 }
+
+/* Keep classifier controls aligned without flattening multiline questions. */
+.mr-rule-form .mr-form-card > .mr-note:not(:last-child) {
+  margin-bottom: 16px;
+}
+.mr-classifier-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 38px;
+}
+.mr-classifier-toggle input,
+.mr-context-message input {
+  margin: 0;
+}
+.mr-context-controls {
+  align-items: end;
+  gap: 12px;
+}
+.mr-context-controls label {
+  font-size: inherit;
+}
+.mr-context-history {
+  display: grid;
+  gap: 6px;
+}
+.mr-context-message {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 38px;
+}
+.mr-context-controls input[type="number"] {
+  width: 110px;
+}
+.mr-score-threshold {
+  gap: 12px;
+}
+.mr-action-choices + .mr-field {
+  margin-top: 22px;
+}
