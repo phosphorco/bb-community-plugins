@@ -224,6 +224,8 @@ export interface OperationRecordV1 {
   status:'evaluating'|'unresolved'|'rejected'|'accepted'|'conflict';
   original:OriginalRef|null; assessments:EvaluationResultV1[]; acceptedOriginal:AcceptedOriginalV1|null;
   publication:PublicationV1|null; feedback:FeedbackV1|null;
+  /** Native-produced immutable acceptance response metadata, independent of live delivery. */
+  acceptanceReceipt?:JsonValue;
   delivery:{state:'none'|'queued'|'preparing'|'request-committed'|'provider-accepted'|'completed'|'cancelled'|'preparation-failed'|'uncertain';queueId:string|null;requestId:string|null;groupIndex:number|null;details:JsonValue};
   reasons:{code:string;message:string}[];
 }
@@ -280,7 +282,7 @@ export const FeedbackV1Schema=FeedbackV1SchemaBase.superRefine((v,ctx)=>{
   if(v.status==='blocked-by-policy'&&v.reasons.length===0)ctx.addIssue({code:'custom',message:'Policy-blocked feedback must retain reasons.'});
   if(v.status==='native-accepted'&&v.recipientThreadId===null)ctx.addIssue({code:'custom',message:'Accepted feedback requires a known recipient.'});
 });
-export const OperationRecordV1Schema=z.looseObject({version:z.literal(1),operation:O.op,requestFingerprint:FingerprintSchema,kind:z.enum(['submission','publication','feedback']),status:z.enum(['evaluating','unresolved','rejected','accepted','conflict']),original:O.ref.nullable(),assessments:z.array(O.result),acceptedOriginal:O.accepted.nullable(),publication:O.publication.nullable(),feedback:FeedbackV1Schema.nullable(),delivery:z.looseObject({state:z.enum(['none','queued','preparing','request-committed','provider-accepted','completed','cancelled','preparation-failed','uncertain']),queueId:IdSchema.nullable(),requestId:IdSchema.nullable(),groupIndex:SequenceSchema.max(LIMITS.originals-1).nullable(),details:JsonSchema}),reasons:z.array(O.cause)}).superRefine((v,ctx)=>{
+export const OperationRecordV1Schema=z.looseObject({version:z.literal(1),operation:O.op,requestFingerprint:FingerprintSchema,kind:z.enum(['submission','publication','feedback']),status:z.enum(['evaluating','unresolved','rejected','accepted','conflict']),original:O.ref.nullable(),assessments:z.array(O.result),acceptedOriginal:O.accepted.nullable(),publication:O.publication.nullable(),feedback:FeedbackV1Schema.nullable(),acceptanceReceipt:JsonSchema.exactOptional(),delivery:z.looseObject({state:z.enum(['none','queued','preparing','request-committed','provider-accepted','completed','cancelled','preparation-failed','uncertain']),queueId:IdSchema.nullable(),requestId:IdSchema.nullable(),groupIndex:SequenceSchema.max(LIMITS.originals-1).nullable(),details:JsonSchema}),reasons:z.array(O.cause)}).superRefine((v,ctx)=>{
   if(v.status==='accepted'&&v.kind==='submission'&&!v.acceptedOriginal)ctx.addIssue({code:'custom',message:'Accepted submissions require the immutable accepted original.'});
   if(v.status!=='accepted'&&v.acceptedOriginal)ctx.addIssue({code:'custom',message:'Unaccepted operations cannot contain an accepted original.'});
   if(v.status!=='accepted'&&v.delivery.state!=='none')ctx.addIssue({code:'custom',message:'Unaccepted work is not delivery eligible.'});

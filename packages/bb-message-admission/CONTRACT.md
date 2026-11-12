@@ -1,6 +1,6 @@
 # Native message admission, wire version 1
 
-Package version `0.1.0-alpha.1`. This document specifies the protocol. Package
+Package version `0.1.0-alpha.2`. This document specifies the protocol. Package
 fixtures are synthetic boundary examples, not evidence that native operations,
 queue behavior, provider delivery or feedback recovery have been implemented.
 The authoritative types and codecs are exported by `/protocol`.
@@ -190,7 +190,25 @@ accepted queue/provider eligibility and preserves the draft/original identity.
 
 A native operation record includes key/fingerprint, kind, status, assessments,
 nullable accepted original/publication/feedback, explicit delivery state and
-reasons. `lookupOperation` returns found+record or missing+null; failure is not
+reasons. Alpha.2 adds optional `acceptanceReceipt?: JsonValue`, native-produced
+immutable source-specific acceptance response metadata. It remains the original
+acceptance response as live queue/request/provider state advances or its queue
+row disappears. Native core owns atomic persistence with acceptance and
+immutability; the package validates finite JSON within the full response budget
+and preserves its data without interpreting source-specific fields.
+
+For direct queue acceptance, a receipt can omit raw input; the native API may
+restore it from the canonical `acceptedOriginal`. A native preparation receipt
+may remain initially accepted/preparing even after `delivery.state` advances.
+Never reconstruct canonical originals or infer current delivery/provider status
+from the receipt. It supplies no new authority, capability flag or host method.
+Alpha.1 absence is valid and distinct from an explicit JSON null; neither absence
+nor receipt payload labels change the operation's verdict or negotiated support.
+Existing strict inputs, additive output fields and unknown-write reconciliation
+semantics are unchanged. The controlled-port replay driver compares explicitly
+present receipts as immutable admission data while permitting delivery progress.
+
+`lookupOperation` returns found+record or missing+null; failure is not
 missing. Recheck is an explicit operation on the same original/fingerprint with
 a stable recheck ID. It fences generations and cannot blindly replay an
 invoked-but-unknown paid partition. The package does not run inference.
@@ -364,8 +382,13 @@ supplied coverage. `runNativeAdmissionConformance` additionally requires a real
 caller-owned submission adapter over native prepare/commit or the public route,
 a pristine disposable test publication/project and explicit fixtures. It uses a
 controlled evaluator and checks immutable publications, active-pointer/replay,
-verdict/advice completeness, journal lookup, original identity, evaluation count
-on exact replay and generation-fenced unregister. The caller owns isolated
+verdict/advice completeness, journal lookup, exact fixture original ID/revision,
+canonical destination/source/raw input/requested intent, evaluation count on
+exact replay and generation-fenced unregister. Evaluator inputs are anchored to
+the normalized submission fixture; publication replay and evaluator publication
+are anchored to the initially published identity/content. Immutable replay
+bases are captured before later calls, so an internally consistent wrong first
+response or a later mutation cannot become its own expected result. The caller owns isolated
 DB/project cleanup and remaining native proof cases. A scripted host used to
 test the driver is kit self-test evidence only.
 
@@ -386,3 +409,18 @@ owned tarball plus actual registry SDK 0.6.52, proving installed entry/type
 resolution and unaugmented baseline input only. Publication, emitted fork SDK
 conformance, full repository checks and runtime activation are separate steward
 steps. No publication or deployment authority is supplied by this package.
+
+### SDK testing fixture prerequisites
+
+The SDK is not a runtime dependency of `/protocol`, `/bb` or `/testing` in this
+package. A consumer that imports the separate registry SDK's `/testing` entry
+must provide the optional peers that its actual fixture uses. The SDK 0.6.52
+Message Rules factory fixture was checked with `cron-parser@5.10.0`,
+`hono@4.11.9` and `better-sqlite3@12.11.1`; SQLite requires a working native
+binding. A missing `cron-parser` stopped the first isolated adopter before
+product execution. With the explicit peers, the actual controlled factory
+fixture passed 8/8 against registry alpha.1 and a locally packed MR artifact.
+This recorded predecessor evidence does not establish alpha.2 publication,
+native behavior, live enrollment or provider inference. The package's local
+packed probe tests receipt/type/entry boundaries without claiming to execute
+that SDK factory fixture or installing its optional native peers.
