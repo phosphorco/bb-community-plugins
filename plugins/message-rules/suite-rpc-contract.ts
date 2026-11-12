@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { PreviewPlacementResultV1Schema, PublicationV1Schema } from "@phosphorco/bb-message-admission/protocol";
 import {
   ConnectionSchema,
   RuleSchema,
@@ -42,7 +43,7 @@ export const contract = {
   },
   saveRule: {
     experimental_description:
-      "Create or replace a rule using the current catalog revision and complete rule value. A rule belongs to a saved group; saving does not enforce live messages.",
+      "Create or replace a rule using the current catalog revision and complete rule value. Actions: reject/proceed/steer/queue/queue-batched; check always/jev is a predicate. A rule belongs to a saved group; saving does not enforce live messages.",
     input: project.extend({ revision: z.number().int(), rule: RuleSchema }),
     output: json,
   },
@@ -91,11 +92,12 @@ export const contract = {
   },
   startSuite: {
     experimental_description:
-      "Explicitly start Test all over every enabled saved fixture and applicable group. May invoke paid configured JEV. Supply saved basis, unique requestId and truthful draft state; reconcile unknown outcomes with snapshot requestId.",
+      "Explicitly start saved tests and all applicable groups. Omit selectedOccurrenceIds for Test all; otherwise select 1..100 saved enabled nonmissing fixtures. Selection is deduplicated and frozen against the exact saved basis. May invoke paid configured JEV. Reconcile unknown outcomes with snapshot requestId; never change selection under the same requestId.",
     input: project.extend({
       requestId: z.string().min(1).max(200),
       basis: z.string(),
       hasRelevantDrafts: z.boolean(),
+      selectedOccurrenceIds: z.array(z.string().min(1).max(200)).min(1).max(100).optional(),
     }),
     output: json,
   },
@@ -144,6 +146,8 @@ const ruleResultSchema = z.object({
   status: z.enum(["not-applicable", "allow", "reject", "unknown"]),
   reason: z.string().optional(),
   observations: z.record(z.string(), z.unknown()),
+  action: z.enum(["reject", "proceed", "steer", "queue", "queue-batched"]).optional(),
+  applies: z.boolean().optional(),
 });
 const evaluationSchema = z.object({
   version: z.string(),
@@ -168,6 +172,12 @@ const evaluationSchema = z.object({
     .optional(),
   contextAdmission: z.enum(["verified-counter", "provider-checked"]).optional(),
   plannedBatch: z.array(z.string()).optional(),
+  nativePlacement:z.discriminatedUnion("state",[
+    z.object({state:z.literal("simulated"),inputHash:z.string(),result:PreviewPlacementResultV1Schema}),
+    z.object({state:z.enum(["unsupported","unknown","not-run"]),reason:z.string()}),
+  ]).optional(),
+  evidenceTokens: z.array(z.string()).optional(),
+  route: z.object({ action: z.enum(["proceed", "steer", "queue", "queue-batched"]), ruleIds: z.array(z.string()) }).optional(),
   errors: z.array(z.string()),
 });
 const resultSchema = z.object({
@@ -178,6 +188,7 @@ const resultSchema = z.object({
   evaluation: evaluationSchema.optional(),
 });
 const frozenSchema = z.object({
+  selectedOccurrenceIds: z.array(z.string()).optional(),
   version: z.string(),
   projectId: z.string(),
   config: configSchema,
@@ -244,10 +255,11 @@ const baseSnapshotSchema = z.object({
   readError: z.string().nullable(),
   connection: z.object({
     configured: z.boolean(),
+    source:z.string().optional(),ownerPluginId:z.string().optional(),reason:z.string().optional(),
     tokenAccounting: z.boolean(),
     mode: z.string(),
   }),
-  delivery: z.object({ state: z.string(), reason: z.string() }),
+  delivery: z.object({ state: z.string(), reason: z.string(), activeKnown:z.boolean().optional(),generationReady:z.boolean().optional(),activePublication:PublicationV1Schema.nullable().optional() }),
   unresolved: z.array(z.unknown()),
 });
 

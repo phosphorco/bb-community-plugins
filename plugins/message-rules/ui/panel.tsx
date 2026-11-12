@@ -434,10 +434,13 @@ export function Panel({
   return (
     <div className="mr-root" data-draft-revision={draftRevision}>
       <p className="mr-notice" role="status">
-        <strong>Preview / observe</strong>
+        <strong>{snapshot?.delivery.activeKnown && snapshot.delivery.generationReady && snapshot.delivery.activePublication?.enrollment.mode === "enforce" ? "Testing-project policy" : snapshot?.delivery.state === "unavailable" ? "Policy status unavailable" : "Preview / observe"}</strong>
         <span>
-          Message filtering is inactive. Scopes, rejection, advice and batch
-          membership apply to saved tests only.
+          {snapshot?.delivery.activeKnown && snapshot.delivery.generationReady && snapshot.delivery.activePublication?.enrollment.mode === "enforce"
+            ? `Active policy ${snapshot.delivery.activePublication.publication.publicationId} · ${snapshot.delivery.activePublication.evaluatorVersion} · testing project ${snapshot.delivery.activePublication.enrollment.projectIds.join(", ")}. Saved edits are separate until explicitly published.`
+            : snapshot?.delivery.state === "unavailable"
+              ? `${snapshot.delivery.activePublication ? `Persisted policy ${snapshot.delivery.activePublication.publication.publicationId}; current generation is not confirmed ready. ` : ""}${snapshot.delivery.reason}`
+              : "Message filtering is inactive in preview. Scopes, rejection, advice and batch membership apply to saved tests only."}
         </span>
       </p>
       {relevant && (
@@ -575,7 +578,7 @@ export function Panel({
                 ? `Running ${run.results.length} / ${total}…`
                 : run
                   ? total
-                    ? `${relevant ? "Saved: " : ""}${pass} / ${total} passed${stale ? " · Stale" : ""}${run.status !== "complete" ? " · " + (run.status === "cancelled" ? "Cancelled" : "Stopped") : ""}`
+                    ? `${run.frozen.selectedOccurrenceIds ? "Selected · " : ""}${relevant ? "Saved: " : ""}${pass} / ${total} passed${stale ? " · Stale" : ""}${run.status !== "complete" ? " · " + (run.status === "cancelled" ? "Cancelled" : "Stopped") : ""}`
                     : `No enabled tests${stale ? " · Stale" : ""}`
                   : `${total} enabled`}
             </span>
@@ -832,6 +835,16 @@ export function Panel({
                     className="mr-results"
                     aria-label="Selected test results"
                   >
+                    <button
+                      className="mr-primary"
+                      disabled={busy || !p || relevant || !selectedTest?.enabled || selectedTest.missing || !!selectedTest.error || run?.quiescent === false}
+                      aria-describedby={relevant ? "mr-draft-reason" : undefined}
+                      onClick={() => void action("startSuite", {
+                        requestId: crypto.randomUUID(), basis: snapshot!.basis,
+                        hasRelevantDrafts: relevant,
+                        selectedOccurrenceIds: [selectedTest!.occurrenceId],
+                      })}
+                    >▶ Test selected</button>
                     <div className={"mr-result-summary mr-tone-" + resultTone}>
                       <h2>
                         <span aria-hidden="true">
@@ -901,6 +914,14 @@ export function Panel({
                             </p>
                           ))}
                         </div>
+                        {result.evaluation.route && (
+                          <p className="mr-note">
+                            Delivery preference: {{ proceed: "Proceed · requested mode and time preserved", steer: "Steer", queue: "Queue", "queue-batched": "Queue batched" }[result.evaluation.route.action]}
+                          </p>
+                        )}
+                        {result.evaluation.policy === "unknown" && result.evaluation.advice.length > 0 && (
+                          <p className="mr-note">Known causes and advice below are incomplete while other checks remain unresolved.</p>
+                        )}
                         <section
                           className="mr-result-card"
                           aria-label="Rule results"
@@ -1244,9 +1265,11 @@ function ConnectionDialog({
         <p>
           {snapshot?.connection.mode === "injected"
             ? "Controlled test transport is active."
-            : snapshot?.connection.configured
-              ? "Message Rules API key is configured."
-              : "Add your Message Rules API key in Settings → Plugins → Message Rules."}
+            : snapshot?.connection.source === "shared"
+              ? `Shared JEV owner: ${snapshot.connection.ownerPluginId}. ${snapshot.connection.reason ?? ""}`
+              : snapshot?.connection.configured
+                ? "Dedicated Message Rules override is configured."
+                : "Dedicated override has no key. Select Topics shared connection or configure the explicit override in Settings → Plugins → Message Rules."}
         </p>
         {!snapshot?.connection.tokenAccounting && (
           <p>

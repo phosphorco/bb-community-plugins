@@ -26,8 +26,8 @@ export type Snapshot = {
   acknowledgedRun?: Run;
   savedOccurrenceId?: string;
   readError: string | null;
-  connection: { configured: boolean; tokenAccounting: boolean; mode: string };
-  delivery: { state: string; reason: string };
+  connection: { configured: boolean; tokenAccounting: boolean; mode: string; source?:string;ownerPluginId?:string;reason?:string };
+  delivery: { state: string; reason: string; activeKnown?: boolean; generationReady?: boolean; activePublication?: import("@phosphorco/bb-message-admission/protocol").PublicationV1 | null };
   unresolved: unknown[];
 };
 export type Client = {

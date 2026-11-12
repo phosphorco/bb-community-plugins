@@ -31,6 +31,7 @@ export function jevRule(id = "avoid-status-pings"): Rule {
   return {
     ...newRule(id),
     title: "Avoid status pings",
+    check: "jev",
     enabled: true,
     advice: "Send a blocker, a decision request, or a completed result.",
     criteria: [

@@ -13,7 +13,7 @@ const rules: Rule[] = [
 ];
 const evaluate = (rs: Rule[], transport: Parameters<typeof evaluateScoped>[5]) =>
   evaluateScoped(captured, groups, rs, defaultConnection, async () => captured, transport, new AbortController().signal);
-test("all groups aggregate advice with every duplicate cause ID; incomplete fields suppress final advice", async () => {
+test("all groups aggregate advice with every duplicate cause ID; incomplete fields retain known advice under unknown", async () => {
   let questions = 0;
   const result = await evaluate(rules, async wire => { questions += Object.keys(wire.questions).length; return answer(wire); });
   assert.equal(questions, 2);
@@ -23,7 +23,7 @@ test("all groups aggregate advice with every duplicate cause ID; incomplete fiel
   assert.equal(admission.action, "reject");
   assert.equal(admission.message, "State the request.\n\nName the owner.");
   const incomplete = await evaluate(rules, async wire => { const response = answer(wire); delete response.answers[Object.keys(response.answers)[0]!]; return response; });
-  assert.equal(incomplete.policy, "unknown"); assert.deepEqual(incomplete.advice, []);
+  assert.equal(incomplete.policy, "unknown"); assert.deepEqual(incomplete.advice, [{ text: "State the request.", ruleIds: ["request"] }, { text: "Name the owner.", ruleIds: ["owner"] }]);
   assert.equal(groupAdmission([{ id: "message", revision: "v1", senderId: "sender", evaluation: incomplete, verifiedReceipt: false }], true).action, "wait");
 });
 test("contradictory Choice/Score distributions hold; consistent metrics, ties and rounded scores remain usable", async () => {

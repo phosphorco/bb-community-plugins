@@ -101,7 +101,7 @@ test("absolute deadline denies the next partition permit before reserving or inv
       assert.equal(done.status, advance ? "cancelled" : "complete");
       assert.equal(done.frozen.denominator, 1);
       assert.equal(done.results[0]!.evaluation!.policy, advance ? "unknown" : "reject");
-      assert.deepEqual(done.results[0]!.evaluation!.advice.length, advance ? 0 : 1);
+      assert.deepEqual(done.results[0]!.evaluation!.advice.length, 1);
       assert.equal((db.prepare("SELECT count(*) n FROM mr_attempts").get() as any).n, calls);
     } finally { Date.now = realNow; await service.dispose(); db.close(); }
   }

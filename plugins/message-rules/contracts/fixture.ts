@@ -2,6 +2,7 @@ import { parseDocument } from "yaml";
 import { unified } from "unified";
 import remarkParse from "remark-parse";
 import { z } from "zod";
+import { parseNativePlacement, type NativePlacementFixture } from "./placement.ts";
 import { Id, normalizeAdvice } from "./model.ts";
 import type { Capture, History } from "./model.ts";
 const metaSchema = z
@@ -18,12 +19,14 @@ const metaSchema = z
     expected_rules: z.array(Id).optional(),
     rule_catalog: z.enum(["global", "legacy"]).optional(),
     expected_batch: z.array(Id).optional(),
+    expected_route: z.enum(["proceed", "steer", "queue", "queue-batched"]).optional(),
   })
   .strict();
 export type Fixture = {
   meta: z.infer<typeof metaSchema>;
   capture: Capture;
   expectedAdvice?: string[];
+  nativePlacement?: NativePlacementFixture;
   queued?: {
     id: string;
     senderId: string | null;
@@ -76,6 +79,7 @@ export function parseFixture(source: string): Fixture {
     "Destination context",
     "Expected advice",
     "Queued messages",
+    "Native placement",
   ];
   headers.forEach((h, i) => {
     if (!allowed.includes(h.name)) return;
@@ -122,6 +126,7 @@ export function parseFixture(source: string): Fixture {
   return {
     meta,
     queued,
+    ...(sections.has("Native placement")?{nativePlacement:parseNativePlacement(sections.get("Native placement")!)}:{}),
     capture: {
       ...(meta.project_id !== undefined ? {projectId: meta.project_id} : {}),
       projectTitle: meta.project_title,

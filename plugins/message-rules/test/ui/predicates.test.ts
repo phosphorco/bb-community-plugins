@@ -127,7 +127,7 @@ test("action radios explain each choice and switch only action, retaining author
     revision: 17,
   };
   const original = structuredClone(rule);
-  for (const action of ["batch", "reject", "jev"] as const) {
+  for (const action of ["reject", "proceed", "steer", "queue", "queue-batched"] as const) {
     const tree = nodes(
       RuleEditor({
         rule,
@@ -142,7 +142,7 @@ test("action radios explain each choice and switch only action, retaining author
     );
     assert.deepEqual(
       radios.map((n) => n.props.value),
-      ["jev", "reject", "batch"],
+      ["reject", "proceed", "steer", "queue", "queue-batched"],
     );
     assert.equal(radios.filter((n) => n.props.checked).length, 1);
     for (const radio of radios) {
@@ -168,13 +168,13 @@ test("action radios explain each choice and switch only action, retaining author
           n.type === "textarea" &&
           n.props.value === original.criteria[0]!.instructions,
       ),
-      action === "jev",
+      true,
     );
     assert.equal(
       updated.some(
         (n) => n.type === "textarea" && n.props.value === original.advice,
       ),
-      action !== "batch",
+      action === "reject",
     );
   }
 });

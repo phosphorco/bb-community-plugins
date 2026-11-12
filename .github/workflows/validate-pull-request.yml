@@ -62,6 +62,8 @@ jobs:
 
           npm run build --workspace @phosphorco/bb-inbox-rows
           npm run build --workspace @phosphorco/bb-thread-attachments
+          npm run build --workspace @phosphorco/bb-message-admission
+          npm run build --workspace @phosphorco/bb-jev
           npm run build --workspace @phosphorco/bb-thread-filters
 
       - name: Check out the selected Turn Results compiler
@@ -175,3 +177,15 @@ jobs:
 
       - name: Inspect Thread Attachments package
         run: npm pack --dry-run --ignore-scripts --workspace @phosphorco/bb-thread-attachments
+
+      - name: Check Message Admission package contents
+        run: npm pack --dry-run --ignore-scripts --workspace @phosphorco/bb-message-admission
+
+      - name: Check installed Message Admission public entries
+        run: npm run test:packed-consumer --workspace @phosphorco/bb-message-admission
+
+      - name: Inspect shared JEV package
+        run: npm pack --dry-run --ignore-scripts --workspace @phosphorco/bb-jev
+
+      - name: Verify shared JEV packed public consumer
+        run: npm run test:packed-consumer --workspace @phosphorco/bb-jev

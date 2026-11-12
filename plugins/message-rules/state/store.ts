@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { canonical, fingerprint } from "../contracts/hash.ts";
 import {
   validateRule,
+  migrateRule,
   VERSION,
   defaultConnection,
   GroupSchema,
@@ -46,6 +47,7 @@ export type TestResult = {
   evaluation?: Evaluation;
 };
 export type FrozenSuite = {
+  selectedOccurrenceIds?: string[];
   version: string;
   projectId: string;
   config: SuiteConfig;
@@ -149,7 +151,7 @@ export function createStore(db: Database.Database) {
             locationRevision: JSON.parse(r.config).locationRevision ?? 0,
           } as SuiteConfig,
           rules: (JSON.parse(r.rules) as Rule[]).map((rule) => ({
-            ...rule,
+            ...migrateRule(rule),
             groupId: rule.groupId ?? "legacy-unscoped",
           })),
           groups: JSON.parse(r.groups) as RuleGroup[],

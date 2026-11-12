@@ -69,7 +69,9 @@ export function confirmsWrite(w: WriteIntent, s: Snapshot): boolean {
   if (w.method === "startSuite")
     return (
       (s.acknowledgedRun ?? s.run)?.requestId === w.input.requestId &&
-      (s.acknowledgedRun ?? s.run)?.frozen.basis === w.input.basis
+      (s.acknowledgedRun ?? s.run)?.frozen.basis === w.input.basis &&
+      JSON.stringify((s.acknowledgedRun ?? s.run)?.frozen.selectedOccurrenceIds) ===
+        JSON.stringify(Array.isArray(w.input.selectedOccurrenceIds) ? [...new Set(w.input.selectedOccurrenceIds)].sort() : undefined)
     );
   if (w.method === "cancelSuite") {
     const target = s.acknowledgedRun?.id === w.input.runId ? s.acknowledgedRun : s.run;

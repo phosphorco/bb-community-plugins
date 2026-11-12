@@ -41,7 +41,8 @@
     "receipts/",
     "ui/",
     "tsconfig.json",
-    "tools/build.mjs"
+    "tools/build.mjs",
+    "admission-rpc-contract.ts"
   ],
   "dependencies": {
     "yaml": "2.8.1",
@@ -53,7 +54,9 @@
     "@codemirror/lang-markdown": "6.3.4",
     "@phosphorco/bb-identity": "0.2.1",
     "@codemirror/language": "6.13.1",
-    "@lezer/highlight": "1.2.5"
+    "@lezer/highlight": "1.2.5",
+    "@phosphorco/bb-message-admission": "0.1.0-alpha.2",
+    "@phosphorco/bb-jev": "0.1.0-alpha.1"
   },
   "devDependencies": {
     "@get-bb/plugin-sdk": "0.6.52",
