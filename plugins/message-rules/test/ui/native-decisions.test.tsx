@@ -100,9 +100,37 @@ test("actual mounted panel reads decisions only on demand, renders rejected/unre
     assert.equal(detailButton.textContent, "Read callback detail");
     await click(detailButton);
     await slot.findByRole("region", { name: "Recent native decisions", busy: false });
-    assert.doesNotMatch(page.textContent!, /callback-10/);
+    assert.match(page.textContent!, /callback-10/, "detail preserves the current page");
     assert.match(page.textContent!, /operation-callback-11/);
     assert.equal(app.counters.evaluate, calls.evaluate);
+    assert.equal(app.counters.paid, 0); assert.equal(app.counters.writes, 0);
+  } finally { slot.unmount(); await app.close(); }
+});
+
+test("callback detail preserves an older page and its next cursor so More can continue", async () => {
+  const app = await decisionsFixture();
+  for (let n = 0; n < 25; n++) await app.capture("paged-" + n);
+  const client: Client = { call: async () => { throw Error("unused"); }, listRecentDecisions: input => app.read(input) };
+  const slot = renderSlot({ component: RecentNativeDecisions }, { client });
+  try {
+    await click(slot.getByText("Recent native decisions"));
+    await click(slot.getByRole("button", { name: "Read recent decisions" }));
+    await slot.findByText(/· paged-24$/, { selector: "summary" });
+    await click(slot.getByRole("button", { name: "More" }));
+    const callback = await slot.findByText(/· paged-14$/, { selector: "summary" });
+    await click(callback);
+    await click(callback.closest("details")!.querySelector("button")!);
+    await slot.findByRole("region", { name: "Recent native decisions", busy: false });
+    assert.ok(slot.queryByText(/· paged-13$/, { selector: "summary" }), "detail retains sibling callbacks on the older page");
+    app.db.prepare("DELETE FROM mr_admissions WHERE id=?").run("paged-14");
+    await click(callback.closest("details")!.querySelector("button")!);
+    assert.match((await slot.findByRole("alert")).textContent!, /callback is no longer retained.*Last successful page retained/);
+    assert.ok(slot.queryByText(/· paged-13$/, { selector: "summary" }));
+    await click(slot.getByRole("button", { name: "More" }));
+    await slot.findByText(/· paged-4$/, { selector: "summary" });
+    assert.equal(slot.queryByRole("alert"), null, "successful older-page read resolves the detail read failure");
+    assert.ok(slot.queryByText(/· paged-0$/, { selector: "summary" }));
+    assert.equal(slot.queryByRole("button", { name: "More" }), null);
     assert.equal(app.counters.paid, 0); assert.equal(app.counters.writes, 0);
   } finally { slot.unmount(); await app.close(); }
 });

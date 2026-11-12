@@ -8,7 +8,7 @@ function Decision({ row, readDetail, busy }: { row: DecisionRow; readDetail: () 
   const submission = row.submission, record = row.native.record;
   return <details className="mr-native-decision">
     <summary>
-      <strong>Native outcome: {status(row)}</strong>{" · "}{row.assessmentId}
+      <strong>Native outcome: {status(row)}</strong>{" · "}{row.assessmentId || "Unknown assessment ID"}
       {submission && <span>{` · ${submission.policyContext.senderTitle ?? "Unnamed sender"} (${submission.source.senderThreadId ?? "no sender thread declared"}) → ${submission.policyContext.destinationTitle ?? "Unnamed destination"} (${submission.threadId})`}</span>}
     </summary>
     <dl>
@@ -18,7 +18,7 @@ function Decision({ row, readDetail, busy }: { row: DecisionRow; readDetail: () 
       <dt>Frozen policy version</dt><dd>{row.frozenPolicy ? `configuration ${row.frozenPolicy.catalogRevision} · evaluator ${row.frozenPolicy.evaluatorVersion} · basis ${row.frozenPolicy.catalogBasis}` : "Unavailable"}</dd>
       <dt>Native lookup</dt><dd>{row.native.reason ?? "Current public native operation record; it may contain later assessments than this callback."}</dd>
     </dl>
-    <button type="button" disabled={busy} onClick={readDetail}>Read callback detail</button>
+    <button type="button" disabled={busy || !row.assessmentId} onClick={readDetail}>Read callback detail</button>
     {row.diagnostics.map((message, index) => <p key={index} className="mr-note">{message}</p>)}
     {submission && <>
       <p>Project: {submission.policyContext.projectTitle ?? "Unnamed"} ({submission.projectId ?? "unknown"}). Declared initiator: {submission.source.initiator}; visible human activity: {String(submission.source.visibleHumanActivity)}.</p>
@@ -77,7 +77,14 @@ export function RecentNativeDecisions({ client }: { client: Client }) {
     try {
       const next = await client.listRecentDecisions({ limit: assessmentId ? 1 : 10, ...(before ? { before } : {}), ...(assessmentId ? { assessmentId } : {}) });
       if (generation.current !== current) return;
-      setPage(next); setError(null);
+      if (assessmentId && page) {
+        const detail = next.rows.find(row => row.assessmentId === assessmentId);
+        const retained = page.rows.find(row => row.assessmentId === assessmentId);
+        if (!detail || detail.cursor !== retained?.cursor)
+          throw Error("The callback is no longer retained at this page's identity. Refresh to read current history.");
+        setPage({ ...page, rows: page.rows.map(row => row.cursor === detail.cursor ? detail : row) });
+      } else setPage(next);
+      setError(null);
     } catch (cause) {
       if (generation.current === current) setError(cause instanceof Error ? cause.message : String(cause));
     } finally {

@@ -1,7 +1,7 @@
 import type Database from "better-sqlite3";
 import type { AdmissionClientV1 } from "@phosphorco/bb-message-admission/bb";
 import { canonical } from "../contracts/hash.ts";
-import { canonicalJson, SubmissionV1Schema, PublicationRefSchema, type SubmissionV1 } from "@phosphorco/bb-message-admission/protocol";
+import { canonicalJson, IdSchema, SubmissionV1Schema, PublicationRefSchema, type SubmissionV1 } from "@phosphorco/bb-message-admission/protocol";
 import {
   DECISION_PAGE_BYTES, DECISION_ROW_BYTES, decisionRowSchema, decisionPolicySchema,
   decisionNativeRecordSchema, publicPublicationSchema, recentDecisionsInputSchema, recentDecisionsSchema,
@@ -25,7 +25,7 @@ function diagnostic(error: unknown): string {
   return text(error);
 }
 const size = (value: unknown) => Buffer.byteLength(JSON.stringify(value));
-type Row = { cursor: string; id: string; state: string; reason: string | null; frozen: string | null; evaluation: string | null };
+type Row = { cursor: string; id: unknown; state: unknown; reason: unknown; frozen: string | null; evaluation: string | null };
 
 // Deliberately independent of createAdmissionLedger: constructing that writer
 // fences prior generations. This path contains SELECTs only, including after
@@ -51,13 +51,22 @@ export async function listRecentDecisions(
   const bindings = new Map<string, SubmissionV1>();
   const rowBudget = Math.min(DECISION_ROW_BYTES, Math.floor((DECISION_PAGE_BYTES - 4096) / limit));
   const rows: DecisionRow[] = page.map(row => {
+    const id = IdSchema.safeParse(row.id);
+    const state = typeof row.state === "string" && row.state.length <= 200 ? row.state : null;
+    const reason = typeof row.reason === "string" || row.reason === null ? row.reason : null;
     const result: DecisionRow = {
-      cursor: row.cursor, assessmentId: row.id.slice(0, 256),
-      local: { state: row.state.slice(0, 200), reason: row.reason, evaluation: null },
+      cursor: row.cursor, assessmentId: id.success ? id.data : "",
+      local: { state: state ?? "unknown", reason, evaluation: null },
       operation: null, submission: null, rawOriginal: null,
       frozenPublication: null, frozenPolicy: null, diagnostics: [],
       native: { state: "unknown", reason: "Frozen native binding is unavailable; no native identity was inferred.", record: null },
     };
+    const malformed = [!id.success && "id", state === null && "state",
+      row.reason !== null && typeof row.reason !== "string" && "reason"].filter(Boolean);
+    if (malformed.length) {
+      result.diagnostics.push(`Malformed journal metadata: ${malformed.join(", ")}. No native identity was inferred.`);
+      return result;
+    }
     try {
       if (!row.frozen) throw Error("Frozen binding exceeds the read budget.");
       const frozen = parseJson(row.frozen, "Frozen journal") as { binding?: { submission?: unknown; publication?: unknown }; policyBytes?: unknown };

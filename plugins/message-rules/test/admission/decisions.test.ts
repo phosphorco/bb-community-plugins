@@ -52,6 +52,33 @@ test("actual factory/RPC reads native accepted, rejected and unresolved with all
   } finally { app.db.pragma("query_only = OFF"); await app.close(); }
 });
 
+test("malformed scalar journal metadata cannot hide neighboring decisions or infer native identity", async () => {
+  const app = await decisionsFixture();
+  try {
+    await app.capture("valid-neighbor");
+    const frozen = (app.db.prepare("SELECT frozen FROM mr_admissions WHERE id=?").get("valid-neighbor") as { frozen: string }).frozen;
+    const insert = app.db.prepare("INSERT INTO mr_admissions(id,basis,owner,state,frozen,reason) VALUES(?,'basis','old',?,?,?)");
+    insert.run(null, "complete", frozen, null);
+    insert.run("bad-state", Buffer.from("not text"), frozen, null);
+    insert.run("bad-reason", "complete", frozen, Buffer.from("not text"));
+    const before = app.db.prepare("SELECT total_changes() changes").get();
+    const lookups = app.counters.lookup;
+    app.db.pragma("query_only = ON");
+    const page = await app.read({ limit: 4 });
+    assert.equal(page.rows.length, 4);
+    assert.equal(page.rows[3].assessmentId, "valid-neighbor");
+    assert.equal(page.rows[3].native.state, "found");
+    for (const row of page.rows.slice(0, 3)) {
+      assert.equal(row.operation, null); assert.equal(row.native.state, "unknown");
+      assert.match(row.diagnostics.join(" "), /Malformed journal metadata/);
+    }
+    assert.equal(page.rows[2].assessmentId, "", "a malformed ID is not replaced with a guessed lookup identity");
+    assert.equal(app.counters.lookup - lookups, 1, "only the valid neighbor performs native lookup");
+    assert.deepEqual(app.db.prepare("SELECT total_changes() changes").get(), before);
+    assert.equal(app.counters.paid, 0); assert.equal(app.counters.writes, 0);
+  } finally { app.db.pragma("query_only = OFF"); await app.close(); }
+});
+
 test("rowid keyset is exact despite unsorted assessment IDs and newer inserts; exact ID lookup is indexed and strict", async () => {
   const queries: string[] = [], db = new Database(":memory:", { verbose: value => queries.push(String(value)) });
   const app = await decisionsFixture(db);
