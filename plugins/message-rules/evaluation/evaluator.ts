@@ -1,5 +1,5 @@
 import { fingerprint } from "../contracts/hash.ts";
-import { match, normalizeAdvice, VERSION } from "../contracts/model.ts";
+import { match, normalizeAdvice, VERSION, actionOf, usesJev } from "../contracts/model.ts";
 import type {
   Capture,
   Connection,
@@ -26,10 +26,18 @@ export type DispatchContext = {
   partitionHash: string;
   inputHash: string;
 };
+export type TransportInvocation = {
+  operation:{namespace:string;operationId:string};
+  deadlineAt:number;
+  kind:'message-rules.admission'|'message-rules.suite';
+  attribution:{[key:string]:string|number|null};
+  observe(receipt:unknown):void;
+};
 export type Transport = (
   wire: Wire,
   signal: AbortSignal,
   context?: DispatchContext,
+  invocation?: TransportInvocation,
 ) => Promise<unknown>;
 export type TokenCounter = (serialized: string) => number;
 export type Binding = {
@@ -70,15 +78,13 @@ export function prepare(
             ? "not-applicable"
             : yes === null
               ? "unknown"
-              : r.action === "reject"
-                ? "reject"
-                : r.action === "batch"
-                  ? "allow"
-                  : "unknown",
+              : usesJev(r) ? "unknown" : actionOf(r) === "reject" ? "reject" : "allow",
+        action: actionOf(r),
+        applies: yes === true && !usesJev(r),
         observations: {},
       };
     statuses.push(row);
-    if (yes !== true || r.action !== "jev") continue;
+    if (yes !== true || !usesJev(r)) continue;
     if (!r.criteria.length) {
       row.reason = "No configured JEV criteria.";
       continue;
@@ -283,41 +289,67 @@ export async function evaluate(
         partitionHash: p.hash,
         inputHash: plan.inputHash,
       });
-      for (const a of decode(raw, p)) {
+      const decoded: ReturnType<typeof decode> = [];
+      if (!record(raw) || raw.model !== p.wire.model || !record(raw.answers)) {
+        errors.push("JEV model/answers mismatch.");
+      } else {
+        if (Object.keys(raw.answers).length !== Object.keys(p.bindings).length ||
+          Object.keys(raw.answers).some(key => !Object.hasOwn(p.bindings,key)))
+          errors.push("Missing or unexpected JEV answer. Known independent answers remain visible.");
+        for (const [key,binding] of Object.entries(p.bindings)) {
+          try {
+            decoded.push(...decode({ model: raw.model, answers: { [key]: raw.answers[key] } },
+              { ...p, bindings: { [key]: binding } }));
+          } catch (e) {
+            errors.push(e instanceof Error ? e.message : String(e));
+          }
+        }
+      }
+      for (const a of decoded) {
         let m = byRule.get(a.binding.ruleId);
         if (!m) byRule.set(a.binding.ruleId, (m = new Map()));
         m.set(a.binding.criterionId, a);
       }
     } catch (e) {
       errors.push(e instanceof Error ? e.message : String(e));
-      break;
+      // Independent fields in later partitions still collect their evidence.
+      // A failed/unknown invocation is never retried here.
     }
   }
   for (const row of plan.statuses) {
     const r = rules.find((x) => x.id === row.id)!;
-    if (r.action !== "jev" || row.status === "not-applicable") continue;
+    if (!usesJev(r) || row.status === "not-applicable") continue;
     const m = byRule.get(r.id);
     row.observations = Object.fromEntries(
       [...(m ?? [])].map(([k, v]) => [k, v.observation]),
     );
+    const values = [...(m?.values() ?? [])].map((x) => x.reject);
     if (row.reason || !m || m.size !== r.criteria.length) {
+      // A known true ANY criterion already determines applicability, even
+      // though every mandatory sibling must still complete before finality.
+      // Keep that cause/advice without turning partial evidence into a final
+      // rejection. ALL needs every criterion; missing siblings cannot prove it.
+      row.applies = r.reduction === "any" && values.some(Boolean);
       row.status = "unknown";
       row.reason ??= errors[0] ?? "Incomplete mandatory checks.";
       continue;
     }
-    const values = [...m.values()].map((x) => x.reject);
-    row.status = (
-      r.reduction === "all" ? values.every(Boolean) : values.some(Boolean)
-    )
-      ? "reject"
-      : "allow";
+    row.applies = r.reduction === "all" ? values.every(Boolean) : values.some(Boolean);
+    row.status = row.applies && actionOf(r) === "reject" ? "reject" : "allow";
   }
+  const routes = plan.statuses.filter(r => r.applies && r.action !== "reject");
+  const preferences = new Set(routes.map(r => r.action).filter(a => a !== "proceed"));
+  // Proceed preserves the requested route. Explicit incompatible preferences
+  // cannot be resolved by rule order or by borrowing another rule's mode.
+  if (preferences.size > 1)
+    errors.push("Conflicting routing preferences: " + [...preferences].join(", ") + ". Choose one route or correct the rules.");
   const unknown =
     plan.statuses.some((r) => r.status === "unknown") || errors.length > 0;
-  const rejected = plan.statuses.filter((r) => r.status === "reject");
+  const rejected = plan.statuses.filter((r) =>
+    r.status === "reject" || (r.applies === true && r.action === "reject"),
+  );
   const advice: Evaluation["advice"] = [];
-  if (!unknown)
-    for (const row of rejected) {
+  for (const row of rejected) {
       const text = normalizeAdvice(rules.find((x) => x.id === row.id)!.advice);
       const same = advice.find((x) => x.text === text);
       if (same) same.ruleIds.push(row.id);
@@ -331,6 +363,9 @@ export async function evaluate(
       : ("provider-checked" as const),
     policy: unknown ? "unknown" : rejected.length ? "reject" : "allow",
     rules: plan.statuses,
+    ...(!unknown && !rejected.length && preferences.size <= 1 ? {
+      route: { action: ([...preferences][0] ?? "proceed") as "proceed" | "steer" | "queue" | "queue-batched", ruleIds: routes.map(r => r.id) },
+    } : {}),
     advice,
     errors,
   };

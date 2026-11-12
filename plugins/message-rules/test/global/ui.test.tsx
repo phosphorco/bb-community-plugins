@@ -11,7 +11,7 @@ test("two editors of the same rule have independent native radio groups and acce
   </>);
   const names = [...html.matchAll(/<input\b[^>]*type="radio"[^>]*>/g)]
     .map((m) => /\bname="([^"]+)"/.exec(m[0])?.[1]);
-  assert.equal(names.length, 6);
+  assert.equal(names.length, 10);
   assert.equal(new Set(names).size, 2, "each editor owns one native radio group");
   const ids = [...html.matchAll(/\sid="([^"]+)"/g)].map((m) => m[1]);
   assert.equal(new Set(ids).size, ids.length, "label/description IDs are instance-unique");

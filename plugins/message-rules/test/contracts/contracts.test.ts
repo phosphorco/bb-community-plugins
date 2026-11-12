@@ -124,6 +124,7 @@ test("delivered authored example files parse through the actual grammar", async 
     "decision-request",
     "progress-only-update",
     "steward-batch",
+    "native-placement-q-a-s-b",
   ])
     assert.equal(
       parseFixture(
@@ -132,6 +133,6 @@ test("delivered authored example files parse through the actual grammar", async 
           "utf8",
         ),
       ).meta.id,
-      file,
+      file === "native-placement-q-a-s-b" ? "q-a-s-b" : file,
     );
 });

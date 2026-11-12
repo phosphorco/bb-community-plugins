@@ -26,12 +26,13 @@ export type Snapshot = {
   acknowledgedRun?: Run;
   savedOccurrenceId?: string;
   readError: string | null;
-  connection: { configured: boolean; tokenAccounting: boolean; mode: string };
-  delivery: { state: string; reason: string };
+  connection: { configured: boolean; tokenAccounting: boolean; mode: string; source?:string;ownerPluginId?:string;reason?:string };
+  delivery: { state: string; reason: string; activeKnown?: boolean; generationReady?: boolean; activePublication?: import("zod").infer<typeof import("../admission/decisions-contract.ts").publicPublicationSchema> | null };
   unresolved: unknown[];
 };
 export type Client = {
   call(method: string, input: unknown): Promise<Snapshot>;
+  listRecentDecisions(input: import("../admission/decisions-contract.ts").RecentDecisionsInput): Promise<import("../admission/decisions-contract.ts").RecentDecisions>;
 };
 export type Draft = {
   value: string;

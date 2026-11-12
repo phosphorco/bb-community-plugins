@@ -101,7 +101,7 @@ test("actual factory -> public RPC -> identity -> files/state/suite composition;
 test("configured factory's real HTTP boundary dispatches an explicit scoped Test without tokenizer", async () => {
   const fake = createFakePluginHost({
     pluginId: "message-rules",
-    settings: { apiKey: "message-rules-own-test-key" },
+    settings: { connectionSource: "dedicated", apiKey: "message-rules-own-test-key" },
   });
   const db = new Database(":memory:");
   fake.bb.storage.database = () => db;
@@ -183,6 +183,8 @@ test("configured factory's real HTTP boundary dispatches an explicit scoped Test
   assert.equal(calls, 1);
   assert.equal(s.connection.tokenAccounting, false);
   assert.equal(s.connection.mode, "live");
+  assert.equal(s.connection.source, "dedicated");
+  assert.equal(s.connection.ownerPluginId, "message-rules");
   assert.equal(
     s.run!.results.find((r) => r.path === "inside.md")!.status,
     "pass",

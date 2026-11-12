@@ -10,6 +10,10 @@ export class TransportError extends Error {
     super(message);
   }
 }
+function maskCredential(text:string,key:string):string {
+  const replacement="[Message Rules credential]";
+  return text.replace(/"(?:[^"\\]|\\.)*"/g,token=>{try{const decoded:unknown=JSON.parse(token);return typeof decoded==='string'&&decoded.includes(key)?JSON.stringify(decoded.replaceAll(key,replacement)):token;}catch{return token;}}).replaceAll(key,replacement);
+}
 export function createHttpTransport(
   config: Connection,
   credential: () => Promise<string | null>,
@@ -62,7 +66,7 @@ export function createHttpTransport(
       } finally {
         reader.releaseLock();
       }
-      const raw = Buffer.concat(chunks).toString("utf8");
+      const raw = maskCredential(Buffer.concat(chunks).toString("utf8"),key);
       if (!response.ok)
         throw new TransportError(
           "JEV HTTP " +

@@ -35,6 +35,8 @@ on:
           - bb-thread-filters
           - bb-inbox-rows
           - bb-thread-attachments
+          - bb-message-admission
+          - bb-jev
       dry_run:
         type: boolean
         default: false
@@ -90,6 +92,8 @@ on:
       - "bb-thread-filters/v*"
       - "bb-inbox-rows/v*"
       - "bb-thread-attachments/v*"
+      - "bb-message-admission/v*"
+      - "bb-jev/v*"
 
 permissions:
   contents: read
@@ -184,18 +188,20 @@ jobs:
             bb-thread-metrics) workspace="@phosphorco/bb-thread-metrics" ;;
             bb-inbox-rows) workspace="@phosphorco/bb-inbox-rows" ;;
             bb-thread-attachments) workspace="@phosphorco/bb-thread-attachments" ;;
+            bb-message-admission) workspace="@phosphorco/bb-message-admission" ;;
+            bb-jev) workspace="@phosphorco/bb-jev" ;;
             bb-thread-filters) workspace="@phosphorco/bb-thread-filters" ;;
             bb-thread-context) workspace="@phosphorco/bb-thread-context" ;;
             bb-thread-membership) workspace="@phosphorco/bb-thread-membership" ;;
             *) echo "Unsupported release plugin: $plugin" >&2; exit 1 ;;
           esac
           case "$plugin" in
-            bb-identity|bb-provider-settings|bb-context-recognition|bb-turn-results|bb-markdown|bb-cross-references|bb-agent-connection|bb-people-accounts|bb-usage-algebra|bb-thread-metrics|bb-thread-membership|bb-thread-context|bb-thread-filters|bb-inbox-rows|bb-thread-attachments) path="packages/$plugin" ;;
+            bb-identity|bb-provider-settings|bb-context-recognition|bb-turn-results|bb-markdown|bb-cross-references|bb-agent-connection|bb-people-accounts|bb-usage-algebra|bb-thread-metrics|bb-thread-membership|bb-thread-context|bb-thread-filters|bb-inbox-rows|bb-thread-attachments|bb-message-admission|bb-jev) path="packages/$plugin" ;;
             *) path="plugins/$plugin" ;;
           esac
           package_version="$(npm pkg get version --workspace "$workspace" | node -e 'let input=""; process.stdin.on("data", chunk => input += chunk); process.stdin.on("end", () => console.log(Object.values(JSON.parse(input))[0]))')"
           # Attribution contract candidates publish under next until their stable release.
-          if [ "$plugin" = "bb-people-accounts" ] && [[ "$package_version" == *-* ]]; then
+          if { [ "$plugin" = "bb-people-accounts" ] || [ "$plugin" = "bb-message-admission" ] || [ "$plugin" = "bb-jev" ]; } && [[ "$package_version" == *-* ]]; then
             dist_tag=next
           fi
           if [ "$plugin" = bb-thread-membership ]; then
@@ -284,7 +290,11 @@ jobs:
         # Packages test against their own dist, and plugins import the workspace-linked packages' dist.
         shell: bash
         run: |
-          if [ "${{ steps.release.outputs.plugin }}" = bb-markdown ]; then
+          if [ "${{ steps.release.outputs.plugin }}" = bb-jev ]; then
+            npm run build --workspace packages/bb-jev
+          elif [ "${{ steps.release.outputs.plugin }}" = bb-message-admission ]; then
+            npm run build --workspace packages/bb-message-admission
+          elif [ "${{ steps.release.outputs.plugin }}" = bb-markdown ]; then
             # Its runtime dependencies are exact registry packages; no sibling draft emission is needed.
             npm run build --workspace packages/bb-markdown
           else
@@ -355,6 +365,10 @@ jobs:
         if: ${{ steps.release.outputs.plugin == 'bb-markdown' && inputs.dry_run }}
         run: npm run test:packed-consumer --workspace @phosphorco/bb-markdown
 
+      - name: Verify shared JEV packed public consumer
+        if: ${{ steps.release.outputs.plugin == 'bb-jev' }}
+        run: npm run test:packed-consumer --workspace @phosphorco/bb-jev
+
       - name: Pack the pinned-next dry-run payload once
         if: ${{ steps.release.outputs.pinned_next == 'true' && inputs.dry_run }}
         shell: bash
@@ -423,13 +437,13 @@ jobs:
           if-no-files-found: warn
 
       - name: Publish through trusted publishers
-        if: ${{ !inputs.dry_run && (steps.release.outputs.plugin == 'bb-context-recognition' || steps.release.outputs.plugin == 'bb-cross-references' || steps.release.outputs.plugin == 'bb-thread-attachments') && steps.release.outputs.pinned_next != 'true' }}
+        if: ${{ !inputs.dry_run && (steps.release.outputs.plugin == 'bb-context-recognition' || steps.release.outputs.plugin == 'bb-cross-references' || steps.release.outputs.plugin == 'bb-thread-attachments' || steps.release.outputs.plugin == 'bb-message-admission') && steps.release.outputs.pinned_next != 'true' }}
         # These packages must fail closed if its configured GitHub OIDC trust is missing.
         # Keep NPM_TOKEN available to other packages; never pass it to this step.
         shell: bash
         run: |
           case "$RELEASE_WORKSPACE" in
-            @phosphorco/bb-context-recognition|@phosphorco/bb-cross-references|@phosphorco/bb-thread-attachments) ;;
+            @phosphorco/bb-context-recognition|@phosphorco/bb-cross-references|@phosphorco/bb-thread-attachments|@phosphorco/bb-message-admission) ;;
             *) echo 'Unexpected trusted-publishing workspace' >&2; exit 1 ;;
           esac
           npm publish --ignore-scripts --access public --provenance --workspace "$RELEASE_WORKSPACE" --tag "$RELEASE_DIST_TAG"
@@ -439,7 +453,7 @@ jobs:
           NODE_AUTH_TOKEN: ''
 
       - name: Publish public package
-        if: ${{ !inputs.dry_run && steps.release.outputs.plugin != 'bb-context-recognition' && steps.release.outputs.plugin != 'bb-cross-references' && steps.release.outputs.plugin != 'bb-thread-attachments' && steps.release.outputs.plugin != 'bb-markdown' && steps.release.outputs.pinned_next != 'true' }}
+        if: ${{ !inputs.dry_run && steps.release.outputs.plugin != 'bb-context-recognition' && steps.release.outputs.plugin != 'bb-cross-references' && steps.release.outputs.plugin != 'bb-thread-attachments' && steps.release.outputs.plugin != 'bb-message-admission' && steps.release.outputs.plugin != 'bb-markdown' && steps.release.outputs.pinned_next != 'true' }}
         # The repository is public, so every release carries SLSA provenance.
         run: npm publish --ignore-scripts --access public --provenance --workspace "$RELEASE_WORKSPACE" --tag "$RELEASE_DIST_TAG"
         env:

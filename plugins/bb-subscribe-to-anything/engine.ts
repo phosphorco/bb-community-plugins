@@ -20,6 +20,17 @@ export type Ports = {
   run: (r: Record, signal: AbortSignal) => Promise<Run>;
   classify: (r: Record, run: Run, signal: AbortSignal) => Promise<Decision>;
 };
+// A maximum-wait notification has independent timing; only the idle branch
+// is invalidated by a newer human acceptance before dispatch.
+function idleFinding(f: Finding): { anchor?: number; observed: number } | null {
+  if (f.outcome !== "triggered") return null;
+  try {
+    const evidence = JSON.parse(f.evidence);
+    if (evidence?.trigger !== "idle" || evidence.branch !== "idle" || typeof evidence.observed_at !== "number") return null;
+    return { observed: evidence.observed_at, ...(typeof evidence.idle_anchor === "number" ? { anchor: evidence.idle_anchor } : {}) };
+  } catch { return null; }
+}
+
 export class Engine {
   store: Store;
   ports: Ports;
@@ -293,11 +304,12 @@ export class Engine {
   activity(owner: string, at: number) {
     for (const r of this.store.owned(owner))
       if (
-        !terminal(r.state) &&
+        (!terminal(r.state) || (r.state === "fulfilled" && this.store.findings(r.id).some(f => f.delivery === "pending" && idleFinding(f) !== null))) &&
         "trigger" in r.request &&
         r.request.trigger.kind === "idle" &&
         at > r.idle_anchor
       ) {
+        if (r.state === "fulfilled") r.state = "watching";
         r.idle_anchor = at;
         r.idle_fired = false;
         r.next_at = at + r.request.trigger.seconds * 1000;
@@ -376,6 +388,15 @@ export class Engine {
         if ((await this.ports.owner(r)) !== "available") continue;
         // Recheck after the asynchronous owner read: cancellation can win there.
         if(this.store.get(r.id).notifications_cancelled){f.delivery="cancelled";this.store.putFinding(f);continue;}
+        const current = this.store.get(r.id);
+        const idle = idleFinding(f);
+        if (idle && "trigger" in current.request && current.request.trigger.kind === "idle" &&
+            (idle.anchor === undefined ? current.idle_anchor + current.request.trigger.seconds * 1000 > idle.observed : current.idle_anchor > idle.anchor)) {
+          f.delivery = "cancelled";
+          f.problem = "New human acceptance invalidated this pending idle finding before dispatch.";
+          this.store.putFinding(f);
+          continue;
+        }
         f.delivery = "sending";
         this.store.putFinding(f);
         try {
@@ -532,6 +553,7 @@ export class Engine {
           branch: maxDue ? "maximum_wait" : t.kind,
           scheduled_at: r.next_at,
           observed_at: now,
+          ...(t.kind === "idle" ? { idle_anchor: r.idle_anchor } : {}),
           missed_boundaries: missed,
         }),
         `timer:${boundary}`,

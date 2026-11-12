@@ -1,11 +1,13 @@
 import { randomUUID } from "node:crypto";
 import { parseFixture } from "../contracts/fixture.ts";
 import { fingerprint } from "../contracts/hash.ts";
-import { normalizeAdvice, VERSION } from "../contracts/model.ts";
+import { normalizeAdvice, VERSION, actionOf } from "../contracts/model.ts";
 import { evaluate } from "../evaluation/evaluator.ts";
 import { evaluateScoped } from "../evaluation/scoped.ts";
 import type { Transport, TokenCounter } from "../evaluation/evaluator.ts";
 import { TransportError } from "../evaluation/transport.ts";
+import { previewFixturePlacement } from "../evaluation/placement.ts";
+import type { PlacementPort } from "../contracts/placement.ts";
 import { plannedBatch } from "../admission/policy.ts";
 import { Conflict } from "../state/store.ts";
 import type { Store, Run, FrozenSuite, TestResult } from "../state/store.ts";
@@ -21,6 +23,17 @@ export function assertResult(
         e.rules.find((x) => x.status === "unknown")?.reason ||
         "Mandatory checks are unresolved.",
     };
+  if(f.nativePlacement) {
+    const observation=e.nativePlacement;
+    if(!observation||observation.state!=="simulated")return {
+      status:"unknown",reason:observation&&"reason" in observation?observation.reason:"Native placement assertion has no public-port result.",
+    };
+    const expected=f.nativePlacement.expect,actual=observation.result;
+    if(actual.status!==expected.status||actual.targetGroupId!==expected.targetGroupId||
+      JSON.stringify(actual.orderedOriginalIds)!==JSON.stringify(expected.orderedOriginalIds)||
+      (expected.reasonCodes&&JSON.stringify(actual.reasons.map(reason=>reason.code).sort())!==JSON.stringify([...expected.reasonCodes].sort())))
+      return {status:"fail",reason:"Native placement differs from the expected status, exact target, ordered originals or reason codes. This was a nonmutating simulation."};
+  }
   const actual = e.rules
       .filter((x) => x.status === "reject")
       .map((x) => x.id)
@@ -41,6 +54,8 @@ export function assertResult(
         actual.join(", ") +
         ".",
     };
+  if (f.meta.expected_route !== undefined && f.meta.expected_route !== e.route?.action)
+    return { status: "fail" as const, reason: "Routing preference differs from expected_route." };
   if (
     f.meta.expected_batch !== undefined &&
     JSON.stringify(f.meta.expected_batch) !==
@@ -81,6 +96,7 @@ export function createSuiteService(
   store: Store,
   transportFor: (run: Run) => Transport,
   countTokens?: TokenCounter,
+  placementPort?: PlacementPort,
 ) {
   const owner = randomUUID(),
     workers = new Map<
@@ -170,9 +186,10 @@ export function createSuiteService(
           );
           store.invoke(attempt, owner);
           let pending: Promise<unknown>;
+          let receipt:unknown=null;
           // No await or owner transfer between permit commit and synchronous initiation.
           try {
-            pending = inner(wire, signal, dispatch);
+            pending = inner(wire, signal, dispatch,{operation:{namespace:'message-rules.suite',operationId:attempt},deadlineAt:Math.min(deadlineAt,Date.now()+run.frozen.config.connection.timeoutMs),kind:'message-rules.suite',attribution:{runId:run.id,requestId:run.requestId,attemptId:attempt,occurrenceId:o.occurrenceId,sourceHash:o.hash,partitionHash:dispatch?.partitionHash??fingerprint(wire)},observe:value=>{receipt=value;}});
           } catch (e) {
             store.observe(attempt, "unknown", { error: String(e) });
             unknown = true;
@@ -180,7 +197,7 @@ export function createSuiteService(
           }
           return pending.then(
             (raw) => {
-              store.observe(attempt, "observed", raw);
+              store.observe(attempt, "observed", receipt===null?raw:{response:raw,transport:receipt});
               return raw;
             },
             (e) => {
@@ -227,11 +244,17 @@ export function createSuiteService(
             (result) =>
               result.status === "allow" &&
               run.frozen.rules.some(
-                (r) => r.id === result.id && r.action === "batch",
+                (r) => r.id === result.id && actionOf(r) === "queue-batched",
               ),
           )
         )
           evaluation.plannedBatch = plannedBatch(fixture.queued).included;
+        if(fixture.nativePlacement) {
+          if(Date.now()>=deadlineAt)abort.abort();
+          evaluation.nativePlacement=await previewFixturePlacement(fixture,evaluation,
+            fixture.meta.project_id!==undefined?fixture.meta.project_id:o.projectId!==undefined?o.projectId:run.frozen.projectId,
+            placementPort,abort.signal);
+        }
         store.append(run.id, owner, {
           occurrenceId: o.occurrenceId,
           path: o.path,
@@ -282,27 +305,37 @@ export function createSuiteService(
       requestId: string,
       expectedBasis: string,
       actor: unknown,
+      selectedOccurrenceIds?: string[],
     ) {
       if (disposed) throw Error("Message Rules is stopping.");
+      if (selectedOccurrenceIds !== undefined &&
+          (!Array.isArray(selectedOccurrenceIds) || selectedOccurrenceIds.length < 1 || selectedOccurrenceIds.length > 100 ||
+           selectedOccurrenceIds.some(id => typeof id !== "string" || !id.length || id.length > 200)))
+        throw Error("Select 1..100 saved enabled test identities.");
+      const selection = selectedOccurrenceIds === undefined ? undefined : [...new Set(selectedOccurrenceIds)].sort();
       const existing = store.db
         .prepare("SELECT id FROM mr_runs WHERE project_id=? AND request_id=?")
         .get(projectId, requestId) as { id: string } | undefined;
       if (existing) {
         const old = store.run(existing.id)!;
-        if (old.frozen.basis !== expectedBasis)
+        if (old.frozen.basis !== expectedBasis || JSON.stringify(old.frozen.selectedOccurrenceIds) !== JSON.stringify(selection))
           throw new Conflict("Request ID was used with different inputs.");
         return old;
       }
       const p = store.get(projectId);
       if (!p || savedBasis(p) !== expectedBasis) throw new Conflict();
+      if (selection?.some(id => !p.occurrences.some(o => o.occurrenceId === id && o.enabled && !o.missing && !o.error && !!o.source)))
+        throw Error("Selected test is missing, disabled, invalid or no longer saved. Refresh before Test.");
+      const occurrences = p.occurrences.filter(o => o.enabled && (!selection || selection.includes(o.occurrenceId)));
       const frozen: FrozenSuite = {
+        ...(selection ? { selectedOccurrenceIds: selection } : {}),
         version: VERSION,
         projectId,
         config: structuredClone(p.config),
         rules: structuredClone(p.rules),
         groups: structuredClone(p.groups),
-        occurrences: structuredClone(p.occurrences.filter((o) => o.enabled)),
-        denominator: p.occurrences.filter((o) => o.enabled).length,
+        occurrences: structuredClone(occurrences),
+        denominator: occurrences.length,
         basis: expectedBasis,
         actor,
       };

@@ -1,7 +1,7 @@
 import { z } from "zod";
 // Captured evaluation semantics are part of savedBasis. Advance this whenever
 // validation or decisions change so old observations cannot look current.
-export const VERSION = "message-rules-v1.5";
+export const VERSION = "message-rules-v1.7";
 export const Id = z.string().regex(/^[a-z][a-z0-9-]{0,79}$/);
 const text = z.string().max(65536);
 export type Predicate =
@@ -86,14 +86,16 @@ export const RuleSchema = z
     enabled: z.boolean(),
     order: z.number().int(),
     match: PredicateSchema,
-    action: z.enum(["reject", "jev", "batch"]),
+    // Legacy action names remain decodable in immutable historical snapshots.
+    action: z.enum(["reject", "proceed", "steer", "queue", "queue-batched", "jev", "batch"]),
+    check: z.enum(["always", "jev"]).optional(),
     criteria: z.array(CriterionSchema).max(32),
     reduction: z.enum(["all", "any"]),
     advice: text,
     revision: z.number().int().nonnegative(),
   })
   .superRefine((r, c) => {
-    if (r.action === "jev" && r.enabled && !r.criteria.length)
+    if (usesJev(r) && r.enabled && !r.criteria.length)
       c.addIssue({
         code: "custom",
         message: "Add a configured JEV question before enabling.",
@@ -115,13 +117,24 @@ export const RuleSchema = z
           message: "Reject choices must exist in criteria.",
         });
     }
-    if (r.enabled && r.action !== "batch" && !r.advice.trim())
+    if (r.enabled && actionOf(r) === "reject" && !r.advice.trim())
       c.addIssue({
         code: "custom",
         message: "Write actionable advice before enabling.",
       });
   });
 export type Rule = z.infer<typeof RuleSchema>;
+export type Action = "reject" | "proceed" | "steer" | "queue" | "queue-batched";
+export function actionOf(r: { action: Rule["action"] }): Action {
+  return r.action === "jev" ? "reject" : r.action === "batch" ? "queue-batched" : r.action;
+}
+export function usesJev(r: { action: string; check?: string }): boolean {
+  return r.check === "jev" || r.action === "jev";
+}
+// Project authored rules only. Do not normalize stored frozen runs/results.
+export function migrateRule(r: Rule): Rule {
+  return { ...r, action: actionOf(r), check: usesJev(r) ? "jev" : "always" };
+}
 export const ConnectionSchema = z.object({
   model: z.enum(["jev-1.14.0", "jev-1.13.0"]),
   maxWireBytes: z.number().int().min(1024).max(1000000),
@@ -165,6 +178,8 @@ export type RuleResult = {
   status: "not-applicable" | "allow" | "reject" | "unknown";
   reason?: string;
   observations: Record<string, unknown>;
+  action?: Action;
+  applies?: boolean;
 };
 export type Evaluation = {
   version: string;
@@ -180,6 +195,9 @@ export type Evaluation = {
   }[];
   contextAdmission?: "verified-counter" | "provider-checked";
   plannedBatch?: string[];
+  nativePlacement?: import("./placement.ts").NativePlacementObservation;
+  evidenceTokens?: string[];
+  route?: { action: Exclude<Action, "reject">; ruleIds: string[] };
   errors: string[];
 };
 export const normalizeAdvice = (s: string) =>
@@ -193,7 +211,8 @@ export function newRule(id: string, groupId = "legacy-unscoped"): Rule {
     enabled: false,
     order: 0,
     match: { kind: "all", children: [] },
-    action: "jev",
+    action: "reject",
+    check: "always",
     criteria: [],
     reduction: "any",
     advice: "",
@@ -250,7 +269,7 @@ export function validateRule(value: unknown): Rule {
     else if (p.kind === "not") walk(p.child, depth + 1);
   };
   walk(r.match, 0);
-  return r;
+  return migrateRule(r);
 }
 
 export const GroupSchema = z

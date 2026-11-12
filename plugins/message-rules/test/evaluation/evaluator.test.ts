@@ -60,7 +60,7 @@ test("zero applicable and deterministic-only rules make zero calls", async () =>
     (await evaluate(captured, [], defaultConnection, transport, signal)).policy,
     "allow",
   );
-  const r = { ...jevRule(), action: "reject" as const, criteria: [] };
+  const r = { ...jevRule(), action: "reject" as const, check: "always" as const, criteria: [] };
   assert.equal(
     (await evaluate(captured, [r], defaultConnection, transport, signal))
       .policy,
@@ -82,7 +82,7 @@ test("unknown mandatory checks hold after known rejection; all applicable checks
   );
   assert.equal(result.policy, "unknown");
   assert.equal(result.rules[0]?.status, "reject");
-  assert.deepEqual(result.advice, []);
+  assert.deepEqual(result.advice, [{ text: r.advice, ruleIds: [r.id] }]);
 });
 test("different context windows select distinct evidence and unavailable remains unknown", () => {
   const a = jevRule("one"),

@@ -121,7 +121,6 @@ export async function evaluateScoped(
     )
   ) {
     evaluated.policy = "unknown";
-    evaluated.advice = [];
     evaluated.errors.push(
       "A group scope requires unavailable project/thread metadata. No work ran for that group.",
     );

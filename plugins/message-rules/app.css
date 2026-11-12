@@ -1,3 +1,10 @@
+.mr-body-loader { height: 100%; min-height: 0; }
+.mr-body-loader:focus-visible, .mr-body-load-retry:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+.mr-body-load-status { padding: 12px; font-size: 12px; color: var(--muted-foreground); }
+.mr-body-load-retry { margin-top: 8px; padding: 4px 8px; color: var(--foreground); background: var(--background); border: 1px solid var(--border); border-radius: 6px; }
+.mr-body-load-details { margin-top: 8px; }
+.mr-body-load-details summary { cursor: pointer; }
+.mr-body-load-details pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 240px; overflow: auto; }
 .mr-root {
   height: 100%;
   min-height: 480px;
@@ -1103,4 +1110,103 @@
   outline: 2px solid var(--ring, var(--primary));
   outline-offset: 2px;
   border-radius: 6px;
+}
+
+.mr-recent-decisions {
+  flex: 0 0 auto;
+  padding: 10px 20px;
+  border-bottom: 1px solid var(--border);
+  max-height: 45vh;
+  overflow: auto;
+  overflow-wrap: anywhere;
+}
+.mr-recent-decisions summary {
+  cursor: pointer;
+  line-height: 1.6;
+}
+.mr-recent-decisions section {
+  padding: 10px 0;
+}
+.mr-native-decision {
+  border-top: 1px solid var(--border);
+  padding: 10px 0;
+  margin-top: 10px;
+}
+.mr-native-decision dl {
+  display: grid;
+  grid-template-columns: minmax(100px, 150px) minmax(0, 1fr);
+  gap: 6px 12px;
+}
+.mr-native-decision dd {
+  margin: 0;
+}
+.mr-native-decision pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+}
+.mr-native-decision p,
+.mr-native-decision li {
+  white-space: pre-wrap;
+}
+.mr-native-assessment {
+  border-left: 2px solid var(--border);
+  padding-left: 12px;
+}
+.mr-notice span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/* Keep classifier controls aligned without flattening multiline questions. */
+.mr-rule-form .mr-form-card > .mr-note:not(:last-child) {
+  margin-bottom: 16px;
+}
+.mr-classifier-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 38px;
+}
+.mr-classifier-toggle input,
+.mr-context-message input {
+  margin: 0;
+}
+.mr-context-controls {
+  align-items: end;
+  gap: 12px;
+}
+.mr-context-controls label {
+  font-size: inherit;
+}
+.mr-context-history {
+  display: grid;
+  gap: 6px;
+}
+.mr-context-message {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 38px;
+}
+.mr-context-controls input[type="number"] {
+  width: 110px;
+}
+.mr-score-threshold {
+  gap: 12px;
+}
+.mr-action-choices + .mr-field {
+  margin-top: 22px;
+}
+@media (max-width: 650px) {
+  .mr-context-controls {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .mr-context-message {
+    grid-column: 1 / -1;
+  }
+  .mr-context-controls input[type="number"] {
+    width: 100%;
+  }
 }

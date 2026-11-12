@@ -6,7 +6,7 @@ import type {
   Predicate,
   Criterion,
 } from "../contracts/model.ts";
-import { newRule } from "../contracts/model.ts";
+import { newRule, actionOf, usesJev } from "../contracts/model.ts";
 export function RuleEditor({
   rule,
   onChange,
@@ -33,9 +33,10 @@ export function RuleEditor({
       </label>
       <section
         className="mr-form-card mr-scope-card"
-        aria-label="When this rule applies"
+        aria-label="Filter messages"
       >
-        <h3>When this rule applies</h3>
+        <h3>Filter messages</h3>
+        <p className="mr-note">Check the group scope first, then this rule’s conditions. Only matching messages continue.</p>
         <label className="mr-field">
           <span>Group</span>
           <SearchValue
@@ -59,20 +60,16 @@ export function RuleEditor({
           />
         </div>
       </section>
-      <section className="mr-form-card" aria-label="What this rule checks">
-        <h3>What this rule checks</h3>
-        <ActionChoices
-          id={`mr-action-${actionId}`}
-          value={rule.action}
-          onChange={(action) => patch({ action })}
-        />
-        {rule.action === "batch" && (
-          <p className="mr-note">
-            Saved tests show intended membership. Native all-sender delivery
-            remains unproved.
-          </p>
-        )}
-        {rule.action === "jev" && (
+      <section className="mr-form-card" aria-label="Classifier">
+        <h3>Classifier</h3>
+        <label className="mr-classifier-toggle">
+          <input type="checkbox" checked={usesJev(rule)} onChange={(e) => patch({ action: actionOf(rule), check: e.target.checked ? "jev" : "always" })} />
+          <span>Check with classifier</span>
+        </label>
+        <p className="mr-note">{usesJev(rule)
+          ? "Ask these questions after the filter matches. Matching answers determine whether this rule’s action applies."
+          : "No classifier is run. Matching the group scope and rule filter is enough for this rule to apply its action."}</p>
+        {usesJev(rule) && (
           <>
             {rule.criteria.map((q, i) => (
               <CriterionEditor
@@ -117,7 +114,7 @@ export function RuleEditor({
               + Question
             </button>
             <label className="mr-field">
-              <span>Reject when</span>
+              <span>Questions match when</span>
               <select
                 value={rule.reduction}
                 onChange={(e) =>
@@ -133,12 +130,24 @@ export function RuleEditor({
       </section>
       <section
         className={
-          "mr-form-card " + (rule.action === "batch" ? "" : "mr-outcome-card")
+          "mr-form-card " + (actionOf(rule) === "reject" ? "mr-outcome-card" : "")
         }
-        aria-label="Test outcome"
+        aria-label="Action when matched"
       >
-        <h3>Test outcome</h3>
-        {rule.action !== "batch" && (
+        <h3>Action when matched</h3>
+        <p className="mr-note">Apply this action after the filter and any classifier conditions match.</p>
+        <ActionChoices
+          id={`mr-action-${actionId}`}
+          value={actionOf(rule)}
+          onChange={(action) => patch({ action })}
+        />
+        {actionOf(rule) === "queue-batched" && (
+          <p className="mr-note">
+            Saved tests show intended membership. Native all-sender delivery
+            remains unproved.
+          </p>
+        )}
+        {actionOf(rule) === "reject" && (
           <label className="mr-field">
             <span>Reply to sender</span>
             <textarea
@@ -370,8 +379,8 @@ function CriterionEditor({
       </label>
       <div className="mr-field">
         <span>Context</span>
-        <div className="mr-inline">
-          <label>
+        <div className="mr-inline mr-context-controls">
+          <label className="mr-context-message">
             <input
               type="checkbox"
               checked={q.context.message}
@@ -384,8 +393,8 @@ function CriterionEditor({
             />
             Message
           </label>
-          <label>
-            Sender history{" "}
+          <label className="mr-context-history">
+            <span>Sender history</span>
             <input
               type="number"
               min={0}
@@ -402,8 +411,8 @@ function CriterionEditor({
               }
             />
           </label>
-          <label>
-            Destination history{" "}
+          <label className="mr-context-history">
+            <span>Destination history</span>
             <input
               type="number"
               min={0}
@@ -477,7 +486,7 @@ function CriterionEditor({
             />
           </label>
           <label className="mr-field">
-            <span>Reject choices</span>
+            <span>Matching choices</span>
             <input
               value={q.rejectChoices.join(", ")}
               onChange={(e) =>
@@ -502,7 +511,7 @@ function CriterionEditor({
           </label>
           <label className="mr-field">
             <span>Threshold</span>
-            <div className="mr-inline">
+            <div className="mr-inline mr-score-threshold">
               <select
                 aria-label="Score comparison"
                 value={q.comparison}
@@ -617,27 +626,11 @@ export function unusedQuestionId(criteria: { id: string }[]) {
 }
 
 const actions = [
-  {
-    value: "jev",
-    title: "Check with JEV",
-    description:
-      "Ask your questions about the message and context. Reject when the answers match your criteria.",
-    path: "M8 10h8M8 14h4M20 11a8 8 0 0 1-8 8H5l-3 3V11a9 9 0 0 1 18 0Z",
-  },
-  {
-    value: "reject",
-    title: "Reject with advice",
-    description:
-      "Reject matching messages directly, with your reply explaining what the sender should change.",
-    path: "M8 3h8l5 5v8l-5 5H8l-5-5V8l5-5ZM9 9l6 6M15 9l-6 6",
-  },
-  {
-    value: "batch",
-    title: "Include in next batch",
-    description:
-      "Mark matching messages for the next batch. Saved tests preview intended membership.",
-    path: "M5 3h14M5 7h14M3 11h18v10H3V11Zm0 0 5 5h8l5-5",
-  },
+  { value: "reject", title: "Reject", description: "Keep the sender's draft and return every identified cause and actionable advice.", path: "M8 3h8l5 5v8l-5 5H8l-5-5V8l5-5ZM9 9l6 6M15 9l-6 6" },
+  { value: "proceed", title: "Proceed", description: "Preserve the requested delivery mode, schedule and execution choices.", path: "m5 12 4 4L19 6" },
+  { value: "steer", title: "Steer", description: "Select steering delivery. Incompatible route preferences remain unresolved.", path: "M4 12h16m-6-6 6 6-6 6" },
+  { value: "queue", title: "Queue", description: "Select a separate queued delivery, retaining the original request and execution choices.", path: "M4 6h16M4 12h16M4 18h16" },
+  { value: "queue-batched", title: "Queue batched", description: "Join the next open ordinary queued delivery when compatible. Scheduled messages stay separate.", path: "M5 3h14M5 7h14M3 11h18v10H3V11Zm0 0 5 5h8l5-5" },
 ] as const;
 
 function ActionChoices({

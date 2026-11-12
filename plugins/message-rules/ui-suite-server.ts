@@ -10,14 +10,19 @@ import { fileLocation } from "./contracts/model.ts";
 import { createStore } from "./state/store.ts";
 import { createFiles } from "./files/files.ts";
 import { createSuiteService, savedBasis } from "./suites/runner.ts";
-import { createHttpTransport } from "./evaluation/transport.ts";
+import { createSelectedJevTransport } from "./evaluation/shared-transport.ts";
+import {createJevClient} from "@phosphorco/bb-jev/bb";
 import type { TokenCounter, Transport } from "./evaluation/evaluator.ts";
 import type { Run } from "./state/store.ts";
+import type { AdmissionSnapshot } from "./admission/snapshot.ts";
+import { createNativeAdmission } from "./admission/native.ts";
+import { admissionContract } from "./admission-rpc-contract.ts";
 import { contract, snapshotSchema } from "./suite-rpc-contract.ts";
 export function createMessageRules(
   bb: BbPluginApi,
   options: {
     transportFor?: (run: Run) => Transport;
+    admissionTransportFor?: (snapshot: AdmissionSnapshot) => Transport;
     countTokens?: TokenCounter;
     fetcher?: typeof fetch;
   } = {},
@@ -32,7 +37,7 @@ export function createMessageRules(
         bb.rpc.register(
           registered,
           handlers,
-          Object.is(registered, contract)
+          (Object.is(registered, contract) || Object.is(registered, admissionContract))
             ? {
                 ...options,
                 experimental_discoverable: true,
@@ -46,12 +51,13 @@ export function createMessageRules(
   if (!identityResult.ok) throw Error(identityResult.error.message);
   const identity = identityResult.value;
   const settings = bb.settings.define({
+    connectionSource:{type:"select",label:"JEV connection",options:["shared","dedicated"],default:"shared",description:"Shared uses the explicit Topics-owned server connection. Dedicated uses only the key below; no credential scans or fallback."},
     apiKey: {
       type: "string",
       secret: true,
-      label: "Message Rules JEV API key",
+      label: "Dedicated Message Rules JEV API key",
       description:
-        "Used only by Message Rules. No ambient or other-plugin credential fallback.",
+        "Optional override, used only when Dedicated Message Rules override is explicitly selected. The shared Topics key stays in Topics settings.",
     },
   });
   const store = createStore(bb.storage.database()),
@@ -84,19 +90,15 @@ export function createMessageRules(
     if (errors.length) throw Error(errors.join("; "));
     return store.get(GLOBAL_CATALOG)!;
   }
+  const connectionSelection=async()=>{const values=await settings.get();return {source:values.connectionSource==='dedicated'?'dedicated' as const:'shared' as const,credential:typeof values.apiKey==='string'?values.apiKey:null};};
+  const sharedConnection=createJevClient(bb.sdk);
+  const admission = createNativeAdmission(bb,store,options.admissionTransportFor ?? (policy=>createSelectedJevTransport(bb.sdk,policy.connection,connectionSelection,options.fetcher)),options.countTokens,()=>bb.realtime.publish("changed",{projectId:GLOBAL_CATALOG,discoverFiles:false}));
+  bb.background.service("message-rules-admission-recovery",{start:signal=>admission.start(signal)});
   const service = createSuiteService(
     store,
-    options.transportFor ??
-      ((r) =>
-        createHttpTransport(
-          r.frozen.config.connection,
-          async () => {
-            const values = await settings.get();
-            return typeof values.apiKey === "string" ? values.apiKey : null;
-          },
-          options.fetcher,
-        )),
+    options.transportFor ?? (run=>createSelectedJevTransport(bb.sdk,run.frozen.config.connection,connectionSelection,options.fetcher)),
     options.countTokens,
+    (input,signal)=>admission.previewPlacement(input,signal),
   );
   const publish = (projectId: string, discoverFiles = false) =>
     bb.realtime.publish("changed", { projectId, discoverFiles });
@@ -140,6 +142,12 @@ export function createMessageRules(
         });
       }
     const configured = await settings.get();
+    let connection={configured:!!configured.apiKey,source:'dedicated',ownerPluginId:'message-rules',reason:configured.apiKey?'Dedicated key configured; authentication is established only by an observed request.':'Dedicated override selected but no key is configured.'};
+    if(options.transportFor)connection={configured:false,source:'injected',ownerPluginId:'message-rules',reason:'Controlled test transport.'};
+    else if(configured.connectionSource!=='dedicated'){
+      try{const metadata=await sharedConnection.describe();connection={configured:metadata.configured,source:'shared',ownerPluginId:metadata.ownerPluginId,reason:metadata.configured?'Topics shared setting configured; authentication is established only by an observed request.':'Topics shared key is not configured.'};}
+      catch(error){connection={configured:false,source:'shared',ownerPluginId:'jev-topics',reason:error instanceof Error?error.message:String(error)};}
+    }
     const requested = requestId
       ? (store.db
           .prepare("SELECT id FROM mr_runs WHERE project_id=? AND request_id=?")
@@ -156,15 +164,11 @@ export function createMessageRules(
       run: store.latest(projectId),
       readError,
       connection: {
-        configured: !!configured.apiKey,
+        ...connection,
         tokenAccounting: !!options.countTokens,
         mode: options.transportFor ? "injected" : "live",
       },
-      delivery: {
-        state: "capability-blocked",
-        reason:
-          "Full original mixed-sender delivery and safe separation are unproved. Queue hooks are not registered.",
-      },
+      delivery: await admission.state(),
       unresolved: store.unresolved(projectId),
     });
   }
@@ -175,6 +179,7 @@ export function createMessageRules(
       );
   };
   const handlers: IdentityRpcHandlers<typeof contract> = {
+    listRecentDecisions: { origin: "interactive-user", handle: input => admission.listRecentDecisions(input) },
     snapshot: {
       origin: "interactive-user",
       handle: async (i) => snapshot(i.projectId, i.discoverFiles, i.requestId, i.runId),
@@ -354,14 +359,14 @@ export function createMessageRules(
           .get(i.projectId, i.requestId) as { id: string } | undefined;
         if (prior) {
           const run = store.run(prior.id)!;
-          service.start(i.projectId, i.requestId, i.basis, run.frozen.actor);
+          service.start(i.projectId, i.requestId, i.basis, run.frozen.actor, i.selectedOccurrenceIds);
           return snapshot(i.projectId, false, i.requestId);
         }
         await discover(i.projectId);
         const actor = await invocation.person();
         if (!actor.ok) throw Error(actor.error.message);
         try {
-          service.start(i.projectId, i.requestId, i.basis, actor.value.actor);
+          service.start(i.projectId, i.requestId, i.basis, actor.value.actor, i.selectedOccurrenceIds);
           publish(i.projectId);
           return snapshot(i.projectId, false, i.requestId);
         } finally {
@@ -382,11 +387,23 @@ export function createMessageRules(
     },
   };
   identity.rpc.register(contract, handlers);
+  const admissionHandlers: IdentityRpcHandlers<typeof admissionContract> = {
+    testAdmissionState: {origin:"interactive-user",handle:async () => admission.state()},
+    publishTestPolicy: {origin:"interactive-user",handle:async input => {
+      const result=await admission.publishTestPolicy(input); publish(GLOBAL_CATALOG); return result;
+    }},
+    deactivateTestPolicy: {origin:"interactive-user",handle:async input => {
+      const result=await admission.deactivateTestPolicy(input); publish(GLOBAL_CATALOG); return result;
+    }},
+    lookupTestPublication: {origin:"interactive-user",handle:async input => admission.lookupTestPublication(input)},
+  };
+  identity.rpc.register(admissionContract,admissionHandlers);
   bb.onDispose(async () => {
     unsubscribe();
     fileErrors.clear();
+    await admission.dispose();
     await service.dispose();
     identity.dispose();
   });
-  return { store, files, service, snapshot };
+  return { store, files, service, snapshot, admission };
 }

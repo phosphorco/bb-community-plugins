@@ -6,6 +6,7 @@ import { createStore } from "../../state/store.ts";
 import { createMessageRules } from "../../ui-suite-server.ts";
 import { GLOBAL_CATALOG as G } from "../../contracts/catalog.ts";
 import { defaultConnection, newGroup, newRule } from "../../contracts/model.ts";
+import { admissionContract } from "../../admission-rpc-contract.ts";
 import { contract, snapshotSchema } from "../../suite-rpc-contract.ts";
 import { memoryFiles, waitUntil } from "../helpers.ts";
 const bytes = (id: string) =>
@@ -16,7 +17,7 @@ test("authoring RPC discovery publishes real schemas while preserving validation
   fake.bb.storage.database = () => db;
   createMessageRules(fake.bb);
   const published = fake.harness.inspection.registrations.experimental_publishedRpcMethods;
-  assert.deepEqual(published.map((m) => m.method).sort(), Object.keys(contract).sort());
+  assert.deepEqual(published.map((m) => m.method).sort(), [...Object.keys(contract),...Object.keys(admissionContract)].sort());
   const save = published.find((m) => m.method === "saveRule")!;
   assert.match(save.methodDescription!, /current catalog revision/);
   assert.ok(save.inputSchema.properties);
