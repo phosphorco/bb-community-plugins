@@ -14,11 +14,12 @@ const sourceIdentity = { provider: source.provider, keys: source.keys };
 const target = { provider: "url", keys: { href: "https://example.test/a" }, presentation: { label: "Original", url: "https://example.test/a" } };
 function open(path = ":memory:", migrate = true) {
   const db = new Database(path);
+  db.pragma("journal_mode = WAL");
   enableForeignKeys(db);
   if (migrate) for (const migration of crossReferencesMigrations) db.exec(migration);
   return { db, store: new CrossReferenceStore(db) };
 }
-function fixture(db: Database.Database, store: CrossReferenceStore, timeline?: () => Promise<any>) {
+function fixture(db: Database.Database, store: CrossReferenceStore, timeline?: (args:any) => Promise<any>) {
   const signals: CrossReferencesChangedSignal[] = [];
   const warnings: string[] = [];
   const bb = {
@@ -284,7 +285,7 @@ test("bounded incomplete timeline scans preserve known times and targets", async
   let pages = 0;
   const { collector } = fixture(db, store, async () => ({ rows: [], timelinePage: { hasOlderRows: true, olderCursor: { anchorSeq: ++pages, anchorId: `msg_${pages}` } } }));
   collector.enqueue("proj_a", "thr_a");
-  await collector.processNext(new AbortController().signal);
+  for(let quantum=0;quantum<50;quantum++)await collector.processNext(new AbortController().signal);
   assert.equal(pages, 50);
   assert.equal(store.listForwardReferences({ source: sourceIdentity }).rows[0]?.lastSeenAt, 20);
 });
@@ -553,4 +554,245 @@ test('actual collector commits primary excerpt/href/binding once and read-only s
  assert.equal(stream.bound_graph_revision,projection.revision);assert.equal((db.prepare('SELECT COUNT(*) n FROM mention_excerpts').get() as any).n,1);
  const location=store.mentionState(sourceIdentity).occurrences[0]!;assert.equal(location.excerpt?.state,'ready');assert.equal(location.authoredUrlState,'exact');assert.equal(location.exactAuthoredHref,'https://example.test/a');
  const before=db.prepare('SELECT * FROM assistant_link_jobs').all();collector.lookupSnapshot();assert.deepEqual(db.prepare('SELECT * FROM assistant_link_jobs').all(),before);
+});
+
+
+async function finish(collector:AssistantLinkCollector, db:Database.Database) {
+  for(let quantum=0;quantum<60 && db.prepare('SELECT 1 FROM assistant_link_jobs').get();quantum++)
+    await collector.processNext(new AbortController().signal);
+  assert.equal((db.prepare('SELECT COUNT(*) n FROM assistant_link_jobs').get() as {n:number}).n,0);
+}
+function supplier(bb:any, revision:()=>string, calls:string[]) {
+  bb.sdk.plugins={list:async()=>({plugins:[{id:'test-supplier',name:'Test',status:'running'}]}),callRpc:async({method,input}:any)=>{
+    if(method==='contextRecognitionDescribe')return {protocol:'bb-context-recognition',versions:[1],capabilities:{revision:revision(),linkify:{providers:[{provider:'test.issue',kinds:['issue']}]}}};
+    calls.push(JSON.stringify(input));return {candidates:[]};
+  }};
+}
+const row=(id:string,seq:number,text:string)=>({id,threadId:'thr_a',sourceSeqStart:seq,messageSeq:seq,kind:'conversation',role:'assistant',text,createdAt:seq*100});
+
+test('one page per quantum; unchanged forced generations reuse history and pure recognition while native targets stay fresh',async t=>{
+  const {db,store}=open();t.after(()=>db.close());let pages=0,heads=0,targetReads=0,targetDeleted=false;
+  const f=fixture(db,store,async(args:any)=>{if(args.afterSequence){heads++;return {maxSeq:10,contextBoundarySeq:null,rows:[],delta:{upsertRows:[]},timelinePage:{olderCursor:null,olderRowsSourceSeqEnd:null}};}return {maxSeq:10,contextBoundarySeq:null,rows:pages++%2===0?[row('new',2,'TOKEN https://bb.test/projects/proj_a/threads/thr_target')]:[row('old',1,'older TOKEN')],
+    timelinePage:{olderCursor:pages%2===1?{anchorSeq:1,anchorId:'old'}:null}};});
+  const calls:string[]=[];supplier(f.bb,()=> 'rev1',calls);
+  f.bb.sdk.threads.events={list:async()=>{heads++;return [{seq:10}];}};
+  f.bb.sdk.threads.get=async({threadId}:any)=>{if(threadId==='thr_target'){targetReads++;return {id:threadId,projectId:'proj_a',deletedAt:targetDeleted?123:null};}return {id:threadId,projectId:'proj_a'};};
+  f.collector.enqueue('proj_a','thr_a');await f.collector.processNext(new AbortController().signal);
+  assert.equal(pages,1);assert.equal(store.getProjection({producerPluginId:'cross-references',source:sourceIdentity}).projection,null);
+  assert.ok(db.prepare('SELECT 1 FROM assistant_link_jobs').get());
+  await finish(f.collector,db);const initialCalls=calls.length;assert.ok(initialCalls>0);assert.equal(pages,2);assert.equal(targetReads,1);
+  targetDeleted=true;f.collector.enqueue('proj_a','thr_a',false,true);await finish(f.collector,db);
+  assert.equal(pages,2);assert.equal(heads,1);assert.equal(calls.length,initialCalls);assert.equal(targetReads,2);
+  assert.equal(store.listForwardReferences({source:sourceIdentity}).rows.some(r=>r.target.provider==='bb'),false);
+});
+
+test('append and historical correction rescan source, recognize only changed inputs, and retire removed locations',async t=>{
+  const {db,store}=open();t.after(()=>db.close());let seq=10,pages=0;
+  let rows=[row('old',1,'[Original](https://example.test/original)')];
+  const f=fixture(db,store,async()=>{pages++;return {maxSeq:seq,rows,timelinePage:{olderCursor:null}};});
+  const calls:string[]=[];supplier(f.bb,()=> 'rev1',calls);f.bb.sdk.threads.events={list:async()=>[{seq}]};
+  f.collector.enqueue('proj_a','thr_a');await finish(f.collector,db);const before=calls.length;
+  rows=[row('new',2,'[New](https://example.test/new)'),...rows];seq++;
+  f.collector.enqueue('proj_a','thr_a',false,true);await finish(f.collector,db);
+  assert.equal(pages,2);assert.equal(calls.length,before*2,'only new message recognition windows miss');
+  rows=[rows[0]!,row('old',1,'corrected without links')];seq++;
+  f.collector.enqueue('proj_a','thr_a',false,true);await finish(f.collector,db);
+  assert.equal(pages,3);assert.equal(calls.length,before*2+1);
+  assert.deepEqual(store.listForwardReferences({source:sourceIdentity}).rows.map(r=>r.target.keys.href),['https://example.test/new']);
+});
+
+test('worker startup discards a reopened partial page and reconstructs the entire source',async t=>{
+  const dir=mkdtempSync(join(tmpdir(),'cross-checkpoint-'));t.after(()=>rmSync(dir,{recursive:true,force:true}));
+  const path=join(dir,'queue.sqlite');let pages=0;
+  const initial=open(path);const first=fixture(initial.db,initial.store,async()=>{pages++;return {maxSeq:10,contextBoundarySeq:null,rows:[row('new',2,'https://example.test/new')],timelinePage:{olderCursor:{anchorSeq:1,anchorId:'older'}}};});
+  first.collector.enqueue('proj_a','thr_a');await first.collector.processNext(new AbortController().signal);first.collector.dispose();initial.db.close();
+  assert.equal(pages,1);
+  const reopened=open(path,false);t.after(()=>reopened.db.close());
+  const next=fixture(reopened.db,reopened.store);next.bb.sdk.threads.events={list:async()=>[{seq:10}]};
+  next.bb.sdk.threads.timeline=async(args:any)=>{assert.equal(args.afterSequence,undefined);pages++;return {maxSeq:10,contextBoundarySeq:null,rows:args.beforeAnchorId?[row('old',1,'https://example.test/old')]:[row('new',2,'https://example.test/new')],timelinePage:{olderCursor:args.beforeAnchorId?null:{anchorSeq:1,anchorId:'older'}}};};
+  next.bb.sdk.subscribe=()=>()=>{};
+  let idle!:()=>void;const reachedIdle=new Promise<void>(resolve=>{idle=resolve;});
+  const process=next.collector.processNext.bind(next.collector);
+  next.collector.processNext=async signal=>{const worked=await process(signal);if(!worked)idle();return worked;};
+  const controller=new AbortController();const running=next.collector.start(controller.signal);await reachedIdle;controller.abort();await running;
+  assert.equal(pages,3);assert.equal(reopened.store.listForwardReferences({source:sourceIdentity}).total,2);
+});
+
+test('startup reconstructs completed source bodies while preserving pure recognition; supplier changes still re-recognize',async t=>{
+  const dir=mkdtempSync(join(tmpdir(),'cross-supplier-checkpoint-'));t.after(()=>rmSync(dir,{recursive:true,force:true}));const path=join(dir,'queue.sqlite');
+  let revision='rev1',pages=0;const calls:string[]=[];
+  const initial=open(path);const first=fixture(initial.db,initial.store,async()=>{pages++;return {maxSeq:10,contextBoundarySeq:null,rows:[row('m',1,'TOKEN')],timelinePage:{olderCursor:null}};});
+  first.bb.sdk.threads.events={list:async()=>[{seq:10}]};supplier(first.bb,()=>revision,calls);
+  first.collector.enqueue('proj_a','thr_a');await finish(first.collector,initial.db);assert.equal(calls.length,1);first.collector.dispose();initial.db.close();
+  const reopened=open(path,false);t.after(()=>reopened.db.close());const next=fixture(reopened.db,reopened.store,async(args:any)=>{if(args.afterSequence)return {maxSeq:10,contextBoundarySeq:null,rows:[],delta:{upsertRows:[]},timelinePage:{olderCursor:null,olderRowsSourceSeqEnd:null}};pages++;return {maxSeq:10,contextBoundarySeq:null,rows:[row('m',1,'TOKEN')],timelinePage:{olderCursor:null}};});
+  next.bb.sdk.threads.events={list:async()=>[{seq:10}]};supplier(next.bb,()=>revision,calls);
+  next.bb.sdk.subscribe=()=>()=>{};
+  let idle!:()=>void;const reachedIdle=new Promise<void>(resolve=>{idle=resolve;});const process=next.collector.processNext.bind(next.collector);
+  next.collector.processNext=async signal=>{const worked=await process(signal);if(!worked)idle();return worked;};
+  const controller=new AbortController();const running=next.collector.start(controller.signal);await reachedIdle;controller.abort();await running;
+  assert.equal(calls.length,1);assert.equal(pages,2);
+  revision='rev2';next.collector.invalidateSuppliers();await finish(next.collector,reopened.db);assert.equal(calls.length,2);assert.equal(pages,2);
+});
+
+
+test('an unchanged source larger than the hot cache does not thrash supplier recognition',async t=>{
+  const {db,store}=open();t.after(()=>db.close());let pages=0;const calls:string[]=[];
+  const f=fixture(db,store,async(args:any)=>{if(args.afterSequence)return {maxSeq:100,contextBoundarySeq:null,rows:[],delta:{upsertRows:[]},timelinePage:{olderCursor:null,olderRowsSourceSeqEnd:null}};pages++;return {maxSeq:100,contextBoundarySeq:null,rows:Array.from({length:80},(_,i)=>row('m'+i,i,'TOKEN '+i)),timelinePage:{olderCursor:null}};});
+  supplier(f.bb,()=> 'rev1',calls);f.bb.sdk.threads.events={list:async()=>[{seq:100}]};
+  f.collector.enqueue('proj_a','thr_a');await finish(f.collector,db);assert.equal(calls.length,80);
+  f.collector.enqueue('proj_a','thr_a',false,true);await finish(f.collector,db);assert.equal(calls.length,80);assert.equal(pages,1);
+});
+
+for(const mode of ['missing-native-delta','expired-cursor'] as const)test(mode+' discards reconstructible source checkpoint while preserving durable retry intent',async t=>{
+  const {db,store}=open();t.after(()=>db.close());let pages=0;
+  const f=fixture(db,store,async()=>{pages++;return {maxSeq:10,contextBoundarySeq:null,rows:[row('m',1,'https://example.test/old')],timelinePage:{olderCursor:mode==='expired-cursor'?{anchorSeq:1,anchorId:'old'}:null}};});
+  f.collector.enqueue('proj_a','thr_a');await f.collector.processNext(new AbortController().signal);
+  if(mode==='missing-native-delta')f.collector.enqueue('proj_a','thr_a',false,true);
+  f.bb.sdk.threads.events={list:async()=>{throw new Error('offline');}};
+  f.bb.sdk.threads.timeline=async()=>{pages++;if(mode==='expired-cursor')throw Object.assign(new Error('expired'),{status:400});return {maxSeq:11,rows:[],timelinePage:{olderCursor:null}};};
+  await f.collector.processNext(new AbortController().signal);assert.equal(pages,2);
+  if(mode==='expired-cursor'){
+    assert.equal(db.prepare('SELECT 1 FROM assistant_link_checkpoints').get(),undefined);
+    assert.equal((db.prepare('SELECT attempts FROM assistant_link_jobs').get() as any).attempts,1);
+  }else assert.equal(store.listForwardReferences({source:sourceIdentity}).total,0);
+});
+
+
+for(const mode of ['append','correction','gap','boundary','server-cache-miss'] as const)test('latest-window '+mode+' uses incremental append only with complete overlapping source proof',async t=>{
+ const {db,store}=open();t.after(()=>db.close());let seq=10,pages=0;const calls:string[]=[];let phase='cold';
+ const f=fixture(db,store);supplier(f.bb,()=> 'rev1',calls);
+ f.bb.sdk.threads.events={list:async()=>[{seq}]};
+ f.bb.sdk.threads.timeline=async(args:any)=>{
+  pages++;
+  if(phase==='cold')return {maxSeq:10,contextBoundarySeq:null,rows:[row('old',1,'https://example.test/old')],timelinePage:{olderCursor:args.beforeAnchorId?null:{anchorSeq:1,anchorId:'old'}}};
+  if(args.afterSequence){
+   assert.equal(args.afterSequence,'10');
+   if(mode==='server-cache-miss')return {maxSeq:11,contextBoundarySeq:null,rows:[row('new',11,'https://example.test/new')],timelinePage:{olderCursor:null}};
+   return {maxSeq:11,contextBoundarySeq:mode==='boundary'?11:null,rows:[],delta:{upsertRows:[mode==='correction'?row('old',1,'corrected'):row('new',11,'https://example.test/new')],rowOrder:mode==='gap'?['new']:['old','new']},timelinePage:{olderCursor:null,olderRowsSourceSeqEnd:null}};
+  }
+  return {maxSeq:11,contextBoundarySeq:null,rows:[row('new',11,'https://example.test/new')],timelinePage:{olderCursor:null}};
+ };
+ f.collector.enqueue('proj_a','thr_a');await finish(f.collector,db);assert.equal(pages,2);const before=calls.length;
+ phase='warm';seq=11;f.collector.enqueue('proj_a','thr_a',false,true);await finish(f.collector,db);
+ if(mode==='append'){
+  assert.equal(pages,3,'one append page, zero old-page reads');assert.equal(calls.length,before+2);
+  assert.equal(store.listForwardReferences({source:sourceIdentity}).total,2);
+ }else {
+  assert.equal(pages,mode==='server-cache-miss'?3:4);assert.equal(store.listForwardReferences({source:sourceIdentity}).total,1);
+ }
+});
+
+test('4536 durable jobs do not allocate 4536 source bodies: eviction bounds collected checkpoints and keeps every queued intent',async t=>{
+ const {db,store}=open();t.after(()=>db.close());const f=fixture(db,store);
+ f.bb.sdk.plugins={list:async()=>({plugins:[]})};
+ f.bb.sdk.threads.get=async({threadId}:any)=>({id:threadId,projectId:'proj_a'});
+ f.bb.sdk.threads.timeline=async({threadId}:any)=>({maxSeq:1,contextBoundarySeq:null,rows:[{...row('m',1,'plain'),threadId}],timelinePage:{olderCursor:null}});
+ for(let i=0;i<4536;i++)f.collector.enqueue('proj_a','thr_'+i);
+ for(let i=0;i<40;i++)await f.collector.processNext(new AbortController().signal);
+ assert.equal((db.prepare('SELECT COUNT(*) n FROM assistant_link_checkpoints').get() as any).n,32);
+ assert.equal((db.prepare('SELECT COUNT(*) n FROM assistant_link_checkpoint_messages').get() as any).n,32);
+ assert.equal((db.prepare('SELECT COUNT(*) n FROM assistant_link_jobs').get() as any).n,4496);
+ assert.equal((db.prepare('SELECT COUNT(*) n FROM assistant_link_checkpoint_messages m LEFT JOIN assistant_link_checkpoints c ON c.thread_id=m.thread_id WHERE c.thread_id IS NULL').get() as any).n,0);
+});
+
+
+test('production service reconciles completed snapshots on startup and invalidates same-sequence source proofs on surface/history signals',async t=>{
+ const {db,store}=open();t.after(()=>db.close());let pages=0;
+ const f=fixture(db,store,async()=>{pages++;return {maxSeq:10,contextBoundarySeq:null,rows:[row('m',1,'https://example.test/a')],timelinePage:{olderCursor:null}};});
+ f.bb.sdk.plugins={list:async()=>({plugins:[]})};f.bb.sdk.threads.events={list:async()=>[{seq:10}]};
+ const callbacks=new Map<string,(event:any)=>void>();f.bb.sdk.subscribe=({event,threadId,callback}:any)=>{if(event==='thread:changed')assert.equal(threadId,'thr_a','compaction requires a scoped thread-detail target');callbacks.set(event,callback);return()=>callbacks.delete(event);};
+ f.collector.enqueue('proj_a','thr_a');await finish(f.collector,db);assert.equal(pages,1);
+ let idleCount=0;const waiting=new Map<number,()=>void>();
+ const atIdle=(count:number)=>idleCount>=count?Promise.resolve():new Promise<void>(resolve=>waiting.set(count,resolve));
+ const process=f.collector.processNext.bind(f.collector);f.collector.processNext=async signal=>{const worked=await process(signal);if(!worked){idleCount++;waiting.get(idleCount)?.();}return worked;};
+ const controller=new AbortController();t.after(()=>controller.abort());const running=f.collector.start(controller.signal);
+ await atIdle(1);assert.equal(pages,2,'startup cannot certify preferences stayed unchanged while stopped');
+ callbacks.get('system:changed')!({changes:['ui-preferences-changed']});assert.equal(db.prepare('SELECT 1 FROM assistant_link_checkpoints').get(),undefined);f.collector.enqueue('proj_a','thr_a',false,true);await atIdle(2);assert.equal(pages,3);
+ callbacks.get('thread:changed')!({id:'thr_a',metadata:{projectId:'proj_a'},changes:['history-rewritten']});assert.equal(db.prepare('SELECT 1 FROM assistant_link_checkpoints').get(),undefined);assert.ok(db.prepare('SELECT 1 FROM assistant_link_jobs').get());await atIdle(3);assert.equal(pages,4);
+ controller.abort();await running;assert.equal(callbacks.size,0);
+});
+
+for(const kind of ['history-rewritten','history-compacted','events-appended'] as const)test('same-maxSeq earlier message '+kind+' cannot retain stale source bodies through native detail invalidation',async t=>{
+ const {db,store}=open();t.after(()=>db.close());let changed=false;let pages=0;
+ const f=fixture(db,store);f.bb.sdk.plugins={list:async()=>({plugins:[]})};f.bb.sdk.threads.events={list:async()=>[{seq:10}]};
+ f.bb.sdk.threads.timeline=async(args:any)=>{pages++;return {maxSeq:10,contextBoundarySeq:null,
+  rows:args.beforeAnchorId?(changed?(kind==='history-compacted'?[]:[row('older',1,'https://example.test/corrected')]):[row('older',1,'https://example.test/original')]):[row('newer',2,'https://example.test/newer')],
+  timelinePage:{olderCursor:args.beforeAnchorId?null:{anchorSeq:1,anchorId:'older'}}};};
+ let detail:((event:any)=>void)|undefined;
+ f.bb.sdk.subscribe=({event,threadId,callback}:any)=>{
+  if(event==='thread:changed'){assert.equal(threadId,'thr_a');detail=callback;return()=>{if(detail===callback)detail=undefined;};}
+  return()=>{};
+ };
+ let idleCount=0;const waiting=new Map<number,()=>void>();const atIdle=(n:number)=>idleCount>=n?Promise.resolve():new Promise<void>(resolve=>waiting.set(n,resolve));
+ const process=f.collector.processNext.bind(f.collector);f.collector.processNext=async signal=>{const worked=await process(signal);if(!worked){idleCount++;waiting.get(idleCount)?.();}return worked;};
+ const controller=new AbortController();t.after(()=>controller.abort());f.collector.enqueue('proj_a','thr_a');const running=f.collector.start(controller.signal);await atIdle(1);
+ assert.equal(pages,2);assert.ok(store.listForwardReferences({source:sourceIdentity}).rows.some(r=>r.target.keys.href==='https://example.test/original'));
+ const cached=db.prepare('SELECT 1 FROM assistant_link_checkpoints').get();if(cached)assert.ok(detail,'a cached source needs the native scoped detail subscription');
+ changed=true;if(detail){detail({id:'thr_a',metadata:{timelineSequence:10},changes:[kind]});assert.ok(db.prepare('SELECT 1 FROM assistant_link_jobs').get(),'late source signals own a durable successor without another view request');}else f.collector.enqueue('proj_a','thr_a',false,true);
+ await atIdle(2);
+ const hrefs=store.listForwardReferences({source:sourceIdentity}).rows.map(r=>r.target.keys.href);
+ assert.equal(pages,4);assert.equal(hrefs.includes('https://example.test/original'),false);
+ assert.equal(hrefs.includes('https://example.test/corrected'),kind!=='history-compacted');
+ controller.abort();await running;assert.equal(detail,undefined);
+});
+
+test('startup reconstructs an offline same-sequence mutation without consulting the old partial witness',async t=>{
+ const dir=mkdtempSync(join(tmpdir(),'cross-offline-rewrite-'));t.after(()=>rmSync(dir,{recursive:true,force:true}));const path=join(dir,'queue.sqlite');
+ const initial=open(path);const first=fixture(initial.db,initial.store,async()=>({maxSeq:10,contextBoundarySeq:null,rows:[row('m',2,'https://example.test/removed')],timelinePage:{olderCursor:{anchorSeq:1,anchorId:'older'}}}));
+ first.collector.enqueue('proj_a','thr_a');await first.collector.processNext(new AbortController().signal);first.collector.dispose();initial.db.close();
+ const reopened=open(path,false);t.after(()=>reopened.db.close());let witnesses=0;
+ const next=fixture(reopened.db,reopened.store);next.bb.sdk.plugins={list:async()=>({plugins:[]})};next.bb.sdk.threads.events={list:async()=>[{seq:10}]};next.bb.sdk.subscribe=()=>()=>{};
+ next.bb.sdk.threads.timeline=async(args:any)=>{if(args.afterSequence)witnesses++;return {maxSeq:10,contextBoundarySeq:null,rows:[row('m',2,'https://example.test/current')],timelinePage:{olderCursor:null}};};
+ let idle!:()=>void;const reachedIdle=new Promise<void>(resolve=>{idle=resolve;});const process=next.collector.processNext.bind(next.collector);
+ next.collector.processNext=async signal=>{const worked=await process(signal);if(!worked)idle();return worked;};
+ const controller=new AbortController();const running=next.collector.start(controller.signal);await reachedIdle;controller.abort();await running;
+ assert.equal(witnesses,0);assert.deepEqual(reopened.store.listForwardReferences({source:sourceIdentity}).rows.map(r=>r.target.keys.href),['https://example.test/current']);
+});
+
+
+test('pure unchanged-source reuse refreshes observedAt without changing evidence revision',async t=>{
+ const {db,store}=open();t.after(()=>db.close());let now=100000,pages=0;t.mock.method(Date,'now',()=>now);
+ const f=fixture(db,store,async(args:any)=>{if(args.afterSequence)return {maxSeq:10,contextBoundarySeq:null,rows:[],delta:{upsertRows:[]},timelinePage:{olderCursor:null,olderRowsSourceSeqEnd:null}};pages++;return {maxSeq:10,contextBoundarySeq:null,rows:[row('m',1,'https://example.test/a')],timelinePage:{olderCursor:null}};});
+ f.bb.sdk.plugins={list:async()=>({plugins:[]})};f.bb.sdk.threads.events={list:async()=>[{seq:10}]};
+ f.collector.enqueue('proj_a','thr_a');await finish(f.collector,db);const before=store.mentionState(sourceIdentity);assert.equal(before.occurrences[0]!.observedAt,now);
+ now+=1000;f.collector.enqueue('proj_a','thr_a',false,true);await finish(f.collector,db);const after=store.mentionState(sourceIdentity);
+ assert.equal(after.occurrences[0]!.observedAt,now);assert.equal(after.revision,before.revision);assert.equal(pages,1);
+});
+
+
+test('a latest-window delta without native older-history metadata cannot certify cached coverage',async t=>{
+ const {db,store}=open();t.after(()=>db.close());let changed=false,pages=0;
+ const f=fixture(db,store);f.bb.sdk.plugins={list:async()=>({plugins:[]})};
+ f.bb.sdk.threads.timeline=async(args:any)=>{pages++;if(args.afterSequence)return {maxSeq:10,contextBoundarySeq:null,rows:[],delta:{upsertRows:[]},timelinePage:{olderCursor:null}};
+  return {maxSeq:10,contextBoundarySeq:null,rows:[row('m',1,changed?'https://example.test/corrected':'https://example.test/original')],timelinePage:{olderCursor:null}};};
+ f.collector.enqueue('proj_a','thr_a');await finish(f.collector,db);changed=true;
+ f.collector.enqueue('proj_a','thr_a',false,true);await finish(f.collector,db);
+ assert.equal(pages,3);assert.deepEqual(store.listForwardReferences({source:sourceIdentity}).rows.map(r=>r.target.keys.href),['https://example.test/corrected']);
+});
+
+
+test('failed older-page attempts retire continuation certification before a same-sequence rewrite during backoff',async t=>{
+ const {db,store}=open();t.after(()=>db.close());let now=100000,rewritten=false,failOlder=true,witnesses=0;const requests:string[]=[];
+ t.mock.method(Date,'now',()=>now);
+ const f=fixture(db,store,async(args:any)=>{
+  requests.push(args.afterSequence?'witness':args.beforeAnchorId?'older':'first');
+  if(args.afterSequence){witnesses++;assert.equal(args.afterSequence,'10');}
+  if(args.beforeAnchorId){if(failOlder){failOlder=false;throw new Error('offline');}return {maxSeq:10,contextBoundarySeq:null,rows:[row('old',1,'older text')],timelinePage:{olderCursor:null}};}
+  // A same-lifetime native rewrite floor supplies a full corrected response,
+  // even if the source was rewritten without an advancing sequence.
+  return {maxSeq:10,contextBoundarySeq:null,rows:[row('new',2,'https://example.test/'+(rewritten?'corrected':'original'))],timelinePage:{olderCursor:{anchorSeq:1,anchorId:'older'}}};
+ });
+ f.collector.enqueue('proj_a','thr_a',false,false,2);
+ await f.collector.processNext(new AbortController().signal);await f.collector.processNext(new AbortController().signal);
+ const failed=db.prepare('SELECT * FROM assistant_link_jobs').get() as any;
+ assert.equal(failed.attempts,1);assert.equal(failed.priority,2);assert.equal(failed.version,1);assert.equal(failed.retry_at,101000);
+ rewritten=true;assert.equal(await f.collector.processNext(new AbortController().signal),false);
+ assert.deepEqual(db.prepare('SELECT * FROM assistant_link_jobs').get(),failed);
+ now=failed.retry_at;await f.collector.processNext(new AbortController().signal);
+ const retry=db.prepare('SELECT * FROM assistant_link_jobs').get() as any;
+ await finish(f.collector,db);
+ assert.deepEqual(store.listForwardReferences({source:sourceIdentity}).rows.map(r=>r.target.keys.href),['https://example.test/corrected']);
+ assert.equal(retry.version,failed.version);assert.equal(retry.priority,failed.priority);assert.equal(retry.attempts,failed.attempts);
+ assert.equal(witnesses,1);assert.deepEqual(requests,['first','older','witness','older']);
+ assert.equal(store.mentionState(sourceIdentity).coverage?.timelineComplete,true);
 });

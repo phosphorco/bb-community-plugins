@@ -45,7 +45,7 @@ function fixture(db:Database.Database,store:CrossReferenceStore,initial:any[]=[]
   server:{experimental_appUrl:'https://bb.test'},log:{warn:(message:string)=>state.logs.push(message)}} as any;
  const signals:any[]=[];
  const collector=new AssistantLinkCollector(bb,db,store,s=>signals.push(s));
- const scan=async()=>{collector.enqueue('proj_a','thr_source',false,true);assert.equal(await collector.processNext(new AbortController().signal),true);return store.mentionState(sourceId);};
+ const scan=async()=>{collector.enqueue('proj_a','thr_source',false,true);assert.equal(await collector.processNext(new AbortController().signal),true);for(let quantum=1;quantum<50 && db.prepare('SELECT 1 FROM assistant_link_jobs').get();quantum++){if(!await collector.processNext(new AbortController().signal))break;}return store.mentionState(sourceId);};
  return {state,collector,scan,signals,bb};
 }
 
@@ -541,4 +541,12 @@ test('new collection retains literal typed PR href separately and historical par
  assert.equal(scan.occurrences[0]!.exactAuthoredHref,pr+'#pullrequestreview-7');assert.equal(scan.occurrences[0]!.excerpt?.state,'ready');
  const changed=await collectConversationMentions({messages:[{...messages[0]!,text:'[x](https://example.test/a&amp;b)'}],context:{consumer:{pluginId:'cross-references'},threadId:'thr_source',links:[]},clients:[],getThread:async id=>({id,projectId:'proj_a'}),signal:new AbortController().signal});
  assert.equal(changed.occurrences[0]!.authoredUrlState,'unknown');assert.equal(changed.occurrences[0]!.exactAuthoredHref,undefined);
+});
+
+
+test('cached/pure recognition yields between messages so foreground work can run within a source scan',async()=>{
+ let foregroundRan=false;const scheduled=new Promise<void>(resolve=>setImmediate(()=>{foregroundRan=true;resolve();}));
+ const result=await collectConversationMentions({messages:Array.from({length:80},(_,i)=>({id:'m'+i,text:'ordinary prose '+i,createdAt:i,messageSeq:i,anchorSeq:i,role:'assistant' as const})),
+  context:{consumer:{pluginId:'cross-references',surface:'conversation'},projectId:'proj_a',threadId:'thr_source',links:[]},clients:[],getThread:async()=>{throw new Error('no native targets');},signal:new AbortController().signal});
+ assert.equal(foregroundRan,true);assert.equal(result.observedMessageIds.length,80);await scheduled;
 });
