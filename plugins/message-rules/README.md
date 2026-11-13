@@ -402,3 +402,34 @@ native transactions or delivery. Captured v1.6 intended-batch results stay
 byte-identical and become stale under v1.7 without replay.
 
 Shared transport retains the existing MR admission/suite paid-attempt UUID, partition/input binding and absolute deadline. Topics persists one HTTP operation before invocation and exposes bounded response/usage/status; lost acknowledgements get one lookup and no submit retry. MR keeps semantic decoding, native evaluation ledgers and policy combination. Transport receipts identify their actual connection source; missing or unreported token/cost fields remain unknown. Package/source checks do not prove loaded cross-plugin or real-provider behavior.
+
+## Native sender hook (BB 0.49.0)
+
+The current live adapter uses BB's native `message.dispatch` hook. It accepts or
+rejects static rules synchronously and returns the rule's advice to the sender.
+The plugin owns a frozen, explicitly activated policy for one testing project;
+BB owns dispatch and the effect of the returned decision. Saving rules and
+installing/reloading the plugin do not activate an old native publication.
+
+Read `testAdmissionState`, then call `publishTestPolicy` with the saved catalog
+`basis`, a stable `requestId`, `scope: "test-project"`, `testProjectId` and the
+`expectedActivePolicy` reference read from status (initially `null`). A
+transaction records both the active policy and the operation result. Reusing an
+ID with different intent fails. Reloads use the same frozen policy; saved edits
+need a new explicit activation. `deactivateTestPolicy` uses the same contract.
+`lookupTestPublication` reads this plugin's recorded operation, not a native
+publication journal. Status includes the ten most recent sender-hook decisions.
+
+This slice deliberately refuses matching paid JEV checks, queue/steer changes,
+and predicates requiring unavailable sender titles, with a concrete explanation
+and next action. Saved JEV tests remain available. Running those checks directly
+inside this hook would hold a server-wide dispatch lock for up to ten seconds;
+a future paid lane must do its work outside that lock and establish durable
+attempt identity before scheduling it. The current static adapter does no
+network requests, history reads, inference or automatic retries.
+
+Native explicit **Send now** bypasses the hook. Compaction and edited resends do
+not pass through it. These are native semantics, not the stronger guarantees of
+the retired custom admission runtime. Historical native callback rows and
+publication receipts are retained, but they cannot establish current sender-hook
+enforcement or a current native delivery result.

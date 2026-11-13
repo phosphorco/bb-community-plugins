@@ -44,7 +44,7 @@ test("actual mounted panel reads decisions only on demand, renders rejected/unre
   let first = true;
   const rpc = Object.fromEntries(Object.keys(contract).map(method => [method, async (input: unknown) => {
     if (method === "snapshot" && first) { first = false; return initial.promise; }
-    if (method === "listRecentDecisions") { reads++; if (fail) throw Error("fixture page read offline"); }
+    if (method === "listRecentDecisions") { reads++; if (fail) throw Error("fixture page read offline"); return app.read(input as object); }
     return app.rpc(method, input as object);
   }]));
   const slot = renderSlot({ component: MessageRulesBody }, { subPath: "", drafts: new Map() }, {
@@ -52,7 +52,7 @@ test("actual mounted panel reads decisions only on demand, renders rejected/unre
     sdk: { projects: { list: async () => [{ id: "project-test", name: "Testing project" }] } } as never,
   });
   try {
-    assert.match(slot.getByRole("status", { name: "Message Rules enforcement" }).textContent!, /Enforcement status unknown/);
+    assert.match(slot.getByRole("status", { name: "Message Rules enforcement" }).textContent!, /Reading enforcement status/);
     assert.equal(reads, 0);
     await act(async () => { initial.resolve(await app.snapshot()); });
     await slot.findByText("Not enforcing");
@@ -135,31 +135,16 @@ test("callback detail preserves an older page and its next cursor so More can co
   } finally { slot.unmount(); await app.close(); }
 });
 
-test("banner requires a current authoritative pointer and ready generation, names exact frozen scope/version, and never asserts global current-project membership", async () => {
-  const app = await decisionsFixture();
-  try {
-    const publication = app.publication;
-    const projects = [{ id: "project-test", name: "Testing project" }];
-    const ready: Snapshot["delivery"] = { state: "available", reason: "fixture ready", activeKnown: true, generationReady: true, activePublication: publication };
-    const html = renderToStaticMarkup(<EnforcementBanner delivery={ready} projects={projects} />);
-    for (const text of ["Enforcing Message Rules", "frozen-publication", "configuration 17", "message-rules-v1.7", "Testing project (project-test)", "frozen project scope", "never enroll a project"]) assert.ok(html.includes(text), text);
-    assert.doesNotMatch(html, /current project|this project|preview/i);
-    for (const delivery of [
-      { ...ready, generationReady: false, state: "unavailable" },
-      { ...ready, activeKnown: false },
-      { ...ready, state: "unsupported", activePublication: null, activeKnown: false },
-      { state: "unconfigured", reason: "unknown pointer", activeKnown: false, generationReady: false, activePublication: null },
-    ]) {
-      const unknown = renderToStaticMarkup(<EnforcementBanner delivery={delivery} projects={projects} />);
-      assert.match(unknown, /Enforcement status unavailable/);
-      assert.doesNotMatch(unknown, /Not enforcing|Enforcing Message Rules/);
-    }
-    const failed = renderToStaticMarkup(<EnforcementBanner delivery={ready} readError="fixture read failed" projects={projects} />);
-    assert.match(failed, /Last observed publication/);
-    assert.match(failed, /current native pointer is unknown/);
-    const inactive = renderToStaticMarkup(<EnforcementBanner delivery={{ ...ready, generationReady: false, activePublication: null }} projects={projects} />);
-    assert.match(inactive, /Not enforcing/);
-  } finally { await app.close(); }
+test("banner names the plugin-owned frozen policy and reports stale status without claiming enforcement", async()=>{
+ const projects=[{id:"project-test",name:"Testing project"}];
+ const ready:Snapshot["delivery"]={state:"available",reason:"Static accept/reject only.",activeKnown:true,generationReady:true,activePolicy:{ref:{policyId:"policy-one",fingerprint:"fingerprint"},projectId:"project-test",enabled:true,createdAt:"2026-11-13T00:00:00Z",catalogRevision:17}};
+ const html=renderToStaticMarkup(<EnforcementBanner delivery={ready} projects={projects}/>);
+ for(const text of ["Static sender rules active","Testing project","policy-one","catalog revision 17","Saved edits do not change"])assert.ok(html.includes(text),text);
+ assert.doesNotMatch(html,/Native publication|Current evaluator generation/);
+ const failed=renderToStaticMarkup(<EnforcementBanner delivery={ready} readError="offline" projects={projects}/>);
+ assert.match(failed,/Enforcement status unavailable/);assert.doesNotMatch(failed,/Static sender rules active/);
+ const inactive=renderToStaticMarkup(<EnforcementBanner delivery={{...ready,activePolicy:null}} projects={projects}/>);
+ assert.match(inactive,/Not enforcing/);
 });
 
 test("read lifetime resets an obsolete busy client and fences late responses and unmount; explicit retry clears a same-content error", async () => {

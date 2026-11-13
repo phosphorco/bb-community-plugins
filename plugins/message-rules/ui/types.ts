@@ -27,7 +27,7 @@ export type Snapshot = {
   savedOccurrenceId?: string;
   readError: string | null;
   connection: { configured: boolean; tokenAccounting: boolean; mode: string; source?:string;ownerPluginId?:string;reason?:string };
-  delivery: { state: string; reason: string; activeKnown?: boolean; generationReady?: boolean; activePublication?: import("zod").infer<typeof import("../admission/decisions-contract.ts").publicPublicationSchema> | null };
+  delivery: { state: string; reason: string; activeKnown?: boolean; generationReady?: boolean; activePolicy?: { ref:{policyId:string;fingerprint:string};projectId:string;enabled:boolean;createdAt:string;catalogRevision:number } | null; recentSenderDecisions?: {created_at:string;thread_id:string;sender_thread_id:string|null;policy_id:string;decision:unknown}[] };
   unresolved: unknown[];
 };
 export type Client = {
