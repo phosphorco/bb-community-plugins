@@ -123,6 +123,9 @@ export function createNativeIdentityConnection(options: { readonly rpc: NativeRp
               // returning B, but do not notify health observers: the caller is already
               // committing this exact B response and a notification would recurse refresh.
               verified = next; authorityEpoch++;
+              // Retire any already-returned verification handoff as well as
+              // pending requests, without recursively notifying the reload owner.
+              health = { ...health, generation: health.generation + 1 };
               if (disposed || nativeState !== 'connected') throw new Error('Native bootstrap became stale.');
             } else verified = next;
           }
