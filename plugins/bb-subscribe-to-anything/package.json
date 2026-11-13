@@ -30,6 +30,7 @@
     "lib/"
   ],
   "dependencies": {
+    "@phosphorco/bb-message-admission": "0.1.0-alpha.2",
     "zod": "4.6.7",
     "@tanstack/react-query": "5.102.5",
     "@radix-ui/react-slot": "1.2.3",
@@ -38,7 +39,7 @@
     "tailwind-merge": "3.4.0"
   },
   "devDependencies": {
-    "@get-bb/plugin-sdk": "0.6.52",
+    "@get-bb/plugin-sdk": "https://github.com/phosphorco/bb-fork/releases/download/sdk-0.6.143-phosphor.05199007.upgrade1/get-bb-plugin-sdk-0.6.143+phosphor.05199007.upgrade1.tgz",
     "@types/node": "^22",
     "typescript": "^5.9.3",
     "better-sqlite3": "12.11.1",
