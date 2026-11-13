@@ -95,3 +95,5 @@ At most four origin/instance scopes retain up to 100 revisions and 1 MiB of seri
 ## Browser test prerequisite
 
 After the collection’s locked `npm ci`, run `npm exec -- playwright install chromium` from this plugin directory before `npm test`. This installs the Chromium revision selected by the locked Playwright dependency; the browser tests use its public executable path. Tests do not acquire it implicitly. A missing browser is a setup failure, not a skipped browser proof.
+
+Browser fixture files run in separate Bun processes through npm test, so DOM/clock mocks and server cleanup from one fixture cannot affect another. The runner discovers every test file; it does not omit browser checks or retry failed assertions.
