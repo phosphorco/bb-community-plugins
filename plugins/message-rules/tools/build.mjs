@@ -1,8 +1,10 @@
 import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import { readFileSync, copyFileSync, mkdirSync } from "node:fs";
 import { dirname, resolve, relative, isAbsolute } from "node:path";
 import { createHash } from "node:crypto";
-const build = spawnSync(process.execPath, ["node_modules/bb-app/dist/bb.js", "plugin", "build", "."], { stdio: "inherit" });
+const cli = process.env.BB_TOOLCHAIN_CLI ?? fileURLToPath(new URL("../../../../fork/build/bb/apps/cli/dist/index.js", import.meta.url));
+const build = spawnSync(process.execPath, [cli, "plugin", "build", "."], { stdio: "inherit" });
 if (build.status !== 0) process.exit(build.status ?? 1);
 const dist = resolve("dist");
 const app = JSON.parse(readFileSync(resolve(dist, "app.meta.json"), "utf8"));

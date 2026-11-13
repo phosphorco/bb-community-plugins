@@ -36,8 +36,7 @@ A global run uses one shared call budget (minimum legacy limits on migration), o
 
 The public registry SDK is pinned to **0.6.52**, including a distinct registry
 lock entry instead of accidentally resolving the workspace's Phosphor SDK
-artifact. The build CLI is exactly `bb-app@0.46.2-nightly.39036585709.1`, whose
-SDK is 0.6.52. `@phosphorco/bb-identity@0.2.1` supplies invocation attribution;
+artifact. Build with the prepared canonical workspace compiler (`fork/build/bb/apps/cli/dist/index.js`), or set `BB_TOOLCHAIN_CLI` to the exact prepared compiler entry. CI uses its checksum-verified selected fork compiler through that same variable. A missing compiler fails the build; the registry nightly is not a fallback for generation-based artifacts. `@phosphorco/bb-identity@0.2.1` supplies invocation attribution;
 catalog data is shared, rather than personal/view-as state.
 
 ## Agent authoring
