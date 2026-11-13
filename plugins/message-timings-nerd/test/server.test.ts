@@ -82,3 +82,11 @@ test("RPC reports the newest open turn as running only while the thread is activ
   await new Promise(resolve => setTimeout(resolve, 2_100));
   assert.deepEqual(await read(), [{ from: 100, to: 100 }]);
 });
+
+test("RPC refuses an unsolicited timeline delta instead of reporting empty history", async () => {
+  const { bb, harness } = createFakePluginHost({ sdk: { threads: {
+    timeline: () => ({ maxSeq: 1, tag: "next", delta: { afterTag: "previous", fields: {}, upsertRows: [] } }),
+  } } });
+  plugin(bb);
+  await assert.rejects(harness.callRpc("timings", { threadId: "t" }), /requires a full timeline snapshot/);
+});
