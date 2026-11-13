@@ -5,6 +5,7 @@ import type {
 } from './client.js';
 import type { Codec, IdentityError, Json, ReadOptions, Result, Unsubscribe } from './model.js';
 import { err, idCodec, identityKeyCodec, ok } from './model-runtime.js';
+import { serverSessionCodec } from './host-runtime.js';
 import { stateCodecs } from './state-service-runtime.js';
 
 const errorCodes = new Set<IdentityError['code']>([
@@ -136,6 +137,30 @@ export function createIdentityConnection(inputs: IdentityConnectionInputs): Iden
     subscribe(listener) {
       return events.subscribe(listener);
     },
+    ...(inputs.revalidateSession ? {
+      async revalidateSession(options?: ReadOptions) {
+        const aborted = cancelled(options); if (aborted) return aborted;
+        if (disposed) return err('disposed', 'Identity connection is disposed.');
+        try {
+          const result = await inputs.revalidateSession!(options);
+          if (disposed) return err('disposed', 'Identity connection is disposed.');
+          const aborted = cancelled(options); if (aborted) return aborted;
+          if (!isRecord(result) || typeof result.ok !== 'boolean') return err('incompatible', 'Malformed session revalidation result.');
+          if (!result.ok) { const failure = decodeError(result.error); return failure.ok ? { ok: false as const, error: failure.value } : failure; }
+          const value = result.value;
+          if (!isRecord(value) || !Number.isSafeInteger(value.generation)) return err('incompatible', 'Malformed verified session generation.');
+          const session = serverSessionCodec.decode(value.session);
+          if (!session.ok) return session;
+          if (session.value.status !== 'ready') return { ok: false as const, error: session.value.error };
+          const health = inputs.getHealth();
+          if (health.generation !== value.generation || health.identity.status !== 'healthy') return err('stale-context', 'Verified identity authority changed.');
+          return ok({ session: session.value, generation: value.generation as number });
+        } catch {
+          if (disposed) return err('disposed', 'Identity connection is disposed.');
+          return cancelled(options) ?? err('unavailable', 'Identity session revalidation failed.', 'after-reconnect');
+        }
+      },
+    } : {}),
     async revalidate(options) {
       const aborted = cancelled(options); if (aborted) return aborted;
       if (disposed) return err('disposed', 'Identity connection is disposed.');

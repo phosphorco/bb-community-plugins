@@ -87,8 +87,8 @@ test('unchanged native bootstrap preserves the owner and dispatches exactly one 
     expect(fixture.binding.currentOwnerSession()).toBe(owner);
     expect(source.calls.save).toHaveLength(1);
     expect(source.calls.save[0].address.owner).toBe('issuer:a');
-    // start performs native revalidate + transport bootstrap; the save performs exactly one direct revalidate.
-    expect(source.calls.bootstrap).toBe(3);
+    // Start reuses native revalidation; the save still performs its own fresh preflight.
+    expect(source.calls.bootstrap).toBe(2);
   } finally { fixture.close(); }
 });
 
@@ -117,16 +117,20 @@ test('native session invalidation suspends A synchronously and reloads B before 
   } finally { fixture.close(); }
 });
 
-test('a bootstrap A-to-B race retains B authority for the first unchanged save', async () => {
+test('an actor change after the verified bootstrap retires A before dispatching a save', async () => {
   const source = nativeFixture();
-  // Native revalidation sees A; the client transport bootstrap immediately
-  // follows with B without any realtime event between the two calls.
-  source.queueBootstrap(session('a', 'a1'), session('b', 'b1'));
-  source.setSession(session('b', 'b1'));
+  // One verified A snapshot is enough to start. If authority changes before the
+  // next operation, its fresh preflight must retire A rather than send A's edit.
   const fixture = await clientStateFixture(source);
   try {
-    const owner = fixture.binding.currentOwnerSession();
+    expect(fixture.binding.getSnapshot()).toMatchObject({ status: 'ready', address: { owner: 'issuer:a' } });
+    expect(fixture.binding.edit('belongs-to-a').ok).toBe(true);
+    source.setSession(session('b', 'b1'));
+    await fixture.binding.flush(); await settle();
+    expect(source.calls.save).toHaveLength(0);
+    expect(fixture.client.currentSession().value.actor.identity.key).toBe('issuer:b');
     expect(fixture.binding.getSnapshot()).toMatchObject({ status: 'ready', address: { owner: 'issuer:b' } });
+    const owner = fixture.binding.currentOwnerSession();
     expect(fixture.binding.edit('belongs-to-b').ok).toBe(true);
     expect((await fixture.binding.flush()).ok).toBe(true);
     expect(fixture.binding.currentOwnerSession()).toBe(owner);
