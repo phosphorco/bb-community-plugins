@@ -60,7 +60,7 @@
     "tailwind-merge": "3.5.0"
   },
   "devDependencies": {
-    "@get-bb/plugin-sdk": "0.6.52",
+    "@get-bb/plugin-sdk": "https://github.com/phosphorco/bb-fork/releases/download/sdk-0.6.143-phosphor.05199007.upgrade1/get-bb-plugin-sdk-0.6.143+phosphor.05199007.upgrade1.tgz",
     "@testing-library/dom": "10.4.1",
     "@testing-library/react": "16.3.2",
     "@types/node": "22.19.0",

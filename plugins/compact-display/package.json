@@ -54,7 +54,7 @@
   ],
   "dependencies": {},
   "devDependencies": {
-    "@get-bb/plugin-sdk": "0.6.52",
+    "@get-bb/plugin-sdk": "https://github.com/phosphorco/bb-fork/releases/download/sdk-0.6.143-phosphor.05199007.upgrade1/get-bb-plugin-sdk-0.6.143+phosphor.05199007.upgrade1.tgz",
     "@types/react": "19.2.2",
     "react": "19.2.1",
     "typescript": "^5.9.3"
