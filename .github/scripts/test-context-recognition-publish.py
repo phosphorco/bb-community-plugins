@@ -41,6 +41,7 @@ class TrustedRecognitionPublishing(unittest.TestCase):
         self.assertIn("NODE_AUTH_TOKEN: ''", CR)
         self.assertNotIn('secrets.', CR)
         self.assertIn('@phosphorco/bb-context-recognition|@phosphorco/bb-cross-references|@phosphorco/bb-thread-attachments|@phosphorco/bb-message-admission|@phosphorco/bb-inbox-rows|@phosphorco/bb-jev|@phosphorco/bb-markdown)', CR)
+        self.assertIn('      - "bb-markdown/v*"', TEXT)
 
     def test_other_packages_keep_regular_token_behavior(self):
         for plugin in ['bb-identity', 'bb-turn-results', 'bb-provider-settings', 'perspectives', 'bb-context-recognition-other', 'bb-message-admission-other']:

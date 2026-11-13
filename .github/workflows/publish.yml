@@ -82,6 +82,7 @@ on:
       - "bb-provider-settings/v*"
       - "bb-context-recognition/v*"
       - "bb-turn-results/v*"
+      - "bb-markdown/v*"
       - "bb-cross-references/v*"
       - "bb-agent-connection/v*"
       - "bb-people-accounts/v*"
