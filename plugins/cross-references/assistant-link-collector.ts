@@ -380,6 +380,9 @@ export class AssistantLinkCollector {
           this.db.prepare(`UPDATE mention_streams SET last_successful_scan_at=? WHERE producer_plugin_id='cross-references'
             AND source_resource_id IN (SELECT id FROM resources WHERE provider='bb' AND canonical_keys_json=?)`)
             .run(Date.now(),JSON.stringify({project:job.project_id,thread:job.thread_id}));
+          this.db.prepare(`UPDATE mention_occurrences SET observed_at=? WHERE producer_plugin_id='cross-references' AND confirmed_in_scan=1
+            AND source_resource_id IN (SELECT id FROM resources WHERE provider='bb' AND canonical_keys_json=?)`)
+            .run(Date.now(),JSON.stringify({project:job.project_id,thread:job.thread_id}));
           this.db.prepare('DELETE FROM assistant_link_jobs WHERE thread_id=? AND version=?').run(job.thread_id,job.version);
           this.db.prepare(`INSERT INTO assistant_link_sync(thread_id,synced_at) VALUES (?,?)
             ON CONFLICT(thread_id) DO UPDATE SET synced_at=excluded.synced_at`).run(job.thread_id,Date.now());

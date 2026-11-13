@@ -744,3 +744,13 @@ test('offline same-sequence mutation without a native delta witness discards par
  const controller=new AbortController();const running=next.collector.start(controller.signal);await reachedIdle;controller.abort();await running;
  assert.equal(witnesses,1);assert.deepEqual(reopened.store.listForwardReferences({source:sourceIdentity}).rows.map(r=>r.target.keys.href),['https://example.test/current']);
 });
+
+
+test('pure unchanged-source reuse refreshes observedAt without changing evidence revision',async t=>{
+ const {db,store}=open();t.after(()=>db.close());let now=100000,pages=0;t.mock.method(Date,'now',()=>now);
+ const f=fixture(db,store,async()=>{pages++;return {maxSeq:10,rows:[row('m',1,'https://example.test/a')],timelinePage:{olderCursor:null}};});
+ f.bb.sdk.plugins={list:async()=>({plugins:[]})};f.bb.sdk.threads.events={list:async()=>[{seq:10}]};
+ f.collector.enqueue('proj_a','thr_a');await finish(f.collector,db);const before=store.mentionState(sourceIdentity);assert.equal(before.occurrences[0]!.observedAt,now);
+ now+=1000;f.collector.enqueue('proj_a','thr_a',false,true);await finish(f.collector,db);const after=store.mentionState(sourceIdentity);
+ assert.equal(after.occurrences[0]!.observedAt,now);assert.equal(after.revision,before.revision);assert.equal(pages,1);
+});
