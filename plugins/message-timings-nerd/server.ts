@@ -31,12 +31,19 @@ export default function plugin(bb: BbPluginApi) {
     // Timings never depend on status; an unreadable status only ends "running".
     const thread = await Promise.resolve().then(() => bb.sdk.threads.get({ threadId })).catch(() => null);
     const running = !!thread && (thread.status === "active" || thread.status === "starting" || thread.status === "stopping");
+    const prior = history.get(threadId);
+    if (prior && prior.running === running) {
+      // Probe the append sequence through events, without reconstructing the
+      // timeline. Empty/unavailable heads are not evidence of unchanged history.
+      // Preserve the timeline fallback for older/unavailable event transports.
+      const head = await Promise.resolve().then(() => bb.sdk.threads.events.list({ threadId, order: "desc", limit: "1" })).catch(() => null);
+      if (head?.length === 1 && Number.isSafeInteger(head[0]!.seq) && head[0]!.seq === prior.maxSeq) return prior.result;
+    }
     for (let page = 0; page < 12; page++) {
       const result = await bb.sdk.threads.timeline({ threadId, includeNestedRows: "true",
         ...(cursor ? { beforeAnchorSeq: String(cursor.anchorSeq), beforeAnchorId: cursor.anchorId } : {}),
       });
-      const prior = history.get(threadId);
-      if (page === 0 && prior?.maxSeq === result.maxSeq && prior.running === running) return history.get(threadId)!.result;
+      if (page === 0 && prior?.maxSeq === result.maxSeq && prior.running === running) return prior.result;
       rows.push(...result.rows);
       if (page === 0) maxSeq = result.maxSeq;
       truncated = result.timelinePage.olderCursor != null;
