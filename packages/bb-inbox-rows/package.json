@@ -1,5 +1,5 @@
 {
-  "name": "@phosphorco/bb-inbox-rows", "version": "0.1.0", "description": "Bounded inert Inbox row projections between independently installed BB plugins.",
+  "name": "@phosphorco/bb-inbox-rows", "version": "0.1.1", "description": "Bounded inert Inbox row projections between independently installed BB plugins.",
   "type": "module", "license": "MIT", "author": "Phosphor",
   "repository": {"type":"git","url":"git+https://github.com/phosphorco/bb-community-plugins.git","directory":"packages/bb-inbox-rows"},
   "exports": {
