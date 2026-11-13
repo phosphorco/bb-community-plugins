@@ -80,22 +80,14 @@ export class AssistantLinkCollector {
     this.wake?.();
   }
 
-  /** Missing surface/history signals cannot certify cached source bodies. */
-  private invalidateSources(threadId?:string,projectId?:string):void {
+  /** Invalidate reconstructible inputs without creating a catalogue backfill
+   * for ordinary preference changes. Existing jobs keep priority/backoff. */
+  private invalidateSources(threadId?:string):void {
     if(this.inactive())return;
-    const checkpoints=new CollectionCheckpoints(this.db);
-    if(threadId){
-      if(!checkpoints.load(threadId))return;
-      checkpoints.remove(threadId);this.continuations.delete(threadId);
-      for(const attempt of this.activeAttempts)if(attempt.threadId===threadId)attempt.controller.abort();
-      const job=this.db.prepare('SELECT project_id FROM assistant_link_jobs WHERE thread_id=?').get(threadId) as {project_id:string}|undefined;
-      const project=projectId??job?.project_id;
-      if(project)this.enqueue(project,threadId,false,true,1);else this.seed();
-    }else {
-      this.db.prepare('DELETE FROM assistant_link_checkpoints').run();this.continuations.clear();
-      for(const attempt of this.activeAttempts)attempt.controller.abort();
-      this.seed();
-    }
+    if(threadId){new CollectionCheckpoints(this.db).remove(threadId);this.continuations.delete(threadId);}
+    else {this.db.prepare('DELETE FROM assistant_link_checkpoints').run();this.continuations.clear();}
+    for(const attempt of this.activeAttempts)if(!threadId || attempt.threadId===threadId)attempt.controller.abort();
+    this.wake?.();
   }
 
   dispose():void {
@@ -453,8 +445,8 @@ export class AssistantLinkCollector {
       }}));
       if(!listening || this.inactive() || signal.aborted)return;
       subscriptions.push(this.bb.sdk.subscribe({event:'thread:changed',callback:event=>{
-        if(listening && !signal.aborted && event.id && event.changes.some(change=>change==='history-rewritten' || change==='history-compacted'))
-          this.invalidateSources(event.id,event.metadata?.projectId);
+        if(listening && !signal.aborted && event.changes.some(change=>change==='history-rewritten' || change==='history-compacted'))
+          this.invalidateSources(event.id);
       }}));
       if(!listening || this.inactive() || signal.aborted)return;
       await this.discover(signal);

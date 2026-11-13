@@ -703,7 +703,7 @@ test('production service reconciles completed snapshots on startup and invalidat
  const process=f.collector.processNext.bind(f.collector);f.collector.processNext=async signal=>{const worked=await process(signal);if(!worked){idleCount++;waiting.get(idleCount)?.();}return worked;};
  const controller=new AbortController();t.after(()=>controller.abort());const running=f.collector.start(controller.signal);
  await atIdle(1);assert.equal(pages,2,'startup cannot certify preferences stayed unchanged while stopped');
- callbacks.get('system:changed')!({changes:['ui-preferences-changed']});await atIdle(2);assert.equal(pages,3);
- callbacks.get('thread:changed')!({id:'thr_a',metadata:{projectId:'proj_a'},changes:['history-rewritten']});await atIdle(3);assert.equal(pages,4);
+ callbacks.get('system:changed')!({changes:['ui-preferences-changed']});assert.equal(db.prepare('SELECT 1 FROM assistant_link_checkpoints').get(),undefined);f.collector.enqueue('proj_a','thr_a',false,true);await atIdle(2);assert.equal(pages,3);
+ callbacks.get('thread:changed')!({id:'thr_a',metadata:{projectId:'proj_a'},changes:['history-rewritten']});assert.equal(db.prepare('SELECT 1 FROM assistant_link_checkpoints').get(),undefined);f.collector.enqueue('proj_a','thr_a',false,true);await atIdle(3);assert.equal(pages,4);
  controller.abort();await running;assert.equal(callbacks.size,0);
 });

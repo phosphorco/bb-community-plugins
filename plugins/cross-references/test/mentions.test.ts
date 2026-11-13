@@ -542,3 +542,11 @@ test('new collection retains literal typed PR href separately and historical par
  const changed=await collectConversationMentions({messages:[{...messages[0]!,text:'[x](https://example.test/a&amp;b)'}],context:{consumer:{pluginId:'cross-references'},threadId:'thr_source',links:[]},clients:[],getThread:async id=>({id,projectId:'proj_a'}),signal:new AbortController().signal});
  assert.equal(changed.occurrences[0]!.authoredUrlState,'unknown');assert.equal(changed.occurrences[0]!.exactAuthoredHref,undefined);
 });
+
+
+test('cached/pure recognition yields between messages so foreground work can run within a source scan',async()=>{
+ let foregroundRan=false;const scheduled=new Promise<void>(resolve=>setImmediate(()=>{foregroundRan=true;resolve();}));
+ const result=await collectConversationMentions({messages:Array.from({length:80},(_,i)=>({id:'m'+i,text:'ordinary prose '+i,createdAt:i,messageSeq:i,anchorSeq:i,role:'assistant' as const})),
+  context:{consumer:{pluginId:'cross-references',surface:'conversation'},projectId:'proj_a',threadId:'thr_source',links:[]},clients:[],getThread:async()=>{throw new Error('no native targets');},signal:new AbortController().signal});
+ assert.equal(foregroundRan,true);assert.equal(result.observedMessageIds.length,80);await scheduled;
+});

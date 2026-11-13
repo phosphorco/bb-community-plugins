@@ -435,7 +435,8 @@ claimed, and the earlier toolbar acceptance item remains separate.
 The durable job still owns collection and its generation fences the final
 reference/evidence transaction. A worker quantum fetches at most one timeline
 page and persists that page's cursor and accepted messages atomically, then
-returns to the event loop. Partial traversal never publishes a complete graph.
+returns to the event loop. Recognition also yields between messages within its
+existing source deadline. Partial traversal never publishes a complete graph.
 Reload resumes a matching pending sequence checkpoint; an expired cursor discards only
 reconstructible source material and retains the job's retry intent.
 
