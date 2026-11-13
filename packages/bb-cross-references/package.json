@@ -68,7 +68,7 @@
     }
   },
   "devDependencies": {
-    "@get-bb/plugin-sdk": "0.6.52",
+    "@get-bb/plugin-sdk": "https://github.com/phosphorco/bb-fork/releases/download/sdk-0.6.143-phosphor.05199007.upgrade1/get-bb-plugin-sdk-0.6.143+phosphor.05199007.upgrade1.tgz",
     "@types/bun": "1.3.14",
     "@types/react": "19.2.2",
     "@types/react-dom": "19.2.2",
