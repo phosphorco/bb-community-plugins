@@ -704,7 +704,7 @@ test('production service reconciles completed snapshots on startup and invalidat
  const controller=new AbortController();t.after(()=>controller.abort());const running=f.collector.start(controller.signal);
  await atIdle(1);assert.equal(pages,2,'startup cannot certify preferences stayed unchanged while stopped');
  callbacks.get('system:changed')!({changes:['ui-preferences-changed']});assert.equal(db.prepare('SELECT 1 FROM assistant_link_checkpoints').get(),undefined);f.collector.enqueue('proj_a','thr_a',false,true);await atIdle(2);assert.equal(pages,3);
- callbacks.get('thread:changed')!({id:'thr_a',metadata:{projectId:'proj_a'},changes:['history-rewritten']});assert.equal(db.prepare('SELECT 1 FROM assistant_link_checkpoints').get(),undefined);f.collector.enqueue('proj_a','thr_a',false,true);await atIdle(3);assert.equal(pages,4);
+ callbacks.get('thread:changed')!({id:'thr_a',metadata:{projectId:'proj_a'},changes:['history-rewritten']});assert.equal(db.prepare('SELECT 1 FROM assistant_link_checkpoints').get(),undefined);assert.ok(db.prepare('SELECT 1 FROM assistant_link_jobs').get());await atIdle(3);assert.equal(pages,4);
  controller.abort();await running;assert.equal(callbacks.size,0);
 });
 
@@ -724,8 +724,8 @@ for(const kind of ['history-rewritten','history-compacted','events-appended'] as
  const controller=new AbortController();t.after(()=>controller.abort());f.collector.enqueue('proj_a','thr_a');const running=f.collector.start(controller.signal);await atIdle(1);
  assert.equal(pages,2);assert.ok(store.listForwardReferences({source:sourceIdentity}).rows.some(r=>r.target.keys.href==='https://example.test/original'));
  const cached=db.prepare('SELECT 1 FROM assistant_link_checkpoints').get();if(cached)assert.ok(detail,'a cached source needs the native scoped detail subscription');
- changed=true;detail?.({id:'thr_a',metadata:{timelineSequence:10},changes:[kind]});
- f.collector.enqueue('proj_a','thr_a',false,true);await atIdle(2);
+ changed=true;if(detail){detail({id:'thr_a',metadata:{timelineSequence:10},changes:[kind]});assert.ok(db.prepare('SELECT 1 FROM assistant_link_jobs').get(),'late source signals own a durable successor without another view request');}else f.collector.enqueue('proj_a','thr_a',false,true);
+ await atIdle(2);
  const hrefs=store.listForwardReferences({source:sourceIdentity}).rows.map(r=>r.target.keys.href);
  assert.equal(pages,4);assert.equal(hrefs.includes('https://example.test/original'),false);
  assert.equal(hrefs.includes('https://example.test/corrected'),kind!=='history-compacted');

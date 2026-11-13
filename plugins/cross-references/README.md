@@ -452,7 +452,9 @@ material too. A fresh service reconstructs completed snapshots once because
 preferences could have changed while it was stopped; pending cursors resume only after a native latest-window delta certifies their
 sequence/context, otherwise they restart safely. Exact thread-detail subscriptions
 cover the at most 32 cached sources (plus one source being collected), including
-compaction signals that native catalogue subscriptions intentionally omit.
+compaction signals that native catalogue subscriptions intentionally omit. A
+source-history signal durably enqueues its known source even when the preceding
+job already committed, so delayed delivery does not require another view request.
 
 For an append, the existing `afterSequence` API may supply a delta of the latest
 window. It is usable only for a previously complete source, with unchanged

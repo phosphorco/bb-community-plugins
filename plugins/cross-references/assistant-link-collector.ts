@@ -96,7 +96,7 @@ export class AssistantLinkCollector {
         const checkpoint=new CollectionCheckpoints(this.db).load(id);
         const sameSequenceAppend=event.changes.includes('events-appended') && checkpoint?.maxSeq!=null &&
           (event.metadata?.timelineSequence===undefined || event.metadata.timelineSequence<=checkpoint.maxSeq);
-        if(sameSequenceAppend || event.changes.some(change=>change==='history-rewritten' || change==='history-compacted'))this.invalidateSources(id);
+        if(sameSequenceAppend || event.changes.some(change=>change==='history-rewritten' || change==='history-compacted'))this.invalidateSources(id,true);
       }});
       this.sourceWatches.set(id,()=>{live=false;off();});
     }
@@ -104,12 +104,18 @@ export class AssistantLinkCollector {
 
   /** Invalidate reconstructible inputs without creating a catalogue backfill
    * for ordinary preference changes. Existing jobs keep priority/backoff. */
-  private invalidateSources(threadId?:string):void {
+  private invalidateSources(threadId?:string,reschedule=false):void {
     if(this.inactive())return;
+    const prior=threadId&&reschedule?new CollectionCheckpoints(this.db).load(threadId):undefined;
+    const pending=threadId&&reschedule&&!prior?.projectId?this.db.prepare('SELECT project_id FROM assistant_link_jobs WHERE thread_id=?').get(threadId) as {project_id:string}|undefined:undefined;
     if(threadId){new CollectionCheckpoints(this.db).remove(threadId);this.continuations.delete(threadId);}
     else {this.db.prepare('DELETE FROM assistant_link_checkpoints').run();this.continuations.clear();}
     for(const attempt of this.activeAttempts)if(!threadId || attempt.threadId===threadId)attempt.controller.abort();
     this.watchSources();this.wake?.();
+    const projectId=prior?.projectId??pending?.project_id;
+    // A delayed native notification can arrive after the preceding job already
+    // committed. Its durable successor must not depend on another view request.
+    if(threadId && reschedule && projectId)this.enqueue(projectId,threadId,false,true,1);
   }
 
   dispose():void {
@@ -310,9 +316,9 @@ export class AssistantLinkCollector {
             }else {checkpoints.remove(job.thread_id);checkpoint=undefined;}
           }
         }
-        checkpoint??={maxSeq:null,cursor:null,pages:0,ready:false,complete:false,sourceLimited:false,
+        checkpoint??={projectId:job.project_id,maxSeq:null,cursor:null,pages:0,ready:false,complete:false,sourceLimited:false,
           missingMessageSeq:false,textChars:0,title,environmentId};
-        checkpoint.title=title;checkpoint.environmentId=environmentId;
+        checkpoint.projectId=job.project_id;checkpoint.title=title;checkpoint.environmentId=environmentId;
         if(!checkpoint.ready){
           const messageIds=new Set(checkpoints.messageIds(job.thread_id));
           if(!stillCurrent())return true;

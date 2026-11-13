@@ -3,7 +3,7 @@ import type { TaggedCandidateV1 } from '@phosphorco/bb-context-recognition';
 import type { ConversationMessage } from './mention-collection.ts';
 
 export type CollectionCheckpoint = {
-  maxSeq: number | null; contextBoundarySeq?:number|null; headIds?:string[]; cursor: {anchorSeq:number;anchorId:string} | null;
+  projectId?:string; maxSeq: number | null; contextBoundarySeq?:number|null; headIds?:string[]; cursor: {anchorSeq:number;anchorId:string} | null;
   pages: number; ready: boolean; complete: boolean; sourceLimited: boolean;
   missingMessageSeq: boolean; textChars: number; title: string; environmentId?: string; pureKey?: string; pureReceipt?:{graph:number;evidence:string};
 };
