@@ -356,6 +356,7 @@ jobs:
           npm run verify:packed --workspace @phosphorco/bb-turn-results
           case "$RELEASE_VERSION" in
             0.1.0) expected_sha='d4fe422fb67017fa01176ffc99647761eda3226533dbd67b75e2d2bf4a30e873' ;;
+            0.1.1) expected_sha='fb6831b3b90bbb3c4a5603abeb7cf39a6cea6a4e15c34b38dfa1b3753483e018' ;;
             *) echo 'Turn Results reviewed payload hash required for this version' >&2; exit 1 ;;
           esac
           pack_dir="$(mktemp -d "$RUNNER_TEMP/turn-results-reviewed.XXXXXX")"
