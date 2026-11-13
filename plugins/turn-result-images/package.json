@@ -1,6 +1,6 @@
 {
   "name": "@phosphorco/bb-plugin-turn-result-images",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "type": "module",
   "license": "MIT",
   "description": "Native image occurrence evidence and verified explicit-host artifact locations for BB turn results.",
@@ -53,7 +53,7 @@
     "media-contract.ts"
   ],
   "dependencies": {
-    "@phosphorco/bb-turn-results": "0.1.0"
+    "@phosphorco/bb-turn-results": "0.1.1"
   },
   "devDependencies": {
     "@get-bb/plugin-sdk": "0.6.52+phosphor.975e38f02f1a.sdk.12eb78c20820",

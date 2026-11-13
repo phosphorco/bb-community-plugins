@@ -1,6 +1,6 @@
 # BB Turn Results
 
-**Unreleased development source.** Package version `0.1.0`, wire protocol `1`. A local build, source conformance report, npm archive, registry release and running BB adoption are separate evidence levels. This source does not establish a released or installed feature.
+Package version `0.1.1`, wire protocol `1`. A local build, source conformance report, npm archive, registry release and running BB adoption are separate evidence levels. This source does not establish a released or installed feature.
 
 Independent BB plugins identify occurrences and return bounded data; a consumer owns captions, layout, history and resources. The package owns codecs, owner-bound transport and test helpers. Suppliers keep receipts, policy and source access. It does not store results or start jobs, send messages, create shares, retry operations or install a runtime.
 

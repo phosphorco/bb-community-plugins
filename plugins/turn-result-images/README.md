@@ -1,6 +1,6 @@
 # Turn result images
 
-An independent native-image occurrence supplier using the public turn-results contract. Its exact public `@phosphorco/bb-turn-results@0.1.0` dependency is published; canonical leaf verification compares the installed registry files with the reviewed archive. See the gallery README for the ordinary registry/development-SDK install and native-binding procedure. This dependency verification does not establish complete plugin or live acceptance.
+An independent native-image occurrence supplier using the public turn-results contract. It declares the exact `@phosphorco/bb-turn-results@0.1.1` dependency; canonical leaf verification compares the installed registry files with the reviewed archive. See the gallery README for the ordinary registry/development-SDK install and native-binding procedure. This dependency verification does not establish complete plugin or live acceptance.
 
 Recognition uses only the bounded completed native image event, exact saved-path site and original selected digest. Resolution independently checks complete provider PNG bytes against an explicit-host file read, preserving unknown historical origin separately from verified current location. It considers one current host candidate for an unbound artifact and never moves an existing binding to another host.
 

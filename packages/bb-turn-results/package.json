@@ -1,6 +1,6 @@
 {
   "name": "@phosphorco/bb-turn-results",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "type": "module",
   "license": "MIT",
   "description": "Bounded cross-plugin results for completed BB turns.",

@@ -24,7 +24,7 @@ exploratory account-settings mockup, not implemented account-controls functional
 ## Integration status
 
 Its public dependencies are published exact versions:
-`@phosphorco/bb-turn-results@0.1.0` and
+`@phosphorco/bb-turn-results@0.1.1` and
 `@phosphorco/bb-context-recognition@0.5.1`. Canonical leaf verification uses their
 registry archives, independently compared with the reviewed release artifacts.
 Source conformance, released-library integration and live native behavior have
