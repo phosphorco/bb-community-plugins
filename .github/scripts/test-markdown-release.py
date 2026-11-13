@@ -37,7 +37,7 @@ def select(**changes):
         env = {**os.environ, 'REQUESTED_PLUGIN': 'bb-markdown', 'REQUESTED_DIST_TAG': 'latest', 'FAKE_VERSION': '0.1.0', 'FAKE_SHA': SHA, 'GITHUB_EVENT_NAME': 'workflow_dispatch', 'GITHUB_REF_NAME': 'main', 'GITHUB_SHA': SHA, 'GITHUB_OUTPUT': str(out), 'EXPECTED_SHA': SHA, 'EXPECTED_VERSION': '0.1.0', 'DRY_RUN': 'true', 'EXPECTED_PAYLOAD_SHA256': 'b' * 64, 'PROOF_RUN_ID': '', 'EXPECTED_RECEIPT_SHA256': ''}
         env.update(changes)
         stubs = ('npm() { printf \'{"w":"%s"}\' "$FAKE_VERSION"; }\n'
-                 'git() { case "$*" in "rev-parse HEAD") echo "$FAKE_SHA";; *"refs/tags/"*) return 1;; *) return 0;; esac; }\n')
+                 'git() { case "$*" in "rev-parse HEAD") echo "$FAKE_SHA";; *"refs/tags/"*) if [ "${FAKE_TAG_PRESENT:-false}" = true ]; then echo "$FAKE_SHA"; else return 1; fi;; *) return 0;; esac; }\n')
         result = subprocess.run(['bash', '-e', '-c', stubs + SELECT], env=env, text=True, capture_output=True)
         values = dict(line.split('=', 1) for line in out.read_text().splitlines()) if out.exists() else {}
         return result, values
@@ -125,8 +125,15 @@ class Selection(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(values['pinned_next'], 'true');self.assertEqual(values['pinned_route'], 'markdown-bootstrap')
         self.assertEqual(values['pinned_tgz'], 'phosphorco-bb-markdown-0.1.0.tgz')
-        for change in [{'EXPECTED_SHA': ''}, {'EXPECTED_SHA': 'c' * 40}, {'GITHUB_SHA': 'c' * 40}, {'EXPECTED_VERSION': '0.2.0'}, {'FAKE_VERSION': '0.1.1'}, {'REQUESTED_DIST_TAG': 'next'}, {'EXPECTED_PAYLOAD_SHA256': ''}, {'EXPECTED_PAYLOAD_SHA256': 'A' * 64}]:
+        for change in [{'EXPECTED_SHA': ''}, {'EXPECTED_SHA': 'c' * 40}, {'GITHUB_SHA': 'c' * 40}, {'EXPECTED_VERSION': '0.2.0'}, {'REQUESTED_DIST_TAG': 'next'}, {'EXPECTED_PAYLOAD_SHA256': ''}, {'EXPECTED_PAYLOAD_SHA256': 'A' * 64}]:
             with self.subTest(change=change):self.assertNotEqual(select(**change)[0].returncode, 0)
+
+    def test_new_patch_release_uses_exact_tagged_oidc_route(self):
+        result, values = select(FAKE_VERSION='0.1.1', GITHUB_EVENT_NAME='push', GITHUB_REF_NAME='bb-markdown/v0.1.1', FAKE_TAG_PRESENT='true')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(values['pinned_next'], 'false')
+        self.assertEqual(values['version'], '0.1.1')
+        self.assertNotEqual(select(FAKE_VERSION='0.1.1', DRY_RUN='false', GITHUB_EVENT_NAME='workflow_dispatch', GITHUB_REF_NAME='main')[0].returncode, 0)
 
     def test_actual_requires_proof_and_receipt_hash_in_addition_to_local_payload(self):
         self.assertNotEqual(select(DRY_RUN='false')[0].returncode, 0)

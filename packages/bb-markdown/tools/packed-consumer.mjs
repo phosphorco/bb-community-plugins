@@ -23,7 +23,7 @@ function run(command,args,cwd){
 try{
  const manifest=JSON.parse(readFileSync(join(root,'package.json'),'utf8'));
  const packed=JSON.parse(run('npm',['pack','--json','--ignore-scripts','--pack-destination',scratch],root))[0];
- assert.equal(packed.version,'0.1.0');
+ assert.equal(packed.version,manifest.version);
  for(const file of packed.files)assert.ok(!/^(?:src|node_modules|test)\//u.test(file.path),`Private source in package: ${file.path}`);
  for(const file of ['dist/index.js','dist/server.js','dist/bb.js','dist/react.js','dist/testing-source-gate.js','tools/check-sources.mjs','tools/markdown-debt.json','README.md','LICENSE'])assert.ok(packed.files.some(f=>f.path===file),`Missing packed ${file}`);
  const consumer=join(scratch,'consumer');mkdirSync(consumer);

@@ -207,10 +207,12 @@ jobs:
           if [ "$plugin" = bb-thread-membership ]; then
             case "$package_version" in 0.1.0|0.1.1) ;; *) echo "Unapproved membership release version" >&2; exit 1 ;; esac
           fi
-          if [ "$plugin" = bb-markdown ]; then
+          if [ "$plugin@$package_version" = bb-markdown@0.1.0 ]; then
             test "$GITHUB_EVENT_NAME" = workflow_dispatch || { echo "Markdown tag/default publication refused; manual proof required" >&2; exit 1; }
-            test "$package_version" = 0.1.0 && test "$dist_tag" = latest || { echo "Only reviewed Markdown 0.1.0/latest is supported" >&2; exit 1; }
+            test "$dist_tag" = latest || { echo "Only reviewed Markdown 0.1.0/latest is supported" >&2; exit 1; }
             [[ "$EXPECTED_PAYLOAD_SHA256" =~ ^[0-9a-f]{64}$ ]] || { echo "Markdown requires the reviewed local archive hash even for dry run" >&2; exit 1; }
+          elif [ "$plugin" = bb-markdown ] && [ "$DRY_RUN" != true ]; then
+            test "$GITHUB_EVENT_NAME" = push && test "$GITHUB_REF_NAME" = "bb-markdown/v$package_version" || { echo "Markdown OIDC releases require their exact version tag" >&2; exit 1; }
           fi
           pinned_next=false
           pinned_row=false
@@ -437,13 +439,13 @@ jobs:
           if-no-files-found: warn
 
       - name: Publish through trusted publishers
-        if: ${{ !inputs.dry_run && (steps.release.outputs.plugin == 'bb-context-recognition' || steps.release.outputs.plugin == 'bb-cross-references' || steps.release.outputs.plugin == 'bb-thread-attachments' || steps.release.outputs.plugin == 'bb-message-admission' || steps.release.outputs.plugin == 'bb-inbox-rows' || steps.release.outputs.plugin == 'bb-jev') && steps.release.outputs.pinned_next != 'true' }}
+        if: ${{ !inputs.dry_run && (steps.release.outputs.plugin == 'bb-context-recognition' || steps.release.outputs.plugin == 'bb-cross-references' || steps.release.outputs.plugin == 'bb-thread-attachments' || steps.release.outputs.plugin == 'bb-message-admission' || steps.release.outputs.plugin == 'bb-inbox-rows' || steps.release.outputs.plugin == 'bb-jev' || steps.release.outputs.plugin == 'bb-markdown') && steps.release.outputs.pinned_next != 'true' }}
         # These packages must fail closed if its configured GitHub OIDC trust is missing.
         # Keep NPM_TOKEN available to other packages; never pass it to this step.
         shell: bash
         run: |
           case "$RELEASE_WORKSPACE" in
-            @phosphorco/bb-context-recognition|@phosphorco/bb-cross-references|@phosphorco/bb-thread-attachments|@phosphorco/bb-message-admission|@phosphorco/bb-inbox-rows|@phosphorco/bb-jev) ;;
+            @phosphorco/bb-context-recognition|@phosphorco/bb-cross-references|@phosphorco/bb-thread-attachments|@phosphorco/bb-message-admission|@phosphorco/bb-inbox-rows|@phosphorco/bb-jev|@phosphorco/bb-markdown) ;;
             *) echo 'Unexpected trusted-publishing workspace' >&2; exit 1 ;;
           esac
           npm publish --ignore-scripts --access public --provenance --workspace "$RELEASE_WORKSPACE" --tag "$RELEASE_DIST_TAG"
