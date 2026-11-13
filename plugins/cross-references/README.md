@@ -440,12 +440,21 @@ existing source deadline. Partial traversal never publishes a complete graph.
 Reload resumes a matching pending sequence checkpoint; an expired cursor discards only
 reconstructible source material and retains the job's retry intent.
 
-An unchanged latest-event sequence avoids timeline reconstruction. Successful
+Every source-cache reuse first requests a native `afterSequence` timeline
+witness. Only an explicit unchanged delta, stable context boundary and stable
+older-row markers permit historical-page reuse. An equal sequence, socket-open
+event or sent subscription frame alone never admits cached bodies. Successful
 pure supplier results retain their text/context/revision cache keys across
 reload. A successful scan that performed no native thread/file verification can
 also reuse its unchanged evidence receipt, including the graph/evidence revisions.
 Sources requiring native verification still perform those reads on each scan;
 a cached source body is never proof that a target still exists or is accessible.
+There is no public subscription-observation acknowledgement. Missing deltas
+therefore conservatively reconstruct history across initial, disconnected and
+new detail-target gaps, even if this costs another traversal. A witness is one
+extra bounded request before a50-page reconstruction when a delta cannot be
+used; a full response is reused as the first reconstruction page.
+
 Plugin invalidation clears supplier results and pure-scan receipts. Reconnect,
 surface-preference changes and history replacement/compaction invalidate source
 material too. A fresh service reconstructs completed snapshots once because
@@ -469,6 +478,8 @@ Reconstructible source bodies are retained for at most 32 sources, each within
 5,000 messages / 2,097,152 UTF-16 units. Eviction cascades to their message rows
 and leaves durable jobs, retry backoff, projections and evidence intact. Pure
 supplier results have a separate global 512-entry / 16-MiB bound, with at most
-65,536 bytes per result and the existing 64-entry hot cache. These are cache
+65,536 bytes per durable result and the existing 64-entry hot cache. The hot
+cache preserves its earlier UTF-16 admission policy across attempts, including
+Unicode results too large for durable UTF-8 admission. These are cache
 limits, not new collection/freshness exclusions. A cold backlog still requires
 its initial traversal; sources outside cache locality can require rescans.

@@ -49,7 +49,10 @@ export class CollectionCheckpoints {
 export class RecognitionCheckpointCache extends Map<string,TaggedCandidateV1[]> {
   private readonly db:Database.Database;
   private readonly current:()=>boolean;
-  constructor(db:Database.Database,current:()=>boolean) {super();this.db=db;this.current=current;}
+  constructor(db:Database.Database,current:()=>boolean,hot?:ReadonlyMap<string,TaggedCandidateV1[]>) {
+    super();this.db=db;this.current=current;
+    if(hot)for(const [key,value] of hot)super.set(key,value);
+  }
   override get(key:string):TaggedCandidateV1[]|undefined {
     if(!this.current())return undefined;
     const hot=super.get(key);if(hot)return hot;
@@ -61,7 +64,8 @@ export class RecognitionCheckpointCache extends Map<string,TaggedCandidateV1[]> 
   override set(key:string,value:TaggedCandidateV1[]):this {
     if(!this.current())return this;
     const json=JSON.stringify(value),bytes=Buffer.byteLength(json);
-    if(bytes>65_536)return this;
+    // Durable byte admission must not narrow the existing UTF-16 hot-cache contract.
+    if(bytes>65_536)return super.set(key,value);
     this.db.transaction(()=>{
       this.db.prepare(`INSERT INTO assistant_link_recognition_cache VALUES (?, ?, ?, ?)
         ON CONFLICT(cache_key) DO UPDATE SET candidates_json=excluded.candidates_json,bytes=excluded.bytes,touched_at=excluded.touched_at`).run(key,json,bytes,Date.now());

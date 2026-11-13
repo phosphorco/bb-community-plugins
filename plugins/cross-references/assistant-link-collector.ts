@@ -94,8 +94,8 @@ export class AssistantLinkCollector {
       const off=this.bb.sdk.subscribe({event:'thread:changed',threadId:id,callback:event=>{
         if(!live || signal.aborted || this.inactive())return;
         const checkpoint=new CollectionCheckpoints(this.db).load(id);
-        const sameSequenceAppend=event.changes.includes('events-appended') && checkpoint?.maxSeq!=null &&
-          (event.metadata?.timelineSequence===undefined || event.metadata.timelineSequence<=checkpoint.maxSeq);
+        const sameSequenceAppend=event.changes.includes('events-appended') &&
+          (checkpoint?.maxSeq==null || event.metadata?.timelineSequence===undefined || event.metadata.timelineSequence<=checkpoint.maxSeq);
         if(sameSequenceAppend || event.changes.some(change=>change==='history-rewritten' || change==='history-compacted'))this.invalidateSources(id,true);
       }});
       this.sourceWatches.set(id,()=>{live=false;off();});
@@ -259,61 +259,62 @@ export class AssistantLinkCollector {
       }
       if (!deleted) {
         if(checkpoint && !continuing){
-          // Equal event sequence is the same fence already used by timeline
-          // snapshots. An unavailable/empty head proves nothing: rescan safely.
-          let headSeq:number|undefined;
+          // subscribe() has no server observation acknowledgement. An equal
+          // event head, socket-open event or sent detail frame cannot certify
+          // that earlier history stayed unchanged across a notification gap.
+          // Always obtain a native delta witness before reusing source bodies.
+          let witness:Awaited<ReturnType<BbPluginApi["sdk"]["threads"]["timeline"]>>;
           try {
-            const head=await bounded(s=>this.bb.sdk.threads.events.list({threadId:job.thread_id,order:'desc',limit:'1',signal:s}),signal);
-            if(head.length===1 && Number.isSafeInteger(head[0]!.seq))headSeq=head[0]!.seq;
-          }catch { /* Fall back to authoritative timeline reconstruction. */ }
-          if(!stillCurrent())return true;
-          if(!checkpoint.ready && checkpoint.maxSeq!==null && headSeq===checkpoint.maxSeq && this.sourceWatchSignal){
-            const witness=await bounded(s=>this.bb.sdk.threads.timeline({threadId:job.thread_id,includeNestedRows:'false',segmentLimit:'100',afterSequence:String(checkpoint!.maxSeq),signal:s}),signal,1000,
+            witness=await bounded(s=>this.bb.sdk.threads.timeline({threadId:job.thread_id,
+              includeNestedRows:'false',segmentLimit:'100',...(checkpoint!.maxSeq===null?{}:{afterSequence:String(checkpoint!.maxSeq)}),signal:s}),signal,1000,
               outerDiagnostic=diagnostics.operation('timeline-prefetch'));
-            if(!stillCurrent())return true;
-            if(witness.maxSeq!==checkpoint.maxSeq || !witness.delta || witness.delta.upsertRows.length>0 || witness.contextBoundarySeq!==checkpoint.contextBoundarySeq ||
-              (witness.delta?.rowOrder!==undefined && JSON.stringify(witness.delta.rowOrder)!==JSON.stringify(checkpoint.headIds)) ||
-              (witness.timelinePage.olderRowUpdates?.length??0)>0 || (witness.timelinePage.olderRowsSourceSeqEnd!=null && witness.timelinePage.olderRowsSourceSeqEnd>checkpoint.maxSeq)){
-              checkpoints.remove(job.thread_id);checkpoint=undefined;this.continuations.delete(job.thread_id);return true;
-            }else {this.continuations.set(job.thread_id,job.version);return true;}
+          }catch(error){
+            if(stillCurrent() && typeof error==='object' && error!==null && 'status' in error && error.status===400){
+              checkpoints.remove(job.thread_id);this.continuations.delete(job.thread_id);return true;
+            }
+            throw error;
           }
-          if(checkpoint && (checkpoint.maxSeq===null || headSeq!==checkpoint.maxSeq)){
-            // afterSequence is a delta of the latest window, not a complete
-            // history feed. Admit only new rows with a retained conversation
-            // overlap. Rewrites/compaction and a missing server cache return a
-            // full window; gaps, old-row updates and changed boundaries rescan.
-            if(headSeq!==undefined && checkpoint.maxSeq!==null && headSeq>checkpoint.maxSeq && checkpoint.ready && checkpoint.complete && !checkpoint.missingMessageSeq){
-              prefetchedPage=await bounded(s=>this.bb.sdk.threads.timeline({threadId:job.thread_id,
-                includeNestedRows:'false',segmentLimit:'100',afterSequence:String(checkpoint!.maxSeq),signal:s}),signal,1000,
-                outerDiagnostic=diagnostics.operation('timeline-prefetch'));
-              if(!stillCurrent())return true;
-              const delta=prefetchedPage.delta;
-              const priorIds=new Set(checkpoints.messageIds(job.thread_id));
-              const order=delta?.rowOrder??checkpoint.headIds??[];
-              const rows=delta?.upsertRows??[];
-              const overlapping=order.some(id=>priorIds.has(id));
-              const appendOnly=delta && rows.every(row=>row.threadId===job.thread_id && row.sourceSeqStart>checkpoint!.maxSeq! && !priorIds.has(row.id));
-              if(appendOnly && overlapping && prefetchedPage.maxSeq>=headSeq && prefetchedPage.contextBoundarySeq===checkpoint.contextBoundarySeq &&
-                (prefetchedPage.timelinePage.olderRowUpdates?.length??0)===0 &&
-                (prefetchedPage.timelinePage.olderRowsSourceSeqEnd==null || prefetchedPage.timelinePage.olderRowsSourceSeqEnd<=checkpoint.maxSeq!)){
-                const accepted:ConversationMessage[]=[];let textChars=checkpoint.textChars;let valid=true;
-                for(const row of rows){
-                  if(row.kind!=='conversation' || (row.role!=='assistant' && row.role!=='user'))continue;
-                  if(row.role==='user' && (row.initiator==='system' || (row.systemMessageKind && row.systemMessageKind!=='unlabeled')))continue;
-                  if(!Number.isSafeInteger(row.messageSeq) || row.messageSeq<0 || !Number.isSafeInteger(row.createdAt) || row.createdAt<0 || row.createdAt>8_640_000_000_000_000){valid=false;break;}
-                  textChars+=row.text.length;
-                  accepted.push({id:row.id,text:row.text,createdAt:row.createdAt,messageSeq:row.messageSeq,anchorSeq:row.sourceSeqStart,role:row.role});
-                }
-                if(valid && textChars<=MENTION_LIMITS.sourceChars && priorIds.size+accepted.length<=MENTION_LIMITS.messages){
-                  checkpoint.maxSeq=prefetchedPage.maxSeq;checkpoint.textChars=textChars;checkpoint.headIds=order;
-                  delete checkpoint.pureKey;
-                  checkpoints.save(job.thread_id,checkpoint,accepted);prefetchedPage=undefined;
-                }else {checkpoints.remove(job.thread_id);checkpoint=undefined;prefetchedPage=undefined;return true;}
-              }else {
-                checkpoints.remove(job.thread_id);checkpoint=undefined;
-                if(delta){prefetchedPage=undefined;return true;}
+          if(!stillCurrent())return true;
+          const delta=witness.delta;
+          const oldMax=checkpoint.maxSeq;
+          const order=delta?.rowOrder??checkpoint.headIds??[];
+          const olderEnd=witness.timelinePage.olderRowsSourceSeqEnd;
+          const olderStable=(witness.timelinePage.olderRowUpdates?.length??0)===0 &&
+            (olderEnd===null || (Number.isSafeInteger(olderEnd) && olderEnd!>=0 && oldMax!==null && olderEnd!<=oldMax));
+          const knownBoundary=checkpoint.contextBoundarySeq===null || Number.isSafeInteger(checkpoint.contextBoundarySeq);
+          const sameBoundary=knownBoundary && witness.contextBoundarySeq===checkpoint.contextBoundarySeq;
+          const unchanged=oldMax!==null && witness.maxSeq===oldMax && delta && delta.upsertRows.length===0 &&
+            JSON.stringify(order)===JSON.stringify(checkpoint.headIds??[]) && sameBoundary && olderStable;
+          if(unchanged){
+            if(!checkpoint.ready){this.continuations.set(job.thread_id,job.version);return true;}
+          }else {
+            // afterSequence describes the latest window, never all history.
+            // Extend only a complete, overlapping, strictly append-only source.
+            const priorIds=new Set(checkpoints.messageIds(job.thread_id));
+            const overlapping=order.some(id=>priorIds.has(id));
+            const rows=delta?.upsertRows??[];
+            const appendOnly=oldMax!==null && witness.maxSeq>oldMax && checkpoint.ready && checkpoint.complete && !checkpoint.missingMessageSeq &&
+              delta && rows.every(row=>row.threadId===job.thread_id && row.sourceSeqStart>oldMax && !priorIds.has(row.id));
+            if(appendOnly && overlapping && sameBoundary && olderStable){
+              const accepted:ConversationMessage[]=[];let textChars=checkpoint.textChars;let valid=true;
+              for(const row of rows){
+                if(row.kind!=='conversation' || (row.role!=='assistant' && row.role!=='user'))continue;
+                if(row.role==='user' && (row.initiator==='system' || (row.systemMessageKind && row.systemMessageKind!=='unlabeled')))continue;
+                if(!Number.isSafeInteger(row.messageSeq) || row.messageSeq<0 || !Number.isSafeInteger(row.createdAt) || row.createdAt<0 || row.createdAt>8_640_000_000_000_000){valid=false;break;}
+                textChars+=row.text.length;
+                accepted.push({id:row.id,text:row.text,createdAt:row.createdAt,messageSeq:row.messageSeq,anchorSeq:row.sourceSeqStart,role:row.role});
               }
-            }else {checkpoints.remove(job.thread_id);checkpoint=undefined;}
+              if(valid && textChars<=MENTION_LIMITS.sourceChars && priorIds.size+accepted.length<=MENTION_LIMITS.messages){
+                checkpoint.maxSeq=witness.maxSeq;checkpoint.textChars=textChars;checkpoint.headIds=order;delete checkpoint.pureKey;
+                checkpoints.save(job.thread_id,checkpoint,accepted);
+              }else {checkpoints.remove(job.thread_id);this.continuations.delete(job.thread_id);return true;}
+            }else {
+              checkpoints.remove(job.thread_id);checkpoint=undefined;this.continuations.delete(job.thread_id);
+              // A full native response is already a fresh first page. A delta
+              // without sufficient overlap needs a full request next quantum.
+              if(delta)return true;
+              prefetchedPage=witness;
+            }
           }
         }
         checkpoint??={projectId:job.project_id,maxSeq:null,cursor:null,pages:0,ready:false,complete:false,sourceLimited:false,
@@ -403,7 +404,7 @@ export class AssistantLinkCollector {
         for(const [id,message] of retained)messages.set(id,message);
       }
       let nativeReads=false;
-      const recognitionCache=new RecognitionCheckpointCache(this.db,stillCurrent);
+      const recognitionCache=new RecognitionCheckpointCache(this.db,stillCurrent,this.recognitionCache);
       this.recognitionCache=recognitionCache;
       const fileVerifier=createMentionFileVerifier(this.bb,{threadId:job.thread_id,projectId:job.project_id,environmentId});
       const scan:MentionScan=deleted?{occurrences:[],observedMessageIds:[],scannedMessageIds:[],failedSuppliers:[],discoveryIncomplete:false,

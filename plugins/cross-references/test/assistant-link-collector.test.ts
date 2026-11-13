@@ -19,7 +19,7 @@ function open(path = ":memory:", migrate = true) {
   if (migrate) for (const migration of crossReferencesMigrations) db.exec(migration);
   return { db, store: new CrossReferenceStore(db) };
 }
-function fixture(db: Database.Database, store: CrossReferenceStore, timeline?: () => Promise<any>) {
+function fixture(db: Database.Database, store: CrossReferenceStore, timeline?: (args:any) => Promise<any>) {
   const signals: CrossReferencesChangedSignal[] = [];
   const warnings: string[] = [];
   const bb = {
@@ -572,8 +572,8 @@ const row=(id:string,seq:number,text:string)=>({id,threadId:'thr_a',sourceSeqSta
 
 test('one page per quantum; unchanged forced generations reuse history and pure recognition while native targets stay fresh',async t=>{
   const {db,store}=open();t.after(()=>db.close());let pages=0,heads=0,targetReads=0,targetDeleted=false;
-  const f=fixture(db,store,async()=>({maxSeq:10,rows:pages++%2===0?[row('new',2,'TOKEN https://bb.test/projects/proj_a/threads/thr_target')]:[row('old',1,'older TOKEN')],
-    timelinePage:{olderCursor:pages%2===1?{anchorSeq:1,anchorId:'old'}:null}}));
+  const f=fixture(db,store,async(args:any)=>{if(args.afterSequence){heads++;return {maxSeq:10,contextBoundarySeq:null,rows:[],delta:{upsertRows:[]},timelinePage:{olderCursor:null,olderRowsSourceSeqEnd:null}};}return {maxSeq:10,contextBoundarySeq:null,rows:pages++%2===0?[row('new',2,'TOKEN https://bb.test/projects/proj_a/threads/thr_target')]:[row('old',1,'older TOKEN')],
+    timelinePage:{olderCursor:pages%2===1?{anchorSeq:1,anchorId:'old'}:null}};});
   const calls:string[]=[];supplier(f.bb,()=> 'rev1',calls);
   f.bb.sdk.threads.events={list:async()=>{heads++;return [{seq:10}];}};
   f.bb.sdk.threads.get=async({threadId}:any)=>{if(threadId==='thr_target'){targetReads++;return {id:threadId,projectId:'proj_a',deletedAt:targetDeleted?123:null};}return {id:threadId,projectId:'proj_a'};};
@@ -604,12 +604,12 @@ test('append and historical correction rescan source, recognize only changed inp
 test('page checkpoints survive a real database reopen and resume the older cursor without replaying page one',async t=>{
   const dir=mkdtempSync(join(tmpdir(),'cross-checkpoint-'));t.after(()=>rmSync(dir,{recursive:true,force:true}));
   const path=join(dir,'queue.sqlite');let pages=0;
-  const initial=open(path);const first=fixture(initial.db,initial.store,async()=>{pages++;return {maxSeq:10,rows:[row('new',2,'https://example.test/new')],timelinePage:{olderCursor:{anchorSeq:1,anchorId:'older'}}};});
+  const initial=open(path);const first=fixture(initial.db,initial.store,async()=>{pages++;return {maxSeq:10,contextBoundarySeq:null,rows:[row('new',2,'https://example.test/new')],timelinePage:{olderCursor:{anchorSeq:1,anchorId:'older'}}};});
   first.collector.enqueue('proj_a','thr_a');await first.collector.processNext(new AbortController().signal);first.collector.dispose();initial.db.close();
   assert.equal(pages,1);
   const reopened=open(path,false);t.after(()=>reopened.db.close());
   const next=fixture(reopened.db,reopened.store);next.bb.sdk.threads.events={list:async()=>[{seq:10}]};
-  next.bb.sdk.threads.timeline=async(args:any)=>{if(args.afterSequence)return {maxSeq:10,contextBoundarySeq:undefined,rows:[],delta:{upsertRows:[]},timelinePage:{olderCursor:null}};pages++;assert.equal(args.beforeAnchorId,'older');return {maxSeq:10,rows:[row('old',1,'https://example.test/old')],timelinePage:{olderCursor:null}};};
+  next.bb.sdk.threads.timeline=async(args:any)=>{if(args.afterSequence)return {maxSeq:10,contextBoundarySeq:null,rows:[],delta:{upsertRows:[]},timelinePage:{olderCursor:null,olderRowsSourceSeqEnd:null}};pages++;assert.equal(args.beforeAnchorId,'older');return {maxSeq:10,contextBoundarySeq:null,rows:[row('old',1,'https://example.test/old')],timelinePage:{olderCursor:null}};};
   next.bb.sdk.subscribe=()=>()=>{};
   let idle!:()=>void;const reachedIdle=new Promise<void>(resolve=>{idle=resolve;});
   const process=next.collector.processNext.bind(next.collector);
@@ -621,10 +621,10 @@ test('page checkpoints survive a real database reopen and resume the older curso
 test('completed source and recognition checkpoints survive reopen; changed suppliers re-recognize without timeline reconstruction',async t=>{
   const dir=mkdtempSync(join(tmpdir(),'cross-supplier-checkpoint-'));t.after(()=>rmSync(dir,{recursive:true,force:true}));const path=join(dir,'queue.sqlite');
   let revision='rev1',pages=0;const calls:string[]=[];
-  const initial=open(path);const first=fixture(initial.db,initial.store,async()=>{pages++;return {maxSeq:10,rows:[row('m',1,'TOKEN')],timelinePage:{olderCursor:null}};});
+  const initial=open(path);const first=fixture(initial.db,initial.store,async()=>{pages++;return {maxSeq:10,contextBoundarySeq:null,rows:[row('m',1,'TOKEN')],timelinePage:{olderCursor:null}};});
   first.bb.sdk.threads.events={list:async()=>[{seq:10}]};supplier(first.bb,()=>revision,calls);
   first.collector.enqueue('proj_a','thr_a');await finish(first.collector,initial.db);assert.equal(calls.length,1);first.collector.dispose();initial.db.close();
-  const reopened=open(path,false);t.after(()=>reopened.db.close());const next=fixture(reopened.db,reopened.store,async()=>{throw new Error('unchanged timeline must not be read');});
+  const reopened=open(path,false);t.after(()=>reopened.db.close());const next=fixture(reopened.db,reopened.store,async(args:any)=>{assert.equal(args.afterSequence,'10');return {maxSeq:10,contextBoundarySeq:null,rows:[],delta:{upsertRows:[]},timelinePage:{olderCursor:null,olderRowsSourceSeqEnd:null}};});
   next.bb.sdk.threads.events={list:async()=>[{seq:10}]};supplier(next.bb,()=>revision,calls);
   next.collector.seed();await finish(next.collector,reopened.db);assert.equal(calls.length,1);assert.equal(pages,1);
   revision='rev2';next.collector.invalidateSuppliers();await finish(next.collector,reopened.db);assert.equal(calls.length,2);assert.equal(pages,1);
@@ -633,17 +633,17 @@ test('completed source and recognition checkpoints survive reopen; changed suppl
 
 test('an unchanged source larger than the hot cache does not thrash supplier recognition',async t=>{
   const {db,store}=open();t.after(()=>db.close());let pages=0;const calls:string[]=[];
-  const f=fixture(db,store,async()=>{pages++;return {maxSeq:100,rows:Array.from({length:80},(_,i)=>row('m'+i,i,'TOKEN '+i)),timelinePage:{olderCursor:null}};});
+  const f=fixture(db,store,async(args:any)=>{if(args.afterSequence)return {maxSeq:100,contextBoundarySeq:null,rows:[],delta:{upsertRows:[]},timelinePage:{olderCursor:null,olderRowsSourceSeqEnd:null}};pages++;return {maxSeq:100,contextBoundarySeq:null,rows:Array.from({length:80},(_,i)=>row('m'+i,i,'TOKEN '+i)),timelinePage:{olderCursor:null}};});
   supplier(f.bb,()=> 'rev1',calls);f.bb.sdk.threads.events={list:async()=>[{seq:100}]};
   f.collector.enqueue('proj_a','thr_a');await finish(f.collector,db);assert.equal(calls.length,80);
   f.collector.enqueue('proj_a','thr_a',false,true);await finish(f.collector,db);assert.equal(calls.length,80);assert.equal(pages,1);
 });
 
-for(const mode of ['missing-head','expired-cursor'] as const)test(mode+' discards reconstructible source checkpoint while preserving durable retry intent',async t=>{
+for(const mode of ['missing-native-delta','expired-cursor'] as const)test(mode+' discards reconstructible source checkpoint while preserving durable retry intent',async t=>{
   const {db,store}=open();t.after(()=>db.close());let pages=0;
-  const f=fixture(db,store,async()=>{pages++;return {maxSeq:10,rows:[row('m',1,'https://example.test/old')],timelinePage:{olderCursor:mode==='expired-cursor'?{anchorSeq:1,anchorId:'old'}:null}};});
+  const f=fixture(db,store,async()=>{pages++;return {maxSeq:10,contextBoundarySeq:null,rows:[row('m',1,'https://example.test/old')],timelinePage:{olderCursor:mode==='expired-cursor'?{anchorSeq:1,anchorId:'old'}:null}};});
   f.collector.enqueue('proj_a','thr_a');await f.collector.processNext(new AbortController().signal);
-  if(mode==='missing-head')f.collector.enqueue('proj_a','thr_a',false,true);
+  if(mode==='missing-native-delta')f.collector.enqueue('proj_a','thr_a',false,true);
   f.bb.sdk.threads.events={list:async()=>{throw new Error('offline');}};
   f.bb.sdk.threads.timeline=async()=>{pages++;if(mode==='expired-cursor')throw Object.assign(new Error('expired'),{status:400});return {maxSeq:11,rows:[],timelinePage:{olderCursor:null}};};
   await f.collector.processNext(new AbortController().signal);assert.equal(pages,2);
@@ -664,7 +664,7 @@ for(const mode of ['append','correction','gap','boundary','server-cache-miss'] a
   if(args.afterSequence){
    assert.equal(args.afterSequence,'10');
    if(mode==='server-cache-miss')return {maxSeq:11,contextBoundarySeq:null,rows:[row('new',11,'https://example.test/new')],timelinePage:{olderCursor:null}};
-   return {maxSeq:11,contextBoundarySeq:mode==='boundary'?11:null,rows:[],delta:{upsertRows:[mode==='correction'?row('old',1,'corrected'):row('new',11,'https://example.test/new')],rowOrder:mode==='gap'?['new']:['old','new']},timelinePage:{olderCursor:null}};
+   return {maxSeq:11,contextBoundarySeq:mode==='boundary'?11:null,rows:[],delta:{upsertRows:[mode==='correction'?row('old',1,'corrected'):row('new',11,'https://example.test/new')],rowOrder:mode==='gap'?['new']:['old','new']},timelinePage:{olderCursor:null,olderRowsSourceSeqEnd:null}};
   }
   return {maxSeq:11,contextBoundarySeq:null,rows:[row('new',11,'https://example.test/new')],timelinePage:{olderCursor:null}};
  };
@@ -748,9 +748,20 @@ test('offline same-sequence mutation without a native delta witness discards par
 
 test('pure unchanged-source reuse refreshes observedAt without changing evidence revision',async t=>{
  const {db,store}=open();t.after(()=>db.close());let now=100000,pages=0;t.mock.method(Date,'now',()=>now);
- const f=fixture(db,store,async()=>{pages++;return {maxSeq:10,rows:[row('m',1,'https://example.test/a')],timelinePage:{olderCursor:null}};});
+ const f=fixture(db,store,async(args:any)=>{if(args.afterSequence)return {maxSeq:10,contextBoundarySeq:null,rows:[],delta:{upsertRows:[]},timelinePage:{olderCursor:null,olderRowsSourceSeqEnd:null}};pages++;return {maxSeq:10,contextBoundarySeq:null,rows:[row('m',1,'https://example.test/a')],timelinePage:{olderCursor:null}};});
  f.bb.sdk.plugins={list:async()=>({plugins:[]})};f.bb.sdk.threads.events={list:async()=>[{seq:10}]};
  f.collector.enqueue('proj_a','thr_a');await finish(f.collector,db);const before=store.mentionState(sourceIdentity);assert.equal(before.occurrences[0]!.observedAt,now);
  now+=1000;f.collector.enqueue('proj_a','thr_a',false,true);await finish(f.collector,db);const after=store.mentionState(sourceIdentity);
  assert.equal(after.occurrences[0]!.observedAt,now);assert.equal(after.revision,before.revision);assert.equal(pages,1);
+});
+
+
+test('a latest-window delta without native older-history metadata cannot certify cached coverage',async t=>{
+ const {db,store}=open();t.after(()=>db.close());let changed=false,pages=0;
+ const f=fixture(db,store);f.bb.sdk.plugins={list:async()=>({plugins:[]})};
+ f.bb.sdk.threads.timeline=async(args:any)=>{pages++;if(args.afterSequence)return {maxSeq:10,contextBoundarySeq:null,rows:[],delta:{upsertRows:[]},timelinePage:{olderCursor:null}};
+  return {maxSeq:10,contextBoundarySeq:null,rows:[row('m',1,changed?'https://example.test/corrected':'https://example.test/original')],timelinePage:{olderCursor:null}};};
+ f.collector.enqueue('proj_a','thr_a');await finish(f.collector,db);changed=true;
+ f.collector.enqueue('proj_a','thr_a',false,true);await finish(f.collector,db);
+ assert.equal(pages,3);assert.deepEqual(store.listForwardReferences({source:sourceIdentity}).rows.map(r=>r.target.keys.href),['https://example.test/corrected']);
 });
