@@ -132,4 +132,3 @@ export function PeopleAccountsSettings() {
     </details>
   </div>;
 }
-
