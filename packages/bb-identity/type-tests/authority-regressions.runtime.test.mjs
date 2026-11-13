@@ -163,3 +163,18 @@ for (const kind of ['native', 'fetch']) test(`${kind}: an older direct A respons
     expect(f.client.currentSession()).toMatchObject({ ok: true, value: { actor: { identity: { key: 'issuer:b' } } } });
   } finally { f.close(); }
 });
+
+test('fetch: aborting the physical root retires returned verification authority', async () => {
+  const root = new AbortController();
+  const connection = createIdentityFetchConnection({ endpoint: new URL('https://fixture.invalid/http/'), signal: root.signal,
+    fetch: async () => new Response(JSON.stringify(ok(session()))) });
+  const client = createIdentityClient({ connection });
+  try {
+    await client.start();
+    const verified = await connection.revalidateSession();
+    root.abort();
+    expect(connection.getHealth().identity.status).toBe('unavailable');
+    expect(connection.getHealth().generation).not.toBe(verified.value.generation);
+    expect(client.currentSession()).toMatchObject({ ok: false, error: { code: 'cancelled' } });
+  } finally { client.dispose(); connection.dispose(); }
+});

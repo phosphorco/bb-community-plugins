@@ -360,8 +360,8 @@ export function createIdentityFetchConnection(options: { readonly endpoint: URL;
   let revalidateEpoch = 0;
   let revalidateFlight: Promise<Result<RevalidatedIdentitySession>> | null = null;
   const publishHealth = () => { for (const listener of [...healthListeners]) listener(); };
-  const setFailed = (state: 'identity' | 'state', message: string) => {
-    health = { ...health, generation: health.generation + 1, [state]: { status: 'unavailable', error: { code: 'unavailable', message, retry: 'after-reconnect' } } };
+  const setFailed = (state: 'identity' | 'state', message: string, failure: IdentityError = { code: 'unavailable', message, retry: 'after-reconnect' }) => {
+    health = { ...health, generation: health.generation + 1, [state]: { status: 'unavailable', error: failure } };
     if (state === 'identity') { authorityEpoch++; revalidateEpoch++; revalidateFlight = null; for (const listener of [...eventListeners]) listener({ kind: 'disconnected' }); } publishHealth();
   };
   const inputs: IdentityConnectionInputs = {
@@ -442,7 +442,16 @@ export function createIdentityFetchConnection(options: { readonly endpoint: URL;
       void flight.finally(() => { if (revalidateFlight === flight) revalidateFlight = null; });
       return waitFor(flight, readOptions?.signal);
     },
-    dispose() { disposed = true; authorityEpoch++; revalidateEpoch++; revalidateFlight = null; for (const controller of activeFetches) controller.abort(); activeFetches.clear(); eventListeners.clear(); healthListeners.clear(); },
+    dispose() { disposed = true; options.signal.removeEventListener('abort', cancelRoot); authorityEpoch++; revalidateEpoch++; revalidateFlight = null; for (const controller of activeFetches) controller.abort(); activeFetches.clear(); eventListeners.clear(); healthListeners.clear(); },
   };
+  // The root signal may fire after a flight's own abort listener was removed,
+  // while its verified response is still crossing client await boundaries.
+  const cancelRoot = () => {
+    if (disposed) return;
+    const message = 'Identity fetch connection was cancelled.';
+    setFailed('identity', message, { code: 'cancelled', message, retry: 'never' });
+  };
+  options.signal.addEventListener('abort', cancelRoot, { once: true });
+  if (options.signal.aborted) cancelRoot();
   return createIdentityConnection(inputs);
 }
