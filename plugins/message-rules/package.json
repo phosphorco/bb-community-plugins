@@ -51,7 +51,7 @@
     "@codemirror/view": "6.38.6",
     "@lezer/highlight": "1.2.5",
     "@phosphorco/bb-identity": "0.2.1",
-    "@phosphorco/bb-jev": "0.1.0-alpha.1",
+    "@phosphorco/bb-jev": "0.1.0-alpha.2",
     "@phosphorco/bb-message-admission": "0.1.0-alpha.2",
     "remark-parse": "11.0.0",
     "unified": "11.0.5",
