@@ -1,7 +1,7 @@
 /** Decoded client transport, explicit fetch root, and bounded identity client cache. */
 import type {
   ClientInvalidation, ConnectionHealth, IdentityClient, IdentityClientTransport,
-  IdentityConnection, IdentityConnectionEvent, IdentityConnectionInputs, IdentitySession,
+  IdentityConnection, IdentityConnectionEvent, IdentityConnectionInputs, IdentitySession, RevalidatedIdentitySession,
 } from './client.js';
 import { createIdentityConnection, freshConnectionHealth } from './client-connection-runtime.js';
 import type { ServerSession } from './host.js';
@@ -301,10 +301,21 @@ export function createIdentityClient(options: { readonly connection: IdentityCon
     const requestOrder = ++refreshOrder;
     if (suspend) suspendAuthority(); const requestGeneration = generation;
     revalidating = true;
-    const revalidated = await options.connection.revalidate(readOptions);
-    revalidating = false;
-    if (!revalidated.ok) { if (requestOrder === refreshOrder && requestGeneration === generation && suspend) { snapshot = { status: 'loading' }; notify(); } return revalidated; }
-    const session = await transport.bootstrap(readOptions);
+    const combined = options.connection.revalidateSession;
+    const session = await (async (): Promise<Result<ServerSession>> => {
+      if (combined) {
+        const verified = await combined.call(options.connection, readOptions);
+        revalidating = false;
+        if (!verified.ok) return verified;
+        const health = options.connection.getHealth();
+        return readOptions?.signal?.aborted ? err('cancelled', 'Identity request was cancelled.')
+          : health.generation !== verified.value.generation || health.identity.status !== 'healthy'
+            ? err('stale-context', 'Verified identity authority changed.') : ok(verified.value.session);
+      }
+      const revalidated = await options.connection.revalidate(readOptions);
+      revalidating = false;
+      return revalidated.ok ? transport.bootstrap(readOptions) : revalidated;
+    })();
     if (requestOrder !== refreshOrder || requestGeneration !== generation || disposed) return session.ok ? err('stale-context', 'Superseded identity refresh.') : session;
     if (!session.ok) { if (requestOrder === refreshOrder && suspend) { snapshot = { status: 'loading' }; notify(); } return session; }
     snapshot = session.value; requiresBootstrap = false; notify(); return ok(undefined);
@@ -338,13 +349,13 @@ export function createIdentityFetchConnection(options: { readonly endpoint: URL;
   const healthListeners = new Set<() => void>();
   let disposed = false;
   const activeFetches = new Set<AbortController>();
-  let verifiedStamp: string | null = null;
+  let verified: { instanceId: string; actor: string; stamp: string } | null = null;
   let revalidateEpoch = 0;
-  let revalidateFlight: Promise<Result<void>> | null = null;
+  let revalidateFlight: Promise<Result<RevalidatedIdentitySession>> | null = null;
   const publishHealth = () => { for (const listener of [...healthListeners]) listener(); };
   const setFailed = (state: 'identity' | 'state', message: string) => {
     health = { ...health, generation: health.generation + 1, [state]: { status: 'unavailable', error: { code: 'unavailable', message, retry: 'after-reconnect' } } };
-    if (state === 'identity') for (const listener of [...eventListeners]) listener({ kind: 'disconnected' }); publishHealth();
+    if (state === 'identity') { revalidateEpoch++; revalidateFlight = null; for (const listener of [...eventListeners]) listener({ kind: 'disconnected' }); } publishHealth();
   };
   const inputs: IdentityConnectionInputs = {
     async request(method, input, readOptions) {
@@ -364,34 +375,41 @@ export function createIdentityFetchConnection(options: { readonly endpoint: URL;
     getHealth: () => health,
     subscribeHealth(listener) { healthListeners.add(listener); return () => healthListeners.delete(listener); },
     async revalidate(readOptions) {
+      const result = await inputs.revalidateSession!(readOptions);
+      return result.ok ? ok(undefined) : result;
+    },
+    async revalidateSession(readOptions) {
       if (disposed || options.signal.aborted || readOptions?.signal?.aborted) return err('cancelled', 'Identity fetch connection was cancelled.');
-      if (revalidateFlight) return revalidateFlight;
+      if (revalidateFlight) return waitFor(revalidateFlight, readOptions?.signal);
       const epoch = ++revalidateEpoch;
       const controller = new AbortController(); activeFetches.add(controller);
-      const abort = () => controller.abort(); options.signal.addEventListener('abort', abort, { once: true }); readOptions?.signal?.addEventListener('abort', abort, { once: true });
-      const flight = (async (): Promise<Result<void>> => { try {
+      const abort = () => controller.abort(); options.signal.addEventListener('abort', abort, { once: true });
+      const flight = (async (): Promise<Result<RevalidatedIdentitySession>> => { try {
         const response = await options.fetch(new URL(routes.bootstrap, options.endpoint), { method: 'POST', headers: { accept: 'application/json', 'content-type': 'application/json' }, credentials: 'same-origin', body: '{}', signal: controller.signal });
         if (!response.ok) throw new Error(`Identity bootstrap returned ${response.status}.`);
         const checked = decodeResult(await response.json(), serverSessionCodec.decode);
-        if (disposed || epoch !== revalidateEpoch) return err('disposed', 'Identity connection is disposed.');
+        if (disposed) return err('disposed', 'Identity connection is disposed.');
+        if (epoch !== revalidateEpoch) return err('stale-context', 'Identity authority changed during bootstrap.');
         if (!checked.ok) { setFailed('identity', checked.error.message); return checked; }
         if (checked.value.status !== 'ready') {
           const failure = checked.value.error;
           setFailed('identity', failure.message); return err(failure.code, failure.message, failure.retry);
         }
-        const changed = verifiedStamp !== null && verifiedStamp !== checked.value.stamp;
-        verifiedStamp = checked.value.stamp;
+        const next = { instanceId: checked.value.instanceId, actor: checked.value.actor.identity.key, stamp: checked.value.stamp };
+        const changed = verified !== null && (verified.instanceId !== next.instanceId || verified.actor !== next.actor || verified.stamp !== next.stamp);
+        verified = next;
         health = { ...health, generation: health.generation + 1, identity: { status: 'healthy' } }; publishHealth();
         if (changed) for (const listener of [...eventListeners]) listener({ kind: 'session' });
-        return ok(undefined);
+        if (disposed || epoch !== revalidateEpoch || controller.signal.aborted || health.identity.status !== 'healthy') return err('stale-context', 'Identity authority changed during bootstrap notification.');
+        return ok({ session: checked.value, generation: health.generation });
       } catch (cause) {
         if (controller.signal.aborted) return err('cancelled', 'Identity bootstrap was cancelled.');
         setFailed('identity', cause instanceof Error ? cause.message : 'Identity bootstrap failed.');
         return err('unavailable', 'Identity bootstrap failed.', 'after-reconnect');
-      } finally { activeFetches.delete(controller); options.signal.removeEventListener('abort', abort); readOptions?.signal?.removeEventListener('abort', abort); } })();
+      } finally { activeFetches.delete(controller); options.signal.removeEventListener('abort', abort); } })();
       revalidateFlight = flight;
       void flight.finally(() => { if (revalidateFlight === flight) revalidateFlight = null; });
-      return flight;
+      return waitFor(flight, readOptions?.signal);
     },
     dispose() { disposed = true; revalidateEpoch++; for (const controller of activeFetches) controller.abort(); activeFetches.clear(); eventListeners.clear(); healthListeners.clear(); },
   };

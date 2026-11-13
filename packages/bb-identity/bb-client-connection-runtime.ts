@@ -4,7 +4,7 @@
  * hook or creates a second socket.
  */
 import type { PluginRpcClient, PluginRpcContract, PluginRealtimeConnectionState, StandardSchemaV1 } from '@get-bb/plugin-sdk/app';
-import type { ConnectionHealth, ConnectionLinkHealth, IdentityConnection } from './client.js';
+import type { ConnectionHealth, ConnectionLinkHealth, IdentityConnection, RevalidatedIdentitySession } from './client.js';
 import { createIdentityConnection } from './client-connection-runtime.js';
 import { serverSessionCodec } from './host-runtime.js';
 import type { IdentityError, Json, ReadOptions, Result, Unsubscribe } from './model.js';
@@ -86,7 +86,7 @@ export function createNativeIdentityConnection(options: { readonly rpc: NativeRp
   /** Changes only when authority can change; ordinary bootstrap attempts do not retire requests. */
   let authorityEpoch = 0;
   let bootstrapAttempt = 0;
-  let revalidateFlight: Promise<Result<void>> | null = null;
+  let revalidateFlight: Promise<Result<RevalidatedIdentitySession>> | null = null;
   const events = new Set<(payload: unknown) => void>();
   const healthListeners = new Set<() => void>();
   const emitHealth = () => { for (const listener of [...healthListeners]) try { listener(); } catch {} };
@@ -100,6 +100,7 @@ export function createNativeIdentityConnection(options: { readonly rpc: NativeRp
     const next = { identity: health.identity, state: health.state };
     next[target] = unavailable(message);
     const lostAuthority = target === 'identity' && health.identity.status === 'healthy';
+    if (target === 'identity') { authorityEpoch++; bootstrapAttempt++; revalidateFlight = null; }
     changeHealth(next);
     if (lostAuthority) emit({ kind: 'disconnected' });
   };
@@ -138,6 +139,10 @@ export function createNativeIdentityConnection(options: { readonly rpc: NativeRp
     getHealth: () => health,
     subscribeHealth(listener: () => void): Unsubscribe { healthListeners.add(listener); return () => healthListeners.delete(listener); },
     async revalidate(readOptions?: ReadOptions): Promise<Result<void>> {
+      const result = await inputs.revalidateSession(readOptions);
+      return result.ok ? ok(undefined) : result;
+    },
+    async revalidateSession(readOptions?: ReadOptions): Promise<Result<RevalidatedIdentitySession>> {
       if (disposed) return err('disposed', 'Native identity connection is disposed.');
       if (readOptions?.signal?.aborted) return err('cancelled', 'Native identity revalidation was cancelled.');
       if (nativeState !== 'connected') return err('unavailable', 'Native realtime is not connected.', 'after-reconnect');
@@ -161,8 +166,10 @@ export function createNativeIdentityConnection(options: { readonly rpc: NativeRp
             emit({ kind: 'session' });
             if (disposed || publishedEpoch !== authorityEpoch || nativeState !== 'connected') return err('stale-context', 'Native identity authority changed during session notification.');
           } else verified = next;
+          const publishedEpoch = authorityEpoch;
           changeHealth({ identity: { status: 'healthy' }, state: health.state });
-          return ok(undefined);
+          if (disposed || publishedEpoch !== authorityEpoch || nativeState !== 'connected' || health.identity.status !== 'healthy') return err('stale-context', 'Native identity authority changed during health notification.');
+          return ok({ session: checked.value, generation: health.generation });
         } catch (cause) {
           if (disposed) return err('disposed', 'Native identity connection is disposed.');
           if (currentAuthority !== authorityEpoch || currentAttempt !== bootstrapAttempt || nativeState !== 'connected') return err('stale-context', 'Native identity authority changed during bootstrap.');
