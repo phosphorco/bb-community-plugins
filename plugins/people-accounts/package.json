@@ -1,6 +1,6 @@
 {
   "name": "@phosphorco/bb-plugin-people-accounts",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "type": "module",
   "license": "MIT",
   "description": "Resolve people to GitHub bots and human commit attribution with self-service token diagnostics.",
