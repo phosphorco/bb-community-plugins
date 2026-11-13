@@ -302,21 +302,27 @@ export function createIdentityClient(options: { readonly connection: IdentityCon
     if (suspend) suspendAuthority(); const requestGeneration = generation;
     revalidating = true;
     const combined = options.connection.revalidateSession;
-    const session = await (async (): Promise<Result<ServerSession>> => {
+    let verifiedGeneration: number | null = null;
+    let session = await (async (): Promise<Result<ServerSession>> => {
       if (combined) {
         const verified = await combined.call(options.connection, readOptions);
         revalidating = false;
         if (!verified.ok) return verified;
-        const health = options.connection.getHealth();
-        return readOptions?.signal?.aborted ? err('cancelled', 'Identity request was cancelled.')
-          : health.generation !== verified.value.generation || health.identity.status !== 'healthy'
-            ? err('stale-context', 'Verified identity authority changed.') : ok(verified.value.session);
+        verifiedGeneration = verified.value.generation;
+        return ok(verified.value.session);
       }
       const revalidated = await options.connection.revalidate(readOptions);
       revalidating = false;
       return revalidated.ok ? transport.bootstrap(readOptions) : revalidated;
     })();
+    // Carry the verification token through the outer await: authority can change
+    // between receiving the verified session and committing this snapshot.
+    const health = verifiedGeneration !== null && session.ok ? options.connection.getHealth() : null;
     if (requestOrder !== refreshOrder || requestGeneration !== generation || disposed) return session.ok ? err('stale-context', 'Superseded identity refresh.') : session;
+    if (session.ok && health) {
+      if (readOptions?.signal?.aborted) session = err('cancelled', 'Identity request was cancelled.');
+      else if (health.generation !== verifiedGeneration || health.identity.status !== 'healthy') session = err('stale-context', 'Verified identity authority changed.');
+    }
     if (!session.ok) { if (requestOrder === refreshOrder && suspend) { snapshot = { status: 'loading' }; notify(); } return session; }
     snapshot = session.value; requiresBootstrap = false; notify(); return ok(undefined);
   };
@@ -350,12 +356,13 @@ export function createIdentityFetchConnection(options: { readonly endpoint: URL;
   let disposed = false;
   const activeFetches = new Set<AbortController>();
   let verified: { instanceId: string; actor: string; stamp: string } | null = null;
+  let authorityEpoch = 0;
   let revalidateEpoch = 0;
   let revalidateFlight: Promise<Result<RevalidatedIdentitySession>> | null = null;
   const publishHealth = () => { for (const listener of [...healthListeners]) listener(); };
   const setFailed = (state: 'identity' | 'state', message: string) => {
     health = { ...health, generation: health.generation + 1, [state]: { status: 'unavailable', error: { code: 'unavailable', message, retry: 'after-reconnect' } } };
-    if (state === 'identity') { revalidateEpoch++; revalidateFlight = null; for (const listener of [...eventListeners]) listener({ kind: 'disconnected' }); } publishHealth();
+    if (state === 'identity') { authorityEpoch++; revalidateEpoch++; revalidateFlight = null; for (const listener of [...eventListeners]) listener({ kind: 'disconnected' }); } publishHealth();
   };
   const inputs: IdentityConnectionInputs = {
     async request(method, input, readOptions) {
@@ -364,11 +371,30 @@ export function createIdentityFetchConnection(options: { readonly endpoint: URL;
       activeFetches.add(controller);
       const abort = () => controller.abort(); options.signal.addEventListener('abort', abort, { once: true }); readOptions?.signal?.addEventListener('abort', abort, { once: true });
       const target = method.startsWith('bb-identity/v1/state/') ? 'state' : 'identity';
+      const currentAuthority = authorityEpoch;
       try {
         const response = await options.fetch(new URL(method, options.endpoint), { method: 'POST', headers: { accept: 'application/json', 'content-type': 'application/json' }, credentials: 'same-origin', body: JSON.stringify(input), signal: controller.signal });
         if (!response.ok) throw new Error(`Identity route returned ${response.status}.`);
-        return await response.json();
-      } catch (cause) { if (!controller.signal.aborted) setFailed(target, cause instanceof Error ? cause.message : 'Identity fetch request failed.'); throw cause; }
+        const value = await response.json();
+        if (disposed || controller.signal.aborted) throw new Error('Identity fetch request was cancelled.');
+        if (method === routes.bootstrap) {
+          if (currentAuthority !== authorityEpoch) throw new Error('Identity fetch bootstrap became stale.');
+          const checked = decodeResult(value, serverSessionCodec.decode);
+          if (!checked.ok) setFailed('identity', checked.error.message);
+          else if (checked.value.status !== 'ready') setFailed('identity', checked.value.error.message);
+          else {
+            const next = { instanceId: checked.value.instanceId, actor: checked.value.actor.identity.key, stamp: checked.value.stamp };
+            const changed = verified === null || verified.instanceId !== next.instanceId || verified.actor !== next.actor || verified.stamp !== next.stamp;
+            verified = next;
+            if (changed) authorityEpoch++;
+            // This is the direct caller's reload: retire earlier verification
+            // attempts/tokens without recursively notifying that reload owner.
+            revalidateEpoch++; revalidateFlight = null;
+            health = { ...health, generation: health.generation + 1 };
+          }
+        }
+        return value;
+      } catch (cause) { if (!disposed && currentAuthority === authorityEpoch && !controller.signal.aborted) setFailed(target, cause instanceof Error ? cause.message : 'Identity fetch request failed.'); throw cause; }
       finally { activeFetches.delete(controller); options.signal.removeEventListener('abort', abort); readOptions?.signal?.removeEventListener('abort', abort); }
     },
     subscribe(listener) { eventListeners.add(listener); return () => eventListeners.delete(listener); },
@@ -382,6 +408,7 @@ export function createIdentityFetchConnection(options: { readonly endpoint: URL;
       if (disposed || options.signal.aborted || readOptions?.signal?.aborted) return err('cancelled', 'Identity fetch connection was cancelled.');
       if (revalidateFlight) return waitFor(revalidateFlight, readOptions?.signal);
       const epoch = ++revalidateEpoch;
+      const currentAuthority = authorityEpoch;
       const controller = new AbortController(); activeFetches.add(controller);
       const abort = () => controller.abort(); options.signal.addEventListener('abort', abort, { once: true });
       const flight = (async (): Promise<Result<RevalidatedIdentitySession>> => { try {
@@ -389,7 +416,7 @@ export function createIdentityFetchConnection(options: { readonly endpoint: URL;
         if (!response.ok) throw new Error(`Identity bootstrap returned ${response.status}.`);
         const checked = decodeResult(await response.json(), serverSessionCodec.decode);
         if (disposed) return err('disposed', 'Identity connection is disposed.');
-        if (epoch !== revalidateEpoch) return err('stale-context', 'Identity authority changed during bootstrap.');
+        if (epoch !== revalidateEpoch || currentAuthority !== authorityEpoch) return err('stale-context', 'Identity authority changed during bootstrap.');
         if (!checked.ok) { setFailed('identity', checked.error.message); return checked; }
         if (checked.value.status !== 'ready') {
           const failure = checked.value.error;
@@ -398,12 +425,16 @@ export function createIdentityFetchConnection(options: { readonly endpoint: URL;
         const next = { instanceId: checked.value.instanceId, actor: checked.value.actor.identity.key, stamp: checked.value.stamp };
         const changed = verified !== null && (verified.instanceId !== next.instanceId || verified.actor !== next.actor || verified.stamp !== next.stamp);
         verified = next;
+        if (changed) authorityEpoch++;
+        const publishedAuthority = authorityEpoch;
         health = { ...health, generation: health.generation + 1, identity: { status: 'healthy' } }; publishHealth();
         if (changed) for (const listener of [...eventListeners]) listener({ kind: 'session' });
-        if (disposed || epoch !== revalidateEpoch || controller.signal.aborted || health.identity.status !== 'healthy') return err('stale-context', 'Identity authority changed during bootstrap notification.');
+        if (disposed || epoch !== revalidateEpoch || publishedAuthority !== authorityEpoch || controller.signal.aborted || health.identity.status !== 'healthy') return err('stale-context', 'Identity authority changed during bootstrap notification.');
         return ok({ session: checked.value, generation: health.generation });
       } catch (cause) {
+        if (disposed) return err('disposed', 'Identity connection is disposed.');
         if (controller.signal.aborted) return err('cancelled', 'Identity bootstrap was cancelled.');
+        if (epoch !== revalidateEpoch || currentAuthority !== authorityEpoch) return err('stale-context', 'Identity authority changed during bootstrap.');
         setFailed('identity', cause instanceof Error ? cause.message : 'Identity bootstrap failed.');
         return err('unavailable', 'Identity bootstrap failed.', 'after-reconnect');
       } finally { activeFetches.delete(controller); options.signal.removeEventListener('abort', abort); } })();
@@ -411,7 +442,7 @@ export function createIdentityFetchConnection(options: { readonly endpoint: URL;
       void flight.finally(() => { if (revalidateFlight === flight) revalidateFlight = null; });
       return waitFor(flight, readOptions?.signal);
     },
-    dispose() { disposed = true; revalidateEpoch++; for (const controller of activeFetches) controller.abort(); activeFetches.clear(); eventListeners.clear(); healthListeners.clear(); },
+    dispose() { disposed = true; authorityEpoch++; revalidateEpoch++; revalidateFlight = null; for (const controller of activeFetches) controller.abort(); activeFetches.clear(); eventListeners.clear(); healthListeners.clear(); },
   };
   return createIdentityConnection(inputs);
 }

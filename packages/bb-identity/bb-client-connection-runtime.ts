@@ -115,19 +115,19 @@ export function createNativeIdentityConnection(options: { readonly rpc: NativeRp
         if (disposed || current !== authorityEpoch || readOptions?.signal?.aborted) throw new Error('Native identity request became stale.');
         if (route === identityRoutes.bootstrap) {
           const checked = decodeBootstrap(value);
-          if (checked.ok && checked.value.status === 'ready') {
+          if (!checked.ok) fail('identity', checked.error.message);
+          else if (checked.value.status !== 'ready') fail('identity', checked.value.error.message);
+          else {
             const next = { instanceId: checked.value.instanceId, actor: checked.value.actor.identity.key, stamp: checked.value.stamp };
-            const changed = verified !== null && (verified.instanceId !== next.instanceId || verified.actor !== next.actor || verified.stamp !== next.stamp);
-            if (changed) {
-              // This bootstrap is the caller's authoritative reload. Fence old work before
-              // returning B, but do not notify health observers: the caller is already
-              // committing this exact B response and a notification would recurse refresh.
-              verified = next; authorityEpoch++;
-              // Retire any already-returned verification handoff as well as
-              // pending requests, without recursively notifying the reload owner.
-              health = { ...health, generation: health.generation + 1 };
-              if (disposed || nativeState !== 'connected') throw new Error('Native bootstrap became stale.');
-            } else verified = next;
+            const changed = verified === null || verified.instanceId !== next.instanceId || verified.actor !== next.actor || verified.stamp !== next.stamp;
+            verified = next;
+            if (changed) authorityEpoch++;
+            // A direct reload supersedes earlier verification attempts and
+            // returned handoffs, including same-stamp capability changes. An
+            // unchanged identity must not retire ordinary in-flight state work.
+            bootstrapAttempt++; revalidateFlight = null;
+            health = { ...health, generation: health.generation + 1 };
+            if (disposed || nativeState !== 'connected') throw new Error('Native bootstrap became stale.');
           }
         }
         if (isStateRoute(route) && health.state.status !== 'healthy') changeHealth({ identity: health.identity, state: { status: 'healthy' } });
