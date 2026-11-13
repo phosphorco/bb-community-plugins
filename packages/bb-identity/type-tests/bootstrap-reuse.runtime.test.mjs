@@ -213,3 +213,15 @@ for (const kind of ['native', 'fetch']) test(`${kind}: actor and instance change
     expect(events).toHaveLength(2);
   } finally { f.close(); }
 });
+
+test('native: a separate direct bootstrap retires an already-returned verified generation', async () => {
+  const f = fixture('native');
+  try {
+    const verified = await f.connection.revalidateSession();
+    expect(verified.ok).toBe(true);
+    f.respond(ok(session('b')));
+    await f.connection.request('bb-identity/v1/bootstrap', {});
+    expect(f.connection.getHealth().identity.status).toBe('healthy');
+    expect(f.connection.getHealth().generation).not.toBe(verified.value.generation);
+  } finally { f.close(); }
+});
