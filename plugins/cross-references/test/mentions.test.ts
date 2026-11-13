@@ -45,7 +45,7 @@ function fixture(db:Database.Database,store:CrossReferenceStore,initial:any[]=[]
   server:{experimental_appUrl:'https://bb.test'},log:{warn:(message:string)=>state.logs.push(message)}} as any;
  const signals:any[]=[];
  const collector=new AssistantLinkCollector(bb,db,store,s=>signals.push(s));
- const scan=async()=>{collector.enqueue('proj_a','thr_source',false,true);assert.equal(await collector.processNext(new AbortController().signal),true);return store.mentionState(sourceId);};
+ const scan=async()=>{collector.enqueue('proj_a','thr_source',false,true);assert.equal(await collector.processNext(new AbortController().signal),true);for(let quantum=1;quantum<50 && db.prepare('SELECT 1 FROM assistant_link_jobs').get();quantum++){if(!await collector.processNext(new AbortController().signal))break;}return store.mentionState(sourceId);};
  return {state,collector,scan,signals,bb};
 }
 

@@ -53,6 +53,7 @@
     "app.css",
     "assistant-links.ts",
     "assistant-link-collector.ts",
+    "collection-checkpoint.ts",
     "presentation.ts",
     "canonical.ts",
     "link-status.ts",

@@ -429,3 +429,41 @@ repairs and exact published0.4 adoption are prerequisites owned by TB, not
 implemented here. FileLink/cache/rawRevision equality alone is not a freshness
 claim; a file can change after a successful read. No new live/UI/fixture proof is
 claimed, and the earlier toolbar acceptance item remains separate.
+
+## Incremental collector checkpoints
+
+The durable job still owns collection and its generation fences the final
+reference/evidence transaction. A worker quantum fetches at most one timeline
+page and persists that page's cursor and accepted messages atomically, then
+returns to the event loop. Partial traversal never publishes a complete graph.
+Reload resumes a matching pending sequence checkpoint; an expired cursor discards only
+reconstructible source material and retains the job's retry intent.
+
+An unchanged latest-event sequence avoids timeline reconstruction. Successful
+pure supplier results retain their text/context/revision cache keys across
+reload. A successful scan that performed no native thread/file verification can
+also reuse its unchanged evidence receipt, including the graph/evidence revisions.
+Sources requiring native verification still perform those reads on each scan;
+a cached source body is never proof that a target still exists or is accessible.
+Plugin invalidation clears supplier results and pure-scan receipts. Reconnect,
+surface-preference changes and history replacement/compaction invalidate source
+material too. A fresh service reconstructs completed snapshots once because
+preferences could have changed while it was stopped; pending cursors still resume
+or fail closed through native snapshot validation.
+
+For an append, the existing `afterSequence` API may supply a delta of the latest
+window. It is usable only for a previously complete source, with unchanged
+context boundary, overlap with retained conversation rows, exclusively new row
+sequences/IDs, no older-row updates, and room within the existing message/text
+limits. Otherwise the collector reconstructs the source within its existing
+50-page bound. Missing deltas after server restart/cache eviction, history
+replacement, compaction, a window gap, or a historical correction therefore cost
+a rescan; the plugin does not treat a window delta as a complete history feed.
+
+Reconstructible source bodies are retained for at most 32 sources, each within
+5,000 messages / 2,097,152 UTF-16 units. Eviction cascades to their message rows
+and leaves durable jobs, retry backoff, projections and evidence intact. Pure
+supplier results have a separate global 512-entry / 16-MiB bound, with at most
+65,536 bytes per result and the existing 64-entry hot cache. These are cache
+limits, not new collection/freshness exclusions. A cold backlog still requires
+its initial traversal; sources outside cache locality can require rescans.

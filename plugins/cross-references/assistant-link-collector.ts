@@ -1,3 +1,5 @@
+import { setImmediate as yieldToHost } from "node:timers/promises";
+import { CollectionCheckpoints, RecognitionCheckpointCache, type CollectionCheckpoint } from "./collection-checkpoint.ts";
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import type Database from "better-sqlite3";
 import { assistantLinkLabel } from "./assistant-links.ts";
@@ -7,7 +9,7 @@ import { MentionDiagnostics, type MentionDiagnosticOperation } from './mention-f
 import { createMentionFileVerifier } from './mention-files.ts';
 import { collectConversationMentions, type ConversationMessage } from "./mention-collection.ts";
 import { MENTION_LIMITS, type MentionScan } from "./mention-evidence.ts";
-import { type ResourceIdentity, threadIdentity, threadResource } from "./canonical.ts";
+import { type ResourceIdentity, threadIdentity, threadResource, sha256Hex } from "./canonical.ts";
 import type { CrossReferencesChangedSignal } from "./model.ts";
 import { CrossReferenceStore } from "./store.ts";
 
@@ -34,6 +36,7 @@ export class AssistantLinkCollector {
   private running = false;
   private readonly lifetime = new AbortController();
   private recognitionCache=new Map<string,TaggedCandidateV1[]>();
+  private readonly continuations=new Map<string,number>();
   private readonly activeAttempts=new Set<{threadId:string;controller:AbortController}>();
   private readonly discoveryOwner = createRecognitionDiscoveryOwner();
   private suppliers: ReadyRecognitionSupplier[] = [];
@@ -67,12 +70,32 @@ export class AssistantLinkCollector {
     // A supplier call may ignore abort and resolve late. Detach its cache so
     // that only attempts in this new epoch can populate it.
     this.recognitionCache=new Map();
+    this.db.prepare("DELETE FROM assistant_link_recognition_cache").run();
+    this.db.prepare("UPDATE assistant_link_checkpoints SET state_json=json_remove(state_json, '$.pureKey')").run();
     this.supplierEpoch++;
     for(const attempt of this.activeAttempts)attempt.controller.abort();
     this.discoveryNeeded=true;
     this.discoveryOwner.dispose();
     this.seed();
     this.wake?.();
+  }
+
+  /** Missing surface/history signals cannot certify cached source bodies. */
+  private invalidateSources(threadId?:string,projectId?:string):void {
+    if(this.inactive())return;
+    const checkpoints=new CollectionCheckpoints(this.db);
+    if(threadId){
+      if(!checkpoints.load(threadId))return;
+      checkpoints.remove(threadId);this.continuations.delete(threadId);
+      for(const attempt of this.activeAttempts)if(attempt.threadId===threadId)attempt.controller.abort();
+      const job=this.db.prepare('SELECT project_id FROM assistant_link_jobs WHERE thread_id=?').get(threadId) as {project_id:string}|undefined;
+      const project=projectId??job?.project_id;
+      if(project)this.enqueue(project,threadId,false,true,1);else this.seed();
+    }else {
+      this.db.prepare('DELETE FROM assistant_link_checkpoints').run();this.continuations.clear();
+      for(const attempt of this.activeAttempts)attempt.controller.abort();
+      this.seed();
+    }
   }
 
   dispose():void {
@@ -186,16 +209,19 @@ export class AssistantLinkCollector {
     };
     const diagnostics=new MentionDiagnostics(()=>!this.disposed && this.db.open && !signal.aborted);
     let outerDiagnostic:MentionDiagnosticOperation|undefined;
+    const checkpoints=new CollectionCheckpoints(this.db);
+    let prefetchedPage:Awaited<ReturnType<BbPluginApi["sdk"]["threads"]["timeline"]>>|undefined;
+    let checkpoint=checkpoints.load(job.thread_id);
+    const continuing=checkpoint && !checkpoint.ready && this.continuations.get(job.thread_id)===job.version;
     try {
-      let title = "Thread";
+      let title = continuing ? checkpoint!.title : "Thread";
       let deleted = job.deleted === 1;
       let complete = true;
       const messages = new Map<string, ConversationMessage>();
-      let environmentId:string|undefined;
+      let environmentId:string|undefined=continuing?checkpoint!.environmentId:undefined;
       let sourceLimited=false;
       let missingMessageSeq=false;
-      let textChars=0;
-      if (!deleted) {
+      if (!deleted && !continuing) {
         if(!stillCurrent())return true;
         try {
           const thread = await bounded(s=>this.bb.sdk.threads.get({ threadId: job.thread_id, signal:s }),signal,1000,outerDiagnostic=diagnostics.operation('source-prefetch'));
@@ -210,33 +236,105 @@ export class AssistantLinkCollector {
         }
       }
       if (!deleted) {
-        let cursor: { anchorSeq: number; anchorId: string } | null = null;
-        for (let pageNumber = 0; pageNumber < 50; pageNumber++) {
-          if (!stillCurrent()) return true;
-          const page = await bounded(s=>this.bb.sdk.threads.timeline({
-            threadId: job.thread_id, includeNestedRows: "false", segmentLimit: "100", signal:s,
-            ...(cursor === null ? {} : { beforeAnchorSeq: String(cursor.anchorSeq), beforeAnchorId: cursor.anchorId }),
-          }),signal,1000,outerDiagnostic=diagnostics.operation('timeline-prefetch'));
+        if(checkpoint && !continuing){
+          // Equal event sequence is the same fence already used by timeline
+          // snapshots. An unavailable/empty head proves nothing: rescan safely.
+          let headSeq:number|undefined;
+          try {
+            const head=await bounded(s=>this.bb.sdk.threads.events.list({threadId:job.thread_id,order:'desc',limit:'1',signal:s}),signal);
+            if(head.length===1 && Number.isSafeInteger(head[0]!.seq))headSeq=head[0]!.seq;
+          }catch { /* Fall back to authoritative timeline reconstruction. */ }
           if(!stillCurrent())return true;
-          for (const row of page.rows) {
-            if (row.kind !== "conversation" || (row.role !== "assistant" && row.role !== "user") || row.threadId!==job.thread_id) continue;
-            if(row.role==='user' && (row.initiator==='system' || (row.systemMessageKind && row.systemMessageKind!=='unlabeled')))continue;
-            if (!Number.isSafeInteger(row.createdAt) || row.createdAt<0 || row.createdAt>8_640_000_000_000_000)continue;
-            if(!Number.isSafeInteger(row.messageSeq) || row.messageSeq<0){missingMessageSeq=true;continue;}
-            if(messages.has(row.id))continue;
-            if(messages.size>=MENTION_LIMITS.messages || textChars+row.text.length>MENTION_LIMITS.sourceChars){sourceLimited=true;break;}
-            textChars+=row.text.length;
-            messages.set(row.id, { id:row.id, text:row.text, createdAt:row.createdAt,messageSeq:row.messageSeq,
-              anchorSeq:Number.isSafeInteger(row.sourceSeqStart)&&row.sourceSeqStart>=0?row.sourceSeqStart:null,role:row.role });
+          if(checkpoint.maxSeq===null || headSeq!==checkpoint.maxSeq){
+            // afterSequence is a delta of the latest window, not a complete
+            // history feed. Admit only new rows with a retained conversation
+            // overlap. Rewrites/compaction and a missing server cache return a
+            // full window; gaps, old-row updates and changed boundaries rescan.
+            if(headSeq!==undefined && checkpoint.maxSeq!==null && headSeq>checkpoint.maxSeq && checkpoint.ready && checkpoint.complete && !checkpoint.missingMessageSeq){
+              prefetchedPage=await bounded(s=>this.bb.sdk.threads.timeline({threadId:job.thread_id,
+                includeNestedRows:'false',segmentLimit:'100',afterSequence:String(checkpoint!.maxSeq),signal:s}),signal,1000,
+                outerDiagnostic=diagnostics.operation('timeline-prefetch'));
+              if(!stillCurrent())return true;
+              const delta=prefetchedPage.delta;
+              const priorIds=new Set(checkpoints.messageIds(job.thread_id));
+              const order=delta?.rowOrder??checkpoint.headIds??[];
+              const rows=delta?.upsertRows??[];
+              const overlapping=order.some(id=>priorIds.has(id));
+              const appendOnly=delta && rows.every(row=>row.threadId===job.thread_id && row.sourceSeqStart>checkpoint!.maxSeq! && !priorIds.has(row.id));
+              if(appendOnly && overlapping && prefetchedPage.maxSeq>=headSeq && prefetchedPage.contextBoundarySeq===checkpoint.contextBoundarySeq &&
+                (prefetchedPage.timelinePage.olderRowUpdates?.length??0)===0 &&
+                (prefetchedPage.timelinePage.olderRowsSourceSeqEnd==null || prefetchedPage.timelinePage.olderRowsSourceSeqEnd<=checkpoint.maxSeq!)){
+                const accepted:ConversationMessage[]=[];let textChars=checkpoint.textChars;let valid=true;
+                for(const row of rows){
+                  if(row.kind!=='conversation' || (row.role!=='assistant' && row.role!=='user'))continue;
+                  if(row.role==='user' && (row.initiator==='system' || (row.systemMessageKind && row.systemMessageKind!=='unlabeled')))continue;
+                  if(!Number.isSafeInteger(row.messageSeq) || row.messageSeq<0 || !Number.isSafeInteger(row.createdAt) || row.createdAt<0 || row.createdAt>8_640_000_000_000_000){valid=false;break;}
+                  textChars+=row.text.length;
+                  accepted.push({id:row.id,text:row.text,createdAt:row.createdAt,messageSeq:row.messageSeq,anchorSeq:row.sourceSeqStart,role:row.role});
+                }
+                if(valid && textChars<=MENTION_LIMITS.sourceChars && priorIds.size+accepted.length<=MENTION_LIMITS.messages){
+                  checkpoint.maxSeq=prefetchedPage.maxSeq;checkpoint.textChars=textChars;checkpoint.headIds=order;
+                  delete checkpoint.pureKey;
+                  checkpoints.save(job.thread_id,checkpoint,accepted);prefetchedPage=undefined;
+                }else {checkpoints.remove(job.thread_id);checkpoint=undefined;prefetchedPage=undefined;return true;}
+              }else {
+                checkpoints.remove(job.thread_id);checkpoint=undefined;
+                if(delta){prefetchedPage=undefined;return true;}
+              }
+            }else {checkpoints.remove(job.thread_id);checkpoint=undefined;}
           }
-          complete = page.timelinePage.olderCursor == null;
-          if (sourceLimited){complete=false;break;}
-          if (complete) break;
-          const next = page.timelinePage.olderCursor;
-          if (next === null || (cursor !== null && next.anchorId === cursor.anchorId && next.anchorSeq === cursor.anchorSeq)) {(outerDiagnostic=diagnostics.operation('timeline-prefetch')).fail('timeline-cursor-stalled');throw new Error("Timeline cursor did not advance.");}
-          cursor = next;
         }
-      }
+        checkpoint??={maxSeq:null,cursor:null,pages:0,ready:false,complete:false,sourceLimited:false,
+          missingMessageSeq:false,textChars:0,title,environmentId};
+        checkpoint.title=title;checkpoint.environmentId=environmentId;
+        if(!checkpoint.ready){
+          const messageIds=new Set(checkpoints.messageIds(job.thread_id));
+          if(!stillCurrent())return true;
+          const cursor=checkpoint.cursor;
+          const page=prefetchedPage??await bounded(s=>this.bb.sdk.threads.timeline({
+            threadId:job.thread_id,includeNestedRows:'false',segmentLimit:'100',signal:s,
+            ...(cursor===null?{}:{beforeAnchorSeq:String(cursor.anchorSeq),beforeAnchorId:cursor.anchorId}),
+          }),signal,1000,outerDiagnostic=diagnostics.operation('timeline-prefetch')).catch(error=>{
+            // Snapshot cursors can expire after pruning/history replacement.
+            // Keep the job/retry, discard only its reconstructible source cache.
+            if(stillCurrent() && typeof error==='object' && error!==null && 'status' in error && error.status===400){
+              checkpoints.remove(job.thread_id);this.continuations.delete(job.thread_id);
+            }
+            throw error;
+          });
+          if(!stillCurrent())return true;
+          if(checkpoint.pages===0){
+            checkpoint.maxSeq=Number.isSafeInteger(page.maxSeq)?page.maxSeq:null;
+            checkpoint.contextBoundarySeq=page.contextBoundarySeq;
+            checkpoint.headIds=page.rows.map(row=>row.id);
+          }
+          const accepted:ConversationMessage[]=[];
+          for(const row of page.rows){
+            if(row.kind!=='conversation' || (row.role!=='assistant' && row.role!=='user') || row.threadId!==job.thread_id)continue;
+            if(row.role==='user' && (row.initiator==='system' || (row.systemMessageKind && row.systemMessageKind!=='unlabeled')))continue;
+            if(!Number.isSafeInteger(row.createdAt) || row.createdAt<0 || row.createdAt>8_640_000_000_000_000)continue;
+            if(!Number.isSafeInteger(row.messageSeq) || row.messageSeq<0){checkpoint.missingMessageSeq=true;continue;}
+            if(messageIds.has(row.id))continue;
+            if(messageIds.size>=MENTION_LIMITS.messages || checkpoint.textChars+row.text.length>MENTION_LIMITS.sourceChars){checkpoint.sourceLimited=true;break;}
+            checkpoint.textChars+=row.text.length;
+            const message:ConversationMessage={id:row.id,text:row.text,createdAt:row.createdAt,messageSeq:row.messageSeq,
+              anchorSeq:Number.isSafeInteger(row.sourceSeqStart)&&row.sourceSeqStart>=0?row.sourceSeqStart:null,role:row.role};
+            messageIds.add(row.id);accepted.push(message);
+          }
+          checkpoint.pages++;
+          checkpoint.complete=page.timelinePage.olderCursor==null && !checkpoint.sourceLimited;
+          checkpoint.ready=checkpoint.complete || checkpoint.sourceLimited || checkpoint.pages>=50;
+          const next=page.timelinePage.olderCursor;
+          if(!checkpoint.ready && (next===null || (cursor!==null && next.anchorId===cursor.anchorId && next.anchorSeq===cursor.anchorSeq))){
+            (outerDiagnostic=diagnostics.operation('timeline-prefetch')).fail('timeline-cursor-stalled');throw new Error('Timeline cursor did not advance.');
+          }
+          checkpoint.cursor=next;
+          if(!stillCurrent())return true;
+          checkpoints.save(job.thread_id,checkpoint,accepted);
+          if(!checkpoint.ready){this.continuations.set(job.thread_id,job.version);return true;}
+        }
+        complete=checkpoint.complete;sourceLimited=checkpoint.sourceLimited;missingMessageSeq=checkpoint.missingMessageSeq;
+      } else { checkpoints.remove(job.thread_id); }
       if(!stillCurrent())return true;
       let context:ContextBundleV1|undefined;
       if(!deleted){
@@ -244,13 +342,40 @@ export class AssistantLinkCollector {
         if(!stillCurrent())return true;
       }
       if(!stillCurrent())return true;
-      const recognitionCache=this.recognitionCache;
+      const pureKey=sha256Hex(JSON.stringify([1,checkpoint?.maxSeq,title,context,this.bb.server.experimental_appUrl,
+        this.suppliers.map(s=>[s.client.pluginId,s.capabilities.revision]),this.discoveryIncomplete,this.failedSuppliers]));
+      if(!deleted && checkpoint?.pureKey===pureKey && checkpoint.pureReceipt &&
+        JSON.stringify(checkpoints.receipt(job.project_id,job.thread_id))===JSON.stringify(checkpoint.pureReceipt)){
+        // Only a successful scan with no native verification can leave this
+        // receipt. Its pure inputs and supplier revisions are unchanged. Native
+        // thread/file reads are never skipped by a source-sequence checkpoint.
+        this.db.transaction(()=>{
+          if(!stillCurrent())return;
+          this.db.prepare(`UPDATE mention_streams SET last_successful_scan_at=? WHERE producer_plugin_id='cross-references'
+            AND source_resource_id IN (SELECT id FROM resources WHERE provider='bb' AND canonical_keys_json=?)`)
+            .run(Date.now(),JSON.stringify({project:job.project_id,thread:job.thread_id}));
+          this.db.prepare('DELETE FROM assistant_link_jobs WHERE thread_id=? AND version=?').run(job.thread_id,job.version);
+          this.db.prepare(`INSERT INTO assistant_link_sync(thread_id,synced_at) VALUES (?,?)
+            ON CONFLICT(thread_id) DO UPDATE SET synced_at=excluded.synced_at`).run(job.thread_id,Date.now());
+          checkpoints.save(job.thread_id,checkpoint!,[]);
+          this.continuations.delete(job.thread_id);
+        })();
+        return true;
+      }
+      if(!deleted){
+        const retained=new Map(checkpoints.messages(job.thread_id).map(message=>[message.id,message]));
+        for(const id of checkpoint?.headIds??[]){const message=retained.get(id);if(message){messages.set(id,message);retained.delete(id);}}
+        for(const [id,message] of retained)messages.set(id,message);
+      }
+      let nativeReads=false;
+      const recognitionCache=new RecognitionCheckpointCache(this.db,stillCurrent);
+      this.recognitionCache=recognitionCache;
       const fileVerifier=createMentionFileVerifier(this.bb,{threadId:job.thread_id,projectId:job.project_id,environmentId});
       const scan:MentionScan=deleted?{occurrences:[],observedMessageIds:[],scannedMessageIds:[],failedSuppliers:[],discoveryIncomplete:false,
         coverage:{timelineComplete:true,reasons:[],retentionLimited:false}}:await collectConversationMentions({messages:[...messages.values()],
         context:context!,clients:this.suppliers,
-        getThread:(threadId,requestSignal,diagnostic)=>{requestSignal.throwIfAborted();return bounded(s=>this.bb.sdk.threads.get({threadId,signal:s}),requestSignal,500,diagnostic,true);},
-        verifyFile:(file,requestSignal,diagnostic)=>{requestSignal.throwIfAborted();return fileVerifier(file,requestSignal,diagnostic);},signal,appUrl:this.bb.server.experimental_appUrl??undefined,
+        getThread:(threadId,requestSignal,diagnostic)=>{nativeReads=true;requestSignal.throwIfAborted();return bounded(s=>this.bb.sdk.threads.get({threadId,signal:s}),requestSignal,500,diagnostic,true);},
+        verifyFile:(file,requestSignal,diagnostic)=>{nativeReads=true;requestSignal.throwIfAborted();return fileVerifier(file,requestSignal,diagnostic);},signal,appUrl:this.bb.server.experimental_appUrl??undefined,
         discoveryIncomplete:this.discoveryIncomplete,failedSuppliers:this.failedSuppliers,cache:recognitionCache,diagnostics});
       scan.coverage.timelineComplete=complete;
       if(missingMessageSeq){scan.coverage.timelineComplete=false;scan.coverage.reasons.push('missing-message-seq');}
@@ -267,6 +392,13 @@ export class AssistantLinkCollector {
         this.db.prepare("DELETE FROM assistant_link_jobs WHERE thread_id = ? AND version = ?").run(job.thread_id, job.version);
         this.db.prepare(`INSERT INTO assistant_link_sync(thread_id, synced_at) VALUES (?, ?)
           ON CONFLICT(thread_id) DO UPDATE SET synced_at = excluded.synced_at`).run(job.thread_id, Date.now());
+        if(checkpoint && !deleted){
+          if(!nativeReads && scan.coverage.reasons.length===0 && !scan.discoveryIncomplete && scan.failedSuppliers.length===0){
+            checkpoint.pureKey=pureKey;checkpoint.pureReceipt=checkpoints.receipt(job.project_id,job.thread_id);
+          }else {delete checkpoint.pureKey;delete checkpoint.pureReceipt;}
+          checkpoints.save(job.thread_id,checkpoint,[]);
+        }
+        this.continuations.delete(job.thread_id);
         committed=true;
         return result;
       })();
@@ -311,18 +443,29 @@ export class AssistantLinkCollector {
     signal.addEventListener('abort',stop,{once:true});
     try {
       subscriptions.push(this.bb.sdk.subscribe({event:'system:changed',callback:event=>{
-        if(listening && !signal.aborted && event.changes.includes('plugins-changed'))this.invalidateSuppliers();
+        if(!listening || signal.aborted)return;
+        if(event.changes.includes('plugins-changed'))this.invalidateSuppliers();
+        if(event.changes.some(change=>change==='config-changed' || change==='ui-preferences-changed' || change==='provider-registrations-changed'))this.invalidateSources();
       }}));
       if(!listening || this.inactive() || signal.aborted)return;
       subscriptions.push(this.bb.sdk.subscribe({event:'realtime:connection',callback:event=>{
-        if(listening && !signal.aborted && event.reconnected)this.invalidateSuppliers();
+        if(listening && !signal.aborted && event.reconnected){this.invalidateSources();this.invalidateSuppliers();}
+      }}));
+      if(!listening || this.inactive() || signal.aborted)return;
+      subscriptions.push(this.bb.sdk.subscribe({event:'thread:changed',callback:event=>{
+        if(listening && !signal.aborted && event.id && event.changes.some(change=>change==='history-rewritten' || change==='history-compacted'))
+          this.invalidateSources(event.id,event.metadata?.projectId);
       }}));
       if(!listening || this.inactive() || signal.aborted)return;
       await this.discover(signal);
       if(this.inactive() || signal.aborted)return;
+      // Across a stopped service, public events cannot prove that UI surface
+      // preferences stayed unchanged. Reconstruct completed snapshots once;
+      // pending cursors still resume or fail closed through native validation.
+      this.db.prepare("DELETE FROM assistant_link_checkpoints WHERE json_extract(state_json,'$.ready')=1").run();
       this.seed();
       while (!this.inactive() && !signal.aborted) {
-        if (await this.processNext(signal)) continue;
+        if (await this.processNext(signal)) { await yieldToHost(); continue; }
         if(this.inactive() || signal.aborted)return;
         const next = this.db.prepare("SELECT MIN(retry_at) AS retry_at FROM assistant_link_jobs").get() as { retry_at: number | null };
         await this.wait(signal, next.retry_at === null ? 60_000 : next.retry_at - Date.now());
