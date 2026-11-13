@@ -1,3 +1,8 @@
+import { bindMessageAdmission } from "@phosphorco/bb-message-admission/bb";
+import { listRecentDecisions } from "../../admission/decisions.ts";
+import { nativeEvaluator } from "../../admission/native-evaluator.ts";
+import { createAdmissionEvaluator } from "../../admission/evaluator.ts";
+import { createAdmissionLedger } from "../../admission/ledger.ts";
 import Database from "better-sqlite3";
 import { createFakePluginHost } from "@get-bb/plugin-sdk/testing";
 import {
@@ -10,7 +15,8 @@ import { canonical } from "../../contracts/hash.ts";
 import { defaultConnection, newGroup, newRule, VERSION } from "../../contracts/model.ts";
 import { GLOBAL_CATALOG } from "../../contracts/catalog.ts";
 
-// Controlled public native records + real feature SQLite/factory/evaluator.
+// Historical reader fixture. The retired evaluator constructs retained rows only.
+// Production uses the native sender hook and never binds this legacy protocol.
 // These are adapter fixtures, never live native or provider evidence.
 export async function decisionsFixture(db = new Database(":memory:"), available = true) {
   const counters = { evaluate: 0, lookup: 0, inflight: 0, peak: 0, paid: 0, writes: 0, capture: 0 };
@@ -57,7 +63,8 @@ export async function decisionsFixture(db = new Database(":memory:"), available 
   });
   await product.admission.ready;
   const rpc = (method: string, input: object) => fake.harness.behavior.callRpc(method, input) as Promise<any>;
-  const read = (input: object = {}) => rpc("listRecentDecisions", input);
+  const historicalBinding=await bindMessageAdmission(fake.bb);
+  const read = (input: object = {}) => listRecentDecisions(db,input,async()=>{if(historicalBinding.status!=="available")throw Error(historicalBinding.detail);return historicalBinding.client;});
   const snapshot = () => rpc("snapshot", { projectId: GLOBAL_CATALOG, discoverFiles: false });
   async function capture(id: string, status: "accepted" | "rejected" | "unresolved" = "rejected") {
     const submission: SubmissionV1 = { version: 1, operation: { namespace: "fixture-native", operationId: "operation-" + id }, requestFingerprint: "sha256:" + "a".repeat(64),
@@ -67,6 +74,7 @@ export async function decisionsFixture(db = new Database(":memory:"), available 
       requestedIntent: { mode: "queue", schedule: { kind: "ordinary" }, membership: "preserve", execution: { provider: null, model: null, reasoning: null, serviceTier: null, permissionMode: null, canAsk: false, configuration: {} } },
       source: { senderThreadId: "sender-id", initiator: "agent", author: { kind: "machine", machineId: "machine-id" }, editor: { kind: "user", userId: "user-id" }, origin: { kind: "agent", threadId: "sender-id" }, externalOperation: null, visibleHumanActivity: false },
       kind: "message", override: "none", expectedPlacementWitness: null };
+    if(!callback) callback=nativeEvaluator(createAdmissionEvaluator(createAdmissionLedger(db),()=>async()=>{counters.paid++;throw Error("Historical fixture cannot invoke paid transport");}));
     counters.evaluate++;
     const localResult = await callback({ version: 1, assessmentId: id, generation: "fixture-generation", cancellationGeneration: "fixture-cancel",
       deadlineAt: new Date(Date.now() + 20000).toISOString(), submission, publication }, {

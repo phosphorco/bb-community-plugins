@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { publicPublicationSchema, recentDecisionsInputSchema, recentDecisionsRpcSchema } from "./admission/decisions-contract.ts";
+import {  recentDecisionsInputSchema, recentDecisionsRpcSchema } from "./admission/decisions-contract.ts";
 import { PreviewPlacementResultV1Schema } from "@phosphorco/bb-message-admission/protocol";
 import {
   ConnectionSchema,
@@ -265,7 +265,7 @@ const baseSnapshotSchema = z.object({
     tokenAccounting: z.boolean(),
     mode: z.string(),
   }),
-  delivery: z.object({ state: z.string(), reason: z.string(), activeKnown:z.boolean().optional(),generationReady:z.boolean().optional(),activePublication:publicPublicationSchema.nullable().optional() }),
+  delivery: z.object({ state: z.string(), reason: z.string(), activeKnown:z.boolean().optional(),generationReady:z.boolean().optional(),activePolicy:z.object({ref:z.object({policyId:z.string(),fingerprint:z.string()}),projectId:z.string(),enabled:z.boolean(),createdAt:z.string(),catalogRevision:z.number()}).nullable().optional(),recentSenderDecisions:z.array(z.object({created_at:z.string(),thread_id:z.string(),sender_thread_id:z.string().nullable(),policy_id:z.string(),decision:z.unknown()})).optional() }),
   unresolved: z.array(z.unknown()),
 });
 

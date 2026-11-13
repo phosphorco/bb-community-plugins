@@ -59,7 +59,7 @@
     "zod": "4.6.7"
   },
   "devDependencies": {
-    "@get-bb/plugin-sdk": "0.6.52",
+    "@get-bb/plugin-sdk": "https://github.com/phosphorco/bb-fork/releases/download/sdk-0.6.143-phosphor.05199007.upgrade1/get-bb-plugin-sdk-0.6.143+phosphor.05199007.upgrade1.tgz",
     "@playwright/test": "1.63.0",
     "@types/better-sqlite3": "^7.6.12",
     "@types/jsdom": "21.1.7",

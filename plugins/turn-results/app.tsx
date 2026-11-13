@@ -1,7 +1,7 @@
 import { definePluginApp, useBbNavigate, useSdk, useRealtime, useRealtimeConnectionState } from '@get-bb/plugin-sdk/app';
 import { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import type { PluginThreadHeaderActionProps } from '@get-bb/plugin-sdk/app';
+import type { ExperimentalThreadHeaderRowProps } from '@get-bb/plugin-sdk/app';
 import { createGalleryAnchorReader, GalleryBoundaryError, GALLERY_HISTORY_LIMITS } from './gallery/anchors.ts';
 import { mountGalleryPane, observeGalleryDemand, GALLERY_PANE_LIMITS, sameBoundary, resolveGalleryBridge } from './gallery/pane.ts';
 import { createGalleryWorkOwner } from './gallery/work-owner.ts';
@@ -94,7 +94,7 @@ export default definePluginApp(app => {
     const previous = currentStop?.() ?? stopping;
     return previous ? previous.then(activate) : activate();
   } });
-  function HeaderBridge({ threadId, projectId }: PluginThreadHeaderActionProps) {
+  function HeaderBridge({ threadId, projectId }: ExperimentalThreadHeaderRowProps) {
     const sdk = useSdk(), connection = useRealtimeConnectionState();
     const nativeTimeline = useMemo(() => ({ sdk, port: sdk.threads }), [sdk]);
     const committedTimeline = useRef<typeof nativeTimeline | null>(null);
@@ -427,7 +427,6 @@ export default definePluginApp(app => {
         toProject: (...args) => { current()?.toProject(...args); },
         toPluginPanel: (...args) => { current()?.toPluginPanel(...args); },
         toCompose: (...args) => { current()?.toCompose(...args); },
-        openThreadPanel: (...args) => current()?.openThreadPanel(...args) ?? false,
         openUrl: (...args) => current()?.openUrl(...args) ?? false,
         experimental_openFilePreview: (...args) => current()?.experimental_openFilePreview(...args) ?? false,
         experimental_openFileExternally: (...args) => current()?.experimental_openFileExternally(...args) ?? false,
@@ -776,5 +775,5 @@ export default definePluginApp(app => {
 
   }
 
-  app.slots.experimental_threadHeaderAction({ id: 'turn-results-bridge', title: 'Turn results bridge', component: HeaderBridge });
+  app.slots.experimental_threadHeaderRow({ id: 'turn-results-bridge', component: HeaderBridge });
 });

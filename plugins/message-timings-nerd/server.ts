@@ -32,11 +32,12 @@ export default function plugin(bb: BbPluginApi) {
     const thread = await Promise.resolve().then(() => bb.sdk.threads.get({ threadId })).catch(() => null);
     const running = !!thread && (thread.status === "active" || thread.status === "starting" || thread.status === "stopping");
     for (let page = 0; page < 12; page++) {
-      const result = await bb.sdk.threads.timeline({ threadId, includeNestedRows: "true",
+      const result: Awaited<ReturnType<typeof bb.sdk.threads.timeline>> = await bb.sdk.threads.timeline({ threadId, includeNestedRows: "true",
         ...(cursor ? { beforeAnchorSeq: String(cursor.anchorSeq), beforeAnchorId: cursor.anchorId } : {}),
       });
+      if ("delta" in result) throw new Error("Message timings requires a full timeline snapshot; no delta was requested.");
       const prior = history.get(threadId);
-      if (page === 0 && prior?.maxSeq === result.maxSeq && prior.running === running) return history.get(threadId)!.result;
+      if (page === 0 && prior && prior.maxSeq === result.maxSeq && prior.running === running) return history.get(threadId)!.result;
       rows.push(...result.rows);
       if (page === 0) maxSeq = result.maxSeq;
       truncated = result.timelinePage.olderCursor != null;

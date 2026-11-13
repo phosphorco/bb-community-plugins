@@ -5,7 +5,7 @@ import { canonical } from "../../contracts/hash.ts";
 import { recentDecisionsSchema, DECISION_PAGE_BYTES } from "../../admission/decisions-contract.ts";
 import { decisionsFixture } from "./decisions.fixture.ts";
 
-test("actual factory/RPC reads native accepted, rejected and unresolved with all causes/advice, identities and feedback; feature evaluation is separate", async () => {
+test("historical reader projects accepted, rejected and unresolved native records with all causes/advice, identities and feedback; feature evaluation is separate", async () => {
   const app = await decisionsFixture();
   try {
     const discovery = app.fake.harness.inspection.registrations.experimental_publishedRpcMethods.find(method => method.method === "listRecentDecisions")!;
@@ -175,26 +175,23 @@ test("malformed/legacy/oversize bindings stay inspectable without guessed native
     app.setMissing(false); app.setOffline(true);
     const offline = await app.read({ limit: 1, assessmentId: "valid" });
     assert.equal(offline.rows[0].native.state, "unavailable");
-    assert.match(offline.rows[0].native.reason, /fixture native read offline/);
-    assert.equal(offline.rows[0].local.evaluation.policy, "reject");
+    assert.match(offline.rows[0].native.reason!, /fixture native read offline/);
+    assert.equal(offline.rows[0].local.evaluation!.policy, "reject");
     app.setOffline(false);
     assert.equal((await app.read({ limit: 1, assessmentId: "valid" })).rows[0].native.state, "found");
-    const stale = await app.snapshot();
-    assert.equal(stale.delivery.activeKnown, true); assert.equal(stale.delivery.generationReady, false); assert.equal(stale.delivery.state, "unavailable");
-    assert.equal(Object.hasOwn(stale.delivery.activePublication, "snapshotBytes"), false);
-    app.setActive(null);
-    const inactive = await app.snapshot();
-    assert.equal(inactive.delivery.activeKnown, true); assert.equal(inactive.delivery.activePublication, null);
-    app.setOffline(true);
-    assert.equal((await app.snapshot()).delivery.activeKnown, false);
+    const current=await app.snapshot();
+    assert.equal(current.delivery.activeKnown,true);assert.equal(current.delivery.generationReady,true);
+    assert.equal(current.delivery.activePolicy,null,"old native publication cannot activate the new sender hook");
+    app.setActive(null);app.setOffline(true);
+    assert.equal((await app.snapshot()).delivery.activeKnown,true,"historical native availability does not own current plugin policy");
     assert.equal(app.counters.paid, 0); assert.equal(app.counters.writes, 0);
     await app.close(false);
     const unsupported = await decisionsFixture(app.db, false);
     try {
       const page = await unsupported.read({ limit: 1, assessmentId: "valid" });
       assert.equal(page.rows[0].native.state, "unavailable");
-      assert.match(page.rows[0].native.reason, /absent/);
-      assert.equal((await unsupported.snapshot()).delivery.activeKnown, false);
+      assert.match(page.rows[0].native.reason!, /absent/);
+      assert.equal((await unsupported.snapshot()).delivery.activeKnown, true);
     } finally { await unsupported.close(); }
   } finally { if (app.db.open) await app.close(); }
 });
@@ -205,14 +202,14 @@ test("large native records use exact detail or explicit refusal; trimmed origina
     const { record } = await app.capture("large");
     record.reasons = [{ code: "large-diagnostic", message: "x".repeat(70000) }];
     let page = await app.read({ limit: 10 });
-    assert.equal(page.rows[0].native.state, "unavailable"); assert.match(page.rows[0].native.reason, /assessmentId and limit:1/);
+    assert.equal(page.rows[0].native.state, "unavailable"); assert.match(page.rows[0].native.reason!, /assessmentId and limit:1/);
     page = await app.read({ limit: 1, assessmentId: "large" });
     assert.equal(page.rows[0].native.state, "found");
-    assert.equal(page.rows[0].native.record.reasons[0].message.length, 70000);
-    assert.deepEqual(page.rows[0].native.record.assessments[0].advice, ["All advice 1", "All advice 2"]);
+    assert.equal(page.rows[0].native.record!.reasons[0].message.length, 70000);
+    assert.deepEqual(page.rows[0].native.record!.assessments[0].advice, ["All advice 1", "All advice 2"]);
     record.reasons[0]!.message = "x".repeat(300000);
     page = await app.read({ limit: 1, assessmentId: "large" });
-    assert.equal(page.rows[0].native.state, "unavailable"); assert.match(page.rows[0].native.reason, /256 KiB/);
+    assert.equal(page.rows[0].native.state, "unavailable"); assert.match(page.rows[0].native.reason!, /256 KiB/);
     record.reasons = [];
     const frozen = JSON.parse((app.db.prepare("SELECT frozen FROM mr_admissions WHERE id='large'").get() as any).frozen);
     frozen.binding.submission.policyContext.messageText = "long original ".repeat(12000);
@@ -220,11 +217,11 @@ test("large native records use exact detail or explicit refusal; trimmed origina
     record.requestFingerprint = "sha256:" + "f".repeat(64);
     page = await app.read({ limit: 25 });
     assert.equal(page.rows[0].submission, null);
-    assert.equal(page.rows[0].native.state, "unavailable"); assert.match(page.rows[0].native.reason, /frozen submission identity/);
+    assert.equal(page.rows[0].native.state, "unavailable"); assert.match(page.rows[0].native.reason!, /frozen submission identity/);
     record.requestFingerprint = frozen.binding.submission.requestFingerprint;
     record.original = { originalId: "another-original", revision: 1 };
     page = await app.read({ limit: 25 });
-    assert.match(page.rows[0].native.reason, /frozen submission identity/);
+    assert.match(page.rows[0].native.reason!, /frozen submission identity/);
     assert.equal(app.counters.writes, 0); assert.equal(app.counters.paid, 0);
   } finally { await app.close(); }
 });
@@ -235,18 +232,18 @@ test("native missing/invalid status never promotes local allow; official public 
     const { record } = await app.capture("local-allow", "accepted");
     app.setMissing(true);
     let row = (await app.read({ limit: 1, assessmentId: "local-allow" })).rows[0];
-    assert.equal(row.local.evaluation.policy, "allow");
+    assert.equal(row.local.evaluation!.policy, "allow");
     assert.equal(row.native.state, "missing"); assert.equal(row.native.record, null);
     app.setMissing(false);
     record.acceptedOriginal = null;
     row = (await app.read({ limit: 1, assessmentId: "local-allow" })).rows[0];
     assert.equal(row.native.state, "unavailable");
-    assert.match(row.native.reason, /immutable accepted original/);
+    assert.match(row.native.reason!, /immutable accepted original/);
     record.status = "evaluating";
     record.delivery = { state: "none", queueId: null, requestId: null, groupIndex: null, details: null };
     record.operation = { namespace: "another-native", operationId: "same-looking-id" };
     row = (await app.read({ limit: 1, assessmentId: "local-allow" })).rows[0];
-    assert.equal(row.native.state, "unavailable"); assert.match(row.native.reason, /another operation/);
+    assert.equal(row.native.state, "unavailable"); assert.match(row.native.reason!, /another operation/);
     assert.equal(app.counters.paid, 0); assert.equal(app.counters.writes, 0);
   } finally { await app.close(); }
 });

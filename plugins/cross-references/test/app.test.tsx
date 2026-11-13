@@ -61,8 +61,8 @@ test.each(["forward", "backlink"] as const)("merges overlapping %s pages and adv
         ? { rows: [replacement], total: 2, nextCursor: "distinct-page" }
         : { rows: [distinct], total: 2, nextCursor: null };
   };
-  const slot = renderSlot(app.threadHeaderActions[0]!,
-    { threadId: "thr_overlap", projectId: "proj_overlap", isCompactViewport: false },
+  const slot = renderSlot(app.threadHeaderRows[0]!,
+    { environment: null,  threadId: "thr_overlap", projectId: "proj_overlap", isCompactViewport: false },
     { rpc: {
       listForwardReferences: direction === "forward" ? page : () => ({ rows: [], total: 0, nextCursor: null }),
       listBacklinks: direction === "backlink" ? page : () => ({ rows: [], total: 0, nextCursor: null }),
@@ -91,8 +91,8 @@ test("load-more cannot discard an in-flight realtime refresh", async () => {
   const app = await loadPluginApp(() => import("../app.tsx"));
   const refreshed = deferred<{ rows: ReturnType<typeof forwardRow>[]; total: number; nextCursor: null }>();
   let calls = 0;
-  const slot = renderSlot(app.threadHeaderActions[0]!,
-    { threadId: "thr_refresh_race", projectId: "proj_refresh_race", isCompactViewport: false },
+  const slot = renderSlot(app.threadHeaderRows[0]!,
+    { environment: null,  threadId: "thr_refresh_race", projectId: "proj_refresh_race", isCompactViewport: false },
     { rpc: {
       listForwardReferences: (input: { cursor?: string }) => {
         calls++;
@@ -124,8 +124,8 @@ test("both directions accept concurrent page results and a refresh invalidates o
   const obsoleteForward = deferred<{ rows: ReturnType<typeof forwardRow>[]; total: number; nextCursor: null }>();
   let forwardCalls = 0;
   let backlinkCalls = 0;
-  const slot = renderSlot(app.threadHeaderActions[0]!,
-    { threadId: "thr_parallel", projectId: "proj_parallel", isCompactViewport: false },
+  const slot = renderSlot(app.threadHeaderRows[0]!,
+    { environment: null,  threadId: "thr_parallel", projectId: "proj_parallel", isCompactViewport: false },
     { rpc: {
       listForwardReferences: (input: { cursor?: string }) => {
         forwardCalls++;
@@ -161,8 +161,8 @@ test("both directions accept concurrent page results and a refresh invalidates o
 test("the References header presents directed forward references and backlinks in one accessible dialog", async () => {
   const app = await loadPluginApp(() => import("../app.tsx"));
   const slot = renderSlot(
-    app.threadHeaderActions[0]!,
-    { threadId: "thr_header01", projectId: "proj_header01", isCompactViewport: false },
+    app.threadHeaderRows[0]!,
+    { environment: null,  threadId: "thr_header01", projectId: "proj_header01", isCompactViewport: false },
     {
       rpc: {
         listForwardReferences: () => ({ rows: [forwardRow()], total: 1, nextCursor: null }),
@@ -218,8 +218,8 @@ test("renders an observed external URL as a navigable forward reference", async 
   const app = await loadPluginApp(() => import("../app.tsx"));
   const externalUrl = "https://example.test/design?source=assistant#overview";
   const slot = renderSlot(
-    app.threadHeaderActions[0]!,
-    { threadId: "thr_url01", projectId: "proj_url01", isCompactViewport: false },
+    app.threadHeaderRows[0]!,
+    { environment: null,  threadId: "thr_url01", projectId: "proj_url01", isCompactViewport: false },
     {
       rpc: {
         listForwardReferences: () => ({
@@ -260,8 +260,8 @@ test("renders an observed external URL as a navigable forward reference", async 
 test("shows only the backlink metric when this thread has no forward references", async () => {
   const app = await loadPluginApp(() => import("../app.tsx"));
   const slot = renderSlot(
-    app.threadHeaderActions[0]!,
-    { threadId: "thr_backlink01", projectId: "proj_backlink01", isCompactViewport: false },
+    app.threadHeaderRows[0]!,
+    { environment: null,  threadId: "thr_backlink01", projectId: "proj_backlink01", isCompactViewport: false },
     {
       rpc: {
         listForwardReferences: () => ({ rows: [], total: 0, nextCursor: null }),
@@ -282,8 +282,8 @@ test("paginates forward references independently from backlinks", async () => {
   const forwardInputs: unknown[] = [];
   const backlinkInputs: unknown[] = [];
   const slot = renderSlot(
-    app.threadHeaderActions[0]!,
-    { threadId: "thr_pages01", projectId: "proj_pages01", isCompactViewport: false },
+    app.threadHeaderRows[0]!,
+    { environment: null,  threadId: "thr_pages01", projectId: "proj_pages01", isCompactViewport: false },
     {
       rpc: {
         listForwardReferences: (input: unknown) => {
@@ -317,8 +317,8 @@ test("paginates forward references independently from backlinks", async () => {
 test("hides the header action when this thread has no forward references or backlinks", async () => {
   const app = await loadPluginApp(() => import("../app.tsx"));
   const slot = renderSlot(
-    app.threadHeaderActions[0]!,
-    { threadId: "thr_empty01", projectId: "proj_empty01", isCompactViewport: false },
+    app.threadHeaderRows[0]!,
+    { environment: null,  threadId: "thr_empty01", projectId: "proj_empty01", isCompactViewport: false },
     {
       rpc: {
         listForwardReferences: () => ({ rows: [], total: 0, nextCursor: null }),
@@ -334,8 +334,8 @@ test("hides the header action when this thread has no forward references or back
 test("keeps header state isolated per visible thread pane", async () => {
   const app = await loadPluginApp(() => import("../app.tsx"));
   const makePane = (projectId: string, threadId: string, label: string) => renderSlot(
-    app.threadHeaderActions[0]!,
-    { threadId, projectId, isCompactViewport: true },
+    app.threadHeaderRows[0]!,
+    { environment: null,  threadId, projectId, isCompactViewport: true },
     {
       rpc: {
         listForwardReferences: () => ({ rows: [forwardRow(label)], total: 1, nextCursor: null }),
@@ -365,8 +365,8 @@ test("shows the URL path for generic link text and keeps the original URL for na
   const app = await loadPluginApp(() => import("../app.tsx"));
   const url = "https://linky.example.test/notes/plan.md?sig=secret";
   const slot = renderSlot(
-    app.threadHeaderActions[0]!,
-    { threadId: "thr_generic01", projectId: "proj_generic01", isCompactViewport: false },
+    app.threadHeaderRows[0]!,
+    { environment: null,  threadId: "thr_generic01", projectId: "proj_generic01", isCompactViewport: false },
     {
       rpc: {
         listForwardReferences: () => ({
@@ -401,8 +401,8 @@ test("drops generic link text with no path and lets the host line name the row",
   const app = await loadPluginApp(() => import("../app.tsx"));
   const url = "https://linky.example.test/";
   const slot = renderSlot(
-    app.threadHeaderActions[0]!,
-    { threadId: "thr_generic02", projectId: "proj_generic02", isCompactViewport: false },
+    app.threadHeaderRows[0]!,
+    { environment: null,  threadId: "thr_generic02", projectId: "proj_generic02", isCompactViewport: false },
     {
       rpc: {
         listForwardReferences: () => ({
@@ -433,8 +433,8 @@ test("drops generic link text with no path and lets the host line name the row",
 test("both directions show source recency with exact timestamp tooltips and omit unknown times", async () => {
   const app = await loadPluginApp(() => import("../app.tsx"));
   const timestamp = Date.now() - 2 * 60 * 60_000;
-  const slot = renderSlot(app.threadHeaderActions[0]!,
-    { threadId: "thr_recency", projectId: "proj_recency", isCompactViewport: false },
+  const slot = renderSlot(app.threadHeaderRows[0]!,
+    { environment: null,  threadId: "thr_recency", projectId: "proj_recency", isCompactViewport: false },
     { rpc: {
       listForwardReferences: () => ({ rows: [{ ...forwardRow("Known"), lastSeenAt: timestamp }, forwardRow("Unknown", "thr_unknown")], total: 2, nextCursor: null }),
       listBacklinks: () => ({ rows: [{ ...backlinkRow(), lastSeenAt: timestamp }], total: 1, nextCursor: null }),
@@ -671,7 +671,7 @@ test("backlink context is one lazy reader with exact target/source/producer admi
   const statusRequests: UiRequest[] = [];
   const sdkRequests: UiRequest[] = [];
   const row = { ...backlinkRow(), source: mentionSource, producerPluginId: "cross-references" };
-  const slot = renderSlot(app.threadHeaderActions[0]!, { threadId: "thr_header01", projectId: "proj_header01", isCompactViewport: false }, { rpc: { listForwardReferences: () => ({ rows: [], total: 0, nextCursor: null }), listBacklinks: () => ({ rows: [row], total: 1, nextCursor: null }), checkForwardReferences: () => [] }, sdk: mentionSdk(request => {
+  const slot = renderSlot(app.threadHeaderRows[0]!, { environment: null,  threadId: "thr_header01", projectId: "proj_header01", isCompactViewport: false }, { rpc: { listForwardReferences: () => ({ rows: [], total: 0, nextCursor: null }), listBacklinks: () => ({ rows: [row], total: 1, nextCursor: null }), checkForwardReferences: () => [] }, sdk: mentionSdk(request => {
     sdkRequests.push(request);
     if (request.method === "crossReferencesProducer.describe") { statusRequests.push(request); return producerDescribe(); }
     if (request.method === "crossReferencesProducerV1GetState") { statusRequests.push(request); return { version: 1, projection: null, evidence: null, status: null, revisionHighWater: 0 }; }
@@ -851,7 +851,7 @@ test("multiple future slots retain every page row without duplicate keys through
 
 test('fixed Brief blocked producer warning stays reachable (info tooltip) at ZERO V1 relationships without inventing an edge',async()=>{
  const app=await loadPluginApp(()=>import('../app.tsx'));const sdk=mentionSdk(request=>request.method==='crossReferencesProducer.describe'?{protocol:'cross-references-producer',versions:[1],sourceKinds:['thread-brief'],limits:{inputBytes:1048576,statusBytes:16384,locations:512,perTarget:100,headingBytes:256,limitCodes:['target-count']}}:request.method==='crossReferencesProducerV1GetState'?{version:1,projection:null,evidence:null,revisionHighWater:10,status:{state:'over-limit',sourceContentRevision:mentionHash,limits:['target-count'],attemptRevision:10,statusDigest:mentionHash,sourceFile:{kind:'thread-storage',threadId:'thr_zero',path:'BRIEF.md'},applicability:'current'}}:null);
- const slot=renderSlot(app.threadHeaderActions[0]!,{threadId:'thr_zero',projectId:'proj_zero',isCompactViewport:false},{sdk,rpc:{listForwardReferences:()=>({rows:[],total:0,nextCursor:null}),listBacklinks:()=>({rows:[],total:0,nextCursor:null}),checkForwardReferences:()=>[]}} as any);
+ const slot=renderSlot(app.threadHeaderRows[0]!,{ environment: null, threadId:'thr_zero',projectId:'proj_zero',isCompactViewport:false},{sdk,rpc:{listForwardReferences:()=>({rows:[],total:0,nextCursor:null}),listBacklinks:()=>({rows:[],total:0,nextCursor:null}),checkForwardReferences:()=>[]}} as any);
  fireEvent.click(await slot.findByRole('button',{name:'Cross-references: Thread Brief'}));const info=await slot.findByRole('button',{name:'Reference warning'});const described=()=>document.getElementById(info.getAttribute('aria-describedby')!)!;expect(described().textContent).toContain('brief references not updated: over limit (target-count)');expect(described().className).toContain('cross-references__visually-hidden');expect(info.getAttribute('aria-expanded')).toBe('false');fireEvent.focus(info);expect(described().className).not.toContain('cross-references__visually-hidden');fireEvent.keyDown(document,{key:'Escape'});expect(info.getAttribute('aria-expanded')).toBe('false');expect(slot.getByRole('dialog',{name:'References'})).toBeTruthy();fireEvent.click(info);expect(info.getAttribute('aria-expanded')).toBe('true');expect(slot.queryByText('1 forward reference')).toBeNull();slot.lifecycle.unmount();
 });
 

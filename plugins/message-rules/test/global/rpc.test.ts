@@ -31,7 +31,7 @@ test("authoring RPC discovery publishes real schemas while preserving validation
   const after = await fake.harness.behavior.callRpc("snapshot", { projectId: G, discoverFiles: false }) as any;
   assert.equal(after.project.revision, before);
   assert.deepEqual(after.project.rules, []);
-  assert.ok(Object.values(fake.harness.inspection.registrations.hooks).every((h) => h === null));
+  assert.equal(typeof fake.harness.inspection.registrations.hooks["message.dispatch"], "function");
   await fake.harness.lifecycle.dispose();
   db.close();
 });

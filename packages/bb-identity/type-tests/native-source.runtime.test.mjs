@@ -131,8 +131,11 @@ test('empty/deferred rows and projection delta/update omissions stay partial bes
   const snap = { source, events: [...events.slice(0, -1), empty, terminal()], timeline: timeline([...projection.rows, assistantRow('deferred', 8, 8, '')]) };
   const e = value(adapter.resolve(snap));
   assert.equal(e.text.length, 2); assert.equal(e.coverage.source.status, 'partial'); assert.ok(e.coverage.source.reasons.includes('projection-source-join-unresolved')); // Empty completed payload cannot prove a text-bearing endpoint.
-  const partial = value(adapter.resolve({ source, events, timeline: { ...projection, delta: { upsertRows: [] }, timelinePage: { ...projection.timelinePage, olderRowUpdates: [projection.rows[0]] } } }));
-  assert.ok(partial.coverage.source.reasons.includes('projection-delta-requires-materialized-rows')); assert.ok(partial.coverage.source.reasons.includes('projection-row-updates-unapplied'));
+  const partial = value(adapter.resolve({ source, events, timeline: { maxSeq: projection.maxSeq, tag: 'delta-snapshot', delta: { afterTag: 'previous', fields: {}, upsertRows: [] } } }));
+  assert.deepEqual(partial.text, []);
+  assert.ok(partial.coverage.source.reasons.includes('projection-delta-requires-materialized-rows'));
+  const updated = value(adapter.resolve({ source, events, timeline: { ...projection, timelinePage: { ...projection.timelinePage, olderRowUpdates: [projection.rows[0]] } } }));
+  assert.ok(updated.coverage.source.reasons.includes('projection-row-updates-unapplied'));
 });
 
 test('missing/unsupported source events never borrow unrelated request links or claim known attribution', () => {
