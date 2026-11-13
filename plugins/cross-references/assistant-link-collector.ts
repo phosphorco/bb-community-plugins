@@ -37,6 +37,8 @@ export class AssistantLinkCollector {
   private readonly lifetime = new AbortController();
   private recognitionCache=new Map<string,TaggedCandidateV1[]>();
   private readonly continuations=new Map<string,number>();
+  private readonly sourceWatches=new Map<string,()=>void>();
+  private sourceWatchSignal:AbortSignal|undefined;
   private readonly activeAttempts=new Set<{threadId:string;controller:AbortController}>();
   private readonly discoveryOwner = createRecognitionDiscoveryOwner();
   private suppliers: ReadyRecognitionSupplier[] = [];
@@ -80,6 +82,26 @@ export class AssistantLinkCollector {
     this.wake?.();
   }
 
+  /** Compaction changes are detail-only native signals. Bind exact cached
+   * source IDs, never a catalogue subscription that cannot see those signals. */
+  private watchSources(extraThreadId?:string):void {
+    const signal=this.sourceWatchSignal;if(!signal || signal.aborted || this.inactive())return;
+    const ids=new Set((this.db.prepare('SELECT thread_id FROM assistant_link_checkpoints').all() as {thread_id:string}[]).map(row=>row.thread_id));
+    if(extraThreadId)ids.add(extraThreadId);
+    for(const [id,off] of this.sourceWatches)if(!ids.has(id)){off();this.sourceWatches.delete(id);}
+    for(const id of ids)if(!this.sourceWatches.has(id)){
+      let live=true;
+      const off=this.bb.sdk.subscribe({event:'thread:changed',threadId:id,callback:event=>{
+        if(!live || signal.aborted || this.inactive())return;
+        const checkpoint=new CollectionCheckpoints(this.db).load(id);
+        const sameSequenceAppend=event.changes.includes('events-appended') && checkpoint?.maxSeq!=null &&
+          (event.metadata?.timelineSequence===undefined || event.metadata.timelineSequence<=checkpoint.maxSeq);
+        if(sameSequenceAppend || event.changes.some(change=>change==='history-rewritten' || change==='history-compacted'))this.invalidateSources(id);
+      }});
+      this.sourceWatches.set(id,()=>{live=false;off();});
+    }
+  }
+
   /** Invalidate reconstructible inputs without creating a catalogue backfill
    * for ordinary preference changes. Existing jobs keep priority/backoff. */
   private invalidateSources(threadId?:string):void {
@@ -87,12 +109,13 @@ export class AssistantLinkCollector {
     if(threadId){new CollectionCheckpoints(this.db).remove(threadId);this.continuations.delete(threadId);}
     else {this.db.prepare('DELETE FROM assistant_link_checkpoints').run();this.continuations.clear();}
     for(const attempt of this.activeAttempts)if(!threadId || attempt.threadId===threadId)attempt.controller.abort();
-    this.wake?.();
+    this.watchSources();this.wake?.();
   }
 
   dispose():void {
     if(this.disposed)return;
     this.disposed=true;
+    for(const off of this.sourceWatches.values())off();this.sourceWatches.clear();this.sourceWatchSignal=undefined;
     this.supplierEpoch++;
     this.lifetime.abort();
     this.discoveryOwner.dispose();
@@ -206,6 +229,7 @@ export class AssistantLinkCollector {
     let checkpoint=checkpoints.load(job.thread_id);
     const continuing=checkpoint && !checkpoint.ready && this.continuations.get(job.thread_id)===job.version;
     try {
+      this.watchSources(job.thread_id);
       let title = continuing ? checkpoint!.title : "Thread";
       let deleted = job.deleted === 1;
       let complete = true;
@@ -237,7 +261,17 @@ export class AssistantLinkCollector {
             if(head.length===1 && Number.isSafeInteger(head[0]!.seq))headSeq=head[0]!.seq;
           }catch { /* Fall back to authoritative timeline reconstruction. */ }
           if(!stillCurrent())return true;
-          if(checkpoint.maxSeq===null || headSeq!==checkpoint.maxSeq){
+          if(!checkpoint.ready && checkpoint.maxSeq!==null && headSeq===checkpoint.maxSeq && this.sourceWatchSignal){
+            const witness=await bounded(s=>this.bb.sdk.threads.timeline({threadId:job.thread_id,includeNestedRows:'false',segmentLimit:'100',afterSequence:String(checkpoint!.maxSeq),signal:s}),signal,1000,
+              outerDiagnostic=diagnostics.operation('timeline-prefetch'));
+            if(!stillCurrent())return true;
+            if(witness.maxSeq!==checkpoint.maxSeq || !witness.delta || witness.delta.upsertRows.length>0 || witness.contextBoundarySeq!==checkpoint.contextBoundarySeq ||
+              (witness.delta?.rowOrder!==undefined && JSON.stringify(witness.delta.rowOrder)!==JSON.stringify(checkpoint.headIds)) ||
+              (witness.timelinePage.olderRowUpdates?.length??0)>0 || (witness.timelinePage.olderRowsSourceSeqEnd!=null && witness.timelinePage.olderRowsSourceSeqEnd>checkpoint.maxSeq)){
+              checkpoints.remove(job.thread_id);checkpoint=undefined;this.continuations.delete(job.thread_id);return true;
+            }else {this.continuations.set(job.thread_id,job.version);return true;}
+          }
+          if(checkpoint && (checkpoint.maxSeq===null || headSeq!==checkpoint.maxSeq)){
             // afterSequence is a delta of the latest window, not a complete
             // history feed. Admit only new rows with a retained conversation
             // overlap. Rewrites/compaction and a missing server cache return a
@@ -405,7 +439,7 @@ export class AssistantLinkCollector {
         this.bb.log.warn(`Could not collect Cross References for ${job.thread_id}: Diagnostics: ${diagnostics.encode()}`);
       }
     }
-    finally {diagnostics.close();this.activeAttempts.delete(attempt);}
+    finally {diagnostics.close();this.activeAttempts.delete(attempt);this.watchSources();}
     return true;
   }
 
@@ -429,9 +463,10 @@ export class AssistantLinkCollector {
     if(this.inactive() || this.running || signal.aborted)return;
     this.running=true;
     signal=AbortSignal.any([signal,this.lifetime.signal]);
+    this.sourceWatchSignal=signal;
     const subscriptions:Array<()=>void>=[];
     let listening=true;
-    const stop=()=>{listening=false;for(const off of subscriptions.splice(0))off();};
+    const stop=()=>{listening=false;for(const off of subscriptions.splice(0))off();for(const off of this.sourceWatches.values())off();this.sourceWatches.clear();this.sourceWatchSignal=undefined;};
     signal.addEventListener('abort',stop,{once:true});
     try {
       subscriptions.push(this.bb.sdk.subscribe({event:'system:changed',callback:event=>{
@@ -444,17 +479,13 @@ export class AssistantLinkCollector {
         if(listening && !signal.aborted && event.reconnected){this.invalidateSources();this.invalidateSuppliers();}
       }}));
       if(!listening || this.inactive() || signal.aborted)return;
-      subscriptions.push(this.bb.sdk.subscribe({event:'thread:changed',callback:event=>{
-        if(listening && !signal.aborted && event.changes.some(change=>change==='history-rewritten' || change==='history-compacted'))
-          this.invalidateSources(event.id);
-      }}));
-      if(!listening || this.inactive() || signal.aborted)return;
       await this.discover(signal);
       if(this.inactive() || signal.aborted)return;
       // Across a stopped service, public events cannot prove that UI surface
       // preferences stayed unchanged. Reconstruct completed snapshots once;
       // pending cursors still resume or fail closed through native validation.
       this.db.prepare("DELETE FROM assistant_link_checkpoints WHERE json_extract(state_json,'$.ready')=1").run();
+      this.watchSources();
       this.seed();
       while (!this.inactive() && !signal.aborted) {
         if (await this.processNext(signal)) { await yieldToHost(); continue; }

@@ -216,7 +216,7 @@ test("active service owns plugin/reconnect subscriptions; abort removes them bef
   t.after(() => controller.abort());
   const running = f.services[0]!.start(controller.signal);
   await listing;
-  assert.equal(f.subscriptions.size, 3);
+  assert.equal(f.subscriptions.size, 2);
   const nativeSource = {provider: "bb", keys: {project: "proj_event", thread: "thr_event"}, presentation: {label: "Seed"}};
   const seed = {...input, producerPluginId: "cross-references", source: nativeSource, targets: [],
     payloadDigest: projectionPayloadDigest("cross-references", canonicalizeResource(nativeSource), false, [])};
@@ -245,7 +245,7 @@ test("active service owns plugin/reconnect subscriptions; abort removes them bef
   assert.doesNotThrow(f.queuedCallbacks);
   await f.services[0]!.start(new AbortController().signal); // Disposed collector cannot restart.
   assert.equal(f.subscriptions.size, 0);
-  assert.equal(f.unsubscribes(), 3);
+  assert.equal(f.unsubscribes(), 2);
   assert.deepEqual(f.warnings, []);
 });
 

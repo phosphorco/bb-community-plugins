@@ -449,8 +449,10 @@ a cached source body is never proof that a target still exists or is accessible.
 Plugin invalidation clears supplier results and pure-scan receipts. Reconnect,
 surface-preference changes and history replacement/compaction invalidate source
 material too. A fresh service reconstructs completed snapshots once because
-preferences could have changed while it was stopped; pending cursors still resume
-or fail closed through native snapshot validation.
+preferences could have changed while it was stopped; pending cursors resume only after a native latest-window delta certifies their
+sequence/context, otherwise they restart safely. Exact thread-detail subscriptions
+cover the at most 32 cached sources (plus one source being collected), including
+compaction signals that native catalogue subscriptions intentionally omit.
 
 For an append, the existing `afterSequence` API may supply a delta of the latest
 window. It is usable only for a previously complete source, with unchanged

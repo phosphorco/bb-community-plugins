@@ -609,7 +609,7 @@ test('page checkpoints survive a real database reopen and resume the older curso
   assert.equal(pages,1);
   const reopened=open(path,false);t.after(()=>reopened.db.close());
   const next=fixture(reopened.db,reopened.store);next.bb.sdk.threads.events={list:async()=>[{seq:10}]};
-  next.bb.sdk.threads.timeline=async(args:any)=>{pages++;assert.equal(args.beforeAnchorId,'older');return {maxSeq:10,rows:[row('old',1,'https://example.test/old')],timelinePage:{olderCursor:null}};};
+  next.bb.sdk.threads.timeline=async(args:any)=>{if(args.afterSequence)return {maxSeq:10,contextBoundarySeq:undefined,rows:[],delta:{upsertRows:[]},timelinePage:{olderCursor:null}};pages++;assert.equal(args.beforeAnchorId,'older');return {maxSeq:10,rows:[row('old',1,'https://example.test/old')],timelinePage:{olderCursor:null}};};
   next.bb.sdk.subscribe=()=>()=>{};
   let idle!:()=>void;const reachedIdle=new Promise<void>(resolve=>{idle=resolve;});
   const process=next.collector.processNext.bind(next.collector);
@@ -696,7 +696,7 @@ test('production service reconciles completed snapshots on startup and invalidat
  const {db,store}=open();t.after(()=>db.close());let pages=0;
  const f=fixture(db,store,async()=>{pages++;return {maxSeq:10,contextBoundarySeq:null,rows:[row('m',1,'https://example.test/a')],timelinePage:{olderCursor:null}};});
  f.bb.sdk.plugins={list:async()=>({plugins:[]})};f.bb.sdk.threads.events={list:async()=>[{seq:10}]};
- const callbacks=new Map<string,(event:any)=>void>();f.bb.sdk.subscribe=({event,callback}:any)=>{callbacks.set(event,callback);return()=>callbacks.delete(event);};
+ const callbacks=new Map<string,(event:any)=>void>();f.bb.sdk.subscribe=({event,threadId,callback}:any)=>{if(event==='thread:changed')assert.equal(threadId,'thr_a','compaction requires a scoped thread-detail target');callbacks.set(event,callback);return()=>callbacks.delete(event);};
  f.collector.enqueue('proj_a','thr_a');await finish(f.collector,db);assert.equal(pages,1);
  let idleCount=0;const waiting=new Map<number,()=>void>();
  const atIdle=(count:number)=>idleCount>=count?Promise.resolve():new Promise<void>(resolve=>waiting.set(count,resolve));
@@ -706,4 +706,41 @@ test('production service reconciles completed snapshots on startup and invalidat
  callbacks.get('system:changed')!({changes:['ui-preferences-changed']});assert.equal(db.prepare('SELECT 1 FROM assistant_link_checkpoints').get(),undefined);f.collector.enqueue('proj_a','thr_a',false,true);await atIdle(2);assert.equal(pages,3);
  callbacks.get('thread:changed')!({id:'thr_a',metadata:{projectId:'proj_a'},changes:['history-rewritten']});assert.equal(db.prepare('SELECT 1 FROM assistant_link_checkpoints').get(),undefined);f.collector.enqueue('proj_a','thr_a',false,true);await atIdle(3);assert.equal(pages,4);
  controller.abort();await running;assert.equal(callbacks.size,0);
+});
+
+for(const kind of ['history-rewritten','history-compacted','events-appended'] as const)test('same-maxSeq earlier message '+kind+' cannot retain stale source bodies through native detail invalidation',async t=>{
+ const {db,store}=open();t.after(()=>db.close());let changed=false;let pages=0;
+ const f=fixture(db,store);f.bb.sdk.plugins={list:async()=>({plugins:[]})};f.bb.sdk.threads.events={list:async()=>[{seq:10}]};
+ f.bb.sdk.threads.timeline=async(args:any)=>{pages++;return {maxSeq:10,contextBoundarySeq:null,
+  rows:args.beforeAnchorId?(changed?(kind==='history-compacted'?[]:[row('older',1,'https://example.test/corrected')]):[row('older',1,'https://example.test/original')]):[row('newer',2,'https://example.test/newer')],
+  timelinePage:{olderCursor:args.beforeAnchorId?null:{anchorSeq:1,anchorId:'older'}}};};
+ let detail:((event:any)=>void)|undefined;
+ f.bb.sdk.subscribe=({event,threadId,callback}:any)=>{
+  if(event==='thread:changed'){assert.equal(threadId,'thr_a');detail=callback;return()=>{if(detail===callback)detail=undefined;};}
+  return()=>{};
+ };
+ let idleCount=0;const waiting=new Map<number,()=>void>();const atIdle=(n:number)=>idleCount>=n?Promise.resolve():new Promise<void>(resolve=>waiting.set(n,resolve));
+ const process=f.collector.processNext.bind(f.collector);f.collector.processNext=async signal=>{const worked=await process(signal);if(!worked){idleCount++;waiting.get(idleCount)?.();}return worked;};
+ const controller=new AbortController();t.after(()=>controller.abort());f.collector.enqueue('proj_a','thr_a');const running=f.collector.start(controller.signal);await atIdle(1);
+ assert.equal(pages,2);assert.ok(store.listForwardReferences({source:sourceIdentity}).rows.some(r=>r.target.keys.href==='https://example.test/original'));
+ const cached=db.prepare('SELECT 1 FROM assistant_link_checkpoints').get();if(cached)assert.ok(detail,'a cached source needs the native scoped detail subscription');
+ changed=true;detail?.({id:'thr_a',metadata:{timelineSequence:10},changes:[kind]});
+ f.collector.enqueue('proj_a','thr_a',false,true);await atIdle(2);
+ const hrefs=store.listForwardReferences({source:sourceIdentity}).rows.map(r=>r.target.keys.href);
+ assert.equal(pages,4);assert.equal(hrefs.includes('https://example.test/original'),false);
+ assert.equal(hrefs.includes('https://example.test/corrected'),kind!=='history-compacted');
+ controller.abort();await running;assert.equal(detail,undefined);
+});
+
+test('offline same-sequence mutation without a native delta witness discards partial bodies before resuming',async t=>{
+ const dir=mkdtempSync(join(tmpdir(),'cross-offline-rewrite-'));t.after(()=>rmSync(dir,{recursive:true,force:true}));const path=join(dir,'queue.sqlite');
+ const initial=open(path);const first=fixture(initial.db,initial.store,async()=>({maxSeq:10,contextBoundarySeq:null,rows:[row('m',2,'https://example.test/removed')],timelinePage:{olderCursor:{anchorSeq:1,anchorId:'older'}}}));
+ first.collector.enqueue('proj_a','thr_a');await first.collector.processNext(new AbortController().signal);first.collector.dispose();initial.db.close();
+ const reopened=open(path,false);t.after(()=>reopened.db.close());let witnesses=0;
+ const next=fixture(reopened.db,reopened.store);next.bb.sdk.plugins={list:async()=>({plugins:[]})};next.bb.sdk.threads.events={list:async()=>[{seq:10}]};next.bb.sdk.subscribe=()=>()=>{};
+ next.bb.sdk.threads.timeline=async(args:any)=>{if(args.afterSequence)witnesses++;return {maxSeq:10,contextBoundarySeq:null,rows:[row('m',2,'https://example.test/current')],timelinePage:{olderCursor:null}};};
+ let idle!:()=>void;const reachedIdle=new Promise<void>(resolve=>{idle=resolve;});const process=next.collector.processNext.bind(next.collector);
+ next.collector.processNext=async signal=>{const worked=await process(signal);if(!worked)idle();return worked;};
+ const controller=new AbortController();const running=next.collector.start(controller.signal);await reachedIdle;controller.abort();await running;
+ assert.equal(witnesses,1);assert.deepEqual(reopened.store.listForwardReferences({source:sourceIdentity}).rows.map(r=>r.target.keys.href),['https://example.test/current']);
 });
