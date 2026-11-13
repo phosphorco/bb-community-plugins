@@ -93,3 +93,9 @@ The chooser keeps only validated published revisions in bounded module memory, s
 At most four origin/instance scopes retain up to 100 revisions and 1 MiB of serialized published data each for 24 hours. Namespace keys are limited to 4 KiB. Known version/namespace changes and mounted-read invalidation prevent older responses from restoring removed choices. Oversized valid catalogs remain usable from the current server response; only epoch/version metadata is retained, without claiming equality for unretained contents. There is no chooser IndexedDB, hashing, cache deadline or cross-tab persistence protocol. Storage and crypto availability cannot block a valid current catalog. Authoritative empty choices restore native Recent; selected recovery and the independent native composer keep their own state. Final launch always validates current server facts again.
 
 Backend database fixtures finalize their prepared statements and close the connection strictly before reopening or removing their temporary database. Fixture lifetime tests retain an old statement to verify that disposal really retires the old connection.
+
+## Browser test prerequisite
+
+After the collection’s locked `npm ci`, run `npm exec -- playwright install chromium` from this plugin directory before `npm test`. This installs the Chromium revision selected by the locked Playwright dependency; the browser tests use its public executable path. Tests do not acquire it implicitly. A missing browser is a setup failure, not a skipped browser proof.
+
+Browser fixture files run in separate Bun processes through npm test, so DOM/clock mocks and server cleanup from one fixture cannot affect another. The runner discovers every test file; it does not omit browser checks or retry failed assertions.

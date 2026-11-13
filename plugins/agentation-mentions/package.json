@@ -34,7 +34,7 @@
     "bbPluginSdk": ">=0.6.52"
   },
   "bb": {
-    "name": "Agentation → Mentions",
+    "name": "Agentation \u2192 Mentions",
     "description": "Based on Agentation by Scott Sunarto; adds bb mentions, queued delivery, and verified identity tags to visual feedback.",
     "branding": {
       "icon": "./icons/annotate.svg",
@@ -93,7 +93,7 @@
     "@phosphorco/bb-identity": "0.2.1"
   },
   "devDependencies": {
-    "@get-bb/plugin-sdk": "0.6.52",
+    "@get-bb/plugin-sdk": "https://github.com/phosphorco/bb-fork/releases/download/sdk-0.6.143-phosphor.05199007.upgrade1/get-bb-plugin-sdk-0.6.143+phosphor.05199007.upgrade1.tgz",
     "@types/better-sqlite3": "^7.6.12",
     "@types/node": "^22",
     "@types/react": "19.2.2",
