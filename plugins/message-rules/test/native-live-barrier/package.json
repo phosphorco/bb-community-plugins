@@ -1,0 +1,13 @@
+{
+  "name": "@phosphorco/bb-plugin-native-live-barrier",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "bb": {
+    "name": "Native live controlled barrier",
+    "description": "Test-only controlled lifecycle synchronization; no evaluator, identity, grouping or provider output.",
+    "server": "./server.ts",
+    "branding": { "icon": "Pause" }
+  },
+  "devDependencies": { "@get-bb/plugin-sdk": "0.6.52" }
+}
