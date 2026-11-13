@@ -441,6 +441,7 @@ export class AssistantLinkCollector {
       for (const changed of signals) {if(this.inactive() || signal.aborted)break;this.publish(changed,threadIdentity(job.project_id,job.thread_id));}
       if(committed && !this.inactive() && !signal.aborted && epoch===this.supplierEpoch && scan.coverage.reasons.length)this.bb.log.warn(`Cross References collection incomplete for ${job.thread_id}: ${scan.coverage.reasons.join(', ')}. Prior unvisited locations retained within caps. Diagnostics: ${diagnostics.encode()}`);
     } catch (error) {
+      this.continuations.delete(job.thread_id); // A failed attempt retires its in-process page lease.
       if (stillCurrent()) {
         const retryAt = Date.now() + Math.min(60_000, 1_000 * 2 ** Math.min(job.attempts, 6));
         this.db.prepare(`UPDATE assistant_link_jobs SET retry_at = ?, attempts = attempts + 1
@@ -491,10 +492,10 @@ export class AssistantLinkCollector {
       if(!listening || this.inactive() || signal.aborted)return;
       await this.discover(signal);
       if(this.inactive() || signal.aborted)return;
-      // Across a stopped service, public events cannot prove that UI surface
-      // preferences stayed unchanged. Reconstruct completed snapshots once;
-      // pending cursors still resume or fail closed through native validation.
-      this.db.prepare("DELETE FROM assistant_link_checkpoints WHERE json_extract(state_json,'$.ready')=1").run();
+      // Native delta floors are process-local. Even an empty same-sequence
+      // delta cannot bind raw bodies from a previous service lifetime.
+      // Jobs/backoff and graph/evidence remain durable; inputs reconstruct.
+      this.db.prepare('DELETE FROM assistant_link_checkpoints').run();
       this.watchSources();
       this.seed();
       while (!this.inactive() && !signal.aborted) {

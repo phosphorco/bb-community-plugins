@@ -437,8 +437,13 @@ reference/evidence transaction. A worker quantum fetches at most one timeline
 page and persists that page's cursor and accepted messages atomically, then
 returns to the event loop. Recognition also yields between messages within its
 existing source deadline. Partial traversal never publishes a complete graph.
-Reload resumes a matching pending sequence checkpoint; an expired cursor discards only
-reconstructible source material and retains the job's retry intent.
+Reload retains pending jobs but discards all reconstructible source checkpoints
+and bodies, including partial pages. Native delta floors are process-local, so
+an empty same-sequence delta after a native restart cannot certify older bodies.
+A new service reconstructs sources from the first page. An expired cursor also
+discards only reconstructible inputs and retains the job's retry intent. A failed
+page attempt retires its continuation lease; a due retry must obtain a fresh
+native witness before reusing any partial source.
 
 Every source-cache reuse first requests a native `afterSequence` timeline
 witness. Only an explicit unchanged delta, stable context boundary and stable
@@ -457,9 +462,9 @@ used; a full response is reused as the first reconstruction page.
 
 Plugin invalidation clears supplier results and pure-scan receipts. Reconnect,
 surface-preference changes and history replacement/compaction invalidate source
-material too. A fresh service reconstructs completed snapshots once because
-preferences could have changed while it was stopped; pending cursors resume only after a native latest-window delta certifies their
-sequence/context, otherwise they restart safely. Exact thread-detail subscriptions
+material too. A fresh service reconstructs all source snapshots, including partial inputs,
+because neither historical content nor preferences can be certified across
+service lifetimes. Exact thread-detail subscriptions
 cover the at most 32 cached sources (plus one source being collected), including
 compaction signals that native catalogue subscriptions intentionally omit. A
 source-history signal durably enqueues its known source even when the preceding
