@@ -15,7 +15,7 @@ import {
 } from "@get-bb/plugin-sdk/app";
 import type {
   PluginNavPanelProps,
-  PluginThreadPanelProps,
+  ExperimentalThreadActionTabProps,
 } from "@get-bb/plugin-sdk/app";
 import type {
   uiContract,
@@ -837,7 +837,7 @@ function Page({ subPath }: PluginNavPanelProps) {
     </Runtime>
   );
 }
-function Panel({ threadId }: PluginThreadPanelProps) {
+function Panel({ threadId }: ExperimentalThreadActionTabProps) {
   const [selected, setSelected] = useState<string>();
   useEffect(() => setSelected(undefined), [threadId]);
   return (
@@ -859,7 +859,7 @@ export default definePluginApp((app) => {
     path: "subscriptions",
     component: Page,
   });
-  app.slots.threadPanelAction({
+  app.slots.experimental_tab({ context: {kind: "thread"}, availability: "action",
     id: "subscriptions",
     title: "Watch & reminder subscriptions",
     icon: "Clock",

@@ -8,6 +8,7 @@
 
 | Plugin | Purpose |
 |---|---|
+| [Message Rules](plugins/message-rules/) | Configure message rules and authored regression suites; full native all-sender delivery remains conditional. |
 | [Figma](plugins/figma/) | Use official Figma tools for reads and edits through native agent tools, `bb figma`, and shared sign-in settings. |
 | [Sentry](plugins/sentry/) | Use official Sentry MCP tools through native agent tools, `bb sentry`, and shared sign-in settings. |
 | [Compact display](plugins/compact-display/) | Shared native UI overrides: responsive 760/1080/1440px thread columns, contained tables, and compact composers. |

@@ -40,9 +40,10 @@ export default function plugin(bb: BbPluginApi) {
       if (head?.length === 1 && Number.isSafeInteger(head[0]!.seq) && head[0]!.seq === prior.maxSeq) return prior.result;
     }
     for (let page = 0; page < 12; page++) {
-      const result = await bb.sdk.threads.timeline({ threadId, includeNestedRows: "true",
+      const result: Awaited<ReturnType<typeof bb.sdk.threads.timeline>> = await bb.sdk.threads.timeline({ threadId, includeNestedRows: "true",
         ...(cursor ? { beforeAnchorSeq: String(cursor.anchorSeq), beforeAnchorId: cursor.anchorId } : {}),
       });
+      if ("delta" in result) throw new Error("Message timings requires a full timeline snapshot; no delta was requested.");
       if (page === 0 && prior?.maxSeq === result.maxSeq && prior.running === running) return prior.result;
       rows.push(...result.rows);
       if (page === 0) maxSeq = result.maxSeq;

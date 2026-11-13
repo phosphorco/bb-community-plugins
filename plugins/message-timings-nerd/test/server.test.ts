@@ -137,3 +137,11 @@ test("a corrected send time is projected after its sequence advances", async () 
   const after = await harness.callRpc("timings", { threadId: "t" }) as { stamps: Stamp[] };
   assert.equal(after.stamps[0]?.at, 200);
 });
+
+test("RPC refuses an unsolicited timeline delta instead of reporting empty history", async () => {
+  const { bb, harness } = createFakePluginHost({ sdk: { threads: {
+    timeline: () => ({ maxSeq: 1, tag: "next", delta: { afterTag: "previous", fields: {}, upsertRows: [] } }),
+  } } });
+  plugin(bb);
+  await assert.rejects(harness.callRpc("timings", { threadId: "t" }), /requires a full timeline snapshot/);
+});

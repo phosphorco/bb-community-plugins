@@ -1503,6 +1503,42 @@
       "count": 1,
       "kind": "reviewed-exception",
       "intent": "BriefContentScrollAnchor content is an HTMLElement ref used only for scroll/focus lifecycle; it returns existing children and does not parse or render Markdown."
+    },
+    {
+      "root": "community",
+      "path": "plugins/message-rules/contracts/fixture.ts",
+      "rule": "parser-import",
+      "sha256": "090c2bd5de6fcec3b4c1660edb63e5932464f662a0ebb57f44f70374aa11e148",
+      "count": 1,
+      "kind": "parser-only",
+      "intent": "Message Rules authored-fixture grammar only: top-level heading offsets distinguish fenced/nested payload; returns fixture data, never HTML or a UI renderer. Source editor is CodeMirror."
+    },
+    {
+      "root": "community",
+      "path": "plugins/message-rules/contracts/fixture.ts",
+      "rule": "parser-use",
+      "sha256": "d607c575a28facedf635e4659594e7835a02d4ae8aaf6766b4d5607539332705",
+      "count": 1,
+      "kind": "parser-only",
+      "intent": "Message Rules authored-fixture grammar only: top-level heading offsets distinguish fenced/nested payload; returns fixture data, never HTML or a UI renderer. Source editor is CodeMirror."
+    },
+    {
+      "root": "community",
+      "path": "plugins/message-rules/contracts/fixture.ts",
+      "rule": "parser-use",
+      "sha256": "fddee034ead72385768dbe587be025e3d75d36b7a8f511ee436d0409999a41b3",
+      "count": 1,
+      "kind": "parser-only",
+      "intent": "Message Rules authored-fixture grammar only: top-level heading offsets distinguish fenced/nested payload; returns fixture data, never HTML or a UI renderer. Source editor is CodeMirror."
+    },
+    {
+      "root": "community",
+      "path": "plugins/message-rules/contracts/fixture.ts",
+      "rule": "parser-import",
+      "sha256": "c63faddef38fe9f309d3b050431746e2cee68b2b0a07a80549d9c12d2ed5e028",
+      "count": 1,
+      "kind": "parser-only",
+      "intent": "Message Rules authored-fixture grammar only: top-level heading offsets distinguish fenced/nested payload; returns fixture data, never HTML or a UI renderer. Source editor is CodeMirror."
     }
   ]
 }
