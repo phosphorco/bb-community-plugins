@@ -1518,7 +1518,7 @@ function MachineMonitorPanel({ subPath = "" }: { subPath?: string }) {
   </main>;
 }
 
-function SidebarHealthAccessory() {
+function useSidebarHealthBadge() {
   const rpc = useRpc<typeof rpcContract>();
   const connection = useRealtimeConnectionState();
   const [health, setHealth] = useState<MachineMonitorHealth | null>(null);
@@ -1543,7 +1543,7 @@ function SidebarHealthAccessory() {
   useRealtime("machine-monitor-fleet", refresh);
   const warnings = health?.warnings ?? [];
   if (warnings.length === 0) return null;
-  return <span className="machine-monitor__sidebar-warning" role="img" aria-label={`Machine health warning: ${warnings.join(", ")}`} title={`Machine health warning: ${warnings.join(", ")}`} />;
+  return { tone: "warning" as const, label: `Machine health warning: ${warnings.join(", ")}` };
 }
 
 function MachineMonitorIcon({ className }: { className?: string }) {
@@ -1561,6 +1561,6 @@ export default definePluginApp((app) => {
     icon: "machine-monitor/fleet-health",
     path: "machine-monitor",
     component: MachineMonitorPanel,
-    experimental_sidebarAccessory: SidebarHealthAccessory,
+    experimental_useBadge: useSidebarHealthBadge,
   });
 });

@@ -481,7 +481,7 @@ function ReferencesDetail({ target, pages, loading, error, stale, loadingMore, c
   );
 }
 
-function ThreadHeaderAction({ threadId, projectId }: { threadId: string; projectId: string; isCompactViewport: boolean }) {
+function ThreadHeaderAction({ threadId, projectId }: { threadId: string; projectId: string }) {
   const { pages, loading, loadingMore, error, stale, loadMore } = useThreadReferences(projectId, threadId);
   const brief=useBriefProducerState(threadId);
   const [open, setOpen] = useState(false);
@@ -607,7 +607,7 @@ const MentionResults = createMentionsBodyLoader<{ selection: MentionSelection }>
 });
 
 export default definePluginApp((app) => {
-  app.slots.experimental_threadHeaderAction({ id: "cross-references", title: "References", component: ThreadHeaderAction });
+  app.slots.experimental_threadHeaderRow({ id: "cross-references", component: ThreadHeaderAction });
   app.slots.experimental_browserToolbarAction({ id: "mentions", title: "Mentions", component: BrowserMentionsAction });
   app.slots.navPanel({ id: "mentions", title: "Mentions", icon: "Link", path: "mentions", component: MentionsPanel });
 });
