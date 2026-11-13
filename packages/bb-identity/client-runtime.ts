@@ -323,7 +323,14 @@ export function createIdentityClient(options: { readonly connection: IdentityCon
       if (readOptions?.signal?.aborted) session = err('cancelled', 'Identity request was cancelled.');
       else if (health.generation !== verifiedGeneration || health.identity.status !== 'healthy') session = err('stale-context', 'Verified identity authority changed.');
     }
-    if (!session.ok) { if (requestOrder === refreshOrder && suspend) { snapshot = { status: 'loading' }; notify(); } return session; }
+    if (!session.ok) {
+      // Provider-only refreshes may retain live authority while freshness is
+      // pending, but a confirmed retired context must retire that old snapshot.
+      if (requestOrder === refreshOrder && (suspend || session.error.code === 'stale-context')) {
+        requiresBootstrap = true; snapshot = { status: 'loading' }; notify();
+      }
+      return session;
+    }
     snapshot = session.value; requiresBootstrap = false; notify(); return ok(undefined);
   };
   const refresh = (readOptions?: ReadOptions): Promise<Result<void>> => refreshInternal(readOptions, true);

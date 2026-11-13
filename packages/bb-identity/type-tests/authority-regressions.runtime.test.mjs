@@ -1,5 +1,6 @@
 // Independent PR12 review regressions; retain adversarial await ordering.
 import { expect, test } from 'bun:test';
+import { createIdentityConnection } from '../client-connection-runtime.ts';
 import { createIdentityClient, createIdentityFetchConnection, createIdentityClientTransport } from '../client-runtime.ts';
 import { createNativeIdentityConnection } from '../bb-client-connection-runtime.ts';
 const ok=value=>({ok:true,value});
@@ -176,5 +177,27 @@ test('fetch: aborting the physical root retires returned verification authority'
     expect(connection.getHealth().identity.status).toBe('unavailable');
     expect(connection.getHealth().generation).not.toBe(verified.value.generation);
     expect(client.currentSession()).toMatchObject({ ok: false, error: { code: 'cancelled' } });
+  } finally { client.dispose(); connection.dispose(); }
+});
+
+test('custom combined connection: stale provider refresh retires previously ready authority', async () => {
+  let generation = 0, emit; const gate = deferred(); let calls = 0;
+  const connection = createIdentityConnection({
+    getHealth: () => ({ generation, identity: { status: 'healthy' }, state: { status: 'healthy' } }),
+    subscribe: listener => { emit = listener; return () => {}; }, subscribeHealth: () => () => {},
+    request: async () => { throw Error('combined path must not issue another bootstrap'); },
+    revalidate: async () => ok(undefined),
+    revalidateSession: async () => ++calls === 1 ? ok({ session: session(), generation }) : gate.promise,
+  });
+  const client = createIdentityClient({ connection });
+  try {
+    await client.start();
+    emit({ kind: 'session', reason: 'provider' });
+    expect(client.currentSession().ok).toBe(true); // Retain authority while only provider freshness is pending.
+    generation++;
+    gate.resolve(ok({ session: session(), generation: 0 }));
+    await settle();
+    expect(client.currentSession().ok).toBe(false); // A confirmed retired scope cannot remain live.
+    expect(client.getSnapshot().status).toBe('loading');
   } finally { client.dispose(); connection.dispose(); }
 });
