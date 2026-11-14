@@ -1,0 +1,85 @@
+{
+  "date": "2026-11-14",
+  "scope": "contract-and-seams; no package publication, plugin migration, live mapping or service change",
+  "source_baseline": "b82386178faf30d114970809b6dd06eb6068356e",
+  "source_candidate": "0.2.0-dev.0",
+  "package_tests": {
+    "pass": 30,
+    "fail": 0,
+    "legacy_v1": 16,
+    "v2": 14
+  },
+  "legacy_people_accounts_plugin_tests": {
+    "pass": 29,
+    "fail": 0,
+    "dependency_pin_unchanged": "0.1.1"
+  },
+  "old_sdk_install_and_v1_imports": {
+    "sdk": "0.5.29",
+    "pass": true,
+    "limits": "installation/import only"
+  },
+  "packed_install": {
+    "passed": true,
+    "level": "isolated-packed-install",
+    "package": "0.2.0-dev.0",
+    "archive_sha256": "d1dc96903cf0df25eac798be0c4352bfa672561653fb1009c93735c02c9fdec3",
+    "entries": 6,
+    "installed_identity": "0.5.0",
+    "sdk": "0.6.52",
+    "typescript": "5.9.3",
+    "checks": [
+      "ordinary npm tarball install",
+      "all six import entries",
+      "pure descriptor",
+      "no credential API",
+      "standalone declaration/brand checks"
+    ],
+    "limits": "No plugin factory adoption, runtime migration or registry publication."
+  },
+  "unchanged_v1_sha256": {
+    "index.ts": "1218d441d4849eee903c28cddb02951ee239f1920d442f5262126445ff79ac32",
+    "bb.ts": "d05e30b424d1d6597cf82872a0f9ee6dddeaab7723c5833f38c5e332ccd6eb1b",
+    "testing.ts": "0d2ac2d5b1a6fdcb77c38743b1b72cba21c971068b22c173c4aa5bd7d22584c1"
+  },
+  "v2_source_sha256": {
+    "src/v2-bb.ts": "b035658f0fe6bd44d213ab3a624fdf659a7a77433b6c71ca5d156ae53327ccc7",
+    "src/v2-testing.ts": "5f2ef99d257204c04a308f5bc10b0e9254aa7a2bc18cb59812979b0cc56e3b95",
+    "src/v2.ts": "2590193b4b0073034fd19d1b7aae32f5d8ce4841d0f580944fad1692e6c70e6a"
+  },
+  "repository_checks": {
+    "npm_ci": "pass",
+    "typecheck": "pass",
+    "build": "pass; unchanged plugin SDK/CLI warnings retained",
+    "test": "fails outside changed package: Mac path alias worker, missing Playwright executables, Turn Results gallery visibility"
+  },
+  "limits": [
+    "Public state binding exercised captured-owner write and response-loss reconciliation using fixture storage.",
+    "Synthetic wire-fake collaborator lookup returned not-found; not claimed as collaborator switching.",
+    "Slack suite did not reach tests because organization dependency @phosphor/bb-reference-publication is absent.",
+    "No production reverse index, adopter migration or native search/mail service tested."
+  ],
+  "macro_probe": {
+    "passed": true,
+    "level": "actual-export-synthetic-probe",
+    "revision": "c6a37818d796ed36028b2d709a7ee707b04b9c11",
+    "refusals": [
+      "linked_outside_macro",
+      "grouped",
+      "expired",
+      "edited",
+      "wrong_actor_after_relink",
+      "wrong_chat",
+      "deleted",
+      "source_unavailable"
+    ],
+    "sharedActorSelection": true,
+    "savedMailAdmission": true,
+    "source_sha256": {
+      "email-access.ts": "be74e47d54a2cad33c2e842d4893860d0116dda03b39cf8e2152162b2786be9f",
+      "contract.ts": "a77f17362711c310d5c7fde4c324a532832b7731e7a51383e17905bf7fac87ca",
+      "capabilities.ts": "dac22805c046d1653ce982ceb34d3edf29e2a361e39067bebb1d3a27bae0d971"
+    },
+    "limits": "No live plugin, native search service, mailbox, deployment or chat/model history was read or changed."
+  }
+}

@@ -23,14 +23,14 @@ const kitImports = { name: 'kit-sibling-entries', setup(build) {
  build.onResolve({ filter: /^\.\/[^/]+\.js$/ }, args => {
   const importer = sources.get(args.importer.replace(/\.[^.]+$/, ''));
   const target = sources.get(resolve(dirname(args.importer), args.path).replace(/\.js$/, ''));
-  return importer?.startsWith('./testing') && target && target !== importer ? { path: args.path, external: true } : undefined;
+  return (importer?.startsWith('./testing') || importer?.endsWith('/testing')) && target && target !== importer ? { path: args.path, external: true } : undefined;
  });
 } };
 const options = { outdir: 'dist', target: targets[0], format: 'esm',
  minify: false, jsx: { runtime: 'automatic', development: false },
  define: { 'process.env.NODE_ENV': JSON.stringify('production') }, external };
 // Kit entries build separately so production entries are emitted exactly as before.
-const isKit = entry => sources.get(resolve(entry).replace(/\.[^.]+$/, ''))?.startsWith('./testing');
+const isKit = entry => (sources.get(resolve(entry).replace(/\.[^.]+$/, ''))?.startsWith('./testing') || sources.get(resolve(entry).replace(/\.[^.]+$/, ''))?.endsWith('/testing'));
 const builds = [await Bun.build({ ...options, entrypoints: entrypoints.filter(e => !isKit(e)) })];
 if (entrypoints.some(isKit)) builds.push(await Bun.build({ ...options, entrypoints: entrypoints.filter(isKit), plugins: [kitImports] }));
 const result = { success: builds.every(b => b.success), logs: builds.flatMap(b => b.logs), outputs: builds.flatMap(b => b.outputs) };
