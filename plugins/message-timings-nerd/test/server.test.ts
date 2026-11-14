@@ -52,11 +52,14 @@ test("RPC rejects malformed input without reading thread history", async () => {
 
 
 test("unchanged history needs only a head probe after invalidation", async () => {
-  let pages = 0; let eventReads = 0;
+  let pages = 0; let eventReads = 0; let headReads = 0;
   const { bb, harness } = createFakePluginHost({ sdk: { threads: {
     timeline: () => { pages++; return { rows: [], maxSeq: 5000,
       timelinePage: { hasOlderRows: true, olderCursor: { anchorSeq: 5000 - pages, anchorId: `a${pages}` } } }; },
-    events: { list: () => { eventReads++; return []; } },
+    events: { list: ({ types, order, limit }) => {
+      if (!types) { headReads++; assert.equal(order, "desc"); assert.equal(limit, "1"); return [{ seq: 5000 }]; }
+      eventReads++; return [];
+    } },
   } } });
   plugin(bb);
   const before = await harness.callRpc("timings", { threadId: "t" });
@@ -64,7 +67,7 @@ test("unchanged history needs only a head probe after invalidation", async () =>
   await harness.emitThreadEvent("thread.idle", { thread: makeThreadResponse({ id: "t" }), lastAssistantText: null });
   const after = await harness.callRpc("timings", { threadId: "t" });
   assert.deepEqual(after, before);
-  assert.equal(pages, 13); assert.equal(eventReads, 2);
+  assert.equal(pages, 12); assert.equal(eventReads, 2); assert.equal(headReads, 1);
 });
 
 test("RPC reports the newest open turn as running only while the thread is active", async () => {
@@ -81,6 +84,58 @@ test("RPC reports the newest open turn as running only while the thread is activ
   status = "idle";
   await new Promise(resolve => setTimeout(resolve, 2_100));
   assert.deepEqual(await read(), [{ from: 100, to: 100 }]);
+});
+
+for (const change of ["append", "correction", "head-failure", "empty-head"] as const) {
+  test(`history rebuilds after ${change} and preserves its incomplete boundary`, async () => {
+    let maxSeq = 100; let pages = 0; let probes = 0;
+    const { bb, harness } = createFakePluginHost({ sdk: { threads: {
+      timeline: () => { pages++; return { rows: [], maxSeq,
+        timelinePage: { olderCursor: { anchorSeq: 1000 - pages, anchorId: `a${pages}` } } }; },
+      events: { list: ({ types }) => {
+        if (types) return [];
+        probes++;
+        if (change === "head-failure") throw new Error("offline");
+        return change === "empty-head" ? [] : [{ seq: maxSeq }];
+      } },
+    } } });
+    plugin(bb);
+    await harness.callRpc("timings", { threadId: "t" });
+    // Edits/corrections append an event too; the same sequence fence applies.
+    if (change === "append" || change === "correction") maxSeq++;
+    await harness.emitThreadEvent("thread.idle", { thread: makeThreadResponse({ id: "t" }), lastAssistantText: null });
+    const result = await harness.callRpc("timings", { threadId: "t" }) as { truncated: boolean };
+    assert.equal(pages, change === "append" || change === "correction" ? 24 : 13); assert.equal(probes, 1); assert.equal(result.truncated, true);
+  });
+}
+
+test("a new plugin instance reconstructs history rather than claiming persisted coverage", async () => {
+  let pages = 0;
+  for (let instance = 0; instance < 2; instance++) {
+    const { bb, harness } = createFakePluginHost({ sdk: { threads: {
+      timeline: () => { pages++; return { rows: [], maxSeq: 7, timelinePage: { olderCursor: null } }; },
+      events: { list: () => [] },
+    } } });
+    plugin(bb); await harness.callRpc("timings", { threadId: "t" });
+  }
+  assert.equal(pages, 2);
+});
+
+
+test("a corrected send time is projected after its sequence advances", async () => {
+  let seq = 1, createdAt = 100;
+  const { bb, harness } = createFakePluginHost({ sdk: { threads: {
+    timeline: () => ({ rows: [{ id: "u", threadId: "t", kind: "conversation", role: "user", initiator: "user", sourceSeqStart: 1, sourceSeqEnd: seq, createdAt }],
+      maxSeq: seq, timelinePage: { olderCursor: null } }),
+    events: { list: ({ types }) => types ? [] : [{ seq }] },
+  } } });
+  plugin(bb);
+  const before = await harness.callRpc("timings", { threadId: "t" }) as { stamps: Stamp[] };
+  assert.equal(before.stamps[0]?.at, 100);
+  seq++; createdAt = 200;
+  await harness.emitThreadEvent("thread.idle", { thread: makeThreadResponse({ id: "t" }), lastAssistantText: null });
+  const after = await harness.callRpc("timings", { threadId: "t" }) as { stamps: Stamp[] };
+  assert.equal(after.stamps[0]?.at, 200);
 });
 
 test("RPC refuses an unsolicited timeline delta instead of reporting empty history", async () => {
