@@ -59,7 +59,7 @@ intervals are omitted rather than invented.
 
 The backend joins the public timeline with recorded `turn/completed` events.
 A folded work summary is not a completion event. Reads are bounded to 12 timeline
-pages, 1,000 completions, and 1,000 request/acceptance events; older history may be incomplete.
+pages, 100 completions, and 100 request/acceptance events; older history may be incomplete.
 Accepted steering is joined back to its original request by request identity;
 acceptance time is not used as send time. When that request is outside the
 available history, send-based intervals remain unknown. Completions without a
@@ -86,8 +86,9 @@ used to identify a thread. A future footer slot can replace this narrow adapter.
   Only uncovered row IDs, reconnect/visibility recovery, and thread lifecycle
   signals request data; requests coalesce and never overlap per pane.
 - A bounded server cache coalesces concurrent clients and queues loads behind
-  two global slots. Unchanged history needs one head-page probe rather than
-  another full traversal; visible rows before the declared history boundary
+  two global slots. Unchanged history needs one latest-event sequence probe
+  before reconstructing any timeline page; visible rows before the declared
+  history boundary
   do not trigger futile older-history reads. Lifecycle invalidation
   prevents obsolete requests from restoring stale results, including failures.
 - Minute deadlines update only the live footer. Raw clock state never enters
