@@ -47,6 +47,7 @@
     "cli/",
     "test/",
     "app.tsx",
+    "settings.tsx",
     "app.css",
     "lib/",
     "skills/",
