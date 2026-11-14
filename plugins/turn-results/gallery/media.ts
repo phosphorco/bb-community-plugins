@@ -45,6 +45,13 @@ export function initialImageCandidate(row: GalleryObservation): boolean {
 }
 export interface ImageCorrelation { row: GalleryObservation; publish(): void }
 
+/** Only a decoded supplier timeout can carry this private recovery operation.
+ * Generic exceptions with matching text never acquire retry authority. */
+class SourceMediaTimeout extends Error {
+  readonly recover: (current: () => boolean) => Promise<ImageLease>;
+  constructor(recover: (current: () => boolean) => Promise<ImageLease>) { super('source-timeout'); this.recover = recover; }
+}
+
 /** One exact Media admission path for visible and speculative owners alike. */
 export async function imageMediaRequest(row: GalleryObservation,
   scope: (signal: AbortSignal, read: (signal: AbortSignal) => Promise<unknown>, speculative: () => boolean) => Promise<{ state: 'ready'; value: unknown } | { state: 'capacity' }>,
@@ -55,9 +62,11 @@ export async function imageMediaRequest(row: GalleryObservation,
   const initial = initialImageCandidate(row);
   if (row.owner !== 'turn-result-images' || (!sha256 || route?.kind !== 'file') && (!initial || !correlate)) return null;
   const fingerprint = sha256 && route?.kind === 'file' ? await sha256Canonical({ target: route.target, sha256 }) : null;
-  const request: MediaRequest = { key: row.key, claim: canonicalJson([row.owner, row.identity]), fingerprint, sha256: sha256 ?? null, async acquire(signal, speculative = () => false) {
+  async function acquire(signal: AbortSignal, speculative: () => boolean = () => false, retryCurrent?: () => boolean): Promise<ImageLease> {
+    const checkRetry = () => { if (retryCurrent && !retryCurrent()) throw Error('Image timeout recovery retired.'); };
+    checkRetry();
     const read = await scope(signal, bounded => {
-      bounded.throwIfAborted();
+      bounded.throwIfAborted(); checkRetry();
       // Own an already-dispatched response through raw settlement. Retirement
       // can refuse a late GET but cannot claim independent source work stopped.
       request.dispatched = true;
@@ -67,7 +76,10 @@ export async function imageMediaRequest(row: GalleryObservation,
     signal.throwIfAborted();
     if (read.state === 'capacity') throw Error('Image verification capacity reached.');
     const output = mediaOutput.parse(read.value);
-    if (output.state !== 'ready') throw Error(output.reason);
+    if (output.state !== 'ready') {
+      if (output.reason === 'source-timeout') throw new SourceMediaTimeout(current => acquire(signal, speculative, current));
+      throw Error(output.reason);
+    }
     const admitted = initial ? await correlate!(signal, speculative) : null;
     signal.throwIfAborted();
     const current = admitted?.row ?? row, target = current.resolution?.route, location = current.resolution?.provenance.artifactLocation;
@@ -84,7 +96,8 @@ export async function imageMediaRequest(row: GalleryObservation,
     request.fingerprint = expectedFingerprint; request.sha256 = expectedSha;
     admitted?.publish();
     return output.lease;
-  } };
+  }
+  const request: MediaRequest = { key: row.key, claim: canonicalJson([row.owner, row.identity]), fingerprint, sha256: sha256 ?? null, acquire };
   return request;
 }
 
@@ -203,6 +216,7 @@ export function createGalleryMedia(ports: MediaPorts) {
       adoption?.root.addEventListener('abort', hardAbort, { once: true });
       const signal = controller.signal;
       entry.store.setState(old => ({ ...old, state: 'loading', error: null }));
+      const deadline = performance.now() + MEDIA_LIMITS.deadlineMs;
       const timer = setTimeout(() => controller.abort('deadline'), MEDIA_LIMITS.deadlineMs);
       const current = () => !disposed && !signal.aborted && entries.get(entry.request.key) === entry && entry.controller === controller && entry.flight?.live();
       const check = () => { if (!current()) throw new Error('Image request retired.'); };
@@ -214,7 +228,24 @@ export function createGalleryMedia(ports: MediaPorts) {
       });
       let responseBody: ReadableStream<Uint8Array> | null = null, bodyHandled = false;
       void (async () => {
-        const lease = await wait(origin.acquire(signal, () => entry.visible <= entry.speculative)); check();
+        const policy = () => entry.visible <= entry.speculative;
+        const fingerprint = origin.fingerprint, boundSha256 = origin.sha256;
+        const canRecover = () => !!(current() && performance.now() < deadline && adoption && adoption.live() && adoption.current()
+          && !detached && entry.foregroundAttempt && entry.visible > entry.speculative && fingerprint && boundSha256
+          && entry.request.fingerprint === fingerprint && entry.request.sha256 === boundSha256
+          && [...entry.demands].some(demand => demand.request === origin && sameScope(demand) && demand.request.adoption === adoption));
+        let lease: ImageLease;
+        try { lease = await wait(origin.acquire(signal, policy)); }
+        catch (error) {
+          check();
+          if (!(error instanceof SourceMediaTimeout) || !canRecover()) throw error;
+          // One recovery only, still inside this controller/token/original7s.
+          // acquire uses the existing ordinary queue and rechecks currentness
+          // at actual SDK dispatch. Public RPC settlement is not inner source
+          // drain: the source keeps its own credits and may truthfully refuse.
+          lease = await wait(error.recover(canRecover));
+        }
+        check();
         responseSettled = true; schedule();
         if (adoption) {
           // A ready lease is still only data. Card-only retirement may leave

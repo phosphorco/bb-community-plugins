@@ -22,7 +22,7 @@ def select(**changes):
         out = Path(temporary) / 'output'
         env = {**os.environ, 'REQUESTED_PLUGIN': PACKAGE, 'REQUESTED_DIST_TAG': 'latest', 'GITHUB_EVENT_NAME': 'workflow_dispatch', 'GITHUB_REF_NAME': 'main', 'GITHUB_SHA': SHA, 'GITHUB_OUTPUT': str(out), 'DRY_RUN': 'true', 'TAG_PRESENT': 'false', 'SOURCE_DIFF': '0'}
         env.update(changes)
-        stubs = ('npm() { printf \'{"w":"0.1.0"}\'; }\n'
+        stubs = ('npm() { printf \'{"w":"0.1.1"}\'; }\n'
                  'git() { case "$*" in *"refs/tags/"*) test "$TAG_PRESENT" = true && echo "' + SHA + '";; "diff --quiet "*) return "$SOURCE_DIFF";; *) return 0;; esac; }\n')
         result = subprocess.run(['bash', '-e', '-c', stubs + SELECT], env=env, capture_output=True, text=True)
         values = dict(line.split('=', 1) for line in out.read_text().splitlines()) if out.exists() else {}
@@ -37,9 +37,9 @@ class ThreadAttachmentsRelease(unittest.TestCase):
         self.assertIn('npm run build --workspace ' + NAME, VALIDATE)
         self.assertIn('npm pack --dry-run --ignore-scripts --workspace ' + NAME, VALIDATE)
         manifest = json.loads((ROOT / 'packages' / PACKAGE / 'package.json').read_text())
-        self.assertEqual((manifest['name'], manifest['version']), (NAME, '0.1.0'))
+        self.assertEqual((manifest['name'], manifest['version']), (NAME, '0.1.1'))
         lock = json.loads((ROOT / 'package-lock.json').read_text())['packages']
-        self.assertEqual(lock['packages/' + PACKAGE]['version'], '0.1.0')
+        self.assertEqual(lock['packages/' + PACKAGE]['version'], '0.1.1')
         self.assertEqual(lock['node_modules/' + NAME]['resolved'], 'packages/' + PACKAGE)
 
     def test_dry_run_selects_exact_workspace_and_package_path(self):
@@ -48,7 +48,7 @@ class ThreadAttachmentsRelease(unittest.TestCase):
         self.assertEqual(out['workspace'], NAME)
         self.assertEqual(out['path'], 'packages/' + PACKAGE)
         self.assertEqual(out['pinned_next'], 'false')
-        self.assertEqual(out['version'], '0.1.0')
+        self.assertEqual(out['version'], '0.1.1')
 
     def test_publish_requires_matching_existing_tag_and_source(self):
         result, _ = select(DRY_RUN='false')
@@ -57,9 +57,9 @@ class ThreadAttachmentsRelease(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         result, _ = select(DRY_RUN='false', TAG_PRESENT='true', SOURCE_DIFF='1')
         self.assertNotEqual(result.returncode, 0)
-        result, _ = select(GITHUB_EVENT_NAME='push', GITHUB_REF_NAME='wrong/v0.1.0', TAG_PRESENT='true')
+        result, _ = select(GITHUB_EVENT_NAME='push', GITHUB_REF_NAME='wrong/v0.1.1', TAG_PRESENT='true')
         self.assertNotEqual(result.returncode, 0)
-        result, _ = select(GITHUB_EVENT_NAME='push', GITHUB_REF_NAME=PACKAGE + '/v0.1.0', TAG_PRESENT='true')
+        result, _ = select(GITHUB_EVENT_NAME='push', GITHUB_REF_NAME=PACKAGE + '/v0.1.1', TAG_PRESENT='true')
         self.assertEqual(result.returncode, 0, result.stderr)
 
 

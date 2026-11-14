@@ -1,6 +1,6 @@
 # Thread Attachments: wire v1
 
-Package `@phosphorco/bb-thread-attachments` 0.1.0 is an independent, data-first
+Package `@phosphorco/bb-thread-attachments` 0.1.1 is an independent, data-first
 contract for shared attachment facts and family operations. Package version and
 wire version are separate. Publication, registry availability, adoption and
 live behavior each require separate evidence.
@@ -254,11 +254,11 @@ witnesses: report exactly what each adopter tested. Source conformance is not
 host discovery, network, running composition, performance or UI proof.
 
 Release/validation workflows include dispatch choice, tag
-`bb-thread-attachments/v0.1.0`, workspace/path mapping, dependency build and
+`bb-thread-attachments/v0.1.1`, workspace/path mapping, dependency build and
 pack inspection. The ordinary public/provenance release route applies. npm
 trusted publishing or the existing first-release credential must be configured
 separately. Publication requires a reviewed source revision and its matching
 release tag. Verify registry version, artifact integrity and provenance
-separately from source checks. Consumers pin exact registry `0.1.0` only after
+separately from source checks. Consumers pin exact registry `0.1.1` only after
 release verification. Temporary local source links prove source compatibility
 only and must never become manifest specifiers.

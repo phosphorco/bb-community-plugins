@@ -8,6 +8,10 @@ old 0.1.1 consumers separately. No credentials were acquired.
 
 ## Executed package proof
 
+The following baseline proof preceded integration with the shared SDK refresh;
+its receipt is `proof/contract-20261114.json`. Integration results are recorded
+separately below, rather than relabeling these earlier observations.
+
 `npm ci`, `npm run test --workspace @phosphorco/bb-people-accounts` and
 `npm run typecheck --workspace @phosphorco/bb-people-accounts` exercise emitted
 JS/declarations with pinned Bun 1.3.14, SDK 0.6.52 and identity 0.5.0.
@@ -99,3 +103,34 @@ not native search/mailbox access, host authorization, retained model-history
 erasure, a new freshness implementation or deployment proof. Search exclusion,
 Slack/GitHub real workflows and all live migrations remain unchanged and must
 be exercised when those adopters are commissioned.
+
+## Integration with the shared SDK refresh
+
+The source change `61f8017` was integrated with shared community source
+`454bbfd0fb6dd5069b65b16fd0873cacc43af6f0`, whose SDK pin is
+`0.6.143+phosphor.05199007.upgrade1`. After a fresh `npm ci` and a rebuild of
+that source's identity package, all 30 contract tests, the emitted declaration
+checks and all 31 legacy plugin tests pass. The latter include the incoming
+lazy-settings changes; the plugin still consumes published 0.1.1. The read
+schemas now also reuse the stored-record codec's 192 KiB per-person limit;
+both registrar and client reject a record exceeding it even below the overall
+256 KiB reply limit. V1 source remains unchanged.
+The conformance kit checks the seeded association's link ID as well as its
+person key in a complete reverse response; a wrong ID fails the regression
+fixture instead of looking like a valid association.
+
+Repository-wide checks were repeated for this composition. Typecheck now fails
+in unchanged identity native-source fixtures, Subscribe to Anything action-tab
+fixtures, Cross References timeline/header consumers and Turn Results history
+fixtures against the refreshed SDK. The broad build fails in Message Rules'
+native artifact-format assertion. These are outside this package's change;
+they were retained and not patched or hidden. The earlier baseline broad
+passes do not certify this newer composition. The focused package proof is
+green; repository-wide integration and live deployment are not claimed green.
+
+`proof/integration-20261114.json` records the exact source/SDK/package evidence,
+packed-consumer result and repeated synthetic Macro admission probe. That
+probe's source is unchanged, and its earlier limits still apply. No adopter
+dependency pin, mapping, credential, plugin migration or running host was
+changed by this contract work. Source delivery is not a registry release or a
+workspace gitlink promotion.

@@ -33,7 +33,6 @@ function thread(id: string): RetainedSourceThread {
     activity: {
       activeBackgroundAgentCount: 0,
       activeBackgroundCommandCount: 0,
-      activeGoalCount: 0,
       activePlanModeCount: 0,
       activeWorkflowCount: 0,
     },
@@ -77,6 +76,7 @@ function threadResult(id: string): RetainedSourceThreadResult {
   return {
     ...thread(id),
     activeBackgroundAgentCount: 0,
+    canEditMessages: true,
     canRestoreEnvironment: false,
     canSpawnChild: true,
     queuedMessageCount: 0,

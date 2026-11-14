@@ -1,0 +1,8 @@
+[
+  {"versions":[1],"supported":true},
+  {"versions":[1,2],"supported":true},
+  {"versions":[2],"supported":false},
+  {"versions":[],"supported":false},
+  {"versions":[0],"malformed":true},
+  {"versions":[1.5],"malformed":true}
+]

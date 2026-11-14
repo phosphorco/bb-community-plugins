@@ -124,6 +124,8 @@ test("source fixture lazy chunks stay deferred and real failed fetch Retry Back 
         viewport: { width: 390, height: 844 },
       }),
       page = await context.newPage();
+    page.setDefaultTimeout(5000);
+    page.setDefaultNavigationTimeout(10000);
     page.on("pageerror", (error) => errors.push(error.message));
     page.on("console", (message) => {
       if (message.type() === "error") console.error(message.text());
@@ -171,6 +173,8 @@ test("source fixture lazy chunks stay deferred and real failed fetch Retry Back 
       viewport: { width: 390, height: 844 },
     });
     page = await context.newPage();
+    page.setDefaultTimeout(5000);
+    page.setDefaultNavigationTimeout(10000);
     page.on("pageerror", (error) => errors.push(error.message));
     page.on("console", (message) => {
       if (message.type() === "error") console.error(message.text());

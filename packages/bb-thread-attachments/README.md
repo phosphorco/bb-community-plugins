@@ -1,7 +1,7 @@
 # @phosphorco/bb-thread-attachments
 
 Shared attachment facts and atomic family operations for independent BB thread
-presentations. Version 0.1.0 implements wire v1. See [CONTRACT.md](CONTRACT.md)
+presentations. Version 0.1.1 implements wire v1. See [CONTRACT.md](CONTRACT.md)
 for ownership, bounds, identity, incomplete coverage and unknown-write semantics.
 
 ```ts
@@ -55,6 +55,6 @@ the native thread eligible or permits a new attachment.
 Run `npm run build`, `npm test`, and `npm run typecheck` in this package. Tests
 consume emitted entries, so build first. Package tests and adopter conformance
 are source evidence. Release uses the reviewed source revision and ordinary
-`bb-thread-attachments/v0.1.0` tag workflow. Verify registry version, artifact
-integrity and provenance before exact `0.1.0` adoption; verify live service
+`bb-thread-attachments/v0.1.1` tag workflow. Verify registry version, artifact
+integrity and provenance before exact `0.1.1` adoption; verify live service
 behavior separately.

@@ -1,0 +1,20 @@
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { policyBytes, readPolicyBytes } from "../../admission/snapshot.ts";
+import { evaluateScoped } from "../../evaluation/scoped.ts";
+import { setup, jevRule, captured, answer } from "../helpers.ts";
+import { savedBasis } from "../../suites/runner.ts";
+test("native-published policy bytes survive mutable catalog edits; malformed or incompatible publication cannot invoke checks", async () => {
+  const {db,store} = setup();
+  let p = store.saveRule("project",store.get("project")!.revision,jevRule());
+  const bytes = policyBytes(p,savedBasis(p));
+  const frozen = readPolicyBytes(bytes);
+  p = store.saveRule("project",p.revision,{ ...p.rules[0]!,enabled:false,advice:"Later catalog" });
+  assert.equal(frozen.rules[0]!.enabled,true);
+  assert.notEqual(frozen.catalogRevision,p.revision);
+  const out = await evaluateScoped({...captured,projectId:"project"},frozen.groups,frozen.rules,frozen.connection,async () => captured,async w => answer(w),new AbortController().signal);
+  assert.equal(out.policy,"reject"); assert.notEqual(out.advice[0]!.text,"Later catalog");
+  assert.throws(() => readPolicyBytes(bytes.replace('"format":1','"format":1,"format":1')),/Ambiguous/);
+  assert.throws(() => readPolicyBytes(bytes.replace(/message-rules-v1\.7/,"message-rules-v1.5")));
+  db.close();
+});

@@ -98,11 +98,14 @@ import { registerPresentation, lookupPresentation, subscribePresentations } from
 import type { PresentationComponent, PresentationPropsV1 } from '@phosphorco/bb-context-recognition/presentation';
 import { PresentationHost, createOwnerPresentationClient } from '@phosphorco/bb-context-recognition/react';
 import type { PresentationHostProps } from '@phosphorco/bb-context-recognition/react';
-import { runPresentationConformance, scanPresentationEntry, HOSTED_SDK_APP_ALLOWLIST } from '@phosphorco/bb-context-recognition/testing/react';
+import { runPresentationConformance, runHostedPresentationConformance, scanPresentationEntry, HOSTED_SDK_APP_ALLOWLIST } from '@phosphorco/bb-context-recognition/testing/react';
+import type { HostedPresentationConformanceOptions } from '@phosphorco/bb-context-recognition/testing/react';
+const hostedOptions: HostedPresentationConformanceOptions = { pluginId: 'x', register() {}, mountContentScript() {}, stamps: [{ schema: 'x/y@1', data: { id: 'a' }, identity: { provider: 'x', id: 'a' } }] };
+void runHostedPresentationConformance(hostedOptions);
 const presentation: PresentationRefV1 = PresentationRefV1Schema.parse({schema:'example/view@1',data:{id:'one'}});
 const hosted: PresentationComponent<{id:string}> = (props:PresentationPropsV1<{id:string}>) => {void props.owner.call('read',{id:props.data.id});return null;};
 const dispose=registerPresentation({pluginId:'example',generation:1,signal:new AbortController().signal},{schema:presentation.schema,decode:value=>typeof value==='object'&&value!==null&&'id'in value&&typeof value.id==='string'?{id:value.id}:null,load:async()=>hosted,methods:['read']});
 const registration=lookupPresentation('example',presentation.schema);
 const unsubscribe=subscribePresentations(()=>{});
 const typedStamp:PresentationHostProps['stamp']={pluginId:'example',...presentation};
-void [registration,typedStamp,PresentationHost,createOwnerPresentationClient,runPresentationConformance,scanPresentationEntry,HOSTED_SDK_APP_ALLOWLIST,dispose,unsubscribe];
+void [registration,typedStamp,PresentationHost,createOwnerPresentationClient,runPresentationConformance,runHostedPresentationConformance,scanPresentationEntry,HOSTED_SDK_APP_ALLOWLIST,dispose,unsubscribe];

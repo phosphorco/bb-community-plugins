@@ -11,8 +11,9 @@ import { GALLERY_METHODS } from '../gallery/rpc.ts';
 registerHooks({ load(url, context, next) {
   if (url.endsWith('.css')) return { format: 'module', shortCircuit: true, source: 'export default {}' };
   if (new URL(url).pathname.endsWith('.tsx')) {
-    let source = readFileSync(new URL(url), 'utf8');
     const parsed = new URL(url);
+    let source = readFileSync(process.env.TURN_RESULTS_BASELINE_DIR && parsed.pathname.endsWith('/turn-results/app.tsx')
+      ? `${process.env.TURN_RESULTS_BASELINE_DIR}/app.tsx` : parsed, 'utf8');
     if (parsed.search.startsWith('?startup-recovery-') && parsed.pathname.endsWith('/app.tsx')) {
       source = source.replaceAll("'./gallery/view.tsx'", "'./gallery/view.tsx" + parsed.search + "'")
         .replace('useSdk,', 'useSdk as originalUseSdk,')
@@ -46,7 +47,8 @@ function retained(turnId = 'turn') {
       fallback: { kind: 'card', title: `Saved ${turnId} result` }, spans: { width: 2, height: 1 } } };
 }
 async function fixture(status = 'pending', depth = 0, options = {}) {
-  const dom = new JSDOM('<body><section data-split-pane-id="left"><header><div data-thread-header-workflow-actions><div data-bb-plugin-root data-bb-plugin="turn-results" class="contents"><span role="group" data-fixture-header></span></div></div></header><section data-thread-window><div data-timeline-row-list="top-level"><div data-timeline-row-id="opaque-stable"><button>Native content</button></div></div></section></section></body>', { pretendToBeVisual: true });
+  const dom = new JSDOM('<body><section data-split-pane-id="left"><header><div data-thread-header-workflow-actions><div data-bb-plugin-root data-bb-plugin="turn-results" class="contents"><span role="group" data-fixture-header></span></div></div></header><section data-thread-window><div data-timeline-row-list="top-level"><div data-timeline-row-id="opaque-stable"><button>Native content</button></div></div></section></section></body>',
+    { pretendToBeVisual: true, ...(options.url ? { url: options.url } : {}) });
   const saved = Object.fromEntries(['window','document','Element','HTMLElement','MutationObserver','ResizeObserver','IntersectionObserver','IS_REACT_ACT_ENVIRONMENT'].map(key => [key, globalThis[key]]));
   class Observer { constructor(callback) { this.callback = callback; this.targets = new Set(); } observe(target) { this.targets.add(target); } unobserve(target) { this.targets.delete(target); } disconnect() { this.targets.clear(); } }
   Object.assign(globalThis, { window: dom.window, document: dom.window.document, Element: dom.window.Element, HTMLElement: dom.window.HTMLElement,
@@ -55,6 +57,9 @@ async function fixture(status = 'pending', depth = 0, options = {}) {
   document.body.getBoundingClientRect = () => box;
   document.querySelector('[data-thread-window]').getBoundingClientRect = () => box;
   const native = document.querySelector('[data-timeline-row-id]'); native.getBoundingClientRect = () => ({ ...box, height: 80, bottom: 80 });
+  // A genuine Header startup before a named native pane is available: the
+  // Header route reader may run, while no Sentinel can acquire a pane mapping.
+  if (options.headerOnly) document.querySelector('[data-thread-window]').removeAttribute('data-thread-window');
   if (options.nativeItems) {
     const items = document.createElement('div'); items.dataset.timelineItems = '';
     native.parentElement.append(items); items.append(native);
@@ -62,7 +67,7 @@ async function fixture(status = 'pending', depth = 0, options = {}) {
     document.querySelector('[data-thread-window]').insertAdjacentHTML('beforeend', '<aside data-fixture-native-chrome><div>Native status</div></aside>');
   }
   let rows = [publicRow(status)], snapshot = `snapshot-${status}`, hold = !!options.holdOlder, holdOlder = !!options.holdOlder, fail = false, maxOwned = 0;
-  const calls = [], held = [], navigation = [], responses = [], cursors = new Map(); let issued = 0;
+  const calls = [], held = [], navigation = [], responses = [], cursors = new Map(), galleryReads = [], heldGalleryReads = []; let issued = 0;
   const subscriptions = new Set(), subscriptionCountsAtRead = [];
   const response = input => {
     const chain = input.beforeAnchorId ? cursors.get(input.beforeAnchorId) : {
@@ -100,7 +105,10 @@ async function fixture(status = 'pending', depth = 0, options = {}) {
   }, plugins: { async list() { return { plugins: [] }; }, async callRpc(args) {
     if (args.method === GALLERY_METHODS.read) {
       const turn = args.input.turnId;
-      return args.outputSchema.parse({ page: { rows: [retained(turn)], next: null }, coverage: { state: 'partial', intervals: [] } });
+      const value = args.outputSchema.parse({ page: { rows: [retained(turn)], next: null }, coverage: { state: 'partial', intervals: [] } });
+      const read = { signal: args.signal, finished: false }; galleryReads.push(read);
+      try { if (options.holdGalleryReads) await new Promise(resolve => heldGalleryReads.push(resolve)); return value; }
+      finally { read.finished = true; }
     }
     if (args.method === GALLERY_METHODS.pending) return args.outputSchema.parse({ rows: [], next: null });
     throw Error(`Unexpected fixture RPC ${args.method}`);
@@ -110,7 +118,7 @@ async function fixture(status = 'pending', depth = 0, options = {}) {
   const bridge = app.threadHeaderActions[0];
   const rendered = renderSlot({ ...bridge, component: props => createPortal(createElement(bridge.component, props), document.querySelector('[data-fixture-header]')) }, { threadId: 'thread', projectId: 'project', isCompactViewport: false }, { sdk,
     openUrl(url) { navigation.push(url); return true; }, realtimeConnectionState: 'connected' });
-  return { dom, native, rendered, app, sdk, calls, held, navigation, responses, subscriptions, subscriptionCountsAtRead,
+  return { dom, native, rendered, app, sdk, calls, held, galleryReads, heldGalleryReads, navigation, responses, subscriptions, subscriptionCountsAtRead,
     async replaceSdk() { globalThis.__startupRecoveryProbe.sdkOverride = Object.create(sdk); await act(async () => { rendered.lifecycle.rerender(createPortal(createElement(bridge.component, { threadId: 'thread', projectId: 'project', isCompactViewport: false }), document.querySelector('[data-fixture-header]'))); }); },
     changed(event, channel = 'thread:changed') { for (const subscription of [...subscriptions]) if (subscription.event === channel) subscription.callback(event); },
     depth(value) { depth = value; }, maxOwned: () => maxOwned,
@@ -121,9 +129,73 @@ async function fixture(status = 'pending', depth = 0, options = {}) {
     notify() { return rendered.behavior.emitRealtime('results-changed', { threadId: 'thread' }); },
     async hidden(value) { Object.defineProperty(document, 'hidden', { configurable: true, value }); await act(async () => document.dispatchEvent(new dom.window.Event('visibilitychange'))); },
     async dispose() { await act(async () => rendered.unmount()); controller.abort(); if (typeof script === 'function') script();
-      for (const release of held) release(); await settle(); assert.equal(subscriptions.size, 0); Object.assign(globalThis, saved); dom.window.close(); },
+      for (const release of held) release(); for (const release of heldGalleryReads) release(); await settle(); assert.equal(subscriptions.size, 0); Object.assign(globalThis, saved); dom.window.close(); },
   };
 }
+
+test('metadata-only thread notifications retain gallery proof, DOM and focus; mixed or ambiguous history still refreshes', async () => {
+  const f = await fixture('completed');
+  try {
+    await until(() => f.roots()[0]?.querySelector('.tr-data-action'));
+    await settle(200);
+    const root = f.roots()[0], action = root.querySelector('.tr-data-action'), nativeButton = f.native.querySelector('button');
+    nativeButton.focus(); const before = f.calls.length;
+    for (const changes of [['title-changed'], ['read-state-changed'], ['pin-state-changed'], ['queue-changed'], ['title-changed', 'read-state-changed']]) {
+      await act(async () => f.changed({ type: 'changed', entity: 'thread', id: 'thread', changes }));
+    }
+    await settle(200);
+    assert.equal(f.calls.length, before, 'metadata-only SDK events do not retire Sentinel proof (default about:blank route)');
+    assert.equal(f.roots()[0], root); assert.equal(root.querySelector('.tr-data-action'), action);
+    assert.equal(document.activeElement, nativeButton); assert.deepEqual(f.navigation, []);
+    for (const changes of [['title-changed', 'events-appended'], ['history-rewritten'], ['history-compacted'], ['status-changed'], ['future-unknown'], [], undefined]) {
+      const count = f.calls.length;
+      await act(async () => f.changed({ type: 'changed', entity: 'thread', id: 'thread', changes }));
+      await until(() => f.calls.length > count && f.calls.at(-1).finished);
+      await until(() => f.roots()[0]?.querySelector('.tr-data-action')); await settle(180);
+    }
+    assert.equal(f.roots()[0], root, 'fresh proof updates the retained root in place');
+    assert.equal(document.activeElement, nativeButton); assert.deepEqual(f.navigation, []);
+  } finally { await f.dispose(); }
+});
+
+test('metadata-only thread notifications preserve an active route-qualified Header job; history and reconnect revoke it', async () => {
+  const f = await fixture('completed', 0, { url: 'https://fixture.invalid/projects/project/threads/thread', headerOnly: true, holdGalleryReads: true });
+  try {
+    await until(() => f.heldGalleryReads.length === 1);
+    assert.equal(window.location.pathname, '/projects/project/threads/thread');
+    assert.equal(document.querySelector('[data-turn-results-sentinel]'), null, 'this witness is Header work, not Sentinel activity');
+    assert.equal(f.subscriptions.size, 3, 'the active Header owns its native event subscriptions');
+    assert.ok(f.calls.length > 0 && f.calls.every(call => call.finished), 'Header completed real native boundary history');
+    const first = f.galleryReads[0], before = f.calls.length;
+    assert.equal(first.finished, false); assert.equal(first.signal.aborted, false, 'Header owns an active retained-read lease');
+    for (const changes of [['title-changed'], ['read-state-changed'], ['pin-state-changed'], ['queue-changed'], ['title-changed', 'read-state-changed']])
+      await act(async () => f.changed({ type: 'changed', entity: 'thread', id: 'thread', changes }));
+    await settle(180);
+    assert.equal(first.signal.aborted, false, 'metadata preserves the actual Header job and its retained read');
+    assert.equal(f.calls.length, before); assert.equal(f.galleryReads.length, 1);
+
+    await act(async () => f.changed({ type: 'changed', entity: 'thread', id: 'thread', changes: ['title-changed', 'history-rewritten'] }));
+    assert.equal(first.signal.aborted, true, 'a mixed history notification revokes Header work');
+    f.heldGalleryReads[0](); await until(() => first.finished); await settle(180);
+    assert.equal(f.calls.length, before, 'history revocation does not pretend an old optional job is fresh');
+    await act(async () => {
+      f.changed({ state: 'connecting', reconnected: false, reconnectDelayMs: 0 }, 'realtime:connection');
+      f.changed({ state: 'connected', reconnected: true, reconnectDelayMs: null }, 'realtime:connection');
+    });
+    await until(() => f.heldGalleryReads.length === 2);
+    const second = f.galleryReads[1];
+    assert.ok(f.calls.length > before, 'connected coverage starts fresh actual Header history');
+    assert.equal(second.signal.aborted, false);
+    const connected = f.calls.length;
+    await act(async () => f.changed({ state: 'disconnected', reconnected: false, reconnectDelayMs: 1000 }, 'realtime:connection'));
+    assert.equal(second.signal.aborted, true, 'coverage loss revokes the new Header job too');
+    f.heldGalleryReads[1](); await until(() => second.finished);
+    await act(async () => f.changed({ state: 'connected', reconnected: true, reconnectDelayMs: null }, 'realtime:connection'));
+    await until(() => f.heldGalleryReads.length === 3);
+    assert.ok(f.calls.length > connected); assert.equal(f.galleryReads[2].signal.aborted, false);
+    assert.deepEqual(f.navigation, []);
+  } finally { for (const release of f.heldGalleryReads) release(); await f.dispose(); }
+});
 
 for (const trigger of ['native-content', 'source-notification', 'reconnect', 'visibility']) test(`actual Sentinel recovers stable pending ID after ${trigger}`, async () => {
   const f = await fixture();

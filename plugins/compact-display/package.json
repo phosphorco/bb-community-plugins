@@ -28,24 +28,33 @@
   },
   "bb": {
     "name": "Compact display",
-    "description": "Adapt thread columns to 760, 1080, or 1440px, contain wide tables, and reduce prompt editor height and spacing. Disable to restore BB defaults.",
+    "description": "Adapt thread columns to 760, 1080, or 1440px and reduce prompt editor height and spacing. To retire the wide layout, select Default in Appearance and disable this plugin.",
     "branding": {
       "icon": "Minimize2"
     },
     "server": "./server.ts",
     "app": "./app.ts",
-    "skills": []
+    "skills": [],
+    "themes": [
+      {
+        "id": "wide-default",
+        "name": "Default + wide thread columns",
+        "description": "Default palette with pane-responsive 760/1080/1440px columns. Native appearance caches these rules before app rendering on returning clients.",
+        "css": "./thread-width.css"
+      }
+    ]
   },
   "files": [
     "dist/",
     "README.md",
     "LICENSE",
     "server.ts",
-    "app.ts"
+    "app.ts",
+    "thread-width.css"
   ],
   "dependencies": {},
   "devDependencies": {
-    "@get-bb/plugin-sdk": "0.6.52",
+    "@get-bb/plugin-sdk": "https://github.com/phosphorco/bb-fork/releases/download/sdk-0.6.143-phosphor.05199007.upgrade1/get-bb-plugin-sdk-0.6.143+phosphor.05199007.upgrade1.tgz",
     "@types/react": "19.2.2",
     "react": "19.2.1",
     "typescript": "^5.9.3"

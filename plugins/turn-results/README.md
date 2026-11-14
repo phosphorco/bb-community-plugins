@@ -285,3 +285,17 @@ than reviving it from a later response. An initial mapped pane with nonempty for
 offscreen route warming until that first foreground result; pre-arrival timing
 is not universally unchanged. This trades optional initial warming
 latency for useful foreground precedence, without changing the history budget.
+
+A decoded Images `source-timeout` permits one automatic recovery only for the
+still-shown, current originating bound foreground adopter. It uses the same
+Media controller, token and original seven-second budget, after the public RPC
+has actually settled, and rejoins the ordinary foreground FIFO. Current row,
+visibility and immutable binding are checked again at actual queued dispatch.
+A replacement card cannot borrow that eligibility. Initial unresolved candidates
+have no such bound adopter and remain manual-only. Generic errors (even identical
+text), capacity, contract, GET/hash/decode failures, retirement and deadline expiry
+do not recover automatically; a failed recovery stays a truthful manual error.
+Source inner ports may still hold the existing source credits after the public
+response, so recovery can encounter capacity or exhaust the original remaining
+time. This adds at most one verification on that failure path, not a healthy-call
+reduction or a guarantee of recovery or native latency.

@@ -45,6 +45,9 @@ jobs:
       - name: Install locked dependencies
         run: npm ci
 
+      - name: Install locked Playwright Chromium and system dependencies
+        run: node node_modules/@playwright/test/cli.js install --with-deps chromium
+
       - name: Build libraries for package tests
         run: |
           npm run build --workspace @phosphorco/bb-identity
@@ -59,6 +62,8 @@ jobs:
 
           npm run build --workspace @phosphorco/bb-inbox-rows
           npm run build --workspace @phosphorco/bb-thread-attachments
+          npm run build --workspace @phosphorco/bb-message-admission
+          npm run build --workspace @phosphorco/bb-jev
           npm run build --workspace @phosphorco/bb-thread-filters
 
       - name: Check out the selected Turn Results compiler
@@ -84,6 +89,17 @@ jobs:
 
       - name: Test
         run: npm run test
+
+      - name: Retain Templates browser failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: templates-browser-diagnostics-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            /tmp/templates-browser-evidence/templates-prompt/
+            /tmp/templates-browser-evidence/templates-recovery/
+          if-no-files-found: ignore
+          retention-days: 7
 
       - name: Typecheck
         run: npm run typecheck
@@ -161,3 +177,15 @@ jobs:
 
       - name: Inspect Thread Attachments package
         run: npm pack --dry-run --ignore-scripts --workspace @phosphorco/bb-thread-attachments
+
+      - name: Check Message Admission package contents
+        run: npm pack --dry-run --ignore-scripts --workspace @phosphorco/bb-message-admission
+
+      - name: Check installed Message Admission public entries
+        run: npm run test:packed-consumer --workspace @phosphorco/bb-message-admission
+
+      - name: Inspect shared JEV package
+        run: npm pack --dry-run --ignore-scripts --workspace @phosphorco/bb-jev
+
+      - name: Verify shared JEV packed public consumer
+        run: npm run test:packed-consumer --workspace @phosphorco/bb-jev

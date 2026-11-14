@@ -23,6 +23,11 @@ export interface ConnectionHealth {
   readonly state: ConnectionLinkHealth;
 }
 export type IdentityConnectionEvent = ClientInvalidation | { readonly kind: 'state'; readonly event: import('./state.js').StateInvalidation };
+/** One decoded bootstrap, usable only while the connection retains this health generation. */
+export interface RevalidatedIdentitySession {
+  readonly session: Extract<ServerSession, { status: 'ready' }>;
+  readonly generation: number;
+}
 /** One root owns this connection. Identity and all StateResource transports borrow it. */
 export interface IdentityConnection extends Disposable {
   getHealth(): ConnectionHealth;
@@ -33,6 +38,12 @@ export interface IdentityConnection extends Disposable {
   /** Re-establishes route reachability and verifies authoritative identity freshness.
    * It does not reload unknown StateResources; their controllers reload/reconcile separately. */
   revalidate(options?: ReadOptions): Promise<Result<void>>;
+  /** Optional combined freshness check and bootstrap. Each call must revalidate;
+   * only concurrent callers in one authority epoch may share a response. The
+   * result includes the health generation AFTER verification/notifications.
+   * Retire it on any intervening generation change, cancellation or disposal.
+   * Absence preserves the legacy revalidate -> bootstrap path. */
+  revalidateSession?(options?: ReadOptions): Promise<Result<RevalidatedIdentitySession>>;
 }
 export interface IdentityClientTransport {
   bootstrap(options?: ReadOptions): Promise<Result<ServerSession>>;
@@ -161,6 +172,7 @@ export interface IdentityConnectionInputs {
   readonly getHealth: () => ConnectionHealth;
   readonly subscribeHealth: (listener: () => void) => Unsubscribe;
   readonly revalidate: (options?: ReadOptions) => Promise<Result<void>>;
+  readonly revalidateSession?: IdentityConnection['revalidateSession'];
   readonly dispose?: () => void;
 }
 export declare function createIdentityConnection(inputs: IdentityConnectionInputs): IdentityConnection;

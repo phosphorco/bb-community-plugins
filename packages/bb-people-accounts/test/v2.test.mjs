@@ -30,7 +30,7 @@ const supplier = {
   async get(i) { return { version: 2, results: i.subjects.map(subject => ({ subject, status: 'found', value: publicIdentity(subject) })) }; },
 };
 const linksReader = {
-  async links(i) { return { version: 2, results: i.personKeys.map(personKey => ({ personKey, status: 'found', version, links: [edge()] })) }; },
+  async links(i) { return { version: 2, results: i.personKeys.map(personKey => ({ personKey, status: 'found', version, links: [edge(personKey === b ? 'link-b' : 'link-a')] })) }; },
   async find(i) { return { version: 2, status: 'page', identity: i.identity, revision: 'index-1', links: [{ personKey: a, id: 'link-a' }, { personKey: b, id: 'link-b' }], nextCursor: null, coverage: 'complete' }; },
 };
 
@@ -91,6 +91,14 @@ test('client and registrar reject wrong-owner namespaces, unrequested identities
   await assert.rejects(forged.get({ subjects: ['requested'] }), /incompatible/);
   const large = createPeopleAccountsV2Client({ plugins: { callRpc: async () => ({ protocol: 'bb-people-accounts', versions: [2], capabilities: {}, hidden: 'x'.repeat(v2.LIMITS_V2.responseBytes) }) } }, 'source-one');
   await assert.rejects(large.describe(), /limit-exceeded/);
+  const oversizedRecord = { version: 2, results: [{ personKey: a, status: 'found', version,
+    links: Array.from({ length: 100 }, (_, n) => edge(`link-${n}`, identity('source-one', `${n}-${'x'.repeat(2000)}`))),
+  }] };
+  assert.ok(JSON.stringify(oversizedRecord).length < v2.LIMITS_V2.responseBytes, 'fixture isolates the per-person bound');
+  const oversizedLinks = fixture({ links: { ...linksReader, links: async () => oversizedRecord } });
+  await assert.rejects(oversizedLinks.client.links({ personKeys: [a] }), /incompatible/);
+  const forgedLinks = createPeopleAccountsV2Client({ plugins: { callRpc: async () => ({ ok: true, value: oversizedRecord }) } }, 'source-one');
+  await assert.rejects(forgedLinks.links({ personKeys: [a] }), /incompatible/);
   const before = f.calls.length;
   await assert.rejects(f.client.get({ subjects: [], token: 'synthetic' }));
   await assert.rejects(f.client.list({ query: '', limit: 50, cursor: 'c' }));
@@ -214,6 +222,8 @@ test('reverse lookup rejects drift/foreign locators, never hides a second person
   await assert.rejects(bad.client.find({ identity: identity(), limit: 50 }), /incompatible/);
   const losing = fixture({ links: { ...linksReader, find: async i => ({ ...(await linksReader.find(i)), links: [] }) } });
   await assert.rejects(runPeopleAccountsV2Conformance({ sdk: losing.sdk, pluginId: 'source-one', personKeys: [a, b], reverse: identity() }), /lost an association/);
+  const wrongId = fixture({ links: { ...linksReader, find: async i => ({ ...(await linksReader.find(i)), links: [{ personKey: a, id: 'wrong-link-id' }] }) } });
+  await assert.rejects(runPeopleAccountsV2Conformance({ sdk: wrongId.sdk, pluginId: 'source-one', personKeys: [a], reverse: identity() }), /lost an association/);
 });
 
 test('v1 methods and credential custody stay independent on the same real SDK host', async () => {

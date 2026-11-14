@@ -81,6 +81,9 @@ span[role="group"]:has(> [data-message-timings-nerd-mount]) {
   }
 }
 .message-timings-nerd__activity-caption {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
   color: var(--muted-foreground);
   font-size: 0.6875rem;
   font-variant-numeric: tabular-nums;

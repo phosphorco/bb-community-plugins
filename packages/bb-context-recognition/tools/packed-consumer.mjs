@@ -34,7 +34,7 @@ import * as mounted from '@phosphorco/bb-context-recognition/testing/react';
 import React,{act} from 'react';
 import {createRoot} from 'react-dom/client';
 import {JSDOM} from 'jsdom';
-assert.equal(typeof registry.registerPresentation,'function');assert.equal(typeof react.PresentationHost,'function');assert.equal(typeof mounted.runPresentationConformance,'function');
+assert.equal(typeof registry.registerPresentation,'function');assert.equal(typeof react.PresentationHost,'function');assert.equal(typeof mounted.runPresentationConformance,'function');assert.equal(typeof mounted.runHostedPresentationConformance,'function');
 assert.equal(root.METHODS.describe, 'contextRecognitionDescribe');
 assert.equal(typeof bb.enumerateRecognitionSuppliers, 'function');
 assert.equal(typeof kit.runSupplierConformance, 'function');

@@ -1,3 +1,4 @@
+import { setImmediate as yieldToHost } from "node:timers/promises";
 import { LIMITS, arbitrate, nativeCandidates, SafeHrefSchema, type ContextBundleV1, type TaggedCandidateV1, type SourceIdentity, type Span } from '@phosphorco/bb-context-recognition';
 import { linkifyAll, type ReadyRecognitionSupplier } from '@phosphorco/bb-context-recognition/bb';
 import { safeAuthoredHrefSchema, recognitionIdentity, recognitionIdentityRecord, verifiedFileIdentity } from '@phosphorco/bb-cross-references';
@@ -106,6 +107,7 @@ export async function collectConversationMentions(options:{messages:readonly Con
     }catch{return null;}
   };
   for(const message of options.messages.slice(0,MENTION_LIMITS.messages)){
+    await yieldToHost(undefined,{signal:options.signal});
     options.signal.throwIfAborted();
     if(sourceExpired || remaining()<=0){expire();break;}
     if(message.text.length>MENTION_LIMITS.messageChars || chars+message.text.length>MENTION_LIMITS.sourceChars){reasons.add('source-text-budget');continue;}

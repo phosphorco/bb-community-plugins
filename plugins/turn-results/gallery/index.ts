@@ -49,7 +49,7 @@ export interface GalleryPage {
   expectedInvalidationVersion?: number | null;
 }
 export type IndexCommit =
-  | { state: 'committed' | 'unchanged'; mutations: number; changedBytes: number; stageVersion: number | null }
+  | { state: 'committed' | 'unchanged'; mutations: number; changedBytes: number; stageVersion: number | null; observationsChanged?: boolean }
   | { state: 'capacity' | 'conflict' | 'revalidate'; reason: string };
 export interface GalleryObservation {
   key: string; owner: string; identity: ResultIdentity; resolution: Resolution | null;
@@ -350,6 +350,15 @@ export function createGalleryIndex(db: Database.Database, options: GalleryIndexO
   function flush(mutations: Mutation[], m: Meta, evicted = 0, stageVersion: number | null = null): IndexCommit {
     const changed = mutations.filter(v => v.before?.payload_json !== v.after?.payload_json || !!v.before !== !!v.after);
     if (!changed.length) return { state: 'unchanged', mutations: 0, changedBytes: 0, stageVersion };
+    // Cursors and an empty owner's heartbeat are durable bookkeeping, not a
+    // reason to walk retained results again. Keep freshness/epoch protection;
+    // supplier changes can affect reads whenever that owner has any claim.
+    const observationsChanged = changed.some(change => {
+      const row = change.after ?? change.before!;
+      return row.kind === 'claim' || row.kind === 'thread' || row.kind === 'supplier'
+        && !!db.prepare("SELECT 1 FROM gallery_records INDEXED BY gallery_stage_read WHERE kind='claim' AND thread_id=? AND owner=? LIMIT 1")
+          .get(row.thread_id, row.owner);
+    });
     const changedBytes = changed.reduce((sum, v) => sum + (v.after?.charge ?? v.before?.charge ?? 0), META_CHARGE);
     if (changed.length + 1 > 40 || changedBytes > 1048576) throw new Refusal('capacity', 'transaction-budget');
     const next = { ...m, order_head: m.order_head + 1, evicted: m.evicted + evicted };
@@ -380,7 +389,7 @@ export function createGalleryIndex(db: Database.Database, options: GalleryIndexO
     for (const v of changed) { if (v.after) put.run(v.after); else remove.run(v.before!.kind, v.before!.record_key); }
     db.prepare(`UPDATE gallery_meta SET observations=@observations,threads=@threads,stages=@stages,suppliers=@suppliers,
       logical_bytes=@logical_bytes,metadata_bytes=@metadata_bytes,order_head=@order_head,evicted=@evicted WHERE singleton=1`).run(next);
-    return { state: 'committed', mutations: changed.length + 1, changedBytes, stageVersion };
+    return { state: 'committed', mutations: changed.length + 1, changedBytes, stageVersion, observationsChanged };
   }
   function commit(work: () => IndexCommit): IndexCommit {
     if (db.inTransaction) return { state: 'conflict', reason: 'caller-transaction-not-supported' };

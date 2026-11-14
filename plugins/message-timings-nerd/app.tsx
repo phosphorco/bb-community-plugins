@@ -1,13 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { definePluginApp, useRealtime, useRealtimeConnectionState, useRpc } from "@get-bb/plugin-sdk/app";
-import type { PluginThreadHeaderActionProps } from "@get-bb/plugin-sdk/app";
+import type { ExperimentalThreadHeaderRowProps } from "@get-bb/plugin-sdk/app";
 import type { rpcContract } from "./rpc-contract.ts";
 import { createDecorations } from "./decorations.ts";
 import { createActivityStrip } from "./activity.ts";
 import { findTimingPane } from "./pane.ts";
 import "./app.css";
 
-function TimingMount({ threadId }: PluginThreadHeaderActionProps) {
+function TimingMount({ threadId }: ExperimentalThreadHeaderRowProps) {
   const rpc = useRpc<typeof rpcContract>();
   const rpcRef = useRef(rpc);
   rpcRef.current = rpc;
@@ -55,6 +55,7 @@ function TimingMount({ threadId }: PluginThreadHeaderActionProps) {
         if (!failed) retryCount.current = 0;
       } catch {
         if (!disposed) {
+          activity.unavailable();
           // A failed read must not remove stable footers or change row heights.
           // Same-bundle reloads can retain this frontend while replacing the
           // backend handle. Recover one transient read without a polling loop.
@@ -92,5 +93,5 @@ function TimingMount({ threadId }: PluginThreadHeaderActionProps) {
 }
 
 export default definePluginApp(app => {
-  app.slots.experimental_threadHeaderAction({ id: "message-timings-nerd", title: "Message timings", component: TimingMount });
+  app.slots.experimental_threadHeaderRow({ id: "message-timings-nerd", component: TimingMount });
 });

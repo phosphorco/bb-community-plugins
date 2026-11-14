@@ -20,6 +20,15 @@ and `10m since previous message · 7m after agent finished` below the follow-up.
 Hover a label for the full local date and time. Timing labels appear automatically
 when the plugin is enabled; there is no per-thread toggle.
 
+The Activity row above an eligible composer keeps its intrinsic responsive space
+from this plugin's mount, including while loading. It distinguishes loading,
+no activity in loaded history, partial history, and unavailable updates without
+inventing zero activity or complete-history coverage. Failed updates retain any
+last loaded activity; successful reads clear the unavailable state even when the
+data is unchanged. Pending questions/approvals still control composer eligibility.
+This does not reserve space before the plugin mounts or stabilize other plugins'
+contributions. No fixed height or maximum-history spacer is used.
+
 ## Develop
 
 From this repository, run:
@@ -50,7 +59,7 @@ intervals are omitted rather than invented.
 
 The backend joins the public timeline with recorded `turn/completed` events.
 A folded work summary is not a completion event. Reads are bounded to 12 timeline
-pages, 1,000 completions, and 1,000 request/acceptance events; older history may be incomplete.
+pages, 100 completions, and 100 request/acceptance events; older history may be incomplete.
 Accepted steering is joined back to its original request by request identity;
 acceptance time is not used as send time. When that request is outside the
 available history, send-based intervals remain unknown. Completions without a
@@ -77,8 +86,9 @@ used to identify a thread. A future footer slot can replace this narrow adapter.
   Only uncovered row IDs, reconnect/visibility recovery, and thread lifecycle
   signals request data; requests coalesce and never overlap per pane.
 - A bounded server cache coalesces concurrent clients and queues loads behind
-  two global slots. Unchanged history needs one head-page probe rather than
-  another full traversal; visible rows before the declared history boundary
+  two global slots. Unchanged history needs one latest-event sequence probe
+  before reconstructing any timeline page; visible rows before the declared
+  history boundary
   do not trigger futile older-history reads. Lifecycle invalidation
   prevents obsolete requests from restoring stale results, including failures.
 - Minute deadlines update only the live footer. Raw clock state never enters

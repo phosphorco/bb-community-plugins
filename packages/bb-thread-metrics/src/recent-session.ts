@@ -1,9 +1,10 @@
-import { LIMITS,validateRecentSnapshot } from './index.js';
+import { LIMITS,validateRecentSnapshot,validateRecentRows,RecentRowsBaselineMissing,RecentRowsUnsupportedVersion,classifyOwnerError } from './index.js';
 import type { RecentSnapshot,RecentSnapshotInput,RecentPublicationIdentity } from './index.js';
 
 export interface RecentSnapshotSource {
  readonly pluginId:string;
  recentSnapshot(input:RecentSnapshotInput,signal:AbortSignal):Promise<unknown>;
+ recentRowsSnapshot?(input:RecentSnapshotInput,signal:AbortSignal):Promise<unknown>;
 }
 export type RecentSessionFailure='inactive'|'busy'|'aborted-before-start'|'aborted'|'timeout'|'source-replaced'|'stale-call'|'stale-publication'|'publication-conflict'|'missing-publication';
 export class RecentSnapshotSessionError extends Error {
@@ -25,7 +26,7 @@ const clock:RecentSessionClock={later(run,ms){const timer=setTimeout(run,ms);ret
 function next(n:number){if(n===Number.MAX_SAFE_INTEGER)throw new Error('Recent session generation exhausted');return n+1;}
 function sourceCopy(source:RecentSnapshotSource):RecentSnapshotSource {
  if(!source.pluginId||source.pluginId.length>200||typeof source.recentSnapshot!=='function')throw new Error('Invalid recent snapshot source');
- return {pluginId:source.pluginId,recentSnapshot:source.recentSnapshot.bind(source)};
+ return {pluginId:source.pluginId,recentSnapshot:source.recentSnapshot.bind(source),...(source.recentRowsSnapshot?{recentRowsSnapshot:source.recentRowsSnapshot.bind(source)}:{})};
 }
 function freeze<T>(value:T):T {
  if(value&&typeof value==='object'&&!Object.isFrozen(value)){for(const child of Object.values(value))freeze(child);Object.freeze(value);}return value;
@@ -51,10 +52,11 @@ export function createRecentSnapshotSession(initial:RecentSnapshotSource,options
  const time=options.clock??clock;
  let source=sourceCopy(initial),active=true,epoch=Symbol('view'),sourceGeneration=1,ownerGeneration=1;
  let held:RecentSnapshotObservation|undefined;
+ let requireFull=false,rowsUnsupported=false;
  let actual:{cancel:((reason:RecentSessionFailure)=>void)|undefined}|undefined;
- const admit=(input:RecentSnapshotInput,raw:unknown,current:()=>boolean):RecentSnapshotObservation=>{
+ const admit=(input:RecentSnapshotInput,raw:unknown,current:()=>boolean,rowsMode:boolean):RecentSnapshotObservation=>{
   if(!current())throw new RecentSnapshotSessionError('stale-call');
-  const value=validateRecentSnapshot(input,raw);
+  const value=rowsMode?validateRecentRows(input,raw,held?.snapshot):validateRecentSnapshot(input,raw);
   // Also fence reentrant/injected property getters during raw validation.
   if(!current())throw new RecentSnapshotSessionError('stale-call');
   if(value.unchanged){if(!held||held.snapshot.revision!==value.revision)throw new RecentSnapshotSessionError('publication-conflict');return held;}
@@ -82,16 +84,17 @@ export function createRecentSnapshotSession(initial:RecentSnapshotSource,options
    * sequence, timeout or ordinary reconnect is NOT authority to invoke this. */
   replaceSource(value:RecentSnapshotSource){
    const updated=sourceCopy(value),sg=next(sourceGeneration),og=next(ownerGeneration);
-   source=updated;sourceGeneration=sg;ownerGeneration=og;held=undefined;epoch=Symbol('source');actual?.cancel?.('source-replaced');
+   source=updated;sourceGeneration=sg;ownerGeneration=og;held=undefined;requireFull=false;rowsUnsupported=false;epoch=Symbol('source');actual?.cancel?.('source-replaced');
   },
   /** Mount/visibility lifecycle retains both watermark and actual admission. */
-  setActive(value:boolean){if(value===active)return;active=value;epoch=Symbol('view');if(!active)actual?.cancel?.('inactive');},
+  setActive(value:boolean){if(value===active)return;active=value;if(active)rowsUnsupported=false;epoch=Symbol('view');if(!active)actual?.cancel?.('inactive');},
   read(options:{signal?:AbortSignal;full?:boolean}={}):Promise<RecentSnapshotObservation>{
    const signal=options.signal,full=options.full;options={};
    if(!active)return Promise.reject(new RecentSnapshotNotStarted('inactive'));
    if(signal?.aborted)return Promise.reject(new RecentSnapshotNotStarted('aborted-before-start'));
    if(actual)return Promise.reject(new RecentSnapshotNotStarted('busy'));
-   const input:RecentSnapshotInput=!full&&held?{ifRevision:held.snapshot.revision}:{};
+   const input:RecentSnapshotInput=!full&&!requireFull&&held?{ifRevision:held.snapshot.revision}:{};
+   const rowsMode=Boolean(source.recentRowsSnapshot&&!rowsUnsupported);
    let selected:RecentSnapshotSource|undefined=source;const binding=sourceGeneration,view=epoch,control=new AbortController(),slot:{cancel:((reason:RecentSessionFailure)=>void)|undefined}={cancel:undefined};
    actual=slot;
    let finished=false;
@@ -100,7 +103,7 @@ export function createRecentSnapshotSession(initial:RecentSnapshotSource,options
    const result=new Promise<RecentSnapshotObservation>((yes,no)=>{resolve=yes;reject=no;});
    let cancelTimer:(()=>void)|undefined;
    const finish=(error:unknown,observation?:RecentSnapshotObservation)=>{
-    if(finished)return;finished=true;cancelTimer?.();cancelTimer=undefined;signal?.removeEventListener('abort',abort);slot.cancel=undefined;
+    if(finished)return;if(observation===undefined&&rowsMode&&current())requireFull=true;finished=true;cancelTimer?.();cancelTimer=undefined;signal?.removeEventListener('abort',abort);slot.cancel=undefined;
     const yes=resolve,no=reject;resolve=undefined;reject=undefined;
     if(observation===undefined)no?.(error);else yes?.(observation);
    };
@@ -111,10 +114,10 @@ export function createRecentSnapshotSession(initial:RecentSnapshotSource,options
    // still cannot invoke a source after its observation already timed out.
    if(finished){actual=undefined;cancelTimer?.();return result;}
    let pending:Promise<unknown>;
-   try{pending=Promise.resolve(selected.recentSnapshot(Object.freeze(input),control.signal));}catch(error){pending=Promise.reject(error);}finally{selected=undefined;}
+   try{pending=Promise.resolve((rowsMode?selected.recentRowsSnapshot!:selected.recentSnapshot)(Object.freeze(input),control.signal));}catch(error){pending=Promise.reject(error);}finally{selected=undefined;}
    void pending.then(value=>{
-    try{if(!finished)finish(undefined,admit(input,value,current));}catch(error){finish(error);}finally{if(actual===slot)actual=undefined;}
-   },error=>{try{finish(error instanceof RecentSnapshotNotStarted?new Error('Recent snapshot source rejected after invocation',{cause:error}):error);}finally{if(actual===slot)actual=undefined;}});
+    try{if(!finished){const observation=admit(input,value,current,rowsMode);requireFull=false;finish(undefined,observation);}}catch(error){if(current()&&error instanceof RecentRowsBaselineMissing)requireFull=true;if(current()&&error instanceof RecentRowsUnsupportedVersion){requireFull=true;rowsUnsupported=true;}finish(error);}finally{if(actual===slot)actual=undefined;}
+   },error=>{try{let absent=false;if(current()&&rowsMode){try{absent=classifyOwnerError(error)==='absent';}catch{/* Preserve the original transport rejection. */}}if(current()&&rowsMode&&absent){rowsUnsupported=true;requireFull=true;}finish(error instanceof RecentSnapshotNotStarted?new Error('Recent snapshot source rejected after invocation',{cause:error}):error);}finally{if(actual===slot)actual=undefined;}});
    return result;
   },
  };

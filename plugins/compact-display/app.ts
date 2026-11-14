@@ -1,3 +1,4 @@
+import "./thread-width.css";
 import { useEffect } from "react";
 import { definePluginApp, useSettings } from "@get-bb/plugin-sdk/app";
 
@@ -44,48 +45,41 @@ export default definePluginApp((app) => {
     display: none !important;
 }
 
-/* Thread measure: BB currently uses this utility on both the timeline column
-   and its composer footer. Scope to thread windows so settings/home stay native.
-   Use a named container: BB's nested page containers must not determine the
-   breakpoints, and a wide viewport must not widen a narrow split pane.
-   max-width (rather than width) preserves narrow panes and mobile layouts. */
-[data-thread-window] {
-    container-type: inline-size;
-    container-name: bb-compact-thread;
-}
-
-[data-thread-window] [class~="max-w-[760px]"] {
-    max-width: 760px !important;
-}
-
-@container bb-compact-thread (min-width: 1080px) {
-    [data-thread-window] [class~="max-w-[760px]"] {
-        max-width: 1080px !important;
-    }
-}
-
-@container bb-compact-thread (min-width: 1440px) {
-    [data-thread-window] [class~="max-w-[760px]"] {
-        max-width: 1440px !important;
-    }
-}
-
-/* Markdown tables deliberately break out of the native column. BB writes this
-   variable inline on each breakout wrapper as it measures available room.
-   Override it there, not on an ancestor, so resize measurements cannot undo the
-   cap. 100% means the local text column; BB's inner table retains x scrolling. */
-[data-thread-window] [style*="--md-table-breakout-max"] {
-    --md-table-breakout-max: 100% !important;
-}
-
-/* Composer density shares the same sheet as the thread measure above. */
+/* Thread measure lives in thread-width.css, also the native appearance theme. */
+/* Composer density retains its app-lifecycle stylesheet. */
 [data-promptbox-action-row] {
     padding: 0 0.25rem;
 }
 
 [data-promptbox-editor-scroll] {
-    max-height: calc(30dvh - 3rem) !important;
+    /* The keyboard can shrink the visual viewport without shrinking dvh.
+       Respect BB's corrected shell height and its tighter home-editor budget;
+       otherwise a long draft can push the composer above the visible area. */
+    max-height: min(
+        calc(30dvh - 3rem),
+        calc(var(--bb-shell-height, 100dvh) * 0.3 - 3rem),
+        var(--composer-editor-available-height, 100dvh)
+    ) !important;
     padding-top: 0.25rem !important;
+}
+
+/* Keep typing controls legible before focus as well as during it. Cover touch
+   devices in landscape and narrow WebViews even if pointer detection differs.
+   Apply across the app, including plugin forms and editors mounted later.
+   Exclude non-typing input controls; keep larger inherited text sizes. */
+@media (any-pointer: coarse), (max-width: 767px) {
+    :where(
+        input:not([type="button"], [type="checkbox"], [type="color"],
+            [type="file"], [type="hidden"], [type="image"], [type="radio"],
+            [type="range"], [type="reset"], [type="submit"]),
+        textarea,
+        select,
+        [contenteditable=""],
+        [contenteditable="true" i],
+        [contenteditable="plaintext-only" i]
+    ) {
+        font-size: max(16px, 1em) !important;
+    }
 }
 `;
       document.head.append(style);

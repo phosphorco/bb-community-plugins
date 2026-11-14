@@ -1,7 +1,7 @@
 import { definePluginApp, useBbNavigate, useSdk, useRealtime, useRealtimeConnectionState } from '@get-bb/plugin-sdk/app';
 import { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import type { PluginThreadHeaderActionProps } from '@get-bb/plugin-sdk/app';
+import type { ExperimentalThreadHeaderRowProps } from '@get-bb/plugin-sdk/app';
 import { createGalleryAnchorReader, GalleryBoundaryError, GALLERY_HISTORY_LIMITS } from './gallery/anchors.ts';
 import { mountGalleryPane, observeGalleryDemand, GALLERY_PANE_LIMITS, sameBoundary, resolveGalleryBridge } from './gallery/pane.ts';
 import { createGalleryWorkOwner } from './gallery/work-owner.ts';
@@ -10,6 +10,16 @@ import type { GalleryOpenPort, GalleryOpenOutcome } from './gallery/view.tsx';
 import { untilAborted } from './gallery/lifetime.ts';
 import type { GalleryAnchor, GalleryTimelinePort } from './gallery/anchors.ts';
 import './app.css';
+
+function threadChangeNeedsProof(event: unknown): boolean {
+  if (!event || typeof event !== 'object' || !('entity' in event) || event.entity !== 'thread'
+    || !('changes' in event) || !Array.isArray(event.changes) || !event.changes.length) return true;
+  // Positive public change kinds only. Never infer unchanged history from a
+  // sequence watermark: backfills/rewrites can retain it. Mixed/unknown kinds
+  // and older payloads without change kinds keep conservative invalidation.
+  return event.changes.some(kind => !['title-changed', 'read-state-changed', 'pin-state-changed', 'queue-changed'].includes(kind));
+}
+
 interface HeaderPreload {
   demand?(ids: readonly string[]): void;
   proof?(result: { anchors: readonly GalleryAnchor[]; continued: boolean; capacity: boolean }): void;
@@ -84,7 +94,7 @@ export default definePluginApp(app => {
     const previous = currentStop?.() ?? stopping;
     return previous ? previous.then(activate) : activate();
   } });
-  function HeaderBridge({ threadId, projectId }: PluginThreadHeaderActionProps) {
+  function HeaderBridge({ threadId, projectId }: ExperimentalThreadHeaderRowProps) {
     const sdk = useSdk(), connection = useRealtimeConnectionState();
     const nativeTimeline = useMemo(() => ({ sdk, port: sdk.threads }), [sdk]);
     const committedTimeline = useRef<typeof nativeTimeline | null>(null);
@@ -329,7 +339,7 @@ export default definePluginApp(app => {
       };
       const stops: (() => void)[] = [];
       try {
-        stops.push(sdk.subscribe({ event: 'thread:changed', threadId, callback: stop }));
+        stops.push(sdk.subscribe({ event: 'thread:changed', threadId, callback(event) { if (threadChangeNeedsProof(event)) stop(); } }));
         stops.push(sdk.subscribe({ event: 'system:config-changed', callback: stop }));
         stops.push(sdk.subscribe({ event: 'realtime:connection', callback(event) {
           if (!live) return;
@@ -417,7 +427,6 @@ export default definePluginApp(app => {
         toProject: (...args) => { current()?.toProject(...args); },
         toPluginPanel: (...args) => { current()?.toPluginPanel(...args); },
         toCompose: (...args) => { current()?.toCompose(...args); },
-        openThreadPanel: (...args) => current()?.openThreadPanel(...args) ?? false,
         openUrl: (...args) => current()?.openUrl(...args) ?? false,
         experimental_openFilePreview: (...args) => current()?.experimental_openFilePreview(...args) ?? false,
         experimental_openFileExternally: (...args) => current()?.experimental_openFileExternally(...args) ?? false,
@@ -661,6 +670,7 @@ export default definePluginApp(app => {
       try {
         subscriptions.push(sdk.subscribe({ event: 'thread:changed', threadId, callback(event) {
           if (typeof event?.id === 'string' && event.id !== threadId) return;
+          if (!threadChangeNeedsProof(event)) return;
           // Backfill may retain timelineSequence; unknown changes are hard too.
           semanticChanged();
         } }));
@@ -765,5 +775,5 @@ export default definePluginApp(app => {
 
   }
 
-  app.slots.experimental_threadHeaderAction({ id: 'turn-results-bridge', title: 'Turn results bridge', component: HeaderBridge });
+  app.slots.experimental_threadHeaderRow({ id: 'turn-results-bridge', component: HeaderBridge });
 });

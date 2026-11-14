@@ -1,4 +1,4 @@
-import { Database } from 'bun:sqlite';
+import { Database, type Statement } from 'bun:sqlite';
 import type { Db } from '../store';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -13,8 +13,32 @@ import { randomUUID } from 'node:crypto';
 
 export function definition(overrides:Partial<TemplateDefinition>={}):TemplateDefinition {return {...emptyDefinition('test-template'),name:'Test template',fields:[{key:'task',label:'Task',type:'textarea',required:true,order:0}],destination:{kind:'existing-project',projectId:'project-1',environment:{kind:'project-default'}},promptTemplate:'Do {{task}}',titleTemplate:'Task {{task}}',...overrides};}
 export function databaseFixture(now:()=>number=Date.now) {
-  const dir=mkdtempSync(join(tmpdir(),'templates-backend-'));const path=join(dir,'data.db');let db=new Database(path);let store=new TemplatesStore(db as unknown as Db,now);
-  return {get db(){return db;},get store(){return store;},reopen(){db.close();db=new Database(path);store=new TemplatesStore(db as unknown as Db,now);return store;},close(){db.close();rmSync(dir,{recursive:true,force:true});}};
+  const dir=mkdtempSync(join(tmpdir(),'templates-backend-'));
+  const path=join(dir,'data.db');
+  const statements=new Set<Statement>();
+  function open() {
+    const connection=new Database(path);
+    const prepare=connection.prepare.bind(connection);
+    connection.prepare=((...args:Parameters<typeof prepare>)=>{
+      const statement=prepare(...args);
+      statements.add(statement);
+      return statement;
+    }) as typeof connection.prepare;
+    return connection;
+  }
+  function closeConnection() {
+    // close(false) leaves prepare() statements and their file connection alive.
+    // Retire every fixture-owned handle before unlinking or reopening the file.
+    for(const statement of statements)statement.finalize();
+    statements.clear();
+    db.close(true);
+  }
+  let db=open(),store=new TemplatesStore(db as unknown as Db,now);
+  return {
+    get db(){return db;},get store(){return store;},
+    reopen(){closeConnection();db=open();store=new TemplatesStore(db as unknown as Db,now);return store;},
+    close(){closeConnection();rmSync(dir,{recursive:true,force:true});},
+  };
 }
 export const alice=personFixture({subject:'alice',name:'Alice'});
 export function launchActor(session='session-1'):LaunchActor {return {actor:alice,expected:{actor:alice.identity.key,session},validate(){}};}

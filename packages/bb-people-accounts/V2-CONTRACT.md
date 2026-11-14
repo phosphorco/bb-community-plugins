@@ -43,8 +43,9 @@ host must update its reverse index and receipts in the same transaction.
 | `/v2/bb` | `registerPeopleAccountsV2`, `createPeopleAccountsV2Client`, `createPeopleAccountsDiscovery`, `PeopleAccountsV2Error` and port types. SDK supplied explicitly; no cross-plugin imports or singleton. |
 | `/v2/testing` | `runPeopleAccountsV2Conformance` over an adopter's real SDK handlers and seeded identities/associations. It imports the emitted sibling entry rather than bundling another client instance. |
 
-V2 is checked with SDK 0.6.52 and bb-identity 0.5.0. The legacy package peer
-range is retained for v1; this is not v2 acceptance on every older SDK host.
+V2 is checked with registry SDK 0.6.52 and the shared fork SDK
+`0.6.143+phosphor.05199007.upgrade1`, using bb-identity 0.5.0. The legacy package
+peer range is retained for v1; this is not v2 acceptance on every older SDK host.
 
 ## Wire
 

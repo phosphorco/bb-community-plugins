@@ -30,8 +30,9 @@ export async function runPeopleAccountsV2Conformance(options: {
     const reverse = await client.find({ identity: options.reverse, limit: 50 });
     if (reverse.status !== 'page') throw new Error('v2 conformance: reverse lookup failed');
     for (const row of result.results) {
-      if (row.status === 'found' && row.links.some(l => locatorKey(l.identity) === locatorKey(options.reverse!))
-        && reverse.nextCursor === null && reverse.coverage === 'complete' && !reverse.links.some(l => l.personKey === row.personKey)) throw new Error('v2 conformance: reverse lookup lost an association');
+      if (row.status === 'found' && reverse.nextCursor === null && reverse.coverage === 'complete'
+        && row.links.some(link => locatorKey(link.identity) === locatorKey(options.reverse!)
+          && !reverse.links.some(found => found.personKey === row.personKey && found.id === link.id))) throw new Error('v2 conformance: reverse lookup lost an association');
     }
     checks.push('forward-links', 'reverse-links');
   }

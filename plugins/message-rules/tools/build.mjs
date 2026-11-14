@@ -1,0 +1,12 @@
+import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+const cli = process.env.BB_TOOLCHAIN_CLI ?? fileURLToPath(new URL("../../../../fork/build/bb/apps/cli/dist/index.js", import.meta.url));
+const build = spawnSync(process.execPath, [cli, "plugin", "build", "."], { stdio: "inherit" });
+if (build.status !== 0) process.exit(build.status ?? 1);
+const app = JSON.parse(readFileSync(resolve("dist/app.meta.json"), "utf8"));
+const server = JSON.parse(readFileSync(resolve("dist/server.meta.json"), "utf8"));
+if (app.sdkVersion !== server.sdkVersion || JSON.stringify(app.builtWith) !== JSON.stringify(server.builtWith)) throw Error("App/server toolchain stamps differ.");
+if (app.artifactFormatVersion !== 1) throw Error("Expected native plugin artifact format 1.");
+console.log("Verified native plugin artifacts and matching toolchain.");

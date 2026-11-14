@@ -10,7 +10,7 @@ const read = path => readFileSync(resolve(root, path), 'utf8');
 
 test('all emitted public entries and declarations exist, kit uses sibling public modules', () => {
  const manifest = JSON.parse(read('package.json'));
- expect(manifest.name).toBe('@phosphorco/bb-thread-attachments'); expect(manifest.version).toBe('0.1.0');
+ expect(manifest.name).toBe('@phosphorco/bb-thread-attachments'); expect(manifest.version).toBe('0.1.1');
  for (const entry of Object.values(manifest.exports)) { expect(read(entry.import).length).toBeGreaterThan(0); expect(read(entry.types).length).toBeGreaterThan(0); }
  expect(read('dist/testing.js')).toContain('"./bb.js"');
  expect(read('dist/testing.js')).toContain('"./index.js"');

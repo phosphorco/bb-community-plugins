@@ -101,7 +101,6 @@ export function createActivityStrip(root: HTMLElement) {
   const node = doc.createElement("div");
   node.setAttribute(OWNED, "");
   node.className = "message-timings-nerd__activity";
-  node.setAttribute("role", "img");
   const track = doc.createElement("div");
   track.className = "message-timings-nerd__activity-track";
   const caption = doc.createElement("span");
@@ -121,7 +120,8 @@ export function createActivityStrip(root: HTMLElement) {
   node.append(track, caption, tip);
   let turns: TurnSpan[] = [];
   let partial = false;
-  let wanted = false;
+  let loaded = false;
+  let unavailable = false;
   let current: Activity | null = null;
   let pointer: number | null = null;
   let timer: number | undefined;
@@ -138,12 +138,12 @@ export function createActivityStrip(root: HTMLElement) {
   // A pending approval or question hides the composer; don't sit between them.
   const blocked = (anchor: Element) => !!anchor.querySelector(":scope > [data-follow-up-composer][hidden]");
   function place(anchor: Element | null = findAnchor()) {
-    if (!wanted || doc.hidden || !anchor || blocked(anchor)) { node.remove(); return; }
+    if (doc.hidden || !anchor || blocked(anchor)) { node.remove(); return; }
     if (node.nextElementSibling !== anchor) anchor.before(node);
   }
   function summary(activity: Activity) {
     const hidden = activity.hiddenIdleMs > 0 ? ` · ${duration(0, activity.hiddenIdleMs) ?? "<1m"} idle beyond 1h not counted` : "";
-    return `${activityPercent(activity)} active${hidden}${partial ? " · loaded history only" : ""}`;
+    return `${activityPercent(activity)} active${hidden}${partial ? " · loaded history only" : ""}${unavailable ? " · update unavailable" : ""}`;
   }
   // Narrow active spans are drawn at 2px; let the pointer snap to them.
   function segmentAt(fraction: number): number {
@@ -182,10 +182,28 @@ export function createActivityStrip(root: HTMLElement) {
   function paint() {
     win.clearTimeout(timer);
     if (disposed || doc.hidden) return;
-    const activity = current = activitySpans(turns, Date.now());
-    wanted = !!activity;
+    const activity = current = loaded ? activitySpans(turns, Date.now()) : null;
+    const state = unavailable ? "unavailable" : !loaded ? "pending" : partial ? "incomplete" : activity ? "ready" : "empty";
+    const attribute = (name: string, value: string | null) => {
+      if (value === null) { if (node.hasAttribute(name)) node.removeAttribute(name); }
+      else if (node.getAttribute(name) !== value) node.setAttribute(name, value);
+    };
+    attribute("data-activity-state", state);
+    attribute("role", activity ? "img" : "status");
+    attribute("aria-busy", state === "pending" ? "true" : null);
+    attributeCaption(activity !== null);
+    if (!activity) {
+      // No numeric activity is implied by an unknown read or an empty bounded
+      // history. Keep the real intrinsic row, not a blank guessed-height spacer.
+      const text = unavailable ? "Activity unavailable" : !loaded ? "Loading activity…"
+        : partial ? "No loaded activity · partial history" : "No activity in loaded history";
+      const label = unavailable && loaded ? `Activity update unavailable. No activity in the last loaded${partial ? " partial" : ""} history.` : text;
+      if (caption.textContent !== text) caption.textContent = text;
+      attribute("aria-label", label);
+      if (track.childElementCount) track.replaceChildren();
+      showTip(); place(); return;
+    }
     place();
-    if (!activity) return;
     while (track.childElementCount > activity.segments.length) track.lastElementChild!.remove();
     activity.segments.forEach((segment, index) => {
       const bar = (track.children[index] as HTMLElement | undefined) ?? track.appendChild(doc.createElement("div"));
@@ -196,13 +214,17 @@ export function createActivityStrip(root: HTMLElement) {
       bar.style.width = `${segment.width * 100}%`;
     });
     const percent = activityPercent(activity);
-    const text = `${percent} active${activity.running ? " · running" : ""}`;
+    const text = `${percent} active${activity.running ? " · running" : ""}${partial ? " · partial" : ""}${unavailable ? " · update unavailable" : ""}`;
     if (caption.textContent !== text) caption.textContent = text;
     const since = new Date(activity.start).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
-    const label = `${activity.running ? "Agent running. " : ""}Active ${duration(0, activity.activeMs) ?? "<1m"} since ${since}; ${summary(activity)}.`;
+    const label = `${unavailable ? "Activity update unavailable; showing last loaded activity. " : ""}${activity.running ? unavailable ? "Last loaded activity indicates agent running. " : "Agent running. " : ""}Active ${duration(0, activity.activeMs) ?? "<1m"} since ${since}; ${summary(activity)}.`;
     if (node.getAttribute("aria-label") !== label) node.setAttribute("aria-label", label);
     showTip();
     timer = win.setTimeout(() => guarded(paint), activity.running ? 60_000 : 600_000);
+  }
+  function attributeCaption(hidden: boolean) {
+    if (hidden) { if (caption.getAttribute("aria-hidden") !== "true") caption.setAttribute("aria-hidden", "true"); }
+    else if (caption.hasAttribute("aria-hidden")) caption.removeAttribute("aria-hidden");
   }
   function hover(event: PointerEvent) { guarded(() => {
     const box = track.getBoundingClientRect();
@@ -213,11 +235,20 @@ export function createActivityStrip(root: HTMLElement) {
   node.addEventListener("pointermove", hover);
   node.addEventListener("pointerleave", leave);
   const observer = new win.MutationObserver(records => guarded(() => {
-    if (!wanted || doc.hidden) return;
+    if (doc.hidden) return;
     if (node.isConnected) {
-      const anchor = node.nextElementSibling;
-      if (anchor?.matches(ANCHOR) && !blocked(anchor)) return;
-      place();
+      const sibling = node.nextElementSibling;
+      // Streaming text cannot change primary/fallback precedence. A newly
+      // added composer can, even while our fallback sibling remains eligible.
+      const addedAnchor = records.some(record => Array.from(record.addedNodes).some(added => {
+        if (added.nodeType !== 1) return false;
+        const element = added as Element;
+        return element.matches(ANCHOR) || !!(element.childElementCount && element.querySelector(ANCHOR));
+      }));
+      if (sibling?.matches(ANCHOR) && !blocked(sibling) && !addedAnchor) return;
+      const selected = findAnchor();
+      if (selected && sibling === selected && !blocked(selected)) return;
+      place(selected);
       return;
     }
     // Detached: streamed text cannot contain a composer, so inspect only
@@ -250,8 +281,13 @@ export function createActivityStrip(root: HTMLElement) {
     node.removeEventListener("pointerleave", leave);
     node.remove();
   }
+  // Eligibility owns placement; data readiness only changes this row's content.
+  guarded(paint);
   return {
-    update(next: TurnSpan[], historyPartial = false) { guarded(() => { turns = next; partial = historyPartial; paint(); }); },
+    update(next: TurnSpan[], historyPartial = false) { guarded(() => {
+      turns = next; partial = historyPartial; loaded = true; unavailable = false; paint();
+    }); },
+    unavailable() { guarded(() => { unavailable = true; paint(); }); },
     dispose,
   };
 }

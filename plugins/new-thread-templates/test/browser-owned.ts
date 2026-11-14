@@ -4,9 +4,89 @@ import {
   type Browser,
   type ConnectOverCDPTransport,
 } from "@playwright/test";
-import { spawn } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
+import type { EventEmitter } from "node:events";
 import { join } from "node:path";
 import { retireDisconnectedPromptBrowser } from "./browser-prompt-cleanup.ts";
+
+/** Connection-only seam: deterministic tests never create a browser or socket. */
+export async function attachOwnedSocket<T>(
+  socket: Pick<
+    WebSocket,
+    "readyState" | "addEventListener" | "removeEventListener" | "close"
+  >,
+  child: Pick<ChildProcess, "exitCode" | "signalCode"> &
+    Pick<EventEmitter, "on" | "removeListener">,
+  attach: () => Promise<T>,
+): Promise<T> {
+  let opened = false;
+  let failure: Error | undefined;
+  let rejectFailure!: (error: Error) => void;
+  let resolveOpen!: () => void;
+  let openTimer: ReturnType<typeof setTimeout> | undefined;
+  const failed = new Promise<never>((_, reject) => {
+    rejectFailure = reject;
+  });
+  const ready = new Promise<void>((resolve) => {
+    resolveOpen = resolve;
+  });
+  const fail = (error: Error) => {
+    failure ??= error;
+    rejectFailure(failure);
+  };
+  const onOpen = () => {
+    opened = true;
+    if (openTimer) clearTimeout(openTimer);
+    resolveOpen();
+  };
+  const onClose = (event: Event) => {
+    const { code, reason, wasClean } = event as CloseEvent;
+    fail(new Error(
+      `Owned Chromium CDP socket closed ${opened ? "during attachment" : "before open"}: code=${code}, reason=${JSON.stringify(reason)}, wasClean=${wasClean}`,
+    ));
+  };
+  const onError = () => fail(new Error("Owned Chromium CDP socket failed"));
+  const onExit = (code: number | null, signal: NodeJS.Signals | null) => fail(new Error(
+    `Owned Chromium exited during CDP ${opened ? "attachment" : "socket opening"}: exitCode=${code}, signal=${signal}`,
+  ));
+  const onChildError = (error: Error) => fail(new Error(
+    `Owned Chromium failed during CDP connection: ${error.message}`, { cause: error },
+  ));
+  socket.addEventListener("open", onOpen);
+  socket.addEventListener("close", onClose);
+  socket.addEventListener("error", onError);
+  child.on("exit", onExit);
+  child.on("error", onChildError);
+  try {
+    if (child.exitCode !== null || child.signalCode !== null)
+      onExit(child.exitCode, child.signalCode);
+    if (socket.readyState === 1) onOpen();
+    else if (socket.readyState >= 2)
+      fail(new Error(`Owned Chromium CDP socket was not open: readyState=${socket.readyState}`));
+    if (!opened && !failure)
+      openTimer = setTimeout(
+        () => fail(new Error("Owned Chromium CDP socket exceeded 5000ms")),
+        5000,
+      );
+    await Promise.race([ready, failed]);
+    if (failure) throw failure;
+    return await Promise.race([attach(), failed]);
+  } catch (error) {
+    try {
+      socket.close();
+    } catch (cleanupError) {
+      console.error("Owned Chromium socket cleanup also failed:", cleanupError);
+    }
+    throw error;
+  } finally {
+    if (openTimer) clearTimeout(openTimer);
+    socket.removeEventListener("open", onOpen);
+    socket.removeEventListener("close", onClose);
+    socket.removeEventListener("error", onError);
+    child.removeListener("exit", onExit);
+    child.removeListener("error", onChildError);
+  }
+}
 
 export function acquireOwnedBrowser({
   scratch,
@@ -174,31 +254,12 @@ export function acquireOwnedBrowser({
           transport.onclose?.(event.reason);
         };
         socket.onerror = (event) => phase("socket:error", { type: event.type });
-        let openTimer: ReturnType<typeof setTimeout> | undefined;
-        try {
-          await new Promise<void>((resolve, reject) => {
-            socket.onopen = () => resolve();
-            socket.addEventListener(
-              "error",
-              () => reject(new Error("Owned Chromium CDP socket failed")),
-              { once: true },
-            );
-            openTimer = setTimeout(
-              () =>
-                reject(new Error("Owned Chromium CDP socket exceeded 5000ms")),
-              5000,
-            );
-          });
-        } catch (error) {
-          socket.close();
-          throw error;
-        } finally {
-          if (openTimer) clearTimeout(openTimer);
-        }
-        browser = await Promise.race([
-          chromium.connectOverCDP(transport, { timeout: 5000 }),
-          startup,
-        ]);
+        browser = await attachOwnedSocket(socket, child, () =>
+          Promise.race([
+            chromium.connectOverCDP(transport, { timeout: 5000 }),
+            startup,
+          ]),
+        );
         return browser;
       } finally {
         if (startupTimer) clearTimeout(startupTimer);

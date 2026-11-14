@@ -442,3 +442,139 @@ test('foreground pressure preserves a visible same-scope proof waiter and its sa
     finally { same.dispose(); }
   } finally { warm.dispose(); abandoned.dispose(); foreground?.dispose(); h.resolve(); h.owner.dispose(); }
 });
+
+// Exercise the decoded supplier result through the real request helper. The
+// owner tests below supply only the existing current-adopter test seam.
+async function timeoutMediaFixture(reply: (attempt: number) => unknown | Promise<unknown>,
+  scope?: Parameters<typeof import('../gallery/media.ts').imageMediaRequest>[1], initial = false) {
+  const f = await correlatedImageFixture(), root = new AbortController(), client = {};
+  const state = { live: true, proof: true, gets: 0, attempts: 0, badHash: false, failedGet: false };
+  const signals: AbortSignal[] = [];
+  const request = (await f.imageMediaRequest(initial ? f.candidate : f.row,
+    async (signal, read, policy) => {
+      signals.push(signal); return scope ? scope(signal, read, policy) : { state: 'ready', value: await read(signal) };
+    }, { async callRpc(input) {
+      const output = await reply(++state.attempts);
+      return output === undefined ? f.plugins.callRpc(input) : input.outputSchema!.parse(output);
+    } } as typeof f.plugins, initial ? async () => ({ row: f.row, publish() {} }) : undefined))!;
+  const adoption = { root: root.signal, client, generation: 1, binding: 'exact-current-row',
+    live: () => state.live && !root.signal.aborted, current: () => state.proof && state.live && !root.signal.aborted,
+    async correlate(signal: AbortSignal) { signal.throwIfAborted(); assert.equal(state.proof, true); } };
+  if (!initial) request.adoption = adoption;
+  const owner = createGalleryMedia({ async fetch() {
+    state.gets++; if (state.failedGet) throw Error('source-timeout');
+    return new Response(state.badHash ? new Uint8Array([0]) : data, { headers: { 'content-type': 'image/png' } });
+  }, createUrl: () => 'blob:timeout-verified', revokeUrl() {} });
+  return { f, owner, request, root, state, signals, adoption };
+}
+const sourceTimeout = { version: 1, state: 'unavailable', reason: 'source-timeout' };
+
+test('typed timeout recovery: exactly one replay shares the original controller; second failure stays manual', async () => {
+  const h = await timeoutMediaFixture(attempt => attempt <= 2 ? sourceTimeout : undefined), handle = h.owner.retain(h.request);
+  try {
+    await settled(handle.store, 'error'); assert.equal(h.state.attempts, 2); assert.equal(h.state.gets, 0);
+    assert.equal(h.signals[0], h.signals[1]); assert.equal(h.owner.stats().running, 0);
+    handle.visible(false); handle.visible(true); handle.revalidate(); await tick();
+    const same = h.owner.retain(h.request); same.dispose(); await tick(); assert.equal(h.state.attempts, 2);
+    handle.retry(); await settled(handle.store, 'ready'); assert.equal(handle.store.state.state, 'ready');
+    assert.equal(h.state.attempts, 3); assert.equal(h.state.gets, 1);
+    assert.notEqual(h.signals[0], h.signals[2], 'manual Retry owns a new ordinary attempt');
+  } finally { handle.dispose(); h.owner.dispose(); }
+});
+
+test('typed timeout recovery: only exact decoded source timeout is eligible, never other failures or initial candidates', async t => {
+  for (const reason of ['source-capacity', 'source-disposed', 'source-error']) await t.test(reason, async () => {
+    const h = await timeoutMediaFixture(() => ({ ...sourceTimeout, reason })), handle = h.owner.retain(h.request);
+    try { await settled(handle.store, 'error'); assert.equal(h.state.attempts, 1); assert.equal(h.state.gets, 0); }
+    finally { handle.dispose(); h.owner.dispose(); }
+  });
+  for (const kind of ['error-text', 'malformed', 'initial', 'hash', 'GET', 'recovery-capacity'] as const) await t.test(kind, async () => {
+    const h = await timeoutMediaFixture(attempt => {
+      if (kind === 'error-text') throw Error('source-timeout');
+      if (kind === 'malformed') return { reason: 'source-timeout' };
+      if (kind === 'initial') return sourceTimeout;
+      if (kind === 'recovery-capacity') return attempt === 1 ? sourceTimeout : { ...sourceTimeout, reason: 'source-capacity' };
+      return undefined;
+    }, undefined, kind === 'initial');
+    h.state.badHash = kind === 'hash'; h.state.failedGet = kind === 'GET';
+    const handle = h.owner.retain(h.request);
+    try {
+      await settled(handle.store, 'error'); assert.equal(handle.store.state.state, 'error'); await tick();
+      assert.equal(h.state.attempts, kind === 'recovery-capacity' ? 2 : 1);
+      assert.equal(h.state.gets, kind === 'hash' || kind === 'GET' ? 1 : 0);
+      assert.equal(handle.store.state.url, null); assert.equal(h.owner.stats().running, 0);
+    } finally { handle.dispose(); h.owner.dispose(); }
+  });
+});
+
+test('typed timeout recovery: originating current visible demand cannot be borrowed from a replacement', async t => {
+  for (const kind of ['root', 'generation', 'proof', 'binding', 'no-adopter', 'replacement', 'hidden'] as const) await t.test(kind, async () => {
+    let finish!: (value: unknown) => void;
+    const h = await timeoutMediaFixture(() => new Promise(resolve => { finish = resolve; })), first = h.owner.retain(h.request);
+    let replacement: ReturnType<typeof h.owner.retain> | undefined;
+    try {
+      await tick(); assert.equal(h.state.attempts, 1);
+      if (kind === 'root') h.root.abort();
+      if (kind === 'generation') h.state.live = false;
+      if (kind === 'proof') h.state.proof = false;
+      if (kind === 'binding') h.request.fingerprint = 'changed';
+      if (kind === 'no-adopter' || kind === 'replacement') first.dispose();
+      if (kind === 'replacement') replacement = h.owner.retain({ ...h.request, adoption: { ...h.adoption } });
+      if (kind === 'hidden') h.owner.visible(false);
+      finish(sourceTimeout); await tick(); await tick();
+      assert.equal(h.state.attempts, 1); assert.equal(h.state.gets, 0); assert.equal(h.owner.stats().running, 0);
+      assert.equal(first.store.state.url, null);
+    } finally { finish(sourceTimeout); first.dispose(); replacement?.dispose(); h.owner.dispose(); }
+  });
+});
+
+test('typed timeout recovery: actual same-thread FIFO precedes retry and queued retirement dispatches zero RPCs', async t => {
+  for (const retire of [false, true]) await t.test(retire ? 'retired while queued' : 'healthy FIFO recovery', async () => {
+    const { createGalleryWorkOwner } = await import('../gallery/work-owner.ts');
+    const { JSDOM } = await import('jsdom');
+    const dom = new JSDOM('', { pretendToBeVisual: true }), saved = globalThis.document; globalThis.document = dom.window.document;
+    const work = createGalleryWorkOwner(), controls = new AbortController(), events: string[] = [];
+    let finish!: (value: unknown) => void, foreground!: () => void;
+    const h = await timeoutMediaFixture(attempt => {
+      events.push(`Media${attempt}`); return attempt === 1 ? new Promise(resolve => { finish = resolve; }) : undefined;
+    }, (signal, read, policy) => work.readScope('thread', signal, read, false, policy, false));
+    const handle = h.owner.retain(h.request);
+    let queued: Promise<unknown> | undefined, other: Promise<unknown> | undefined;
+    try {
+      await tick(); assert.deepEqual(events, ['Media1']);
+      queued = work.readScope('thread', controls.signal, async () => {
+        events.push('foreground'); await new Promise<void>(resolve => { foreground = resolve; }); return true;
+      });
+      other = work.readScope('other-thread', controls.signal, async () => { events.push('other'); return true; });
+      await other; assert.deepEqual(events, ['Media1', 'other'], 'same-thread work cannot overlap the actual pending public promise');
+      finish(sourceTimeout); await tick(); await tick();
+      assert.deepEqual(events, ['Media1', 'other', 'foreground']); assert.equal(h.state.attempts, 1);
+      assert.equal(work.running, 1); assert.equal([...work.queue.values()].reduce((count, entries) => count + entries.size, 0), 1, 'recovery reuses the ordinary bounded FIFO queue');
+      if (retire) h.state.proof = false;
+      foreground(); await queued; await settled(handle.store, retire ? 'error' : 'ready');
+      assert.equal(handle.store.state.state, retire ? 'error' : 'ready');
+      assert.equal(h.state.attempts, retire ? 1 : 2); assert.equal(h.state.gets, retire ? 0 : 1);
+      if (!retire) assert.deepEqual(events, ['Media1', 'other', 'foreground', 'Media2']);
+      assert.equal(h.signals[0], h.signals[1]); await work.whenDrained();
+      assert.equal(work.running, 0); assert.equal(work.historyReads.size, 0);
+    } finally {
+      finish(sourceTimeout); foreground?.(); controls.abort(); handle.dispose(); h.owner.dispose();
+      await Promise.allSettled([queued, other]); work.dispose(); await work.whenDrained();
+      globalThis.document = saved; dom.window.close();
+    }
+  });
+});
+
+test('typed timeout recovery: queued recovery cannot renew the original seven-second budget or fetch a late lease', { timeout: 11000 }, async () => {
+  let first!: (value: unknown) => void, second!: (value: unknown) => void;
+  const h = await timeoutMediaFixture(attempt => new Promise(resolve => { if (attempt === 1) first = resolve; else second = resolve; }));
+  const handle = h.owner.retain(h.request), started = performance.now();
+  try {
+    await tick(); await new Promise(resolve => setTimeout(resolve, 6200)); first(sourceTimeout);
+    await tick(); assert.equal(h.state.attempts, 2); assert.equal(h.signals[0], h.signals[1]);
+    await settled(handle.store, 'error'); assert.equal(handle.store.state.state, 'error'); assert.match(handle.store.state.error!, /deadline/);
+    assert.ok(performance.now() - started < 7800, 'recovery must not start a fresh seven seconds');
+    assert.equal(h.state.gets, 0); assert.equal(h.signals[1]!.aborted, true); assert.equal(h.owner.stats().running, 0);
+    second(sourceTimeout); await tick(); assert.equal(h.state.attempts, 2); assert.equal(h.state.gets, 0);
+  } finally { first(sourceTimeout); second?.(sourceTimeout); handle.dispose(); h.owner.dispose(); }
+});

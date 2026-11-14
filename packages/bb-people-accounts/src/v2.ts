@@ -87,7 +87,7 @@ export const getOutputV2Schema = z.object({ version: z.literal(2), results: z.ar
   z.object({ subject: text(LIMITS_V2.subjectBytes), status: z.enum(['missing', 'unavailable']) }),
 ])).max(LIMITS_V2.batch) });
 export const linksOutputV2Schema = z.object({ version: z.literal(2), results: z.array(z.discriminatedUnion('status', [
-  z.object({ personKey: personKeyV2Schema, status: z.literal('found'), version: stateVersion, links: z.array(linkOutput).max(LIMITS_V2.links) }).refine(v => distinctLinks(v.links), 'Duplicate link'),
+  z.object({ personKey: personKeyV2Schema, status: z.literal('found'), version: stateVersion, links: z.array(linkOutput).max(LIMITS_V2.links) }).refine(v => linksRecordSchema.safeParse({ links: v.links }).success, 'Invalid links record'),
   z.object({ personKey: personKeyV2Schema, status: z.enum(['missing', 'unavailable']) }),
 ])).max(LIMITS_V2.batch) });
 export const findOutputV2Schema = z.discriminatedUnion('status', [
