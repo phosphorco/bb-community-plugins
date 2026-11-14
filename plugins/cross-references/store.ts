@@ -287,6 +287,18 @@ export const crossReferencesMigrations = [
      CHECK((state='over-limit' AND json_array_length(limit_codes_json)>0 AND json_array_length(identity_codes_json)=0)
        OR(state='identity-unrepresentable' AND json_array_length(identity_codes_json)>0))
    )`,
+  `CREATE TABLE assistant_link_checkpoints (
+     thread_id TEXT PRIMARY KEY, state_json TEXT NOT NULL, touched_at INTEGER NOT NULL
+   );
+   CREATE TABLE assistant_link_checkpoint_messages (
+     thread_id TEXT NOT NULL REFERENCES assistant_link_checkpoints(thread_id) ON DELETE CASCADE,
+     message_id TEXT NOT NULL, message_json TEXT NOT NULL,
+     PRIMARY KEY(thread_id, message_id)
+   );
+   CREATE TABLE assistant_link_recognition_cache (
+     cache_key TEXT PRIMARY KEY, candidates_json TEXT NOT NULL,
+     bytes INTEGER NOT NULL, touched_at INTEGER NOT NULL
+   )`,
 ] as const;
 
 export function enableForeignKeys(db: Sqlite): void {
