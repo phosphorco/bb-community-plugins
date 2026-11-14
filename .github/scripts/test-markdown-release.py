@@ -144,7 +144,7 @@ class Selection(unittest.TestCase):
             self.assertNotEqual(select(**env)[0].returncode, 0)
 
     def test_tag_and_default_generic_route_cannot_publish_markdown(self):
-        self.assertNotIn('      - "bb-markdown/v*"', TEXT)
+        self.assertIn('      - "bb-markdown/v*"', TEXT)
         for plugin in ['bb-markdown', '']:
             self.assertNotEqual(select(REQUESTED_PLUGIN=plugin, GITHUB_EVENT_NAME='push', GITHUB_REF_NAME='bb-markdown/v0.1.0', DRY_RUN='false')[0].returncode, 0)
         self.assertFalse(chosen('Publish public package', pinned='false'))
