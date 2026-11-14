@@ -34,6 +34,7 @@ test('settings mounts cached summary only; checks and directory search require d
     peopleAccountsDirectory: () => { searches++; return { items: [], reason: null, truncated: false }; },
   } });
   try {
+    expect(slot.getByRole('status').textContent).toBe('Loading people and token health…');
     await slot.findByText('Ada Fixture');
     expect(slot.queryByRole('link', { name: 'Create PAT for @ada-bot' })).toBeNull();
     expect(slot.container.textContent).toContain('Set the GitHub organization');
@@ -44,6 +45,7 @@ test('settings mounts cached summary only; checks and directory search require d
     expect(slot.container.textContent).toContain('Your token slot: configured');
     expect(slot.container.textContent).toContain('Effective token supplied by Ada Fixture');
     expect(app.settingsSections).toHaveLength(1);
+    expect(app.settingsSections[0]).toMatchObject({ id: 'people-accounts-health', title: 'People and token health' });
     expect(app.contentScripts).toHaveLength(0);
     expect(app.navPanels).toHaveLength(0);
     await act(async () => { slot.getByRole('button', { name: 'Run checks' }).click(); });
