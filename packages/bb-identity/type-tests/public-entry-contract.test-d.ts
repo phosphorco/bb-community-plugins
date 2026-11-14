@@ -104,3 +104,9 @@ type _CoreEditing = Assert<Equal<typeof coreReact.useIdentityEditingBinding, typ
 coreReact.useBbIdentityClient;
 // @ts-expect-error native slot acquisition is excluded from the borrowed core
 coreReact.useBbIdentityConnection;
+
+// Optional freshness handoff preserves every pre-existing custom connection.
+type LegacyIdentityConnection = Omit<IdentityConnection, 'revalidateSession'>;
+type _LegacyConnection = Assert<Assignable<LegacyIdentityConnection, IdentityConnection>>;
+type _LegacyRevalidateResult = Assert<Equal<Awaited<ReturnType<IdentityConnection['revalidate']>>, Result<void>>>;
+type _CombinedRevalidateResult = Assert<Equal<Awaited<ReturnType<NonNullable<IdentityConnection['revalidateSession']>>>, Result<import('../client.js').RevalidatedIdentitySession>>>;
