@@ -1,0 +1,127 @@
+{
+  "date": "2026-11-15",
+  "scope": "generic-host source, actual public SDK/native identity state and browser-component proof only",
+  "baseline": "04f9098b9ae284bf9ef715b777635fc35dbdb608",
+  "published_contract": "@phosphorco/bb-people-accounts@0.2.0-dev.0",
+  "published_identity": "@phosphorco/bb-identity@0.5.0",
+  "sdk": "0.6.143+phosphor.05199007.upgrade1",
+  "host_source_package_version": "0.1.0; no host registry publication performed",
+  "tests": {
+    "pass": 47,
+    "fail": 0,
+    "preserved_legacy": 31,
+    "new_host": 16
+  },
+  "typecheck": "pass",
+  "build": "pass; existing native target CLI",
+  "npm_ci": "pass; maintained native npm lock",
+  "packed_source": {
+    "passed": true,
+    "level": "isolated-packed-source-and-registry-dependencies",
+    "host_archive_sha256": "9de15b6633b71b00c58fe2c2b58f3f6d940cc30184e339c650f828352cd1c8ab",
+    "host_source_candidate": "0.1.0",
+    "identity": "0.5.0",
+    "contract": "0.2.0-dev.0",
+    "checks": [
+      "ordinary npm install with exact registry identity and contract",
+      "all plugin source/SQLite/SDK app tests from packed source",
+      "standalone typecheck with explicit repository leaf/base configs"
+    ],
+    "limits": "Not a host plugin registry release, runtime deployment or native running-host proof.",
+    "tests": {
+      "pass": 47,
+      "fail": 0
+    }
+  },
+  "coverage": [
+    "public state-storage conformance with real SQLite files, stable empty versions, initialize winner, immutable address-scoped operations, expiry tombstones, commit validation and restart",
+    "record, reverse index/revision and operation receipt roll back together on failed receipt insertion",
+    "revision/locator-bound reverse pagination, replay without revision increment, relink and unlink",
+    "actual factory + native directory search/opaque person selection + collaborator state binding + v2 read conformance share one SQLite store",
+    "same-name people stay distinct; one external account stays associated with two separate people",
+    "lost accepted response reconciles the same operation; held accepted save remains on original owner after actor switch",
+    "late native load and disposed controller cannot replace a newer view; stale recovery owner rejected",
+    "conflict review retains the local value and explicit rebase uses native CAS/index transaction",
+    "SDK app components exercise zero suppliers, manual exact references, unavailable link retention, namespaces, partial result and failure recovery, late query fencing",
+    "generic storage startup failure reports unavailable and preserves healthy legacy v1; no empty-value fallback",
+    "lazy unopened app registration retains both legacy and generic work behind dynamic imports"
+  ],
+  "legacy_extraction": "Prior factory body preserved byte-for-byte except explicit function name, injected binding and type-only binding import; legacy settings and slot names retained. All 31 legacy tests pass.",
+  "database": "SDK-owned connection; Bun SQLite API-compatible test binding with explicit statement cleanup. Not an actual running-host database.",
+  "native_directory_learning": "Use profiles returned by native directory search before selecting an opaque fixture person. This exercises shared normalization/cache rather than manufacturing a host key or adding a private identity lookup.",
+  "macro_boundary": {
+    "passed": true,
+    "level": "actual-export-synthetic-probe",
+    "revision": "b5d53191cd2be54a848375478f953de00ece8569",
+    "refusals": [
+      "linked_outside_macro",
+      "grouped",
+      "expired",
+      "edited",
+      "wrong_actor_after_relink",
+      "wrong_chat",
+      "deleted",
+      "source_unavailable"
+    ],
+    "sharedActorSelection": true,
+    "savedMailAdmission": true,
+    "source_sha256": {
+      "email-access.ts": "be74e47d54a2cad33c2e842d4893860d0116dda03b39cf8e2152162b2786be9f",
+      "contract.ts": "a77f17362711c310d5c7fde4c324a532832b7731e7a51383e17905bf7fac87ca",
+      "capabilities.ts": "dac22805c046d1653ce982ceb34d3edf29e2a361e39067bebb1d3a27bae0d971"
+    },
+    "limits": "No live plugin, native search service, mailbox, deployment or chat/model history was read or changed."
+  },
+  "repository_checks": {
+    "tests": {
+      "failed_workspaces": [
+        "@phosphorco/bb-context-recognition@0.5.3",
+        "@phosphorco/bb-plugin-bb-subscribe-to-anything@0.1.0",
+        "@phosphorco/bb-plugin-figma@0.1.0",
+        "@phosphorco/bb-plugin-new-thread-templates@0.1.0",
+        "@phosphorco/bb-plugin-plugin-guide-for-nerds@0.1.0",
+        "@phosphorco/bb-plugin-turn-results@0.1.0"
+      ],
+      "log_sha256": "1cbe01db9bbb936a6301b3b16bec0221b2765605ec1a90d4da566e5127888b4e"
+    },
+    "types": {
+      "failed_workspaces": [
+        "@phosphorco/bb-identity@0.5.0",
+        "@phosphorco/bb-plugin-bb-subscribe-to-anything@0.1.0",
+        "@phosphorco/bb-plugin-cross-references@0.1.0",
+        "@phosphorco/bb-plugin-turn-results@0.1.0"
+      ],
+      "log_sha256": "8fbf5bd2cb01b5418b9b64719c64f8c8170dd4d72dd8d8ae2cc18641784edafe"
+    },
+    "build": {
+      "failed_workspaces": [
+        "@phosphorco/bb-plugin-message-rules@0.1.0"
+      ],
+      "log_sha256": "0b615ab44d70484704f77a7ab512d37e3598fe3d490677ada280201a2ebf2dca"
+    }
+  },
+  "source_sha256": {
+    "server.ts": "647d5493504a48b1bd22895a8fe9aa36138b697bb7c9fae487573c44b20bce2d",
+    "legacy-github.ts": "66410a038e6c4ea20c09371b77765b13d1f875293e2069c53010102f806e1481",
+    "links-model.ts": "67991b9a1b4051405bea90900a4fa1b4f26e5da6d0f67db79134add8b13fe5c7",
+    "links-store.ts": "e0660123790706e48b0c55199516f39dede99716d93d61572fe466259c24a7d0",
+    "contributions.ts": "2e372b8f4efec282a8d053cd9596e9d4d1f342b80d282d067dfb4cd2af7da8ed",
+    "links-settings.tsx": "b428f9d44587b9a49fb2a2cf809f43d36448a3791b11ecbc40cd54399ed9c97e",
+    "app.tsx": "ee3bd18e816e0fa829d9567a05550f9ebe85341eac48ba134bdfca318abf743d",
+    "package.json": "339feab1a2f85da22b35adb548e21b2151a8ccbe71a4a65626a3f4c2250b690f",
+    "README.md": "998323fa408e9653153874ba1df0f3b2ce19125f5a2c18ce2d351c774b4d8fe2"
+  },
+  "check_log_sha256": {
+    "tests": "f7416a10381bf6eb35a1cf51d22451c610b7ddc624c59e2ab835ee428a3831f5",
+    "types": "1a31b381c3ba0fcff2b5c8b4f62779237e9a5ccda605d9bc3523853dd8c7ae5b",
+    "build": "2fa1d96b754c1df55fa799bccf75e16446518f5f9f21f9a6d0b3892f42cb4585",
+    "pack-tests": "4adde3408e922b0368717461895e5b9a92d1a817412960a86c87c2017ab2681e",
+    "pack-types": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "limits": [
+    "No Slack/GitHub/Macro adopter implementation or mapping import/cutover; no new credentials, mailbox/search access, runtime activation or workspace gitlink promotion.",
+    "Multi-user host protocol and SDK DOM are controlled fixtures. No running BB machine, real browser layout or deployed-host acceptance is claimed.",
+    "Full repository checks remain red outside this package; recorded observations do not certify the whole composition.",
+    "Expired operation tombstones are retained; any future bounded maintenance must preserve unknown-operation semantics."
+  ]
+}

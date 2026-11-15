@@ -15,3 +15,4 @@
 .people-accounts summary { cursor: pointer; }
 .people-accounts form { margin-top: 0.5rem; }
 .people-accounts a { color: var(--foreground); text-decoration: underline; text-underline-offset: 0.125rem; }
+.people-accounts select { font: inherit; color: var(--foreground); background: var(--background); border: 1px solid var(--border); border-radius: 0.375rem; padding: 0.375rem; }

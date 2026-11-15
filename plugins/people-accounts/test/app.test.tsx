@@ -44,7 +44,8 @@ test('settings mounts cached summary only; checks and directory search require d
     expect(checks).toBe(0); expect(searches).toBe(0);
     expect(slot.container.textContent).toContain('Your token slot: configured');
     expect(slot.container.textContent).toContain('Effective token supplied by Ada Fixture');
-    expect(app.settingsSections).toHaveLength(1);
+    expect(app.settingsSections).toHaveLength(2);
+    expect(app.settingsSections[1]).toMatchObject({ id: 'people-account-links', title: 'People account links' });
     expect(app.settingsSections[0]).toMatchObject({ id: 'people-accounts-health', title: 'People and token health' });
     expect(app.contentScripts).toHaveLength(0);
     expect(app.navPanels).toHaveLength(0);

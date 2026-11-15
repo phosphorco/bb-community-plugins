@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { createFakePluginHost } from '@get-bb/plugin-sdk/testing';
+import { createPeopleHost as createFakePluginHost } from './host-fixture';
 import { runPeopleAccountsConformance, rosterEntryFixture } from '@phosphorco/bb-people-accounts/testing';
 import { createPeopleAccountsClient } from '@phosphorco/bb-people-accounts/bb';
 import { sdkFromFakeHost } from '@phosphorco/bb-people-accounts/testing';

@@ -1,3 +1,4 @@
+/** Legacy GitHub settings surface. Generic links never consume these settings or secret slots. */
 import { useRecoveringRead } from './lib/useRecoveringRead.ts';
 import { ReadStatus } from './lib/ReadStatus.tsx';
 import { useCallback, useEffect, useRef, useState } from 'react';

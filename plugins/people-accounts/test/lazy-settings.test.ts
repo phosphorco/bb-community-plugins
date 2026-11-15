@@ -28,7 +28,7 @@ test('unopened registration excludes settings reads, actions and recovery code',
   const eager = [...seen].map(path => files.get(path)).join('\n');
   const deferred = [...files].filter(([path]) => !seen.has(path)).map(([, source]) => source).join('\n');
   expect(eager).toContain('people-accounts-health');
-  for (const marker of ['peopleAccountsStatus', 'peopleAccountsCheck', 'peopleAccountsDirectory', 'Retrying automatically', 'personal-access-tokens/new']) {
+  for (const marker of ['peopleAccountsStatus', 'peopleAccountsCheck', 'peopleAccountsDirectory', 'Retrying automatically', 'personal-access-tokens/new', 'Add known link', 'Search accounts']) {
     expect(eager).not.toContain(marker);
     expect(deferred).toContain(marker);
   }
