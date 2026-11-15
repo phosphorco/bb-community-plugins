@@ -55,7 +55,7 @@
   ],
   "dependencies": {
     "@phosphorco/bb-identity": "0.4.2-native-marker.0",
-    "@phosphorco/bb-people-accounts": "0.1.1",
+    "@phosphorco/bb-people-accounts": "0.2.0-dev.0",
     "zod": "4.6.7"
   },
   "devDependencies": {
