@@ -29,6 +29,7 @@ PINNED = {
     ('bb-identity', '0.4.1'): ('packages/bb-identity', '@phosphorco/bb-identity', 'next', 'oidc', 'bb-identity-next'),
     ('bb-identity', '0.4.2-native-marker.0'): ('packages/bb-identity', '@phosphorco/bb-identity', 'next', 'oidc', 'bb-identity-next'),
     ('bb-identity', '0.5.0'): ('packages/bb-identity', '@phosphorco/bb-identity', 'next', 'oidc', 'reviewed-bb-identity-0.5.0'),
+    ('bb-identity', '0.5.1'): ('packages/bb-identity', '@phosphorco/bb-identity', 'next', 'oidc', 'reviewed-bb-identity-0.5.1'),
     ('bb-thread-membership', '0.1.0'): ('packages/bb-thread-membership', '@phosphorco/bb-thread-membership', 'latest', 'membership-bootstrap', 'reviewed-bb-thread-membership-0.1.0'),
     ('bb-markdown', '0.1.0'): ('packages/bb-markdown', '@phosphorco/bb-markdown', 'latest', 'markdown-bootstrap', 'reviewed-bb-markdown-0.1.0'),
 }
@@ -261,8 +262,8 @@ def preflight():
         before = {'tags': {}, 'versionAbsent': VERSION, 'packageAbsent': True, 'route': ROUTE}
     else:
         require('latest' in approved, 'Existing identity package requires approved latest tag')
-        if VERSION == '0.5.0':
-            require(approved['latest'] == '0.3.1', 'Identity 0.5.0 must preserve latest0.3.1')
+        if PLUGIN == 'bb-identity' and VERSION in ('0.5.0', '0.5.1'):
+            require(approved['latest'] == '0.3.1', f'Identity {VERSION} must preserve latest0.3.1')
         require(code == 0 and tags == approved, 'Registry dist-tags drift from owner-approved payload; stop before publication')
         code, version = registry_read(NAME + '@' + VERSION, 'version')
         require(code != 0 and isinstance(version, dict) and version.get('error', {}).get('code') == 'E404', 'Version exists or registry result is unresolved; stop for owner inspection, never republish')
