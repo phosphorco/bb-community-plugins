@@ -98,3 +98,15 @@ export interface NativeSourceAdapter {
 }
 export declare const NATIVE_SOURCE_LIMITS: Readonly<{ events: 2000; rows: 2000; bytes: 2097152; depth: 8; historyReads: 16; identifier: 256; dataDepth: 64 }>;
 export declare function createNativeSourceAdapter(options?: { readonly history?: ProvenanceReader }): NativeSourceAdapter;
+
+/** Opaque immutable capture owned by one synchronous batch invocation. */
+declare const nativeTimelineHandle: unique symbol;
+export interface NativeTimelineHandle { readonly [nativeTimelineHandle]: true }
+export interface NativeSourceBatch {
+  /** Captures the entire supplied timeline, including unrelated and non-enumerable data. */
+  captureTimeline(timeline: NativeSourceSnapshot['timeline']): Result<NativeTimelineHandle>;
+  /** Same whole-source limits and semantic joins as resolve({...snapshot, timeline}). */
+  resolve(snapshot: Omit<NativeSourceSnapshot, 'timeline'>, timeline: NativeTimelineHandle): Result<NativeSourceEvidence>;
+}
+/** Synchronous only. Every capture expires on callback return/throw; no input identity is cached. */
+export declare function withNativeSourceBatch<T>(run: (batch: NativeSourceBatch) => T): T;
