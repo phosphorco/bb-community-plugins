@@ -376,7 +376,8 @@ const OVERVIEW_LATEST_METRICS_SQL = `
     SELECT recent.machine_source, recent.machine_id,
       recent.collector_session_id, recent.sequence
     FROM latest_collections latest
-    JOIN machine_monitor_fleet_collections recent
+    -- Keep machines outermost; a reordered inner join scans all retained collections.
+    CROSS JOIN machine_monitor_fleet_collections recent
       ON recent.machine_source = latest.machine_source
       AND recent.machine_id = latest.machine_id
       AND recent.normalized_at BETWEEN @overviewNowMs - ${CPU_ROLLING_WINDOW_MS} AND @overviewNowMs
