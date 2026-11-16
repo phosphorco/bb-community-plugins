@@ -9,7 +9,7 @@ declare const terminal: NativeSourceReference;
 const adapter = createNativeSourceAdapter();
 async function publicSdkWitness() {
   const events: NativeEvent[] = await sdk.threads.events.list({ threadId: terminal.threadId, limit: '200', order: 'asc' });
-  const timeline: NativeTimeline = await sdk.threads.timeline({ threadId: terminal.threadId, includeNestedRows: 'true', deferContent: 'false', summaryOnly: 'false', segmentLimit: '200' });
+  const timeline: NativeTimeline = await sdk.threads.timeline({ threadId: terminal.threadId, includeNestedRows: 'true', deferContent: 'false', segmentLimit: '200' });
   const result = adapter.resolve({ source: terminal, events, timeline });
   if (result.ok) {
     const initiating: 'unknown' = result.value.initiatingPerson.status;
@@ -42,9 +42,11 @@ if (asserted.ok) {
   const sourceActor: NativeSourceActor = asserted.value;
   const recorded = { ...event, data: { ...event.data, p6rAuthors: [sourceActor], p6rEditors: [asserted.value] } } satisfies NativeSourceEvent;
   adapter.resolve({ source: { kind: 'event', threadId: 'thread', eventId: 'event' }, events: [recorded] });
-  // @ts-expect-error the consumed SDK does not declare integration-asserted people
-  const staleSdkEvent: NativeEvent = recorded;
-  void staleSdkEvent;
+  // The selected SDK now explicitly declares integration-asserted native people.
+  const nativeSdkEvent: NativeEvent = recorded;
+  // @ts-expect-error evidence remains a closed producer-declared enum, never a guessed identity
+  const guessedSdkEvent: NativeEvent = { ...recorded, data: { ...recorded.data, p6rAuthors: [{ ...asserted.value, evidence: 'guessed' }] } };
+  void [nativeSdkEvent, guessedSdkEvent];
 }
 // Every ordinary public SDK event remains accepted without a cast or SDK augmentation.
 declare const ordinarySdkEvents: readonly NativeEvent[];
