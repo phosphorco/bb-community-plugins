@@ -438,6 +438,11 @@ test("overview selects only exact latest collections through indexed candidate l
   const queryPlan = source.overviewQueryPlan;
   const collectionTimeLookups = queryPlan.filter((detail) => detail.includes("machine_monitor_fleet_collections_machine_time"));
   assert.ok(collectionTimeLookups.length >= 2, "the per-machine latest candidate and its five-minute CPU range both use the collection-time index");
+  assert.ok(queryPlan.some((detail) => detail.startsWith("SEARCH recent USING COVERING INDEX machine_monitor_fleet_collections_machine_time")
+    && detail.includes("machine_source=?") && detail.includes("machine_id=?") && detail.includes("normalized_at>?") && detail.includes("normalized_at<?")),
+  "the five-minute CPU window must range-search each machine, not scan retained collections through a covering index");
+  assert.equal(queryPlan.some((detail) => detail.startsWith("SCAN recent USING COVERING INDEX machine_monitor_fleet_collections_machine_time")), false,
+    "using the collection-time index alone does not prove the history read is bounded");
   assert.equal(queryPlan.some((detail) => /SCAN .*machine_monitor_fleet_metric_values/i.test(detail)), false, "the overview never ranks or scans retained metric history");
 });
 
