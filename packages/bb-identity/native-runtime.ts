@@ -1,7 +1,7 @@
 /** Public SDK snapshot adapter. No SDK runtime, lifecycle, history store or Contribution fabrication. */
 import { decodeSourceActors, nativeMention } from './native-actors-runtime.js';
 import { utf8ByteLength } from './utf8-byte-length.js';
-import type { NativeCoverage, NativeSourceActor, NativeSourceEvent as NativeEvent, NativeHistoryRead, NativeInputLink, NativeSourceAdapter, NativeSourceEvidence, NativeSourceReference, NativeSourceSnapshot, NativeTextEvidence, NativeTimeline } from './native.js';
+import type { NativeCoverage, NativeSourceActor, NativeSourceEvent as NativeEvent, NativeHistoryRead, NativeInputLink, NativeSourceAdapter, NativeSourceEvidence, NativeSourceReference, NativeSourceSnapshot, NativeTextEvidence, NativeTimeline, NativeSourceBatch, NativeTimelineHandle } from './native.js';
 import type { ProvenanceReader, Result } from './model.js';
 import { err, idCodec, ok } from './model-runtime.js';
 
@@ -13,9 +13,18 @@ const seq = (v: unknown): v is number => typeof v === 'number' && Number.isSafeI
 const turn = (e: NativeEvent) => e.scope.kind === 'turn' ? e.scope.turnId : null;
 /** Copy one data representation without invoking accessors or serialization hooks.
  * Count non-enumerable data too: it must not escape the bound if later consumed. */
-function boundedSnapshot(input: NativeSourceSnapshot): NativeSourceSnapshot {
+interface CapturedData<T> {
+  readonly value: T;
+  readonly rawBytes: number;
+  /** Undefined is omitted as an object property, even though raw accounting charges it. */
+  readonly jsonBytes: number | null;
+  readonly depth: number;
+  readonly jsonMembers: number;
+}
+function captureData<T>(input: T): CapturedData<T> {
   let bytes = 0;
   const active = new Set<object>();
+  let maxDepth = 0;
   function add(text: string): void {
     if (text.length > NATIVE_SOURCE_LIMITS.bytes - bytes) throw new Error('bytes');
     bytes += utf8ByteLength(text);
@@ -23,6 +32,7 @@ function boundedSnapshot(input: NativeSourceSnapshot): NativeSourceSnapshot {
   }
   function copy(value: unknown, depth: number): unknown {
     if (depth > NATIVE_SOURCE_LIMITS.dataDepth) throw new Error('data depth');
+    if (depth > maxDepth) maxDepth = depth;
     if (value === null || value === undefined) { add('null'); return value; }
     if (typeof value === 'string') { add(value); add('""'); return value; }
     if (typeof value === 'boolean') { add(value ? 'true' : 'false'); return value; }
@@ -46,15 +56,19 @@ function boundedSnapshot(input: NativeSourceSnapshot): NativeSourceSnapshot {
       Object.defineProperty(result, key, { value: copy(descriptor.value, depth + 1), enumerable: true, configurable: true, writable: true });
     }
     active.delete(value);
-    return result;
+    return Object.freeze(result);
   }
   // Public input is typed; the bounded copy preserves those data fields. All used
   // fields still pass semantic validation below, before becoming evidence.
-  const stable = copy(input, 0) as NativeSourceSnapshot;
+  const stable = copy(input, 0) as T;
   // Bound the serialized stable representation too, including JSON escape expansion.
   // The copied representation contains no callable hooks or accessors.
-  if (utf8ByteLength(JSON.stringify(stable)) > NATIVE_SOURCE_LIMITS.bytes) throw new Error('serialized bytes');
-  return stable;
+  const json = JSON.stringify(stable);
+  const jsonBytes = json === undefined ? null : utf8ByteLength(json);
+  if (jsonBytes !== null && jsonBytes > NATIVE_SOURCE_LIMITS.bytes) throw new Error('serialized bytes');
+  const jsonMembers = stable !== null && typeof stable === 'object' && !Array.isArray(stable)
+    ? Object.keys(stable).filter(key => (stable as Record<string, unknown>)[key] !== undefined).length : 0;
+  return { value: stable, rawBytes: bytes, jsonBytes, depth: maxDepth, jsonMembers };
 }
 interface AssistantItemIdentity {
   id: string;
@@ -97,8 +111,13 @@ function validateReference(s: NativeSourceReference): boolean {
   return (s.kind === 'assistant-item' || s.kind === 'assistant-terminal') && validId(s.terminalEventId) && validId(s.scope?.turnId) && (s.kind !== 'assistant-item' || validId(s.itemId));
 }
 function normalize(snapshot: NativeSourceSnapshot): Result<NativeSourceEvidence> {
+  try { return normalizeOwned(captureData(snapshot).value); }
+  catch { return err('invalid-input', 'Malformed native source snapshot.'); }
+}
+/** Only the two validated capture paths may supply this owned representation. */
+function normalizeOwned(snapshot: Omit<NativeSourceSnapshot, 'timeline'> & { readonly timeline?: NativeSourceSnapshot['timeline'] }): Result<NativeSourceEvidence> {
   try {
-    const { source, events, timeline } = boundedSnapshot(snapshot);
+    const { source, events, timeline } = snapshot;
     if (!validateReference(source) || !Array.isArray(events) || events.length > NATIVE_SOURCE_LIMITS.events) return err('invalid-input', 'Invalid or oversized native source snapshot.');
     const ids = new Set<string>(), sequences = new Set<number>();
     for (const e of events) {
@@ -267,4 +286,42 @@ export function createNativeSourceAdapter(options: { readonly history?: Provenan
       return ok({ ...evidence, history });
     },
   };
+}
+
+/** A synchronous read owns these immutable captures; no input-identity cache survives it. */
+export function withNativeSourceBatch<T>(run: (batch: NativeSourceBatch) => T): T {
+  let pages: Map<NativeTimelineHandle, CapturedData<NativeSourceSnapshot['timeline']>> | null = new Map();
+  const malformed = () => err('invalid-input', 'Malformed native source snapshot.');
+  const batch: NativeSourceBatch = Object.freeze({
+    captureTimeline(input: NativeSourceSnapshot['timeline']) {
+      if (pages === null) return malformed();
+      try {
+        const page = captureData(input);
+        const handle = Object.freeze({}) as NativeTimelineHandle;
+        pages.set(handle, page);
+        return ok(handle);
+      } catch { return malformed(); }
+    },
+    resolve(input: Omit<NativeSourceSnapshot, 'timeline'>, handle: NativeTimelineHandle) {
+      // Refuse retired/foreign handles before inspecting any unowned envelope.
+      const page = pages?.get(handle);
+      if (!page) return malformed();
+      try {
+        const base = captureData(input);
+        if (!base.value || typeof base.value !== 'object' || Array.isArray(base.value) ||
+          Object.hasOwn(base.value, 'timeline') || base.jsonBytes === null) return malformed();
+        // Charge the original whole snapshot on EVERY resolution, even though its
+        // complete timeline was copied only once. No rows or extra fields are dropped.
+        const rawBytes = base.rawBytes + utf8ByteLength('timeline') + 2 + page.rawBytes;
+        const jsonBytes = base.jsonBytes + (page.jsonBytes === null ? 0 :
+          utf8ByteLength(JSON.stringify('timeline')) + 1 + page.jsonBytes + (base.jsonMembers ? 1 : 0));
+        const depth = Math.max(base.depth, page.depth + 1);
+        if (rawBytes > NATIVE_SOURCE_LIMITS.bytes || jsonBytes > NATIVE_SOURCE_LIMITS.bytes ||
+          depth > NATIVE_SOURCE_LIMITS.dataDepth) return malformed();
+        return normalizeOwned(Object.freeze({ ...base.value, timeline: page.value }));
+      } catch { return malformed(); }
+    },
+  });
+  try { return run(batch); }
+  finally { pages.clear(); pages = null; }
 }

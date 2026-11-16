@@ -68,6 +68,38 @@ Terminal references contain no attemptId. A terminal event must be
 failed, or interrupted. Two terminals in one turn remain distinct sources.
 An attempt ID appears only inside an actual optional history response.
 
+## Reusing a whole timeline in one synchronous read
+
+`withNativeSourceBatch` is an additive local helper for resolving several
+references against the same page. Existing `adapter.resolve` and `enrich`
+contracts, source formats and limits remain unchanged.
+
+```ts
+import { withNativeSourceBatch } from '@phosphorco/bb-identity/native';
+const results = withNativeSourceBatch(batch => {
+  const captured = batch.captureTimeline(timeline);
+  if (!captured.ok) return [captured];
+  return requests.map(({ source, events }) =>
+    batch.resolve({ source, events }, captured.value));
+});
+```
+
+Capture validates and privately freezes the **entire** page, including unrelated
+rows, unknown fields and non-enumerable data. It invokes no accessors or
+serialization hooks. Each resolution still validates its source/event envelope
+and charges the original combined page-plus-envelope raw bytes, serialized JSON
+bytes (including escape expansion), depth and semantic source bounds. Two
+individually bounded components may therefore still be refused when combined.
+No rows are prefiltered and no input-identity cache is retained.
+
+The callback is synchronous: do not `await`, retain the batch, or reuse handles
+for another read. All captures expire on callback return or throw; escaped,
+forged and foreign handles refuse before inspecting a supplied envelope.
+Changing the caller's original page after capture cannot change that capture.
+Start a new batch to observe changed source data. This ownership does not prove
+freshness, pagination completeness or a common event/timeline revision; the
+caller still owns those read fences.
+
 ## Source and identity semantics
 
 A request group uses its exact `inputGroups[groupIndex]`, falling back to the

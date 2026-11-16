@@ -52,3 +52,15 @@ if (asserted.ok) {
 declare const ordinarySdkEvents: readonly NativeEvent[];
 const recordedEvents: readonly NativeSourceEvent[] = ordinarySdkEvents;
 void recordedEvents;
+
+
+// Batch capture is additive: ordinary adapters still implement only resolve/enrich.
+import { withNativeSourceBatch } from '../native.js';
+import type { NativeTimelineHandle } from '../native.js';
+withNativeSourceBatch(batch => {
+  const captured = batch.captureTimeline(undefined);
+  if (captured.ok) batch.resolve({ source, events: ordinarySdkEvents }, captured.value);
+  // @ts-expect-error a timeline handle cannot be fabricated from plain data
+  const fabricated: NativeTimelineHandle = {};
+  void fabricated;
+});
