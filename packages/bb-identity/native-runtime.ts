@@ -1,5 +1,6 @@
 /** Public SDK snapshot adapter. No SDK runtime, lifecycle, history store or Contribution fabrication. */
 import { decodeSourceActors, nativeMention } from './native-actors-runtime.js';
+import { utf8ByteLength } from './utf8-byte-length.js';
 import type { NativeCoverage, NativeSourceActor, NativeSourceEvent as NativeEvent, NativeHistoryRead, NativeInputLink, NativeSourceAdapter, NativeSourceEvidence, NativeSourceReference, NativeSourceSnapshot, NativeTextEvidence, NativeTimeline } from './native.js';
 import type { ProvenanceReader, Result } from './model.js';
 import { err, idCodec, ok } from './model-runtime.js';
@@ -15,10 +16,9 @@ const turn = (e: NativeEvent) => e.scope.kind === 'turn' ? e.scope.turnId : null
 function boundedSnapshot(input: NativeSourceSnapshot): NativeSourceSnapshot {
   let bytes = 0;
   const active = new Set<object>();
-  const encoder = new TextEncoder();
   function add(text: string): void {
     if (text.length > NATIVE_SOURCE_LIMITS.bytes - bytes) throw new Error('bytes');
-    bytes += encoder.encode(text).byteLength;
+    bytes += utf8ByteLength(text);
     if (bytes > NATIVE_SOURCE_LIMITS.bytes) throw new Error('bytes');
   }
   function copy(value: unknown, depth: number): unknown {
@@ -53,7 +53,7 @@ function boundedSnapshot(input: NativeSourceSnapshot): NativeSourceSnapshot {
   const stable = copy(input, 0) as NativeSourceSnapshot;
   // Bound the serialized stable representation too, including JSON escape expansion.
   // The copied representation contains no callable hooks or accessors.
-  if (encoder.encode(JSON.stringify(stable)).byteLength > NATIVE_SOURCE_LIMITS.bytes) throw new Error('serialized bytes');
+  if (utf8ByteLength(JSON.stringify(stable)) > NATIVE_SOURCE_LIMITS.bytes) throw new Error('serialized bytes');
   return stable;
 }
 interface AssistantItemIdentity {
