@@ -582,7 +582,7 @@ function supplier(bb:any, revision:()=>string, calls:string[]) {
 }
 const row=(id:string,seq:number,text:string)=>({id,threadId:'thr_a',sourceSeqStart:seq,messageSeq:seq,kind:'conversation',role:'assistant',text,createdAt:seq*100});
 
-test('one page per quantum; unchanged forced generations reuse history and pure recognition while native targets stay fresh',async t=>{
+test('one page per quantum; new generations reread history while pure recognition stays cached and native targets stay fresh',async t=>{
   const {db,store}=open();t.after(()=>db.close());let pages=0,heads=0,targetReads=0,targetDeleted=false;
   const f=fixture(db,store,async(args:any)=>{if(args.afterTag){heads++;return {maxSeq:10,contextBoundarySeq:null,rows:[],delta:{upsertRows:[]},timelinePage:{olderCursor:null,olderRowsSourceSeqEnd:null}};}return {maxSeq:10,contextBoundarySeq:null,rows:pages++%2===0?[row('new',2,'TOKEN https://bb.test/projects/proj_a/threads/thr_target')]:[row('old',1,'older TOKEN')],
     timelinePage:{olderCursor:pages%2===1?{anchorSeq:1,anchorId:'old'}:null}};});
@@ -594,7 +594,7 @@ test('one page per quantum; unchanged forced generations reuse history and pure 
   assert.ok(db.prepare('SELECT 1 FROM assistant_link_jobs').get());
   await finish(f.collector,db);const initialCalls=calls.length;assert.ok(initialCalls>0);assert.equal(pages,2);assert.equal(targetReads,1);
   targetDeleted=true;f.collector.enqueue('proj_a','thr_a',false,true);await finish(f.collector,db);
-  assert.equal(pages,2);assert.equal(heads,1);assert.equal(calls.length,initialCalls);assert.equal(targetReads,2);
+  assert.equal(pages,4);assert.equal(heads,0);assert.equal(calls.length,initialCalls);assert.equal(targetReads,2);
   assert.equal(store.listForwardReferences({source:sourceIdentity}).rows.some(r=>r.target.provider==='bb'),false);
 });
 
@@ -643,7 +643,7 @@ test('startup reconstructs completed source bodies while preserving pure recogni
   next.collector.processNext=async signal=>{const worked=await process(signal);if(!worked)idle();return worked;};
   const controller=new AbortController();const running=next.collector.start(controller.signal);await reachedIdle;controller.abort();await running;
   assert.equal(calls.length,1);assert.equal(pages,2);
-  revision='rev2';next.collector.invalidateSuppliers();await finish(next.collector,reopened.db);assert.equal(calls.length,2);assert.equal(pages,2);
+  revision='rev2';next.collector.invalidateSuppliers();await finish(next.collector,reopened.db);assert.equal(calls.length,2);assert.equal(pages,3);
 });
 
 
@@ -652,7 +652,7 @@ test('an unchanged source larger than the hot cache does not thrash supplier rec
   const f=fixture(db,store,async(args:any)=>{if(args.afterTag)return {maxSeq:100,contextBoundarySeq:null,rows:[],delta:{upsertRows:[]},timelinePage:{olderCursor:null,olderRowsSourceSeqEnd:null}};pages++;return {maxSeq:100,contextBoundarySeq:null,rows:Array.from({length:80},(_,i)=>row('m'+i,i,'TOKEN '+i)),timelinePage:{olderCursor:null}};});
   supplier(f.bb,()=> 'rev1',calls);f.bb.sdk.threads.events={list:async()=>[{seq:100}]};
   f.collector.enqueue('proj_a','thr_a');await finish(f.collector,db);assert.equal(calls.length,80);
-  f.collector.enqueue('proj_a','thr_a',false,true);await finish(f.collector,db);assert.equal(calls.length,80);assert.equal(pages,1);
+  f.collector.enqueue('proj_a','thr_a',false,true);await finish(f.collector,db);assert.equal(calls.length,80);assert.equal(pages,2);
 });
 
 for(const mode of ['missing-native-delta','expired-cursor'] as const)test(mode+' discards reconstructible source checkpoint while preserving durable retry intent',async t=>{
@@ -670,28 +670,24 @@ for(const mode of ['missing-native-delta','expired-cursor'] as const)test(mode+'
 });
 
 
-for(const mode of ['append','compressed-append','correction','gap','boundary','server-cache-miss'] as const)test('latest-window '+mode+' uses incremental append only with complete overlapping source proof',async t=>{
- const {db,store}=open();t.after(()=>db.close());let seq=10,pages=0;const calls:string[]=[];let phase='cold';
- const f=fixture(db,store);supplier(f.bb,()=> 'rev1',calls);
- f.bb.sdk.threads.events={list:async()=>[{seq}]};
- f.bb.sdk.threads.timeline=async(args:any)=>{
-  pages++;
-  if(phase==='cold')return {maxSeq:10,contextBoundarySeq:null,rows:[row('old',1,'https://example.test/old')],timelinePage:{olderCursor:args.beforeAnchorId?null:{anchorSeq:1,anchorId:'old'}}};
-  if(args.afterTag){
-   assert.equal(args.afterTag,'10');
-   if(mode==='server-cache-miss')return {maxSeq:11,contextBoundarySeq:null,rows:[row('new',11,'https://example.test/new')],timelinePage:{olderCursor:null}};
-   return {maxSeq:11,contextBoundarySeq:mode==='boundary'?11:null,rows:[],delta:{upsertRows:[mode==='correction'?row('old',1,'corrected'):row('new',11,'https://example.test/new')],rowOrder:mode==='gap'?['new']:mode==='compressed-append'?[[0,1],'new']:['old','new']},timelinePage:{olderCursor:null,olderRowsSourceSeqEnd:null}};
-  }
-  return {maxSeq:11,contextBoundarySeq:null,rows:[row('new',11,'https://example.test/new')],timelinePage:{olderCursor:null}};
- };
- f.collector.enqueue('proj_a','thr_a');await finish(f.collector,db);assert.equal(pages,2);const before=calls.length;
- phase='warm';seq=11;f.collector.enqueue('proj_a','thr_a',false,true);await finish(f.collector,db);
- if(mode==='append' || mode==='compressed-append'){
-  assert.equal(pages,3,'one append page, zero old-page reads');assert.equal(calls.length,before+2);
-  assert.equal(store.listForwardReferences({source:sourceIdentity}).total,2);
- }else {
-  assert.equal(pages,mode==='server-cache-miss'?3:4);assert.equal(store.listForwardReferences({source:sourceIdentity}).total,1);
- }
+for(const mode of ['append','historical-correction','history-prune','context-boundary','source-reset'] as const)test('fresh queued source '+mode+' does not trust a latest-window tag for old bodies',async t=>{
+ const {db,store}=open();t.after(()=>db.close());let warm=false,pages=0;
+ const f=fixture(db,store,async(args:any)=>{
+  assert.equal(args.afterTag,undefined);pages++;
+  const older=!!args.beforeAnchorId;
+  if(!warm)return {maxSeq:10,contextBoundarySeq:null,rows:older?[row('old',1,'https://example.test/old')]:[row('head',10,'head')],timelinePage:{olderCursor:older?null:{anchorSeq:1,anchorId:'old'}}};
+  const paged=mode==='append'||mode==='historical-correction';
+  const rows=mode==='append'?(older?[row('old',1,'https://example.test/old')]:[row('new',11,'https://example.test/new')]):
+   mode==='historical-correction'?(older?[row('old',1,'corrected without links')]:[row('head',10,'head')]):
+   mode==='history-prune'?[row('head',10,'head')]:[row('new',mode==='source-reset'?3:10,'https://example.test/new')];
+  return {maxSeq:mode==='append'?11:mode==='source-reset'?3:10,contextBoundarySeq:mode==='context-boundary'?10:null,rows,timelinePage:{olderCursor:paged&&!older?{anchorSeq:1,anchorId:'old'}:null}};
+ });
+ f.bb.sdk.plugins={list:async()=>({plugins:[]})};
+ f.collector.enqueue('proj_a','thr_a');await finish(f.collector,db);assert.equal(pages,2);
+ warm=true;f.collector.enqueue('proj_a','thr_a',false,true);await finish(f.collector,db);
+ const refs=store.listForwardReferences({source:sourceIdentity}).rows.map(r=>r.target.keys.href).sort();
+ const expected=mode==='append'?['https://example.test/new','https://example.test/old']:mode==='historical-correction'||mode==='history-prune'?[]:['https://example.test/new'];
+ assert.deepEqual(refs,expected);assert.equal(pages,mode==='append'||mode==='historical-correction'?4:3);
 });
 
 test('4536 durable jobs do not allocate 4536 source bodies: eviction bounds collected checkpoints and keeps every queued intent',async t=>{
@@ -762,13 +758,13 @@ test('startup reconstructs an offline same-sequence mutation without consulting 
 });
 
 
-test('pure unchanged-source reuse refreshes observedAt without changing evidence revision',async t=>{
+test('fresh unchanged-source scans refresh observedAt without changing evidence revision',async t=>{
  const {db,store}=open();t.after(()=>db.close());let now=100000,pages=0;t.mock.method(Date,'now',()=>now);
  const f=fixture(db,store,async(args:any)=>{if(args.afterTag)return {maxSeq:10,contextBoundarySeq:null,rows:[],delta:{upsertRows:[]},timelinePage:{olderCursor:null,olderRowsSourceSeqEnd:null}};pages++;return {maxSeq:10,contextBoundarySeq:null,rows:[row('m',1,'https://example.test/a')],timelinePage:{olderCursor:null}};});
  f.bb.sdk.plugins={list:async()=>({plugins:[]})};f.bb.sdk.threads.events={list:async()=>[{seq:10}]};
  f.collector.enqueue('proj_a','thr_a');await finish(f.collector,db);const before=store.mentionState(sourceIdentity);assert.equal(before.occurrences[0]!.observedAt,now);
  now+=1000;f.collector.enqueue('proj_a','thr_a',false,true);await finish(f.collector,db);const after=store.mentionState(sourceIdentity);
- assert.equal(after.occurrences[0]!.observedAt,now);assert.equal(after.revision,before.revision);assert.equal(pages,1);
+ assert.equal(after.occurrences[0]!.observedAt,now);assert.equal(after.revision,before.revision);assert.equal(pages,2);
 });
 
 
@@ -779,7 +775,7 @@ test('a latest-window delta without native older-history metadata cannot certify
   return {maxSeq:10,contextBoundarySeq:null,rows:[row('m',1,changed?'https://example.test/corrected':'https://example.test/original')],timelinePage:{olderCursor:null}};};
  f.collector.enqueue('proj_a','thr_a');await finish(f.collector,db);changed=true;
  f.collector.enqueue('proj_a','thr_a',false,true);await finish(f.collector,db);
- assert.equal(pages,3);assert.deepEqual(store.listForwardReferences({source:sourceIdentity}).rows.map(r=>r.target.keys.href),['https://example.test/corrected']);
+ assert.equal(pages,2);assert.deepEqual(store.listForwardReferences({source:sourceIdentity}).rows.map(r=>r.target.keys.href),['https://example.test/corrected']);
 });
 
 
@@ -790,8 +786,8 @@ test('failed older-page attempts retire continuation certification before a same
   requests.push(args.afterTag?'witness':args.beforeAnchorId?'older':'first');
   if(args.afterTag){witnesses++;assert.equal(args.afterTag,'10');}
   if(args.beforeAnchorId){if(failOlder){failOlder=false;throw new Error('offline');}return {maxSeq:10,contextBoundarySeq:null,rows:[row('old',1,'older text')],timelinePage:{olderCursor:null}};}
-  // A same-lifetime native rewrite floor supplies a full corrected response,
-  // even if the source was rewritten without an advancing sequence.
+  // A due retry starts with a full corrected response, even when an older
+  // source changed without advancing the latest sequence.
   return {maxSeq:10,contextBoundarySeq:null,rows:[row('new',2,'https://example.test/'+(rewritten?'corrected':'original'))],timelinePage:{olderCursor:{anchorSeq:1,anchorId:'older'}}};
  });
  f.collector.enqueue('proj_a','thr_a',false,false,2);
@@ -805,6 +801,25 @@ test('failed older-page attempts retire continuation certification before a same
  await finish(f.collector,db);
  assert.deepEqual(store.listForwardReferences({source:sourceIdentity}).rows.map(r=>r.target.keys.href),['https://example.test/corrected']);
  assert.equal(retry.version,failed.version);assert.equal(retry.priority,failed.priority);assert.equal(retry.attempts,failed.attempts);
- assert.equal(witnesses,1);assert.deepEqual(requests,['first','older','witness','older']);
+ assert.equal(witnesses,0);assert.deepEqual(requests,['first','older','first','older']);
  assert.equal(store.mentionState(sourceIdentity).coverage?.timelineComplete,true);
+});
+
+test('an unobserved older-page rewrite cannot be hidden by an unchanged latest-window tag',async t=>{
+ const {db,store}=open();t.after(()=>db.close());let href='https://example.test/before';let fullPages=0,taggedReads=0;
+ const f=fixture(db,store,async(args:any)=>{
+  if(args.afterTag){taggedReads++;return {tag:'latest-window-10',maxSeq:10,delta:{afterTag:args.afterTag,upsertRows:[],fields:{}}};}
+  fullPages++;
+  return {tag:args.beforeAnchorId?'older-window-10':'latest-window-10',maxSeq:10,contextBoundarySeq:null,
+   rows:args.beforeAnchorId?[row('old',1,href)]:[row('head',10,'unchanged head')],
+   timelinePage:{historySnapshot:'same-max-sequence-and-surface',olderRowsSourceSeqEnd:null,olderCursor:args.beforeAnchorId?null:{anchorSeq:1,anchorId:'older'}}};
+ });
+ f.bb.sdk.plugins={list:async()=>({plugins:[]})};
+ f.collector.enqueue('proj_a','thr_a');await finish(f.collector,db);assert.equal(fullPages,2);
+ href='https://example.test/after'; // No notification: reconnect/subscription gap.
+ f.collector.enqueue('proj_a','thr_a',false,true);await finish(f.collector,db);
+ const refs=store.listForwardReferences({source:sourceIdentity}).rows.map(r=>r.target.keys.href);
+ assert.deepEqual(refs,['https://example.test/after'],'the native latest-window delta does not certify older cached bodies');
+ assert.equal(fullPages,4,'the new source attempt reads both current pages');
+ assert.equal(taggedReads,0,'opaque latest-window tags are not an older-history revision signal');
 });
