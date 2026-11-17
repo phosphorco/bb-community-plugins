@@ -28,6 +28,9 @@ async function bounded<T>(run:(signal:AbortSignal)=>Promise<T>,signal:AbortSigna
   })]);}catch(error){diagnostic?.fail(signal.aborted?'cancelled':'sdk-failure');throw error;}finally{if(!native)diagnostic?.close();clearTimeout(timer);signal.removeEventListener('abort',abort);controller.abort();}
 }
 
+type TimelineRead = Awaited<ReturnType<BbPluginApi["sdk"]["threads"]["timeline"]>>;
+type TimelinePage = Extract<TimelineRead, { rows: unknown[] }>;
+
 type Job = { thread_id: string; project_id: string; version: number; deleted: number; attempts: number };
 
 /** SQLite owns pending work; one abort-aware worker resumes it after reload. */
@@ -231,7 +234,7 @@ export class AssistantLinkCollector {
     const diagnostics=new MentionDiagnostics(()=>!this.disposed && this.db.open && !signal.aborted);
     let outerDiagnostic:MentionDiagnosticOperation|undefined;
     const checkpoints=new CollectionCheckpoints(this.db);
-    let prefetchedPage:Awaited<ReturnType<BbPluginApi["sdk"]["threads"]["timeline"]>>|undefined;
+    let prefetchedPage:TimelinePage|undefined;
     let checkpoint=checkpoints.load(job.thread_id);
     const continuing=checkpoint && !checkpoint.ready && this.continuations.get(job.thread_id)===job.version;
     try {
@@ -263,10 +266,10 @@ export class AssistantLinkCollector {
           // event head, socket-open event or sent detail frame cannot certify
           // that earlier history stayed unchanged across a notification gap.
           // Always obtain a native delta witness before reusing source bodies.
-          let witness:Awaited<ReturnType<BbPluginApi["sdk"]["threads"]["timeline"]>>;
+          let witness:TimelineRead;
           try {
-            witness=await bounded(s=>this.bb.sdk.threads.timeline({threadId:job.thread_id,
-              includeNestedRows:'false',segmentLimit:'100',...(checkpoint!.maxSeq===null?{}:{afterSequence:String(checkpoint!.maxSeq)}),signal:s}),signal,1000,
+            witness=await bounded<TimelineRead>(s=>this.bb.sdk.threads.timeline({threadId:job.thread_id,
+              includeNestedRows:'false',segmentLimit:'100',...(checkpoint!.tag===undefined?{}:{afterTag:checkpoint!.tag}),signal:s}),signal,1000,
               outerDiagnostic=diagnostics.operation('timeline-prefetch'));
           }catch(error){
             if(stillCurrent() && typeof error==='object' && error!==null && 'status' in error && error.status===400){
@@ -275,17 +278,35 @@ export class AssistantLinkCollector {
             throw error;
           }
           if(!stillCurrent())return true;
-          const delta=witness.delta;
+          const delta='delta' in witness?witness.delta:undefined;
+          const full='rows' in witness?witness:undefined;
+          // BB 0.49 deltas are bound to an opaque prior tag; omitted fields
+          // retain that exact snapshot. Full responses conservatively rescan.
+          if(delta && (checkpoint.tag===undefined || delta.afterTag!==checkpoint.tag)) {
+            checkpoints.remove(job.thread_id);this.continuations.delete(job.thread_id);return true;
+          }
           const oldMax=checkpoint.maxSeq;
-          const order=delta?.rowOrder??checkpoint.headIds??[];
-          const olderEnd=witness.timelinePage.olderRowsSourceSeqEnd;
-          const olderStable=(witness.timelinePage.olderRowUpdates?.length??0)===0 &&
+          const priorOrder=checkpoint.headIds??[];
+          const order:string[]=[];
+          let validOrder=true;
+          for(const part of delta?.rowOrder??priorOrder) {
+            if(typeof part==='string')order.push(part);
+            else if(Number.isSafeInteger(part[0]) && Number.isSafeInteger(part[1]) && part[0]>=0 && part[1]>0 && part[0]+part[1]<=priorOrder.length)order.push(...priorOrder.slice(part[0],part[0]+part[1]));
+            else validOrder=false;
+          }
+          const metadata=full?.timelinePage??delta?.fields.timelinePage;
+          const olderEnd=metadata?.olderRowsSourceSeqEnd;
+          const olderStable=metadata===undefined?delta!==undefined:(metadata.olderRowUpdates?.length??0)===0 &&
             (olderEnd===null || (Number.isSafeInteger(olderEnd) && olderEnd!>=0 && oldMax!==null && olderEnd!<=oldMax));
+          const historyStable=metadata?.historySnapshot===undefined || checkpoint.historySnapshot===undefined || metadata.historySnapshot===checkpoint.historySnapshot;
           const knownBoundary=checkpoint.contextBoundarySeq===null || Number.isSafeInteger(checkpoint.contextBoundarySeq);
-          const sameBoundary=knownBoundary && witness.contextBoundarySeq===checkpoint.contextBoundarySeq;
+          const boundary=full?full.contextBoundarySeq:delta?.fields.contextBoundarySeq===undefined?checkpoint.contextBoundarySeq:delta.fields.contextBoundarySeq;
+          const sameBoundary=validOrder && historyStable && knownBoundary && boundary===checkpoint.contextBoundarySeq;
           const unchanged=oldMax!==null && witness.maxSeq===oldMax && delta && delta.upsertRows.length===0 &&
             JSON.stringify(order)===JSON.stringify(checkpoint.headIds??[]) && sameBoundary && olderStable;
           if(unchanged){
+            checkpoint.tag=witness.tag;
+            checkpoints.save(job.thread_id,checkpoint,[]);
             if(!checkpoint.ready){this.continuations.set(job.thread_id,job.version);return true;}
           }else {
             // afterSequence describes the latest window, never all history.
@@ -305,15 +326,15 @@ export class AssistantLinkCollector {
                 accepted.push({id:row.id,text:row.text,createdAt:row.createdAt,messageSeq:row.messageSeq,anchorSeq:row.sourceSeqStart,role:row.role});
               }
               if(valid && textChars<=MENTION_LIMITS.sourceChars && priorIds.size+accepted.length<=MENTION_LIMITS.messages){
-                checkpoint.maxSeq=witness.maxSeq;checkpoint.textChars=textChars;checkpoint.headIds=order;delete checkpoint.pureKey;
+                checkpoint.tag=witness.tag;checkpoint.maxSeq=witness.maxSeq;checkpoint.textChars=textChars;checkpoint.headIds=order;delete checkpoint.pureKey;
                 checkpoints.save(job.thread_id,checkpoint,accepted);
               }else {checkpoints.remove(job.thread_id);this.continuations.delete(job.thread_id);return true;}
             }else {
               checkpoints.remove(job.thread_id);checkpoint=undefined;this.continuations.delete(job.thread_id);
               // A full native response is already a fresh first page. A delta
               // without sufficient overlap needs a full request next quantum.
-              if(delta)return true;
-              prefetchedPage=witness;
+              if(delta || !full)return true;
+              prefetchedPage=full;
             }
           }
         }
@@ -337,6 +358,8 @@ export class AssistantLinkCollector {
           });
           if(!stillCurrent())return true;
           if(checkpoint.pages===0){
+            checkpoint.tag=page.tag;
+            checkpoint.historySnapshot=page.timelinePage.historySnapshot;
             checkpoint.maxSeq=Number.isSafeInteger(page.maxSeq)?page.maxSeq:null;
             checkpoint.contextBoundarySeq=page.contextBoundarySeq;
             checkpoint.headIds=page.rows.map(row=>row.id);
