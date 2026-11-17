@@ -670,7 +670,7 @@ for(const mode of ['missing-native-delta','expired-cursor'] as const)test(mode+'
 });
 
 
-for(const mode of ['append','correction','gap','boundary','server-cache-miss'] as const)test('latest-window '+mode+' uses incremental append only with complete overlapping source proof',async t=>{
+for(const mode of ['append','compressed-append','correction','gap','boundary','server-cache-miss'] as const)test('latest-window '+mode+' uses incremental append only with complete overlapping source proof',async t=>{
  const {db,store}=open();t.after(()=>db.close());let seq=10,pages=0;const calls:string[]=[];let phase='cold';
  const f=fixture(db,store);supplier(f.bb,()=> 'rev1',calls);
  f.bb.sdk.threads.events={list:async()=>[{seq}]};
@@ -680,13 +680,13 @@ for(const mode of ['append','correction','gap','boundary','server-cache-miss'] a
   if(args.afterTag){
    assert.equal(args.afterTag,'10');
    if(mode==='server-cache-miss')return {maxSeq:11,contextBoundarySeq:null,rows:[row('new',11,'https://example.test/new')],timelinePage:{olderCursor:null}};
-   return {maxSeq:11,contextBoundarySeq:mode==='boundary'?11:null,rows:[],delta:{upsertRows:[mode==='correction'?row('old',1,'corrected'):row('new',11,'https://example.test/new')],rowOrder:mode==='gap'?['new']:['old','new']},timelinePage:{olderCursor:null,olderRowsSourceSeqEnd:null}};
+   return {maxSeq:11,contextBoundarySeq:mode==='boundary'?11:null,rows:[],delta:{upsertRows:[mode==='correction'?row('old',1,'corrected'):row('new',11,'https://example.test/new')],rowOrder:mode==='gap'?['new']:mode==='compressed-append'?[[0,1],'new']:['old','new']},timelinePage:{olderCursor:null,olderRowsSourceSeqEnd:null}};
   }
   return {maxSeq:11,contextBoundarySeq:null,rows:[row('new',11,'https://example.test/new')],timelinePage:{olderCursor:null}};
  };
  f.collector.enqueue('proj_a','thr_a');await finish(f.collector,db);assert.equal(pages,2);const before=calls.length;
  phase='warm';seq=11;f.collector.enqueue('proj_a','thr_a',false,true);await finish(f.collector,db);
- if(mode==='append'){
+ if(mode==='append' || mode==='compressed-append'){
   assert.equal(pages,3,'one append page, zero old-page reads');assert.equal(calls.length,before+2);
   assert.equal(store.listForwardReferences({source:sourceIdentity}).total,2);
  }else {
