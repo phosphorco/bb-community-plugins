@@ -19,7 +19,7 @@ export function briefWarning(view:{state:ProducerState|null;error:string|null;st
  if(view.error||view.stale)return 'Brief status unavailable; showing the last available Brief state.';
  return null;
 }
-/** One fixed source read owner at the thread header, reused by its open detail. */
+/** One fixed source read owner in thread Info, reused by its open detail. */
 export function useBriefProducerState(threadId:string){
  const sdk=useSdk(),client=useMemo(()=>createCrossReferencesProducerClient(sdk),[sdk]);
  const source=useMemo(()=>verifiedFileIdentity({kind:'thread-storage',threadId,path:'BRIEF.md'}),[threadId]);

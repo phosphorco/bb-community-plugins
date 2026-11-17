@@ -4,6 +4,7 @@ import { Component, Suspense, lazy, useCallback, useEffect, useId, useLayoutEffe
 import {
   definePluginApp,
   experimental_Icon as Icon,
+  experimental_InfoSection as InfoSection,
   useBbNavigate,
   useRealtime,
   useRealtimeConnectionState,
@@ -481,7 +482,7 @@ function ReferencesDetail({ target, pages, loading, error, stale, loadingMore, c
   );
 }
 
-function ThreadHeaderAction({ threadId, projectId }: { threadId: string; projectId: string }) {
+function ThreadReferencesControl({ threadId, projectId }: { threadId: string; projectId: string }) {
   const { pages, loading, loadingMore, error, stale, loadMore } = useThreadReferences(projectId, threadId);
   const brief=useBriefProducerState(threadId);
   const [open, setOpen] = useState(false);
@@ -496,18 +497,18 @@ function ThreadHeaderAction({ threadId, projectId }: { threadId: string; project
     forwardCount > 0 ? countLabel(forwardCount, "forward reference") : null,
     backlinkCount > 0 ? countLabel(backlinkCount, "backlink") : null,
   ].filter((label): label is string => label !== null);
-  // Keep the header quiet until this exact thread has a relationship to show.
+  // Keep the Info section quiet until this exact thread has a relationship to show.
   // Once visible, its dialog owns refresh/loading detail for that relationship.
   const hasBrief=brief.state?.status!=null||Boolean(brief.state?.projection?.targets.length);
   if ((loading || count === 0) && !hasBrief) return null;
-  return <>
+  return <InfoSection label="References">
     <button ref={triggerRef} type="button" className="cross-references__trigger" aria-label={`Cross-references: ${directionLabels.length?directionLabels.join(", "):"Thread Brief"}`} aria-expanded={open} aria-haspopup="dialog" aria-controls={popoverId} title="Show cross-references" onClick={() => setOpen((current) => !current)}>
       {count===0&&hasBrief&&<span>Brief references</span>}
       {forwardCount > 0 && <span className="cross-references__metric" aria-hidden="true"><LinkGlyph /><span className="cross-references__count">{forwardCount}</span></span>}
       {backlinkCount > 0 && <span className="cross-references__metric" aria-hidden="true"><BacklinkGlyph /><span className="cross-references__count">{backlinkCount}</span></span>}
     </button>
     {open && triggerRef.current != null && <ReferencesDetail target={{ provider: "bb", keys: { project: projectId, thread: threadId } }} pages={pages} loading={loading} loadingMore={loadingMore} error={error} stale={stale} checks={checks} checking={checking} checkError={checkError} trigger={triggerRef.current} popoverId={popoverId} onClose={close} onLoadMore={loadMore} briefMessage={briefWarning(brief)} />}
-  </>;
+  </InfoSection>;
 }
 
 export const PANEL_LOAD_RECOVERY_MS = 10_000;
@@ -607,7 +608,7 @@ const MentionResults = createMentionsBodyLoader<{ selection: MentionSelection }>
 });
 
 export default definePluginApp((app) => {
-  app.slots.experimental_threadHeaderRow({ id: "cross-references", component: ThreadHeaderAction });
+  app.slots.experimental_threadInfoSection({ id: "cross-references", group: "references", component: ThreadReferencesControl });
   app.slots.experimental_browserToolbarAction({ id: "mentions", title: "Mentions", component: BrowserMentionsAction });
   app.slots.navPanel({ id: "mentions", title: "Mentions", icon: "Link", path: "mentions", component: MentionsPanel });
 });

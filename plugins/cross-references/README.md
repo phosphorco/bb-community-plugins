@@ -141,10 +141,12 @@ data remain retained while Cross References owns new conversation-mention collec
 
 ### References should be present only when there is a relationship to show
 
-The compact thread-header affordance is not a permanently visible “Links”
+The compact control under **Info → References** is not a permanently visible “Links”
 button. It appears when the thread has one or more forward references or
 backlinks, shows the two counts with distinct directional icons, and opens the
-full reference view. Its absence means there is no relationship currently
+full reference view. Brief reference status also remains accessible here when
+there are no relationships. No control or row is added beneath the thread title.
+Its absence means there is no relationship or Brief status currently
 known for that thread; it should not make a user wait for a separate discovery
 step once a qualifying assistant URL has been observed.
 

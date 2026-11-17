@@ -48,11 +48,12 @@ function recoveryClock() {
   } };
 }
 
-test("actual Crossrefs entry preserves immediate registrations and the original public helper exports", () => {
-  expect(registered.threadHeaderRows.map(action => action.id)).toEqual(["cross-references"]);
+test("actual Crossrefs entry keeps References in Info with no header row and preserves public helper exports", () => {
+  expect(registered.threadHeaderRows).toEqual([]);
+  expect(registered.threadInfoSections.map(section => section.id)).toEqual(["cross-references"]);
   expect(registered.browserToolbarActions.map(action => [action.id, action.title])).toEqual([["mentions", "Mentions"]]);
   expect(registered.navPanels.map(panel => [panel.id, panel.title, panel.icon, panel.path])).toEqual([["mentions", "Mentions", "Link", "mentions"]]);
-  expect(typeof registered.threadHeaderRows[0]!.component).toBe("function");
+  expect(typeof registered.threadInfoSections[0]!.component).toBe("function");
   expect(typeof registered.browserToolbarActions[0]!.component).toBe("function");
   expect(typeof registered.navPanels[0]!.component).toBe("function");
   expect(cleanInlineMarkdown).toBe(pureClean);
