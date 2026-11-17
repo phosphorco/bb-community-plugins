@@ -1,9 +1,9 @@
 {
   "name": "@phosphorco/bb-people-accounts",
-  "version": "0.1.1",
+  "version": "0.2.0-dev.0",
   "type": "module",
   "license": "MIT",
-  "description": "People-accounts attribution contract: roster DTOs, resolution codecs, a fixed RPC protocol, an owner-bound client and a conformance kit.",
+  "description": "Portable identity associations and contribution contracts, with legacy People Accounts v1 compatibility.",
   "author": "Phosphor",
   "homepage": "https://github.com/phosphorco/bb-community-plugins/tree/main/packages/bb-people-accounts#readme",
   "bugs": {
@@ -31,19 +31,34 @@
     "./testing": {
       "types": "./dist/types/testing.d.ts",
       "import": "./dist/testing.js"
+    },
+    "./v2": {
+      "types": "./dist/types/v2.d.ts",
+      "import": "./dist/v2.js"
+    },
+    "./v2/bb": {
+      "types": "./dist/types/v2-bb.d.ts",
+      "import": "./dist/v2-bb.js"
+    },
+    "./v2/testing": {
+      "types": "./dist/types/v2-testing.d.ts",
+      "import": "./dist/v2-testing.js"
     }
   },
   "files": [
     "dist/",
     "README.md",
     "CONTRACT.md",
-    "LICENSE"
+    "LICENSE",
+    "V2-CONTRACT.md",
+    "COMPATIBILITY.md"
   ],
   "publishConfig": {
     "access": "public"
   },
   "dependencies": {
-    "zod": "4.6.7"
+    "zod": "4.6.7",
+    "@phosphorco/bb-identity": "0.5.0"
   },
   "peerDependencies": {
     "@get-bb/plugin-sdk": ">=0.5.29 <0.6 || ^0.6.29"
@@ -60,8 +75,8 @@
     "typescript": "5.9.3"
   },
   "scripts": {
-    "build": "bun tools/build.mjs --entry \"src/index.ts\" --target browser --entry \"src/bb.ts\" --target browser --entry \"src/testing.ts\" --target browser --external \"zod\" --external \"@get-bb/plugin-sdk\" --external \"@get-bb/plugin-sdk/*\" && tsc --project tsconfig.declarations.json",
+    "build": "bun tools/build.mjs --entry \"src/index.ts\" --target browser --entry \"src/bb.ts\" --target browser --entry \"src/testing.ts\" --target browser --entry \"src/v2.ts\" --target browser --entry \"src/v2-bb.ts\" --target browser --entry \"src/v2-testing.ts\" --target browser --external \"zod\" --external \"@phosphorco/bb-identity/*\" --external \"@get-bb/plugin-sdk\" --external \"@get-bb/plugin-sdk/*\" && tsc --project tsconfig.declarations.json",
     "test": "bun run build && bun test test",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit && tsc --project tsconfig.types.json --noEmit"
   }
 }

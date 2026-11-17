@@ -1,6 +1,80 @@
 # People Accounts
 
-Feature-owned roster and per-person bot credentials for trusted attribution.
+Generic account associations for BB people, with the existing GitHub
+attribution surface retained as an explicit legacy adapter.
+
+## Account links
+
+Open **People account links** in plugin settings. The native person picker
+changes whose links you are editing; you remain the editor. Accounts with equal
+display names stay distinct by supplier and exact subject. One external account
+may be associated with several people without merging them. Multiple linked
+accounts remain a list; each consuming plugin must choose its acting account.
+
+Use **Refresh suppliers**, choose an available supplier, then **Search accounts**.
+Discovery and searches are bounded and user-driven. **More accounts** continues
+the same revision; a changed directory asks you to search again. One failed
+supplier does not hide healthy suppliers. Partial and over-limit results remain
+visible. With no suppliers, you can still inspect retained links and explicitly
+add a known supplier-qualified account reference. Do not guess a subject from
+an email address or display name.
+
+Edits save through the native identity state controller. Keep the view open
+until saving finishes. An interrupted response reconciles its original operation;
+it does not authorize a fresh resend. Conflicting edits expose **Use saved links**
+and **Keep my links**. Changing person or actor retires the old controller;
+late reads and old recovery actions cannot change the replacement view.
+Unsaved edits are intentionally in-session; there is no browser draft database.
+
+A link is attribution/routing data. It grants no service access, creates no
+account, stores no credential, chooses no primary account, and supplies no
+fresh-request or email permission. A disabled, missing or failing supplier
+leaves its link retained with unavailable presentation.
+
+## Host ownership and storage
+
+The published `@phosphorco/bb-people-accounts@0.2.0-dev.0` supplies v2 codecs,
+registration, intended-owner clients and finite discovery. Published
+`bb-identity@0.5.0` supplies the person directory, collaborator target policy,
+state transport/controller, CAS and operation reconciliation. Generic code is
+in `links-model.ts`, `links-store.ts`, `contributions.ts` and `links-settings.tsx`.
+The app entry lazily loads both settings sections.
+
+The host advertises the v2 **links** role, not its own external identity catalog.
+`LinksGet` and `LinksFind` project the same feature-owned SQLite storage that
+native state writes use. Writes use the native state routes, with no separate
+link-write RPC or second synchronization engine. One record named `links` is
+scoped by native instance, plugin, collection and person address.
+
+`people_links_records`, `people_links_index`, `people_links_revision` and
+`people_links_receipts` live in this plugin's existing SDK database. One immediate
+transaction validates the current editor, performs CAS, updates links and the
+locator index/revision, and retains the exact operation outcome. Failed receipt
+insertion rolls the entire change back. Indexed reverse pages bind both locator
+and revision; they never scan the roster. Replaying an old operation replays its
+outcome without advancing the index. A schema mismatch is retained for explicit
+migration, never silently adopted or reset.
+
+Receipts remain queryable for 30 days; expired IDs remain tombstoned and cannot
+be reused. There is no automatic cleanup of unknown work. This policy should
+be revisited with measured write volume before adding bounded archival, not by
+deleting uncertain receipts. Generic tables start independently of all legacy
+settings; this implementation runs no import or adopter cutover.
+
+If generic storage cannot initialize, v1 remains usable and generic reads report
+unavailable rather than inventing an empty record. Correct the reported storage
+problem and reload People Accounts. A later read failure retains its original
+operation for native reconciliation; a reconnect is never a fresh write.
+
+## Legacy GitHub attribution
+
+`legacy-github.ts` retains the previous factory's settings, secret slot names,
+fixed v1 RPCs, CLI matching, token custody and health checks. `settings.tsx`
+retains that UI. The process still has this named GitHub-specific exception;
+the v2 host does not call it for discovery, link editing or account choice.
+No link changes the saved roster, Slack mapping, Macro mapping or email policy.
+
+The legacy feature owns its roster and per-person bot credentials.
 Matching preserves input order, skips ambiguous names and lets consumers use
 their default account when no suitable bot is available. Token health is advisory.
 

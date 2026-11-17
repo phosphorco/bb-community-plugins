@@ -3,7 +3,7 @@
   "version": "0.1.1",
   "type": "module",
   "license": "MIT",
-  "description": "Resolve people to GitHub bots and human commit attribution with self-service token diagnostics.",
+  "description": "Generic person/account associations with retained legacy GitHub attribution.",
   "author": "Phosphor",
   "homepage": "https://github.com/phosphorco/bb-community-plugins/tree/main/plugins/people-accounts#readme",
   "bugs": {
@@ -26,7 +26,7 @@
   },
   "bb": {
     "name": "People Accounts",
-    "description": "Your roster row, bot token and attribution diagnostics.",
+    "description": "Link people to account references from installed plugins.",
     "branding": {
       "icon": "./icons/people.svg"
     },
@@ -47,14 +47,20 @@
     "cli/",
     "test/",
     "app.tsx",
+    "settings.tsx",
     "app.css",
     "lib/",
     "skills/",
-    "icons/"
+    "icons/",
+    "legacy-github.ts",
+    "links-model.ts",
+    "links-store.ts",
+    "links-settings.tsx",
+    "contributions.ts"
   ],
   "dependencies": {
-    "@phosphorco/bb-identity": "0.4.2-native-marker.0",
-    "@phosphorco/bb-people-accounts": "0.1.1",
+    "@phosphorco/bb-identity": "0.5.0",
+    "@phosphorco/bb-people-accounts": "0.2.0-dev.0",
     "zod": "4.6.7"
   },
   "devDependencies": {
@@ -71,7 +77,9 @@
     "jsdom": "^27.0.0",
     "react": "19.2.1",
     "react-dom": "19.2.1",
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "cron-parser": "5.10.0",
+    "hono": "4.13.18"
   },
   "scripts": {
     "build": "node ../../tools/bb-target-cli.mjs plugin build .",

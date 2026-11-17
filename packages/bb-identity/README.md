@@ -147,6 +147,40 @@ release explicitly; older installed versions do not gain the entry implicitly.
 Packed mixed-entry/browser/source checks remain distinct from actual hosted
 Inbox/product and registry acceptance.
 
+## Verified bootstrap handoff (unreleased)
+
+Native and fetch roots now offer optional `IdentityConnection.revalidateSession()`.
+It performs the same fresh bootstrap as `revalidate()`, returning the complete
+ready session together with the verified connection health generation. The client
+uses that response directly, eliminating the second sequential bootstrap before
+state loading. There is no retained bootstrap cache: only concurrent callers in
+one authority epoch share the in-flight read. Direct transport bootstrap calls
+still make their own request, and state writes still run their own fresh preflight.
+
+The response is retired on authority/health-generation change, denial, cancellation
+or disposal. Actor, instance, exact session stamp, capabilities and access results
+retain their existing decoders and lifecycle checks. View selection, state owner
+checks, resource reloads and write/reconciliation semantics are unchanged. Fetch
+revalidation waiters cancel independently; the connection root owns the physical
+request. An identity-route failure retires any older verification flight.
+
+Custom connections do not need to implement the optional method. Their existing
+`revalidate(): Promise<Result<void>>` followed by a decoded transport bootstrap
+continues unchanged. A custom root opting in must return `RevalidatedIdentitySession`
+from the same verified flight, with its final health generation; it must fence
+intervening authority changes. `createIdentityConnection` decodes and checks that
+handoff, and the client checks its generation again after awaiting it.
+
+This additive public contract requires a new minor package version (proposed
+`0.6.0` on `next`); it must not be published as `0.5.0`. This source change does
+not change the manifest, publish a package, update release receipts, or adopt it
+in any plugin. Before release, assign the new version and regenerate the npm lock,
+add the reviewed version to the pinned `next` release workflow/receipt contract,
+and verify the exact packed artifact. Consumers then adopt that exact registry
+version and rebuild separately. In particular, deployed `0.3.1` bundles and
+`0.5.0` `/react-core` consumers need explicit adoption; neither gains this fix
+from changing this source tree alone.
+
 ## Entry points
 
 | Import suffix | Runtime/declaration status | Responsibility |

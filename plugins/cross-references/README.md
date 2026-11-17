@@ -429,3 +429,62 @@ repairs and exact published0.4 adoption are prerequisites owned by TB, not
 implemented here. FileLink/cache/rawRevision equality alone is not a freshness
 claim; a file can change after a successful read. No new live/UI/fixture proof is
 claimed, and the earlier toolbar acceptance item remains separate.
+
+## Incremental collector checkpoints
+
+The durable job still owns collection and its generation fences the final
+reference/evidence transaction. A worker quantum fetches at most one timeline
+page and persists that page's cursor and accepted messages atomically, then
+returns to the event loop. Recognition also yields between messages within its
+existing source deadline. Partial traversal never publishes a complete graph.
+Reload retains pending jobs but discards all reconstructible source checkpoints
+and bodies, including partial pages. Native delta floors are process-local, so
+an empty same-sequence delta after a native restart cannot certify older bodies.
+A new service reconstructs sources from the first page. An expired cursor also
+discards only reconstructible inputs and retains the job's retry intent. A failed
+page attempt retires its continuation lease; a due retry must obtain a fresh
+native witness before reusing any partial source.
+
+Every source-cache reuse first requests a native `afterSequence` timeline
+witness. Only an explicit unchanged delta, stable context boundary and stable
+older-row markers permit historical-page reuse. An equal sequence, socket-open
+event or sent subscription frame alone never admits cached bodies. Successful
+pure supplier results retain their text/context/revision cache keys across
+reload. A successful scan that performed no native thread/file verification can
+also reuse its unchanged evidence receipt, including the graph/evidence revisions.
+Sources requiring native verification still perform those reads on each scan;
+a cached source body is never proof that a target still exists or is accessible.
+There is no public subscription-observation acknowledgement. Missing deltas
+therefore conservatively reconstruct history across initial, disconnected and
+new detail-target gaps, even if this costs another traversal. A witness is one
+extra bounded request before a50-page reconstruction when a delta cannot be
+used; a full response is reused as the first reconstruction page.
+
+Plugin invalidation clears supplier results and pure-scan receipts. Reconnect,
+surface-preference changes and history replacement/compaction invalidate source
+material too. A fresh service reconstructs all source snapshots, including partial inputs,
+because neither historical content nor preferences can be certified across
+service lifetimes. Exact thread-detail subscriptions
+cover the at most 32 cached sources (plus one source being collected), including
+compaction signals that native catalogue subscriptions intentionally omit. A
+source-history signal durably enqueues its known source even when the preceding
+job already committed, so delayed delivery does not require another view request.
+
+For an append, the existing `afterSequence` API may supply a delta of the latest
+window. It is usable only for a previously complete source, with unchanged
+context boundary, overlap with retained conversation rows, exclusively new row
+sequences/IDs, no older-row updates, and room within the existing message/text
+limits. Otherwise the collector reconstructs the source within its existing
+50-page bound. Missing deltas after server restart/cache eviction, history
+replacement, compaction, a window gap, or a historical correction therefore cost
+a rescan; the plugin does not treat a window delta as a complete history feed.
+
+Reconstructible source bodies are retained for at most 32 sources, each within
+5,000 messages / 2,097,152 UTF-16 units. Eviction cascades to their message rows
+and leaves durable jobs, retry backoff, projections and evidence intact. Pure
+supplier results have a separate global 512-entry / 16-MiB bound, with at most
+65,536 bytes per durable result and the existing 64-entry hot cache. The hot
+cache preserves its earlier UTF-16 admission policy across attempts, including
+Unicode results too large for durable UTF-8 admission. These are cache
+limits, not new collection/freshness exclusions. A cold backlog still requires
+its initial traversal; sources outside cache locality can require rescans.

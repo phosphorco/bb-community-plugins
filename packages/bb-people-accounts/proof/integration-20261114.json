@@ -1,0 +1,117 @@
+{
+  "date": "2026-11-14",
+  "scope": "contract-and-seams source integration only; no package publication, adopter pins, plugin migration, live mapping, credentials or runtime changes",
+  "implementation_parent": "61f80172a1b62829b637c9e07695db49fd5bc1d7",
+  "integrated_shared_parent": "454bbfd0fb6dd5069b65b16fd0873cacc43af6f0",
+  "source_candidate": "0.2.0-dev.0",
+  "sdk": "0.6.143+phosphor.05199007.upgrade1",
+  "identity_workspace_source": "0.5.0 rebuilt after shared-source merge",
+  "v1_source_unchanged_from": "b82386178faf30d114970809b6dd06eb6068356e",
+  "source_sha256": {
+    "src/v2.ts": "f4606e01b346f73eab1dd23286fc2a8f820c9ea8e8ce9c08a6691e04597f85e0",
+    "src/v2-bb.ts": "b035658f0fe6bd44d213ab3a624fdf659a7a77433b6c71ca5d156ae53327ccc7",
+    "src/v2-testing.ts": "bfc2bc5a5cca02ddce1bf169b8cbb2b8a2ad07fb6921a07959cb60f065f844fd",
+    "test/v2.test.mjs": "09319ed49c9b13ca5d591572e960b198f0d33de7c9773018ac5601faff29007f",
+    "package.json": "b6e1fcd4e2cb8a52a031f3cd9564f168368ec01aa96ce59d50c29ff4734d269c"
+  },
+  "package_tests": {
+    "pass": 30,
+    "fail": 0,
+    "legacy_v1": 16,
+    "v2": 14
+  },
+  "package_typecheck": "pass; source and emitted declarations",
+  "legacy_plugin_tests": {
+    "pass": 31,
+    "fail": 0,
+    "dependency_pin_unchanged": "0.1.1",
+    "includes": "incoming shared lazy-settings work, not a People Accounts v2 adoption"
+  },
+  "packed_install": {
+    "passed": true,
+    "level": "isolated-packed-install",
+    "archive_sha256": "5552cf451307f1fb9335048a5a0b33a6d9ea3984f43bd910153354fcaa3a47e4",
+    "entries": 6,
+    "sdk": "0.6.143+phosphor.05199007.upgrade1",
+    "installed_identity": "0.5.0",
+    "typescript": "5.9.3",
+    "checks": [
+      "ordinary npm tarball install",
+      "all six import entries",
+      "pure descriptor and strict link codec",
+      "no credential API",
+      "standalone declaration/brand checks",
+      "30 contract tests against installed tarball dist, registry identity and fork SDK"
+    ],
+    "limits": "No adopter factory, production storage/index, collaborator switching, registry release or live host.",
+    "runtime_tests": {
+      "pass": 30,
+      "fail": 0,
+      "bun": "1.3.14",
+      "sdk_testing_optional_peers": {
+        "better-sqlite3": "12.11.1",
+        "hono": "4.13.18",
+        "cron-parser": "5.10.0",
+        "react": "19.2.1",
+        "react-dom": "19.2.1",
+        "@testing-library/react": "16.3.3"
+      }
+    }
+  },
+  "macro_probe": {
+    "passed": true,
+    "level": "actual-export-synthetic-probe",
+    "revision": "c6a37818d796ed36028b2d709a7ee707b04b9c11",
+    "refusals": [
+      "linked_outside_macro",
+      "grouped",
+      "expired",
+      "edited",
+      "wrong_actor_after_relink",
+      "wrong_chat",
+      "deleted",
+      "source_unavailable"
+    ],
+    "sharedActorSelection": true,
+    "savedMailAdmission": true,
+    "source_sha256": {
+      "email-access.ts": "be74e47d54a2cad33c2e842d4893860d0116dda03b39cf8e2152162b2786be9f",
+      "contract.ts": "a77f17362711c310d5c7fde4c324a532832b7731e7a51383e17905bf7fac87ca",
+      "capabilities.ts": "dac22805c046d1653ce982ceb34d3edf29e2a361e39067bebb1d3a27bae0d971"
+    },
+    "limits": "No live plugin, native search service, mailbox, deployment or chat/model history was read or changed."
+  },
+  "repository_checks": {
+    "npm_ci": "pass; frozen merged npm lock",
+    "identity_build": "pass",
+    "typecheck": "fails in unchanged bb-identity native fixtures, Subscribe to Anything action-tab fixtures, Cross References timeline/header consumers and Turn Results history fixtures against refreshed SDK",
+    "build": "fails in unchanged Message Rules native artifact-format assertion",
+    "test": {
+      "exit_code": 1,
+      "failed_workspaces": [
+        "@phosphorco/bb-context-recognition@0.5.3",
+        "@phosphorco/bb-plugin-bb-subscribe-to-anything@0.1.0",
+        "@phosphorco/bb-plugin-new-thread-templates@0.1.0",
+        "@phosphorco/bb-plugin-plugin-guide-for-nerds@0.1.0",
+        "@phosphorco/bb-plugin-turn-results@0.1.0"
+      ],
+      "summary": "Context Recognition packaging, Subscribe to Anything inherited-worker path, New Thread Templates cleanup, Plugin Guide builder and Turn Results app/gallery integration fail outside the changed package."
+    }
+  },
+  "limits": [
+    "No production index or generic editor implemented.",
+    "Public identity state composition uses fixture storage and own actor, not collaborator switching.",
+    "Slack/GitHub adopter factories and live workflows are not established by this source proof.",
+    "Macro probe has synthetic account/mail/source data only; no native mail or search service, live host or model history was accessed.",
+    "Earlier broad pass observations in contract-20261114.json apply only to that earlier source/SDK baseline."
+  ],
+  "check_log_sha256": {
+    "package_tests": "106eb9c0300c38a21a25c77c6348d723e186531fdf96a53b2e1c5faebc50db0b",
+    "package_types": "2b0176784ad7afaa1b7beb784bab1bb68bf391b878a993eb754d5bf86ae6befe",
+    "legacy_plugin": "4c072748ceea6a967eea44b7fb33d0f27d120f5578208ca97c16b7e19b1874a3",
+    "repo_tests": "06581ee9f442b4b7085db60277404303a7c746da6d3d97767e71721ec104bc54",
+    "repo_types": "310327ecd79491f6fd8991f55197a7636f175a2379092ee02e76a1604973ecf0",
+    "repo_build": "d28a3e0b00f3d81f981a11fe8fdbd7ad7f6955b227ebd4a86f941793b4a48c17",
+    "packed_runtime": "c5e81c138d4603e175668532e694d88a262d130c80ac9eb28fc1e458dc007208"
+  }
+}

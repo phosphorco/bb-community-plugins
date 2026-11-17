@@ -196,7 +196,6 @@ describe('identity connection and client runtime', () => {
     expect((await client.start()).ok).toBe(true);
     expect(calls).toEqual([
       ['https://bb.example/http/bb-identity/v1/bootstrap', 'POST'],
-      ['https://bb.example/http/bb-identity/v1/bootstrap', 'POST'],
     ]);
     client.dispose(); connection.dispose();
   });

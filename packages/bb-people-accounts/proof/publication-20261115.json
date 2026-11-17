@@ -1,0 +1,108 @@
+{
+  "date": "2026-11-15",
+  "scope": "package publication and dependency-pin preparation only",
+  "package": "@phosphorco/bb-people-accounts",
+  "version": "0.2.0-dev.0",
+  "tag": "bb-people-accounts/v0.2.0-dev.0",
+  "source": "aac8c8b457003c25a6aa69f667a2b906e9c7949a",
+  "workflow": ".github/workflows/publish.yml",
+  "dry_run": {
+    "id": 43705795041,
+    "conclusion": "success"
+  },
+  "publication_run": {
+    "id": 43705978214,
+    "conclusion": "success",
+    "url": "https://github.com/phosphorco/bb-community-plugins/actions/runs/43705978214"
+  },
+  "dist_tags": {
+    "next": "0.2.0-dev.0",
+    "latest": "0.1.1"
+  },
+  "registry": {
+    "tarball": "https://registry.npmjs.org/@phosphorco/bb-people-accounts/-/bb-people-accounts-0.2.0-dev.0.tgz",
+    "integrity": "sha512-xDtsYMSLlzKGaLzQcn0q9xmuvBfTsgdAetzEuYG7IvR036fdbTDcHC1EioT8dv4wNdlKHsNxfaHfth5SyF4nNA==",
+    "sha1": "7f43d84b8e5bf0c0ba3c5a934f00e6780ca67a3c",
+    "sha256": "5552cf451307f1fb9335048a5a0b33a6d9ea3984f43bd910153354fcaa3a47e4",
+    "attestations": {
+      "url": "https://registry.npmjs.org/-/npm/v1/attestations/@phosphorco%2fbb-people-accounts@0.2.0-dev.0",
+      "provenance": {
+        "predicateType": "https://slsa.dev/provenance/v1"
+      }
+    },
+    "gitHead": "aac8c8b457003c25a6aa69f667a2b906e9c7949a"
+  },
+  "registry_proof": {
+    "verified_source": "aac8c8b457003c25a6aa69f667a2b906e9c7949a",
+    "sha256": "5552cf451307f1fb9335048a5a0b33a6d9ea3984f43bd910153354fcaa3a47e4",
+    "passed": true,
+    "tests": {
+      "pass": 30,
+      "fail": 0
+    },
+    "exports": 6,
+    "source_and_emitted_type_checks": true,
+    "ordinary_registry_install": true,
+    "byte_identical_to_verified_tarball": true
+  },
+  "community_host": {
+    "version_pin": "0.2.0-dev.0",
+    "tests": {
+      "pass": 31,
+      "fail": 0
+    },
+    "typecheck": "pass",
+    "build": "pass",
+    "npm_ci": "pass",
+    "feature_sources": "unchanged; v1 handlers remain in use"
+  },
+  "organization_pins": {
+    "source_commit": "b5d53191cd2be54a848375478f953de00ece8569",
+    "base": "baab364ab4062e0d5f5cd2832bbd9973a8397c9f",
+    "consumers": [
+      "rosetta-slack",
+      "github-review",
+      "rosetta-macro"
+    ],
+    "proof": "docs/qa/2026-11-15-people-accounts-pins.json",
+    "method": "current native generator, maintained lock, manifest-only frozen install; local authored tree and HEAD preserved"
+  },
+  "macro_boundary": {
+    "passed": true,
+    "level": "actual-export-synthetic-probe",
+    "revision": "baab364ab4062e0d5f5cd2832bbd9973a8397c9f",
+    "refusals": [
+      "linked_outside_macro",
+      "grouped",
+      "expired",
+      "edited",
+      "wrong_actor_after_relink",
+      "wrong_chat",
+      "deleted",
+      "source_unavailable"
+    ],
+    "sharedActorSelection": true,
+    "savedMailAdmission": true,
+    "source_sha256": {
+      "email-access.ts": "be74e47d54a2cad33c2e842d4893860d0116dda03b39cf8e2152162b2786be9f",
+      "contract.ts": "a77f17362711c310d5c7fde4c324a532832b7731e7a51383e17905bf7fac87ca",
+      "capabilities.ts": "dac22805c046d1653ce982ceb34d3edf29e2a361e39067bebb1d3a27bae0d971"
+    },
+    "limits": "No live plugin, native search service, mailbox, deployment or chat/model history was read or changed."
+  },
+  "limits": [
+    "No plugin import/handler migration, live account mapping, credentials, runtime activation or workspace gitlink promotion.",
+    "latest remains 0.1.1; the explicit candidate is published under next.",
+    "Broader repository checks retain the separately recorded shared-source failures in integration-20261114.json; focused release/package/host checks establish this delivery.",
+    "Organization manifest fixture uses native generation and frozen dependency resolution with install scripts disabled; it is not application build or live adopter proof."
+  ],
+  "check_log_sha256": {
+    "registry_tests": "a37059900ff8be0ba9ceb18dc93018dd84822bf43506802fab2de8d318233fe5",
+    "registry_types": "172574ef16d0471b8b566f3b6f0d6a605d5c76b822a3ecdd2f09068ab86b6536",
+    "host_tests": "1c7c892911e69b00d7047de9004ae5303905e1842bd2ee6d262b94fcea8e5c31",
+    "host_types": "1a31b381c3ba0fcff2b5c8b4f62779237e9a5ccda605d9bc3523853dd8c7ae5b",
+    "host_build": "2fa1d96b754c1df55fa799bccf75e16446518f5f9f21f9a6d0b3892f42cb4585",
+    "org_frozen": "83b7d6d832ec8e637aee1d367853f0ac8a959327df424f9d805baa99ef1b4598",
+    "org_sync": "7de6ed19b14d03f00a7fffed3049442667f0ab15b930412a56c82c0d4c97b7e9"
+  }
+}
