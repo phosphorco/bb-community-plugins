@@ -31,6 +31,7 @@ PINNED = {
     ('bb-identity', '0.5.0'): ('packages/bb-identity', '@phosphorco/bb-identity', 'next', 'oidc', 'reviewed-bb-identity-0.5.0'),
     ('bb-identity', '0.5.1'): ('packages/bb-identity', '@phosphorco/bb-identity', 'next', 'oidc', 'reviewed-bb-identity-0.5.1'),
     ('bb-identity', '0.5.2'): ('packages/bb-identity', '@phosphorco/bb-identity', 'next', 'oidc', 'reviewed-bb-identity-0.5.2'),
+    ('bb-identity', '0.6.0'): ('packages/bb-identity', '@phosphorco/bb-identity', 'next', 'oidc', 'reviewed-bb-identity-0.6.0'),
     ('bb-thread-membership', '0.1.0'): ('packages/bb-thread-membership', '@phosphorco/bb-thread-membership', 'latest', 'membership-bootstrap', 'reviewed-bb-thread-membership-0.1.0'),
     ('bb-markdown', '0.1.0'): ('packages/bb-markdown', '@phosphorco/bb-markdown', 'latest', 'markdown-bootstrap', 'reviewed-bb-markdown-0.1.0'),
 }

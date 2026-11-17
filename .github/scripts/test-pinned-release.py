@@ -42,11 +42,11 @@ def select(*, plugin, version, event='workflow_dispatch', tag='latest', dry=True
 
 class PinnedTable(unittest.TestCase):
     def test_table_is_closed_and_exact(self):
-        self.assertEqual(set(helper.PINNED), {('bb-identity', '0.4.0'), ('bb-identity', '0.4.1'), ('bb-identity', '0.4.2-native-marker.0'), ('bb-thread-membership', '0.1.0'), ('bb-identity', '0.5.0'), ('bb-identity', '0.5.1'), ('bb-identity', '0.5.2'), ('bb-markdown', '0.1.0')})
+        self.assertEqual(set(helper.PINNED), {('bb-identity', '0.4.0'), ('bb-identity', '0.4.1'), ('bb-identity', '0.4.2-native-marker.0'), ('bb-thread-membership', '0.1.0'), ('bb-identity', '0.5.0'), ('bb-identity', '0.5.1'), ('bb-identity', '0.5.2'), ('bb-identity', '0.6.0'), ('bb-markdown', '0.1.0')})
         for plugin, version in [('perspectives', '0.3.0'), ('bb-identity', '0.3.1'), ('bb-identity', '0.5.3'), ('bb-identity', '0.5.2-unreviewed'), ('bb-identity', '0.5.1-unreviewed'), ('bb-context-recognition', '0.6.0'), ('bb-thread-membership', '0.1.1')]:
             with self.assertRaises(ValueError):
                 helper.bind(plugin, version)
-        self.assertRegex(SELECT, r'bb-identity@0\.4\.0\|bb-identity@0\.4\.1\|bb-identity@0\.4\.2-native-marker\.0\|bb-identity@0\.5\.0\|bb-identity@0\.5\.1\|bb-identity@0\.5\.2\|bb-thread-membership@0\.1\.0\|bb-markdown@0\.1\.0\) pinned_row=true')
+        self.assertRegex(SELECT, r'bb-identity@0\.4\.0\|bb-identity@0\.4\.1\|bb-identity@0\.4\.2-native-marker\.0\|bb-identity@0\.5\.0\|bb-identity@0\.5\.1\|bb-identity@0\.5\.2\|bb-identity@0\.6\.0\|bb-thread-membership@0\.1\.0\|bb-markdown@0\.1\.0\) pinned_row=true')
 
     def test_identity_040_row_keeps_original_names_and_next(self):
         helper.bind('bb-identity', '0.4.0')
@@ -70,7 +70,7 @@ class PinnedTable(unittest.TestCase):
             helper.publishable()
 
     def test_identity_patch_rows_have_exact_next_oidc_artifacts(self):
-        for version, previous in [('0.5.1', '0.5.0'), ('0.5.2', '0.5.1')]:
+        for version, previous in [('0.5.1', '0.5.0'), ('0.5.2', '0.5.1'), ('0.6.0', '0.5.2')]:
             helper.bind('bb-identity', version)
             self.assertEqual((helper.PACKAGE, helper.NAME, helper.DIST_TAG, helper.ROUTE, helper.TGZ, helper.ARTIFACT),
                              ('packages/bb-identity', '@phosphorco/bb-identity', 'next', 'oidc', f'phosphorco-bb-identity-{version}.tgz', f'reviewed-bb-identity-{version}'))
@@ -93,7 +93,7 @@ class SelectStep(unittest.TestCase):
         self.assertNotEqual(code, 0)
 
     def test_new_rows_pin_on_dispatch_and_refuse_elsewhere(self):
-        for plugin, version, tag in [('bb-identity', '0.5.0', 'next'), ('bb-identity', '0.5.1', 'next'), ('bb-identity', '0.5.2', 'next'), ('bb-thread-membership', '0.1.0', 'latest')]:
+        for plugin, version, tag in [('bb-identity', '0.5.0', 'next'), ('bb-identity', '0.5.1', 'next'), ('bb-identity', '0.5.2', 'next'), ('bb-identity', '0.6.0', 'next'), ('bb-thread-membership', '0.1.0', 'latest')]:
             code, out, _ = select(plugin=plugin, version=version, tag=tag)
             self.assertEqual((code, out['pinned_next']), (0, 'true'))
             self.assertEqual(out['pinned_tgz'], 'phosphorco-' + plugin + '-' + version + '.tgz')
@@ -111,7 +111,7 @@ class SelectStep(unittest.TestCase):
         self.assertNotEqual(select(plugin='bb-thread-membership', version='0.1.0', tag='next')[0], 0)
 
     def test_identity_patch_rows_keep_exact_proof_and_source_guards(self):
-        for version, previous in [('0.5.1', '0.5.0'), ('0.5.2', '0.5.1')]:
+        for version, previous in [('0.5.1', '0.5.0'), ('0.5.2', '0.5.1'), ('0.6.0', '0.5.2')]:
             code, out, _ = select(plugin='bb-identity', version=version, tag='next', dry=False, hashes=True)
             self.assertEqual((code, out['pinned_next'], out['pinned_route']), (0, 'true', 'oidc'))
             self.assertEqual(out['pinned_artifact'], f'reviewed-bb-identity-{version}-' + SHA)
@@ -223,7 +223,7 @@ class FirstPublishPreflight(unittest.TestCase):
                     helper.preflight()
 
     def test_identity_patch_rows_preserve_latest_and_require_absent_versions(self):
-        for version, previous in [('0.5.1', '0.5.0'), ('0.5.2', '0.5.1')]:
+        for version, previous in [('0.5.1', '0.5.0'), ('0.5.2', '0.5.1'), ('0.6.0', '0.5.2')]:
             approved = {'latest': '0.3.1', 'next': previous}
             absent = (1, {'error': {'code': 'E404'}})
             with fixture('bb-identity', version, json.dumps(approved)), patch.object(helper, 'verify'), patch.object(helper, 'registry_read', side_effect=[(0, approved), absent]) as read:
@@ -315,7 +315,7 @@ class ExactPublishRoutes(unittest.TestCase):
                 called.assert_not_called()
 
     def test_postflight_records_both_reads_even_if_uncertain_and_never_retries(self):
-        for plugin, version, tags in [('bb-identity', '0.5.0', {'latest': '0.3.1', 'next': '0.4.2-native-marker.0'}), ('bb-identity', '0.5.1', {'latest': '0.3.1', 'next': '0.5.0'}), ('bb-identity', '0.5.2', {'latest': '0.3.1', 'next': '0.5.1'}), ('bb-thread-membership', '0.1.0', {})]:
+        for plugin, version, tags in [('bb-identity', '0.5.0', {'latest': '0.3.1', 'next': '0.4.2-native-marker.0'}), ('bb-identity', '0.5.1', {'latest': '0.3.1', 'next': '0.5.0'}), ('bb-identity', '0.5.2', {'latest': '0.3.1', 'next': '0.5.1'}), ('bb-identity', '0.6.0', {'latest': '0.3.1', 'next': '0.5.2'}), ('bb-thread-membership', '0.1.0', {})]:
             with fixture(plugin, version):
                 helper.OUT.mkdir()
                 (helper.OUT / helper.RECEIPT).write_text('{"payload":{"integrity":"sri","shasum":"sha1"}}')
@@ -328,7 +328,7 @@ class ExactPublishRoutes(unittest.TestCase):
                 self.assertEqual(after['distRead']['exitCode'], 1)
 
     def test_postflight_accepts_only_the_one_approved_tag_effect(self):
-        for plugin, version, before in [('bb-identity', '0.5.0', {'latest': '0.3.1', 'next': '0.4.2-native-marker.0'}), ('bb-identity', '0.5.1', {'latest': '0.3.1', 'next': '0.5.0'}), ('bb-identity', '0.5.2', {'latest': '0.3.1', 'next': '0.5.1'}), ('bb-thread-membership', '0.1.0', {})]:
+        for plugin, version, before in [('bb-identity', '0.5.0', {'latest': '0.3.1', 'next': '0.4.2-native-marker.0'}), ('bb-identity', '0.5.1', {'latest': '0.3.1', 'next': '0.5.0'}), ('bb-identity', '0.5.2', {'latest': '0.3.1', 'next': '0.5.1'}), ('bb-identity', '0.6.0', {'latest': '0.3.1', 'next': '0.5.2'}), ('bb-thread-membership', '0.1.0', {})]:
             with fixture(plugin, version):
                 helper.OUT.mkdir()
                 (helper.OUT / helper.RECEIPT).write_text('{"payload":{"integrity":"sri","shasum":"sha1"}}')
@@ -341,7 +341,7 @@ class ExactPublishRoutes(unittest.TestCase):
                     helper.postflight()
 
     def test_identity_patch_rows_reject_latest_or_integrity_drift(self):
-        for version, previous in [('0.5.1', '0.5.0'), ('0.5.2', '0.5.1')]:
+        for version, previous in [('0.5.1', '0.5.0'), ('0.5.2', '0.5.1'), ('0.6.0', '0.5.2')]:
             before = {'latest': '0.3.1', 'next': previous}
             expected = {**before, 'next': version}
             for tags, dist in [({**expected, 'latest': version}, {'integrity': 'sri', 'shasum': 'sha1'}),
@@ -379,7 +379,7 @@ class ReviewedPayload(unittest.TestCase):
         os.environ['EXPECTED_RECEIPT_SHA256'] = helper.digest((helper.OUT / helper.RECEIPT).read_bytes())
 
     def test_capture_then_verify_exact_archive_and_source_for_reviewed_rows(self):
-        for plugin, version in [('bb-identity', '0.5.0'), ('bb-identity', '0.5.1'), ('bb-identity', '0.5.2'), ('bb-thread-membership', '0.1.0')]:
+        for plugin, version in [('bb-identity', '0.5.0'), ('bb-identity', '0.5.1'), ('bb-identity', '0.5.2'), ('bb-identity', '0.6.0'), ('bb-thread-membership', '0.1.0')]:
             with fixture(plugin, version), patch.object(helper, 'expected', return_value=SHA), patch.object(helper, 'sources', return_value={'source': 'hash'}), patch.object(helper, 'command', return_value='tree'):
                 raw = self.prepare()
                 helper.capture();self.freeze();helper.verify()
