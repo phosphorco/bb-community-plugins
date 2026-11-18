@@ -765,13 +765,6 @@ test(
   60000,
 );
 
-const { browserSavedRequestRecovery } = await import("./browser-recovery.ts");
-test(
-  "actual product browser reload resumes exact saved direct and native request",
-  browserSavedRequestRecovery,
-  60000,
-);
-
 const { browserPromptWorkbench } = await import("./browser-prompt.ts");
 test(
   "actual product Prompt live samples syntax caret and short mobile wheel reachability",

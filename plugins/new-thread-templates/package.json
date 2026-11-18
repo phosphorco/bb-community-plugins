@@ -78,8 +78,8 @@
     "dev": "node ../../tools/bb-target-cli.mjs plugin dev .",
     "test": "node tools/test.mjs",
     "test:backend": "bun test test/model*.test.ts test/store*.test.ts test/launch*.test.ts test/backend*.test.ts",
-    "test:app": "bun test test/app*.test.ts test/app*.test.tsx test/browser.test.ts",
+    "test:app": "bun test test/app*.test.ts test/app*.test.tsx && node tools/test.mjs --browser",
     "typecheck": "tsc --noEmit",
-    "test:browser": "bun test test/browser.test.ts"
+    "test:browser": "node tools/test.mjs --browser"
   }
 }

@@ -5,7 +5,7 @@ import {databaseFixture,published,nativeFixture,launchRequest,launchActor,native
 test('startup recovery only decodes genuinely interrupted phases, leaving all completed/history rows untouched',async()=>{
  const f=databaseFixture(),n=nativeFixture();published(f);const service=new LaunchService(f.store,n.native);
  try{const request=launchRequest();await service.launch(request,launchActor());service.dispose();const interrupted=f.store.launch(request.operationId)!;interrupted.status.phase='preparing';interrupted.status.threadId=null;interrupted.confirmation=null;const priorToken=interrupted.token;f.db.prepare('UPDATE template_launches SET data=? WHERE id=?').run(JSON.stringify(interrupted),request.operationId);
-  const completed=JSON.stringify({status:{phase:'succeeded'},futureCompletedVersion:2,payload:'Preserve without decoding'});const insert=f.db.prepare('INSERT INTO template_launches VALUES(?,?)');for(let i=0;i<1000;i++)insert.run('completed-'+i,completed);
+  const completed=JSON.stringify({status:{phase:'succeeded'},futureCompletedVersion:2,payload:'Preserve without decoding'});const insert=f.db.prepare('INSERT INTO template_launches VALUES(?,?)');f.db.transaction(()=>{for(let i=0;i<1000;i++)insert.run('completed-'+i,completed);})();
   expect(()=>f.store.recoverInterrupted()).not.toThrow();expect(f.store.launch(request.operationId)).toMatchObject({status:{phase:'failed',retryable:true}});expect(f.store.launch(request.operationId)!.token).not.toBe(priorToken);expect(f.db.prepare("SELECT COUNT(*) AS n FROM template_launches WHERE data=?").get(completed)).toEqual({n:1000});
  }finally{service.dispose();f.close();}
 });

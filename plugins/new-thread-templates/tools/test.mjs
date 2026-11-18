@@ -7,7 +7,7 @@ const tests = readdirSync(new URL("../test/", import.meta.url))
 if (!tests.length) throw new Error("No template tests found");
 const browser = tests.filter(name => name.startsWith("browser"));
 const unit = tests.filter(name => !name.startsWith("browser"));
-for (const files of [unit, ...browser.map(name => [name])]) {
+for (const files of [process.argv.includes("--browser") ? [] : unit, ...browser.map(name => [name])]) {
   if (!files.length) continue;
   const result = spawnSync("bun", ["test", ...files.map(name => "test/" + name)], {
     cwd: root, stdio: "inherit",
