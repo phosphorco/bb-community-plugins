@@ -107,7 +107,13 @@ jobs:
         run: npm run typecheck
 
       - name: Build BB artifacts
-        run: npm run build
+        # The retained Turn Results compiler must not build unrelated native leaves.
+        run: env -u BB_CLI -u BB_TOOLCHAIN_CLI npm run build
+
+      - name: Rebuild selected Turn Results artifacts
+        run: |
+          npm run build --workspace @phosphorco/bb-plugin-turn-results
+          npm run build --workspace @phosphorco/bb-plugin-turn-result-images
 
       - name: Verify selected Turn Results artifacts
         run: |

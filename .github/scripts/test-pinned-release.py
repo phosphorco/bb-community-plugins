@@ -490,5 +490,51 @@ class TurnResultsDevelopmentInputs(unittest.TestCase):
                 self.assertEqual(len(calls), 1)
 
 
+class TurnResultsCompilerScope(unittest.TestCase):
+    def run_build_step(self, name, failure=0):
+        text = (ROOT / '.github/workflows/validate-pull-request.yml').read_text()
+        steps = dict(re.findall(r'^      - name: ([^\n]+)\n(.*?)(?=^      - name: |\Z)', text, re.M | re.S))
+        block = steps[name]
+        run = re.search(r'^        run: (.*)', block, re.M).group(1)
+        script = '\n'.join(line[10:] for line in block.split('        run: |\n', 1)[1].splitlines()) if run == '|' else run
+        with tempfile.TemporaryDirectory(prefix='compiler-scope-') as directory:
+            root = Path(directory)
+            executable = root / 'npm'
+            executable.write_text('''#!/usr/bin/env python3
+import json, os, sys
+with open(os.environ['SCOPE_CALLS'], 'a') as f:
+    f.write(json.dumps({'args': sys.argv[1:], 'BB_CLI': os.environ.get('BB_CLI'), 'BB_TOOLCHAIN_CLI': os.environ.get('BB_TOOLCHAIN_CLI')}) + '\\n')
+sys.exit(int(os.environ['SCOPE_EXIT']))
+''')
+            executable.chmod(0o700)
+            calls = root / 'calls.jsonl'
+            env = {**os.environ, 'PATH': str(root) + os.pathsep + os.environ['PATH'],
+                   'BB_CLI': '/selected/turn-results-wrapper', 'BB_TOOLCHAIN_CLI': '/selected/turn-results-compiler',
+                   'SCOPE_CALLS': str(calls), 'SCOPE_EXIT': str(failure)}
+            result = subprocess.run(['bash', '-e', '-c', script], cwd=root, env=env, capture_output=True, text=True)
+            return result, [json.loads(line) for line in calls.read_text().splitlines()] if calls.exists() else []
+
+    def test_collection_build_uses_native_compilers_without_the_pair_override(self):
+        result, calls = self.run_build_step('Build BB artifacts')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(calls, [{'args': ['run', 'build'], 'BB_CLI': None, 'BB_TOOLCHAIN_CLI': None}])
+
+    def test_selected_pair_rebuild_keeps_the_reviewed_compiler(self):
+        result, calls = self.run_build_step('Rebuild selected Turn Results artifacts')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual([call['args'] for call in calls], [
+            ['run', 'build', '--workspace', '@phosphorco/bb-plugin-turn-results'],
+            ['run', 'build', '--workspace', '@phosphorco/bb-plugin-turn-result-images'],
+        ])
+        for call in calls:
+            self.assertEqual(call['BB_CLI'], '/selected/turn-results-wrapper')
+            self.assertEqual(call['BB_TOOLCHAIN_CLI'], '/selected/turn-results-compiler')
+
+    def test_pair_failure_stops_before_the_second_build(self):
+        result, calls = self.run_build_step('Rebuild selected Turn Results artifacts', 42)
+        self.assertEqual(result.returncode, 42)
+        self.assertEqual(len(calls), 1)
+
+
 if __name__ == '__main__':
     unittest.main()

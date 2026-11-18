@@ -34,9 +34,13 @@ Legacy test ownership is recorded in `mr_test_owners`: a unique group referenced
 
 A global run uses one shared call budget (minimum legacy limits on migration), one overall configured time limit, bounded responses and durable attempt reservations. With differing legacy models, the first source by ID supplies the model; original configurations remain preserved. Unknown legacy effects count against the global call limit and unquiesced legacy owners block global work. Plugin/process replacement never automatically replays paid attempts. New explicit runs retain saved bytes/revisions and the immutable denominator, cancellation and lost-ack reconciliation contracts. Start responses and read-only `snapshot` requests with `requestId` include an exact `acknowledgedRun` independently of the latest `run`. Cancellation responses and metadata-only reads with `runId` likewise acknowledge that exact target, so retry A can reconcile A after B completes or discovery becomes unavailable without replacing the current display or invoking new work. An incomplete/cancelled run retains pending fixtures as untested.
 
-The public registry SDK is pinned to **0.6.52**, including a distinct registry
-lock entry instead of accidentally resolving the workspace's Phosphor SDK
-artifact. Build with the prepared canonical workspace compiler (`fork/build/bb/apps/cli/dist/index.js`), or set `BB_TOOLCHAIN_CLI` to the exact prepared compiler entry. CI uses its checksum-verified selected fork compiler through that same variable. A missing compiler fails the build; the registry nightly is not a fallback for generation-based artifacts. `@phosphorco/bb-identity@0.2.1` supplies invocation attribution;
+Development uses the exact Phosphor SDK artifact declared in `package.json`
+and the lockfile. The build selects the repository's pinned `bb-app-target`
+native compiler, or an explicit prepared entry supplied by `BB_TOOLCHAIN_CLI`.
+An inherited `BB_CLI` does not override that choice. The retained Turn Results
+compiler is separate and must not build this native plugin. App/server builder
+stamps must agree; they are not inferred from the development SDK pin.
+`@phosphorco/bb-identity` supplies invocation attribution;
 catalog data is shared, rather than personal/view-as state.
 
 ## Agent authoring
@@ -269,7 +273,7 @@ Group edits have their own revisions, conflict protection, draft barriers and fr
 
 On absent/incompatible hosts this remains **preview/observe**. There are no fallback dispatch hooks, text-prefix sends or plugin-owned queue mutation. A saved test rejection describes only that fixture. The compatible capability path registers an admission evaluator; initial active enrollment remains explicit and testing-project scoped. Installing does not prove native behavior or full delivery.
 
-Build output uses the public format-2 manifest: authoritative assets and chunks are under `dist/.bb-artifacts/<generation>/`. The build verifies every declared SHA-256/length and matching app/server SDK/toolchain stamps. Exact copies also populate `dist/app.js`, `dist/app.css` and referenced root chunks because mutable-path runtimes inspect root app freshness. These are generated compatibility assets, not a separate source or deployment. A runtime loader can rebuild the app with its own toolchain; record each artifact’s actual builder stamp and verify its declared assets rather than rewriting stamps to claim identical builds. Never compare only a stale legacy root file to generation metadata.
+Current builds require native artifact format 1 and matching app/server SDK/toolchain stamps, with frontend output in `dist/app.js` and `dist/app.css`. Earlier generation-based format 2 evidence describes the retained historical compiler and does not qualify current output. A runtime loader can rebuild with its own toolchain; record the actual builder stamps rather than rewriting them to claim identical builds.
 
 Suite progress uses metadata-only snapshots. Explicit reads, reconnect and run completion discover files; concurrent discoveries share one promise and read at most eight files at once. Last good inputs and matching read errors survive progress updates until actual discovery succeeds.
 
