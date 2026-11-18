@@ -320,8 +320,10 @@ jobs:
         if: ${{ steps.release.outputs.plugin == 'turn-results' || steps.release.outputs.plugin == 'turn-result-images' }}
         shell: bash
         run: |
-          sdk="$GITHUB_WORKSPACE/../sdk-artifacts/get-bb-plugin-sdk-0.6.52+phosphor.975e38f02f1a.sdk.12eb78c20820.tgz"
+          # The artifact compiler is pinned separately. Development declarations
+          # and the test harness must follow each plugin's current manifest.
           for plugin in turn-results turn-result-images; do
+            sdk="$(node -e 'const sdk = JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8")).devDependencies?.["@get-bb/plugin-sdk"]; if (typeof sdk !== "string" || !sdk) throw new Error("Missing declared development SDK"); process.stdout.write(sdk);' "plugins/$plugin/package.json")"
             npm install --prefix "plugins/$plugin" --workspaces=false --include=dev --ignore-scripts --package-lock=false --no-save --no-audit --no-fund --registry=https://registry.npmjs.org "$sdk"
           done
           npm rebuild --prefix plugins/turn-result-images/node_modules/better-sqlite3 --workspaces=false

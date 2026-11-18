@@ -435,5 +435,60 @@ class ReviewedPayload(unittest.TestCase):
             self.assertFalse(chosen('Download and verify the exact reviewed pinned-next dry-run artifact', True, plugin))
 
 
+class TurnResultsDevelopmentInputs(unittest.TestCase):
+    def run_step(self, workflow, sdk_values, fail_install=0):
+        text = (ROOT / '.github/workflows' / workflow).read_text()
+        steps = dict(re.findall(r'^      - name: ([^\n]+)\n(.*?)(?=^      - name: |\Z)', text, re.M | re.S))
+        step = steps['Install published Turn Results development inputs']
+        script = '\n'.join(line[10:] for line in re.search(r'^        run: \|\n(.*)', step, re.M | re.S).group(1).splitlines())
+        with tempfile.TemporaryDirectory(prefix='turn-results-dev-inputs-') as directory:
+            root = Path(directory)
+            for plugin, sdk in sdk_values.items():
+                leaf = root / 'plugins' / plugin
+                leaf.mkdir(parents=True)
+                (leaf / 'package.json').write_text(json.dumps({'devDependencies': {} if sdk is None else {'@get-bb/plugin-sdk': sdk}}))
+            calls = root / 'calls.jsonl'
+            stub = '''npm() {
+              node -e 'require("node:fs").appendFileSync(process.env.CALL_LOG, JSON.stringify(process.argv.slice(1))+"\\n")' "$@"
+              if [ "$1" = install ]; then return "$FAKE_NPM_EXIT"; fi
+              return 0
+            }
+'''
+            result = subprocess.run(['bash', '-e', '-c', stub + script], cwd=root,
+                                    env={**os.environ, 'CALL_LOG': str(calls), 'FAKE_NPM_EXIT': str(fail_install)},
+                                    capture_output=True, text=True)
+            return result, [json.loads(line) for line in calls.read_text().splitlines()] if calls.exists() else []
+
+    def test_each_leaf_keeps_its_declared_development_sdk(self):
+        sdks = {'turn-results': 'https://example.invalid/gallery-sdk.tgz', 'turn-result-images': '0.6.143'}
+        for workflow in ['publish.yml', 'validate-pull-request.yml']:
+            with self.subTest(workflow=workflow):
+                result, calls = self.run_step(workflow, sdks)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(len(calls), 4)
+                for call, (plugin, sdk) in zip(calls[:2], sdks.items()):
+                    self.assertEqual(call[:3], ['install', '--prefix', 'plugins/' + plugin])
+                    self.assertEqual(call[-1], sdk)
+                    self.assertIn('--workspaces=false', call)
+                    self.assertIn('--ignore-scripts', call)
+                    self.assertIn('--no-save', call)
+                self.assertEqual(calls[2], ['rebuild', '--prefix', 'plugins/turn-result-images/node_modules/better-sqlite3', '--workspaces=false'])
+                self.assertEqual(calls[3], ['rebuild', '--prefix', 'plugins/turn-result-images/node_modules/bun', '--workspaces=false'])
+
+    def test_missing_development_sdk_stops_before_install(self):
+        for workflow in ['publish.yml', 'validate-pull-request.yml']:
+            with self.subTest(workflow=workflow):
+                result, calls = self.run_step(workflow, {'turn-results': None, 'turn-result-images': '0.6.143'})
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(calls, [])
+
+    def test_install_failure_stops_later_installs_and_rebuilds(self):
+        for workflow in ['publish.yml', 'validate-pull-request.yml']:
+            with self.subTest(workflow=workflow):
+                result, calls = self.run_step(workflow, {'turn-results': '0.6.143', 'turn-result-images': '0.6.143'}, fail_install=42)
+                self.assertEqual(result.returncode, 42)
+                self.assertEqual(len(calls), 1)
+
+
 if __name__ == '__main__':
     unittest.main()
