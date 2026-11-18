@@ -1,11 +1,33 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { duration, label, projectTiming, sentAt, type TimingRow } from "../timing.ts";
+import { duration, label, projectTiming, sentAt, timingMetadata, turnSpans, type TimingRow } from "../timing.ts";
 import { attachRequestTimes } from "../request-times.ts";
 
 const row = (id: string, seq: number, at: number, role = "user", turnId = "turn1"): TimingRow => ({
   id, sourceSeqStart: seq, sourceSeqEnd: seq, createdAt: at, threadId: "t", turnId,
   kind: "conversation", role, initiator: "user",
+});
+test("page metadata drops presentation payloads while preserving steering, nested rows and turn timing", () => {
+  const steer = { ...row("steer", 3, 80_000), turnRequest: { kind: "steer", status: "accepted" } as const,
+    text: "message".repeat(100_000) };
+  const summary = { ...row("summary", 4, 100_000, "assistant"), kind: "turn", children: [steer],
+    output: "output".repeat(100_000) };
+  const rows = [row("u", 1, 0), summary, row("a", 5, 100_000, "assistant")];
+  const completions = [{ turnId: "turn1", seq: 6, at: 120_000, status: "completed" }];
+  const requests = [
+    { seq: 2, createdAt: 60_000, type: "client/turn/requested", data: { requestId: "r" } },
+    { seq: 3, createdAt: 80_000, type: "turn/input/accepted", data: { clientRequestId: "r" } },
+  ];
+  const metadata = rows.map(timingMetadata);
+  assert.equal("output" in metadata[1]!, false);
+  assert.equal("text" in metadata[1]!.children![0]!, false);
+  assert.notEqual(metadata[1]!.children![0], steer);
+  assert.ok(JSON.stringify(metadata).length < 2_000);
+  attachRequestTimes(metadata, requests);
+  assert.equal("sentAt" in steer, false, "SDK response rows remain untouched");
+  attachRequestTimes(rows, requests);
+  assert.deepEqual(projectTiming("t", metadata, completions), projectTiming("t", rows, completions));
+  for (const running of [true, false]) assert.deepEqual(turnSpans("t", metadata, [], running), turnSpans("t", rows, [], running));
 });
 test("historical turnaround and wait freeze at the next human message", () => {
   const stamps = projectTiming("t", [row("u", 1, 0), row("a", 3, 120_000, "assistant"), row("u2", 5, 600_000)],

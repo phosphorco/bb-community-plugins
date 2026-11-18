@@ -7,7 +7,9 @@ import type { Stamp } from "../timing.ts";
 test("RPC respects the event-page ceiling and exposes incomplete coverage", async () => {
   let pages = 0;
   const { bb, harness } = createFakePluginHost({ sdk: { threads: {
-    timeline: () => {
+    timeline: ({ deferContent, includeNestedRows }) => {
+      assert.equal(deferContent, "true", "timestamp reads do not request expanded settled tool output");
+      assert.equal(includeNestedRows, "true", "nested same-thread timing remains available");
       pages++;
       return { rows: [], maxSeq: 5000, timelinePage: { hasOlderRows: true, olderCursor: { anchorSeq: 5000 - pages, anchorId: `anchor${pages}` } } };
     },
