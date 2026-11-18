@@ -16,6 +16,21 @@ export interface TimingRow {
   sentSeq?: number;
 }
 
+// Release message text, tool output and other timeline presentation data before
+// loading another page. Only turn children participate in timing projection.
+export function timingMetadata(row: TimingRow): TimingRow {
+  return {
+    id: row.id, threadId: row.threadId, kind: row.kind,
+    role: row.role, initiator: row.initiator, turnId: row.turnId,
+    sourceSeqStart: row.sourceSeqStart, sourceSeqEnd: row.sourceSeqEnd,
+    createdAt: row.createdAt, sentAt: row.sentAt, sentSeq: row.sentSeq,
+    turnRequest: row.turnRequest == null ? row.turnRequest : {
+      kind: row.turnRequest.kind, status: row.turnRequest.status,
+    },
+    ...(row.kind === "turn" ? { children: row.children?.map(timingMetadata) } : {}),
+  };
+}
+
 export interface Completion {
   turnId: string;
   seq: number;
