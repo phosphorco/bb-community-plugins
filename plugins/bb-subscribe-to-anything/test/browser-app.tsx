@@ -129,7 +129,7 @@ function mount(panel: boolean, id = "") {
   slot = panel
     ? renderSlot(
         app.threadPanelActions[0]!,
-        { threadId: "thread-a", params: null },
+        { threadId: "thread-a", environment: null, params: null },
         { rpc },
       )
     : renderSlot(app.navPanels[0]!, { subPath: id }, { rpc });

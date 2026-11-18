@@ -11,7 +11,9 @@ test('all entries self-resolve with matching emitted declarations; optional entr
  const manifest=JSON.parse(text('package.json'));assert.equal(manifest.name,'@phosphorco/bb-context-recognition');assert.equal(manifest.version,'0.5.3');
  assert.deepEqual(Object.keys(manifest.exports),['.','./bb','./testing','./presentation','./react','./testing/react']);
  for(const entry of Object.values(manifest.exports))for(const path of [entry.import,entry.types])assert.ok(existsSync(new URL('../'+path,import.meta.url)),path);
- assert.equal(manifest.devDependencies.bun,'1.3.14');assert.equal(manifest.devDependencies['@get-bb/plugin-sdk'],'0.6.52');assert.equal(manifest.peerDependenciesMeta['@get-bb/plugin-sdk'].optional,true);
+ // Development uses the selected fork artifact; the packed-consumer matrix below
+ // independently checks compatibility with the portable public SDK baselines.
+ assert.equal(manifest.devDependencies.bun,'1.3.14');assert.equal(manifest.devDependencies['@get-bb/plugin-sdk'],'https://github.com/phosphorco/bb-fork/releases/download/sdk-0.6.143-phosphor.05199007.upgrade1/get-bb-plugin-sdk-0.6.143+phosphor.05199007.upgrade1.tgz');assert.equal(manifest.peerDependenciesMeta['@get-bb/plugin-sdk'].optional,true);
  assert.deepEqual(Object.keys(manifest.dependencies),['zod']);assert.deepEqual(Object.keys(manifest.peerDependencies),['@get-bb/plugin-sdk','react','react-dom','jsdom']);
  for (const name of ['react','react-dom','jsdom']) assert.equal(manifest.peerDependenciesMeta[name].optional,true);
  for(const name of ['LICENSE','PACKAGING.md','README.md','CONTRACT.md'])assert.ok(text(name).length>0);

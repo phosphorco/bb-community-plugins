@@ -254,8 +254,10 @@ async function fixture(count = 6, mount = true, contribution = {}) {
   if (contribution.captureRuntime) globalThis.__turnResultsRuntimeFixture = runtimeProbe;
   const app = await loadPluginApp(await (contribution.definition ?? (contribution.captureRuntime ? runtimeDefinition : definition))), controller = new AbortController();
   let script = await app.contentScripts[0].mount({ pluginId: 'turn-results', generation: 1, signal: controller.signal });
-  assert.equal(app.composerCustomizations.length, 0); assert.equal(app.threadPanelActions.length, 0);
-  const originalBridge = app.threadHeaderActions[0];
+  assert.equal(app.composerCustomizations.length, 0); assert.equal(app.tabs.length, 0);
+  assert.equal(app.threadHeaderRows.length, 1);
+  const originalBridge = app.threadHeaderRows[0];
+  assert.equal(originalBridge.id, 'turn-results-bridge');
   const Bridge = contribution.wrapBanner ? contribution.wrapBanner(originalBridge.component) : originalBridge.component;
   const headerProps = { threadId: 'thread', projectId: 'project', isCompactViewport: false };
   const banner = { ...originalBridge, component: props => createPortal(h(Bridge, props), document.querySelector('[data-fixture-header]')) };
@@ -1156,7 +1158,7 @@ test('same-thread split keeps its exact unchanged custom host while another pane
     const right = document.createElement('section'); right.dataset.threadWindow = '';
     right.innerHTML = '<div data-timeline-row-list="top-level"><div data-timeline-row-id="opaque-0"><button>Right native row</button></div></div>';
     document.body.append(right);
-    const Sentinel = f.app.threadHeaderActions[0].component;
+    const Sentinel = f.app.threadHeaderRows[0].component;
     const frame = document.createElement('section'); frame.dataset.splitPaneId = 'right';
     const group = document.createElement('span'); group.setAttribute('role', 'group');
     frame.append(group, right); document.body.append(frame);
@@ -1305,7 +1307,7 @@ test('timeline-only registration has no composer/panel/overlay and hides only it
   const f = await fixture(1);
   try {
     await until(() => f.stats().live === 1);
-    assert.equal(f.app.composerCustomizations.length, 0); assert.equal(f.app.threadPanelActions.length, 0); assert.equal(f.app.appOverlays.length, 0);
+    assert.equal(f.app.composerCustomizations.length, 0); assert.equal(f.app.tabs.length, 0); assert.equal(f.app.appOverlays.length, 0);
     const marker = document.querySelector('[data-turn-results-bridge]'); assert.equal(marker.hidden, true);
     const style = document.createElement('style'); style.textContent = readFileSync(new URL('../app.css', import.meta.url), 'utf8').split('\n').find(line => line.includes(':has(> span[role="group"] > [data-turn-results-bridge])'));
     document.head.append(style);

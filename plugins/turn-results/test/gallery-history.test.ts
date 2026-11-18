@@ -7,7 +7,7 @@ import type { GalleryTimelinePage } from '../gallery/anchors.ts';
 // Public timeline shape, opaque IDs unrelated to sequences. Native DOM only
 // contributes these exact IDs; tests never derive a before cursor from an ID.
 type Timeline = Awaited<ReturnType<ReturnType<typeof useSdk>['threads']['timeline']>>;
-type PublicRow = Timeline['rows'][number];
+type PublicRow = Extract<Timeline, { rows: unknown[] }>['rows'][number];
 function rows(count: number) {
   return Array.from({ length: count }, (_, i) => ({ id: `opaque-${String.fromCharCode(65 + i % 26)}-${(i * 71 + 17) % 10007}`,
     threadId: 'thread', turnId: `turn-${i}`, kind: 'conversation' as const, role: 'assistant' as const,

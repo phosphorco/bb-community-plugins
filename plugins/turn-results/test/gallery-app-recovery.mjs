@@ -115,7 +115,9 @@ async function fixture(status = 'pending', depth = 0, options = {}) {
   } } };
   const app = await loadPluginApp(await (options.definition ?? definition)), controller = new AbortController();
   const script = app.contentScripts[0].mount({ signal: controller.signal });
-  const bridge = app.threadHeaderActions[0];
+  assert.equal(app.threadHeaderRows.length, 1);
+  const bridge = app.threadHeaderRows[0];
+  assert.equal(bridge.id, 'turn-results-bridge');
   const rendered = renderSlot({ ...bridge, component: props => createPortal(createElement(bridge.component, props), document.querySelector('[data-fixture-header]')) }, { threadId: 'thread', projectId: 'project', isCompactViewport: false }, { sdk,
     openUrl(url) { navigation.push(url); return true; }, realtimeConnectionState: 'connected' });
   return { dom, native, rendered, app, sdk, calls, held, galleryReads, heldGalleryReads, navigation, responses, subscriptions, subscriptionCountsAtRead,
@@ -401,7 +403,7 @@ test('actual historical same-thread split Sentinels keep independent pinned publ
         kind: 'turn', status: 'completed', sourceSeqStart: 100, sourceSeqEnd: 102 }], completedTurnDisplay: 'collapse',
         timelinePage: { historySnapshot: 'right-proof', olderCursor: input.beforeAnchorId ? null : { anchorId: 'right-issued', anchorSeq: 100 } } };
     } } };
-    const Sentinel = f.app.threadHeaderActions[0].component;
+    const Sentinel = f.app.threadHeaderRows[0].component;
     const frame = document.createElement('section'); frame.dataset.splitPaneId = 'right';
     const group = document.createElement('span'); group.setAttribute('role', 'group'); frame.append(group, right); document.body.append(frame);
     // Test-only host placement; production galleries remain their real createRoot path.

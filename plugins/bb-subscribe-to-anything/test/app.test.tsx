@@ -58,7 +58,7 @@ test("page and thread panel share list; panel sends its own scope and loads diag
   };
   const slot = renderSlot(
     loaded.threadPanelActions[0]!,
-    { threadId: "thread-a", params: null },
+    { threadId: "thread-a", environment: null, params: null },
     { rpc },
   );
   await waitFor(() =>
@@ -140,13 +140,13 @@ test("late read from an unmounted thread cannot populate another thread panel", 
   let resolve!: (value: typeof snapshot) => void;
   const first = renderSlot(
     loaded.threadPanelActions[0]!,
-    { threadId: "old", params: null },
+    { threadId: "old", environment: null, params: null },
     { rpc: { subscriptionsList: () => new Promise((r) => (resolve = r)) } },
   );
   first.lifecycle.unmount();
   const next = renderSlot(
     loaded.threadPanelActions[0]!,
-    { threadId: "new", params: null },
+    { threadId: "new", environment: null, params: null },
     {
       rpc: {
         subscriptionsList: async () => ({ ...snapshot, rows: [], total: 0 }),
