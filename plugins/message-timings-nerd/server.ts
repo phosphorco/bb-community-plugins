@@ -1,6 +1,6 @@
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { rpcContract } from "./rpc-contract.ts";
-import { projectTiming, turnSpans, type TimingRow, type TurnSpan } from "./timing.ts";
+import { projectTiming, turnSpans, timingMetadata, type TimingRow, type TurnSpan } from "./timing.ts";
 import { createCache } from "./cache.ts";
 import { attachRequestTimes } from "./request-times.ts";
 import type { Stamp } from "./timing.ts";
@@ -40,12 +40,12 @@ export default function plugin(bb: BbPluginApi) {
       if (head?.length === 1 && Number.isSafeInteger(head[0]!.seq) && head[0]!.seq === prior.maxSeq) return prior.result;
     }
     for (let page = 0; page < 12; page++) {
-      const result: Awaited<ReturnType<typeof bb.sdk.threads.timeline>> = await bb.sdk.threads.timeline({ threadId, includeNestedRows: "true",
+      const result: Awaited<ReturnType<typeof bb.sdk.threads.timeline>> = await bb.sdk.threads.timeline({ threadId, includeNestedRows: "true", deferContent: "true",
         ...(cursor ? { beforeAnchorSeq: String(cursor.anchorSeq), beforeAnchorId: cursor.anchorId } : {}),
       });
       if ("delta" in result) throw new Error("Message timings requires a full timeline snapshot; no delta was requested.");
       if (page === 0 && prior?.maxSeq === result.maxSeq && prior.running === running) return prior.result;
-      rows.push(...result.rows);
+      rows.push(...result.rows.map(timingMetadata));
       if (page === 0) maxSeq = result.maxSeq;
       truncated = result.timelinePage.olderCursor != null;
       cursor = result.timelinePage.olderCursor;

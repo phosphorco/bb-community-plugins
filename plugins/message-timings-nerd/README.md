@@ -85,6 +85,12 @@ used to identify a thread. A future footer slot can replace this narrow adapter.
 - Streaming text is ignored. Known rows repaint locally on windowing changes.
   Only uncovered row IDs, reconnect/visibility recovery, and thread lifecycle
   signals request data; requests coalesce and never overlap per pane.
+- Timeline reads request deferred settled tool content. Each received page is
+  immediately reduced to timing metadata, including same-thread turn children,
+  before the next page is loaded. Message/tool presentation payloads are not
+  retained across pages. This reduces transfer and plugin retention; the host
+  still reconstructs timeline pages, and a page cap is not an input-byte or
+  server-CPU bound. The latest-event probe may also carry event content.
 - A bounded server cache coalesces concurrent clients and queues loads behind
   two global slots. Unchanged history needs one latest-event sequence probe
   before reconstructing any timeline page; visible rows before the declared
