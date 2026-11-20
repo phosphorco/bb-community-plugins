@@ -572,7 +572,7 @@ const row=(id:string,seq:number,text:string)=>({id,threadId:'thr_a',sourceSeqSta
 
 test('one page per quantum; unchanged forced generations reuse history and pure recognition while native targets stay fresh',async t=>{
   const {db,store}=open();t.after(()=>db.close());let pages=0,heads=0,targetReads=0,targetDeleted=false;
-  const f=fixture(db,store,async(args:any)=>{if(args.afterSequence){heads++;return {maxSeq:10,contextBoundarySeq:null,rows:[],delta:{upsertRows:[]},timelinePage:{olderCursor:null,olderRowsSourceSeqEnd:null}};}return {maxSeq:10,contextBoundarySeq:null,rows:pages++%2===0?[row('new',2,'TOKEN https://bb.test/projects/proj_a/threads/thr_target')]:[row('old',1,'older TOKEN')],
+  const f=fixture(db,store,async(args:any)=>{if(args.afterTag){heads++;return {maxSeq:10,contextBoundarySeq:null,rows:[],delta:{upsertRows:[]},timelinePage:{olderCursor:null,olderRowsSourceSeqEnd:null}};}return {maxSeq:10,contextBoundarySeq:null,rows:pages++%2===0?[row('new',2,'TOKEN https://bb.test/projects/proj_a/threads/thr_target')]:[row('old',1,'older TOKEN')],
     timelinePage:{olderCursor:pages%2===1?{anchorSeq:1,anchorId:'old'}:null}};});
   const calls:string[]=[];supplier(f.bb,()=> 'rev1',calls);
   f.bb.sdk.threads.events={list:async()=>{heads++;return [{seq:10}];}};
@@ -609,7 +609,7 @@ test('worker startup discards a reopened partial page and reconstructs the entir
   assert.equal(pages,1);
   const reopened=open(path,false);t.after(()=>reopened.db.close());
   const next=fixture(reopened.db,reopened.store);next.bb.sdk.threads.events={list:async()=>[{seq:10}]};
-  next.bb.sdk.threads.timeline=async(args:any)=>{assert.equal(args.afterSequence,undefined);pages++;return {maxSeq:10,contextBoundarySeq:null,rows:args.beforeAnchorId?[row('old',1,'https://example.test/old')]:[row('new',2,'https://example.test/new')],timelinePage:{olderCursor:args.beforeAnchorId?null:{anchorSeq:1,anchorId:'older'}}};};
+  next.bb.sdk.threads.timeline=async(args:any)=>{assert.equal(args.afterTag,undefined);pages++;return {maxSeq:10,contextBoundarySeq:null,rows:args.beforeAnchorId?[row('old',1,'https://example.test/old')]:[row('new',2,'https://example.test/new')],timelinePage:{olderCursor:args.beforeAnchorId?null:{anchorSeq:1,anchorId:'older'}}};};
   next.bb.sdk.subscribe=()=>()=>{};
   let idle!:()=>void;const reachedIdle=new Promise<void>(resolve=>{idle=resolve;});
   const process=next.collector.processNext.bind(next.collector);
@@ -624,7 +624,7 @@ test('startup reconstructs completed source bodies while preserving pure recogni
   const initial=open(path);const first=fixture(initial.db,initial.store,async()=>{pages++;return {maxSeq:10,contextBoundarySeq:null,rows:[row('m',1,'TOKEN')],timelinePage:{olderCursor:null}};});
   first.bb.sdk.threads.events={list:async()=>[{seq:10}]};supplier(first.bb,()=>revision,calls);
   first.collector.enqueue('proj_a','thr_a');await finish(first.collector,initial.db);assert.equal(calls.length,1);first.collector.dispose();initial.db.close();
-  const reopened=open(path,false);t.after(()=>reopened.db.close());const next=fixture(reopened.db,reopened.store,async(args:any)=>{if(args.afterSequence)return {maxSeq:10,contextBoundarySeq:null,rows:[],delta:{upsertRows:[]},timelinePage:{olderCursor:null,olderRowsSourceSeqEnd:null}};pages++;return {maxSeq:10,contextBoundarySeq:null,rows:[row('m',1,'TOKEN')],timelinePage:{olderCursor:null}};});
+  const reopened=open(path,false);t.after(()=>reopened.db.close());const next=fixture(reopened.db,reopened.store,async(args:any)=>{if(args.afterTag)return {maxSeq:10,contextBoundarySeq:null,rows:[],delta:{upsertRows:[]},timelinePage:{olderCursor:null,olderRowsSourceSeqEnd:null}};pages++;return {maxSeq:10,contextBoundarySeq:null,rows:[row('m',1,'TOKEN')],timelinePage:{olderCursor:null}};});
   next.bb.sdk.threads.events={list:async()=>[{seq:10}]};supplier(next.bb,()=>revision,calls);
   next.bb.sdk.subscribe=()=>()=>{};
   let idle!:()=>void;const reachedIdle=new Promise<void>(resolve=>{idle=resolve;});const process=next.collector.processNext.bind(next.collector);
@@ -637,7 +637,7 @@ test('startup reconstructs completed source bodies while preserving pure recogni
 
 test('an unchanged source larger than the hot cache does not thrash supplier recognition',async t=>{
   const {db,store}=open();t.after(()=>db.close());let pages=0;const calls:string[]=[];
-  const f=fixture(db,store,async(args:any)=>{if(args.afterSequence)return {maxSeq:100,contextBoundarySeq:null,rows:[],delta:{upsertRows:[]},timelinePage:{olderCursor:null,olderRowsSourceSeqEnd:null}};pages++;return {maxSeq:100,contextBoundarySeq:null,rows:Array.from({length:80},(_,i)=>row('m'+i,i,'TOKEN '+i)),timelinePage:{olderCursor:null}};});
+  const f=fixture(db,store,async(args:any)=>{if(args.afterTag)return {maxSeq:100,contextBoundarySeq:null,rows:[],delta:{upsertRows:[]},timelinePage:{olderCursor:null,olderRowsSourceSeqEnd:null}};pages++;return {maxSeq:100,contextBoundarySeq:null,rows:Array.from({length:80},(_,i)=>row('m'+i,i,'TOKEN '+i)),timelinePage:{olderCursor:null}};});
   supplier(f.bb,()=> 'rev1',calls);f.bb.sdk.threads.events={list:async()=>[{seq:100}]};
   f.collector.enqueue('proj_a','thr_a');await finish(f.collector,db);assert.equal(calls.length,80);
   f.collector.enqueue('proj_a','thr_a',false,true);await finish(f.collector,db);assert.equal(calls.length,80);assert.equal(pages,1);
@@ -665,8 +665,8 @@ for(const mode of ['append','correction','gap','boundary','server-cache-miss'] a
  f.bb.sdk.threads.timeline=async(args:any)=>{
   pages++;
   if(phase==='cold')return {maxSeq:10,contextBoundarySeq:null,rows:[row('old',1,'https://example.test/old')],timelinePage:{olderCursor:args.beforeAnchorId?null:{anchorSeq:1,anchorId:'old'}}};
-  if(args.afterSequence){
-   assert.equal(args.afterSequence,'10');
+  if(args.afterTag){
+   assert.equal(args.afterTag,'10');
    if(mode==='server-cache-miss')return {maxSeq:11,contextBoundarySeq:null,rows:[row('new',11,'https://example.test/new')],timelinePage:{olderCursor:null}};
    return {maxSeq:11,contextBoundarySeq:mode==='boundary'?11:null,rows:[],delta:{upsertRows:[mode==='correction'?row('old',1,'corrected'):row('new',11,'https://example.test/new')],rowOrder:mode==='gap'?['new']:['old','new']},timelinePage:{olderCursor:null,olderRowsSourceSeqEnd:null}};
   }
@@ -742,7 +742,7 @@ test('startup reconstructs an offline same-sequence mutation without consulting 
  first.collector.enqueue('proj_a','thr_a');await first.collector.processNext(new AbortController().signal);first.collector.dispose();initial.db.close();
  const reopened=open(path,false);t.after(()=>reopened.db.close());let witnesses=0;
  const next=fixture(reopened.db,reopened.store);next.bb.sdk.plugins={list:async()=>({plugins:[]})};next.bb.sdk.threads.events={list:async()=>[{seq:10}]};next.bb.sdk.subscribe=()=>()=>{};
- next.bb.sdk.threads.timeline=async(args:any)=>{if(args.afterSequence)witnesses++;return {maxSeq:10,contextBoundarySeq:null,rows:[row('m',2,'https://example.test/current')],timelinePage:{olderCursor:null}};};
+ next.bb.sdk.threads.timeline=async(args:any)=>{if(args.afterTag)witnesses++;return {maxSeq:10,contextBoundarySeq:null,rows:[row('m',2,'https://example.test/current')],timelinePage:{olderCursor:null}};};
  let idle!:()=>void;const reachedIdle=new Promise<void>(resolve=>{idle=resolve;});const process=next.collector.processNext.bind(next.collector);
  next.collector.processNext=async signal=>{const worked=await process(signal);if(!worked)idle();return worked;};
  const controller=new AbortController();const running=next.collector.start(controller.signal);await reachedIdle;controller.abort();await running;
@@ -752,7 +752,7 @@ test('startup reconstructs an offline same-sequence mutation without consulting 
 
 test('pure unchanged-source reuse refreshes observedAt without changing evidence revision',async t=>{
  const {db,store}=open();t.after(()=>db.close());let now=100000,pages=0;t.mock.method(Date,'now',()=>now);
- const f=fixture(db,store,async(args:any)=>{if(args.afterSequence)return {maxSeq:10,contextBoundarySeq:null,rows:[],delta:{upsertRows:[]},timelinePage:{olderCursor:null,olderRowsSourceSeqEnd:null}};pages++;return {maxSeq:10,contextBoundarySeq:null,rows:[row('m',1,'https://example.test/a')],timelinePage:{olderCursor:null}};});
+ const f=fixture(db,store,async(args:any)=>{if(args.afterTag)return {maxSeq:10,contextBoundarySeq:null,rows:[],delta:{upsertRows:[]},timelinePage:{olderCursor:null,olderRowsSourceSeqEnd:null}};pages++;return {maxSeq:10,contextBoundarySeq:null,rows:[row('m',1,'https://example.test/a')],timelinePage:{olderCursor:null}};});
  f.bb.sdk.plugins={list:async()=>({plugins:[]})};f.bb.sdk.threads.events={list:async()=>[{seq:10}]};
  f.collector.enqueue('proj_a','thr_a');await finish(f.collector,db);const before=store.mentionState(sourceIdentity);assert.equal(before.occurrences[0]!.observedAt,now);
  now+=1000;f.collector.enqueue('proj_a','thr_a',false,true);await finish(f.collector,db);const after=store.mentionState(sourceIdentity);
@@ -763,7 +763,7 @@ test('pure unchanged-source reuse refreshes observedAt without changing evidence
 test('a latest-window delta without native older-history metadata cannot certify cached coverage',async t=>{
  const {db,store}=open();t.after(()=>db.close());let changed=false,pages=0;
  const f=fixture(db,store);f.bb.sdk.plugins={list:async()=>({plugins:[]})};
- f.bb.sdk.threads.timeline=async(args:any)=>{pages++;if(args.afterSequence)return {maxSeq:10,contextBoundarySeq:null,rows:[],delta:{upsertRows:[]},timelinePage:{olderCursor:null}};
+ f.bb.sdk.threads.timeline=async(args:any)=>{pages++;if(args.afterTag)return {maxSeq:10,tag:'tag10',delta:{afterTag:'tag10',upsertRows:[],fields:{}}};
   return {maxSeq:10,contextBoundarySeq:null,rows:[row('m',1,changed?'https://example.test/corrected':'https://example.test/original')],timelinePage:{olderCursor:null}};};
  f.collector.enqueue('proj_a','thr_a');await finish(f.collector,db);changed=true;
  f.collector.enqueue('proj_a','thr_a',false,true);await finish(f.collector,db);
@@ -775,8 +775,8 @@ test('failed older-page attempts retire continuation certification before a same
  const {db,store}=open();t.after(()=>db.close());let now=100000,rewritten=false,failOlder=true,witnesses=0;const requests:string[]=[];
  t.mock.method(Date,'now',()=>now);
  const f=fixture(db,store,async(args:any)=>{
-  requests.push(args.afterSequence?'witness':args.beforeAnchorId?'older':'first');
-  if(args.afterSequence){witnesses++;assert.equal(args.afterSequence,'10');}
+  requests.push(args.afterTag?'witness':args.beforeAnchorId?'older':'first');
+  if(args.afterTag){witnesses++;assert.equal(args.afterTag,'10');}
   if(args.beforeAnchorId){if(failOlder){failOlder=false;throw new Error('offline');}return {maxSeq:10,contextBoundarySeq:null,rows:[row('old',1,'older text')],timelinePage:{olderCursor:null}};}
   // A same-lifetime native rewrite floor supplies a full corrected response,
   // even if the source was rewritten without an advancing sequence.

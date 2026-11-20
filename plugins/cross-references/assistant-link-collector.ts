@@ -29,6 +29,12 @@ async function bounded<T>(run:(signal:AbortSignal)=>Promise<T>,signal:AbortSigna
 }
 
 type Job = { thread_id: string; project_id: string; version: number; deleted: number; attempts: number };
+type TimelineRowLike = { id:string; threadId:string; sourceSeqStart:number; kind:string; role?:"assistant"|"user"; initiator?:string; systemMessageKind?:string|null; createdAt:number; messageSeq:number; text:string };
+type TimelineFieldsLike = { contextBoundarySeq?:number|null; timelinePage?:{olderRowsSourceSeqEnd?:number|null;olderRowUpdates?:TimelineRowLike[]|null;olderCursor?:{anchorSeq:number;anchorId:string}|null} };
+type TimelineWireResponse =
+  | { maxSeq:number; tag:string; rows:TimelineRowLike[]; contextBoundarySeq:number|null; timelinePage:{olderRowsSourceSeqEnd:number|null;olderRowUpdates?:TimelineRowLike[]|null;olderCursor:{anchorSeq:number;anchorId:string}|null} }
+  | { maxSeq:number; tag?:string; delta:{ afterTag?:string; upsertRows:TimelineRowLike[]; rowOrder?:Array<string|[number,number]>; fields?:TimelineFieldsLike } };
+type TimelineDeltaWire = { maxSeq:number; tag?:string; contextBoundarySeq?:number|null; timelinePage?:TimelineFieldsLike["timelinePage"]; delta:{ afterTag?:string; upsertRows:TimelineRowLike[]; rowOrder?:Array<string|[number,number]>; fields?:TimelineFieldsLike } };
 
 /** SQLite owns pending work; one abort-aware worker resumes it after reload. */
 export class AssistantLinkCollector {
@@ -231,7 +237,7 @@ export class AssistantLinkCollector {
     const diagnostics=new MentionDiagnostics(()=>!this.disposed && this.db.open && !signal.aborted);
     let outerDiagnostic:MentionDiagnosticOperation|undefined;
     const checkpoints=new CollectionCheckpoints(this.db);
-    let prefetchedPage:Awaited<ReturnType<BbPluginApi["sdk"]["threads"]["timeline"]>>|undefined;
+    let prefetchedPage:TimelineWireResponse|undefined;
     let checkpoint=checkpoints.load(job.thread_id);
     const continuing=checkpoint && !checkpoint.ready && this.continuations.get(job.thread_id)===job.version;
     try {
@@ -263,11 +269,11 @@ export class AssistantLinkCollector {
           // event head, socket-open event or sent detail frame cannot certify
           // that earlier history stayed unchanged across a notification gap.
           // Always obtain a native delta witness before reusing source bodies.
-          let witness:Awaited<ReturnType<BbPluginApi["sdk"]["threads"]["timeline"]>>;
+          let witness:TimelineWireResponse;
           try {
             witness=await bounded(s=>this.bb.sdk.threads.timeline({threadId:job.thread_id,
-              includeNestedRows:'false',segmentLimit:'100',...(checkpoint!.maxSeq===null?{}:{afterSequence:String(checkpoint!.maxSeq)}),signal:s}),signal,1000,
-              outerDiagnostic=diagnostics.operation('timeline-prefetch'));
+              includeNestedRows:'false',segmentLimit:'100',...(checkpoint!.tag===undefined?{}:{afterTag:checkpoint!.tag}),signal:s}),signal,1000,
+              outerDiagnostic=diagnostics.operation('timeline-prefetch')) as unknown as TimelineWireResponse;
           }catch(error){
             if(stillCurrent() && typeof error==='object' && error!==null && 'status' in error && error.status===400){
               checkpoints.remove(job.thread_id);this.continuations.delete(job.thread_id);return true;
@@ -275,26 +281,31 @@ export class AssistantLinkCollector {
             throw error;
           }
           if(!stillCurrent())return true;
-          const delta=witness.delta;
+          const hasDelta='delta' in witness;
+          const delta='delta' in witness ? (witness as TimelineDeltaWire).delta : undefined;
           const oldMax=checkpoint.maxSeq;
-          const order=delta?.rowOrder??checkpoint.headIds??[];
-          const olderEnd=witness.timelinePage.olderRowsSourceSeqEnd;
-          const olderStable=(witness.timelinePage.olderRowUpdates?.length??0)===0 &&
-            (olderEnd===null || (Number.isSafeInteger(olderEnd) && olderEnd!>=0 && oldMax!==null && olderEnd!<=oldMax));
+          const order:Array<string|[number,number]>=delta?.rowOrder??checkpoint.headIds??[];
+          const deltaWitness='delta' in witness ? witness as TimelineDeltaWire : undefined;
+          const pageFields:TimelineFieldsLike=deltaWitness
+            ? (deltaWitness.delta.fields ?? { contextBoundarySeq:deltaWitness.contextBoundarySeq, timelinePage:deltaWitness.timelinePage })
+            : witness as TimelineFieldsLike;
+          const olderEnd=pageFields.timelinePage?.olderRowsSourceSeqEnd;
+          const olderStable=(!hasDelta || pageFields.timelinePage!==undefined) && (pageFields.timelinePage?.olderRowUpdates?.length??0)===0 &&
+            (olderEnd===undefined || olderEnd===null || (Number.isSafeInteger(olderEnd) && olderEnd!>=0 && oldMax!==null && olderEnd!<=oldMax));
           const knownBoundary=checkpoint.contextBoundarySeq===null || Number.isSafeInteger(checkpoint.contextBoundarySeq);
-          const sameBoundary=knownBoundary && witness.contextBoundarySeq===checkpoint.contextBoundarySeq;
+          const sameBoundary=knownBoundary && (pageFields.contextBoundarySeq===undefined || pageFields.contextBoundarySeq===checkpoint.contextBoundarySeq);
           const unchanged=oldMax!==null && witness.maxSeq===oldMax && delta && delta.upsertRows.length===0 &&
             JSON.stringify(order)===JSON.stringify(checkpoint.headIds??[]) && sameBoundary && olderStable;
           if(unchanged){
             if(!checkpoint.ready){this.continuations.set(job.thread_id,job.version);return true;}
           }else {
-            // afterSequence describes the latest window, never all history.
+            // afterTag describes the latest window, never all history.
             // Extend only a complete, overlapping, strictly append-only source.
             const priorIds=new Set(checkpoints.messageIds(job.thread_id));
-            const overlapping=order.some(id=>priorIds.has(id));
-            const rows=delta?.upsertRows??[];
+            const overlapping=order.some((id:string|[number,number])=>typeof id==='string' && priorIds.has(id));
+            const rows:TimelineRowLike[]=delta?.upsertRows??[];
             const appendOnly=oldMax!==null && witness.maxSeq>oldMax && checkpoint.ready && checkpoint.complete && !checkpoint.missingMessageSeq &&
-              delta && rows.every(row=>row.threadId===job.thread_id && row.sourceSeqStart>oldMax && !priorIds.has(row.id));
+              delta && rows.every((row:TimelineRowLike)=>row.threadId===job.thread_id && row.sourceSeqStart>oldMax && !priorIds.has(row.id));
             if(appendOnly && overlapping && sameBoundary && olderStable){
               const accepted:ConversationMessage[]=[];let textChars=checkpoint.textChars;let valid=true;
               for(const row of rows){
@@ -305,7 +316,7 @@ export class AssistantLinkCollector {
                 accepted.push({id:row.id,text:row.text,createdAt:row.createdAt,messageSeq:row.messageSeq,anchorSeq:row.sourceSeqStart,role:row.role});
               }
               if(valid && textChars<=MENTION_LIMITS.sourceChars && priorIds.size+accepted.length<=MENTION_LIMITS.messages){
-                checkpoint.maxSeq=witness.maxSeq;checkpoint.textChars=textChars;checkpoint.headIds=order;delete checkpoint.pureKey;
+                checkpoint.maxSeq=witness.maxSeq;checkpoint.tag=witness.tag ?? String(witness.maxSeq);checkpoint.textChars=textChars;checkpoint.headIds=order.filter((id:string|[number,number]):id is string=>typeof id==='string');delete checkpoint.pureKey;
                 checkpoints.save(job.thread_id,checkpoint,accepted);
               }else {checkpoints.remove(job.thread_id);this.continuations.delete(job.thread_id);return true;}
             }else {
@@ -317,14 +328,14 @@ export class AssistantLinkCollector {
             }
           }
         }
-        checkpoint??={projectId:job.project_id,maxSeq:null,cursor:null,pages:0,ready:false,complete:false,sourceLimited:false,
+        checkpoint??={projectId:job.project_id,maxSeq:null,tag:undefined,cursor:null,pages:0,ready:false,complete:false,sourceLimited:false,
           missingMessageSeq:false,textChars:0,title,environmentId};
         checkpoint.projectId=job.project_id;checkpoint.title=title;checkpoint.environmentId=environmentId;
         if(!checkpoint.ready){
           const messageIds=new Set(checkpoints.messageIds(job.thread_id));
           if(!stillCurrent())return true;
           const cursor=checkpoint.cursor;
-          const page=prefetchedPage??await bounded(s=>this.bb.sdk.threads.timeline({
+          const pageResult=(prefetchedPage??await bounded(s=>this.bb.sdk.threads.timeline({
             threadId:job.thread_id,includeNestedRows:'false',segmentLimit:'100',signal:s,
             ...(cursor===null?{}:{beforeAnchorSeq:String(cursor.anchorSeq),beforeAnchorId:cursor.anchorId}),
           }),signal,1000,outerDiagnostic=diagnostics.operation('timeline-prefetch')).catch(error=>{
@@ -334,10 +345,13 @@ export class AssistantLinkCollector {
               checkpoints.remove(job.thread_id);this.continuations.delete(job.thread_id);
             }
             throw error;
-          });
+          })) as unknown as TimelineWireResponse;
           if(!stillCurrent())return true;
+          if('delta' in pageResult) { checkpoints.remove(job.thread_id); this.continuations.delete(job.thread_id); return true; }
+          const page=pageResult;
           if(checkpoint.pages===0){
             checkpoint.maxSeq=Number.isSafeInteger(page.maxSeq)?page.maxSeq:null;
+            checkpoint.tag=page.tag ?? String(page.maxSeq);
             checkpoint.contextBoundarySeq=page.contextBoundarySeq;
             checkpoint.headIds=page.rows.map(row=>row.id);
           }
