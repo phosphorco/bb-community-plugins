@@ -12,7 +12,7 @@ const installedRequest: InstalledSendArguments = {
   mode: 'auto',
   input: [{ type: 'text', text: 'Preserve native mentions.', mentions: [] }],
 };
-const installedResponse: InstalledSendResult = { ok: true, delivery: 'sent' };
+const installedResponse: InstalledSendResult = { ok: true, delivery: 'sent', messageSequence: null };
 const installedHasDelivery: 'delivery' extends keyof InstalledSendResult ? true : false = true;
 /** Installed callRpc remains Zod-shaped; this stays an internal-only source constraint. */
 const unknownOutputSchema = z.unknown();
