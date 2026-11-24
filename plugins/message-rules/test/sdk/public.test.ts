@@ -15,13 +15,13 @@ const req = createRequire(import.meta.url),
   root = path.dirname(path.dirname(req.resolve("@get-bb/plugin-sdk")));
 test("exact selected fork artifact and public runtime exports; source imports have no copied/private declarations", () => {
   const p = JSON.parse(readFileSync(path.join(root, "package.json"), "utf8"));
-  assert.equal(p.version, "0.6.143+phosphor.05199007.upgrade1");
+  assert.equal(p.version, "0.6.164+phosphor.df9619d8.upgrade1");
   assert.equal(typeof createFakeSdk, "function");
   assert.equal(typeof definePluginApp, "function");
   const lock = JSON.parse(readFileSync("../../package-lock.json", "utf8"));
   const selected =
     lock.packages["node_modules/@get-bb/plugin-sdk"];
-  assert.equal(selected.version, "0.6.143+phosphor.05199007.upgrade1");
+  assert.equal(selected.version, "0.6.164+phosphor.df9619d8.upgrade1");
   assert.match(selected.resolved, /github.com\/phosphorco\/bb-fork\/releases/);
   assert.match(selected.integrity, /^sha512-/);
   console.log(
