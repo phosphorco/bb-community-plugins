@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import Sqlite from "better-sqlite3";
-import { Collectors } from "../collector.ts";
+import { Collectors, collectorPolicy } from "../collector.ts";
 import { Store } from "../store.ts";
 import type { Database } from "../store.ts";
 import { Engine } from "../engine.ts";
@@ -124,7 +124,7 @@ test("expiry and cancellation revoke in-flight assignment and reject late eviden
   }
 });
 test("missing launch has bounded actionable review, and launch refusal can fail immediately", async () => {
-  const f = fixture(); await f.setup(); await f.start(); f.advance(31000); await f.finish();
+  const f = fixture(); await f.setup(); await f.start(); f.advance(collectorPolicy.heartbeatMs+1); await f.finish();
   assert.match(f.store.get(f.id).runs.at(-1)!.problem!, /Provider collector did not return/);
   assert.equal(f.store.get(f.id).state, "reviewing"); f.db.close();
   const g = fixture(); await g.setup(); g.engine.fail("observer", "Provider denied launch; need access to the assigned local log");

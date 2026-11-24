@@ -213,6 +213,7 @@ export class Engine {
     r.repairs++;
     r.generation++;
     r.recipe = recipe;
+    if(r.collector?.status)r.collector_reports=[...(r.collector_reports??[]),r.collector.status].slice(-3);
     r.collector = undefined;
     r.report_blocked = true;
     r.revisions.push(recipe);

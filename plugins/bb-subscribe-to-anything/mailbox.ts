@@ -1,3 +1,4 @@
+export const mailboxDeadlines = { pollMs:35000, requestMs:15000, stopMs:10000 } as const;
 // Pure existing-CLI wire protocol; the worker factory below owns eligibility,
 // connection selection, total deadline and cancellation. No alternate route.
 export async function requestMailbox(endpoint: string, body: unknown, signal: AbortSignal) {
@@ -7,7 +8,7 @@ export async function requestMailbox(endpoint: string, body: unknown, signal: Ab
       headers: { "content-type": "application/json" }, signal,
       body: JSON.stringify(body),
     });
-    if (!response.ok || !response.body) throw new Error(`Collector mailbox HTTP ${response.status}`);
+    if (!response.body) throw Object.assign(new Error(`Collector mailbox HTTP ${response.status}`),{httpStatus:response.status,collectorRefused:response.status===401||response.status===403});
     reader = response.body.getReader();
     const chunks: Uint8Array[] = []; let bytes = 0;
     for (;;) {
@@ -15,15 +16,21 @@ export async function requestMailbox(endpoint: string, body: unknown, signal: Ab
       bytes += next.value.byteLength;
       // One JSON envelope, optionally preceded by newline keepalives. JSON
       // escaping can expand the CLI's 1 MiB decoded output up to sixfold.
-      if (bytes > 7 * 1024 * 1024) throw new Error("Collector mailbox framing limit");
+      if (!response.ok && bytes>65536) { chunks.push(next.value.subarray(0,Math.max(0,65536-(bytes-next.value.byteLength))));break; }
+      if (bytes > 7 * 1024 * 1024) throw Object.assign(new Error("Collector mailbox framing limit"),{receivedBytes:bytes,limitBytes:7*1024*1024});
       chunks.push(next.value);
     }
-    const envelope = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+    const text=Buffer.concat(chunks).toString("utf8");
+    if(!response.ok)throw Object.assign(new Error(`Collector mailbox HTTP ${response.status}`),{httpStatus:response.status,statusText:response.statusText,body:text,bodyTruncated:bytes>65536,receivedBytes:bytes,collectorRefused:response.status===401||response.status===403});
+    const envelope = JSON.parse(text);
     if (!Number.isInteger(envelope.exitCode) || typeof (envelope.stdout ?? "") !== "string" ||
         typeof (envelope.stderr ?? "") !== "string") throw new Error("Invalid collector mailbox envelope");
     if (Buffer.byteLength(envelope.stdout ?? "") > 1024 * 1024 || Buffer.byteLength(envelope.stderr ?? "") > 1024 * 1024)
       throw new Error("Collector mailbox output limit");
-    if (envelope.exitCode !== 0) throw new Error(`Collector mailbox unavailable: ${(envelope.stderr ?? "").slice(0, 2000)}`);
+    if (envelope.exitCode !== 0) {
+      let refusal=false;try{refusal=JSON.parse(envelope.stdout||"{}").collectorFailure?.refused===true;}catch{}
+      throw Object.assign(new Error(`Collector mailbox unavailable: ${envelope.stderr ?? ""}`),{exitCode:envelope.exitCode,stdout:envelope.stdout??"",stderr:envelope.stderr??"",collectorRefused:refusal});
+    }
     return JSON.parse(envelope.stdout || "");
   } finally { await reader?.cancel().catch(() => {}); }
 }
@@ -32,7 +39,7 @@ export async function requestMailbox(endpoint: string, body: unknown, signal: Ab
 // Native admission is deliberately narrower than CLI compatibility. The digest
 // identifies the reviewed stock 0.6.49 CLI entry + all its JS chunks, not a path
 // name or a claimed version. New/unknown builds safely retain CLI execution.
-export async function createMailbox(id: string, token: string, worker: string, env = process.env, request = requestMailbox) {
+export async function createMailbox(id: string, token: string, worker: string, env = process.env, request = requestMailbox, deadlines: {pollMs:number;requestMs:number;stopMs:number} = mailboxDeadlines) {
   const { spawn } = await import("node:child_process");
   const { createHash } = await import("node:crypto");
   const fs = await import("node:fs/promises");
@@ -87,19 +94,22 @@ export async function createMailbox(id: string, token: string, worker: string, e
     cli(argv: string[], ms: number) { return new Promise<any>((resolve, reject) => {
       const child = spawn(env.BB_CLI || "bb", ["subscribe", ...argv], { env, stdio: ["ignore", "pipe", "pipe"] });
       children.add(child);
-      const chunks: Buffer[] = []; let stderr = "", size = 0, problem: Error | undefined;
+      const started=Date.now(),chunks: Buffer[] = []; let stderrChunks:Buffer[]=[],stderrCaptured=0,size = 0, stderrBytes=0, problem: Error | undefined;
       const timer = setTimeout(() => { problem = new Error("Collector mailbox deadline"); child.kill("SIGKILL"); }, ms);
       child.stdout!.on("data", (data: Buffer) => {
         size += data.length;
         if (size > 1024 * 1024) { problem = new Error("Collector mailbox output limit"); child.kill("SIGKILL"); }
         else chunks.push(data);
       });
-      child.stderr!.on("data", (data: Buffer) => { stderr = (stderr + data.toString()).slice(0, 2000); });
-      child.once("error", error => { clearTimeout(timer); children.delete(child); reject(error); });
+      child.stderr!.on("data", (data: Buffer) => { stderrBytes+=data.length;const part=data.subarray(0,Math.max(0,65536-stderrCaptured));if(part.length){stderrChunks.push(part);stderrCaptured+=part.length;} });
+      child.once("error", error => { clearTimeout(timer); children.delete(child); reject(Object.assign(error,{operation:argv[0],cli:env.BB_CLI||"bb",collectorRefused:["EACCES","EPERM"].includes((error as NodeJS.ErrnoException).code??"")})); });
       child.once("close", code => {
         clearTimeout(timer); children.delete(child);
-        if (problem || code !== 0) reject(problem ?? new Error(`Collector mailbox unavailable: ${stderr}`));
-        else try { resolve(JSON.parse(Buffer.concat(chunks).toString("utf8"))); } catch (error) { reject(error); }
+        const stdout=Buffer.concat(chunks).toString("utf8"),stderr=Buffer.concat(stderrChunks).toString("utf8");let refused=false;
+        try{refused=JSON.parse(stdout||"{}").collectorFailure?.refused===true;}catch{}
+        const details={operation:argv[0],cli:env.BB_CLI||"bb",exitCode:code,signal:child.signalCode,timeoutMs:ms,durationMs:Date.now()-started,stdout,stderr,omittedStderrBytes:Math.max(0,stderrBytes-Buffer.byteLength(stderr)),collectorRefused:refused};
+        if (problem || code !== 0) reject(Object.assign(problem??new Error(`Collector mailbox unavailable: ${stderr}`),details));
+        else try { resolve(JSON.parse(stdout)); } catch (error) { reject(Object.assign(error as Error,details)); }
       });
     }); },
   };
@@ -118,7 +128,7 @@ export async function createMailbox(id: string, token: string, worker: string, e
     transport: endpoint ? "native" : "cli",
     rpc(op: string, extra: string[] = []) {
       if (closed) return Promise.reject(new Error("Collector mailbox closed"));
-      const argv = [op, id, token, worker, ...extra], ms = op === "collector-poll" ? 25000 : 10000;
+      const argv = [op, id, token, worker, ...extra], ms = op === "collector-poll" ? deadlines.pollMs : op === "collector-stopped" ? deadlines.stopMs : deadlines.requestMs;
       // Never change transport after a request could have taken effect.
       return endpoint ? helpers.native(argv, ms) : helpers.cli(argv, ms);
     },

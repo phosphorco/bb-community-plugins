@@ -620,3 +620,44 @@ This README supersedes older API sketches where they conflict, including
 The Jev investigation read documentation; it did not benchmark this subscription
 workload or install the skill. Costs and limits are version-sensitive. Typed
 classification output guarantees a response shape, not factual correctness.
+
+
+## Collector liveness and diagnostics
+
+The existing provider-launched collector keeps its inherited CLI, cwd, credentials
+and permission mode. It never falls back to another identity or forces a native
+transport after a request. The reviewed native fast-path gate is unchanged;
+unknown CLI builds continue through the supported CLI.
+
+A quiet mailbox wait lasts at most 20s. CLI poll requests have 35s for bootstrap,
+discovery, authority checks and waiting; other requests have 15s and final stop
+reporting has 10s. A transient error may recover within a 60s liveness grace. An
+explicit assignment/authority refusal stops immediately. The server heartbeat
+window is 90s, and collection has the recipe deadline plus 110s for assignment and
+sealed-result acknowledgement. Subscription expiry still revokes the work at its
+selected deadline; final best-effort stop reporting can add up to 10s. These bounds
+are policy, not a diagnosis of an earlier failure or a latency promise.
+
+`subscription_inspect` shows a small `collector_health` summary. With
+`include_debug:true`, `debug.collector.status` retains the provider worker's
+operation, transport, generation/sequence, last known task, timing policy, recent
+errors/recovery and exact stop branch. Signal, expiry, authoritative stop, recipe
+exception, result-ack exhaustion and transport-grace exhaustion stay distinct.
+These are authenticated worker reports; native server `heartbeat`/`stopped_at`
+remain separate server observations, not proof of target delivery. Legacy workers
+without reports keep an explicitly unknown stop reason.
+
+At most 8 diagnostic events and 60KiB per status are retained, with explicit omission
+counts for large details; the full sanitized error is also emitted to worker
+stderr. Mailbox stderr capture is bounded at 64KiB with omitted-byte counts, and
+actual HTTP error bodies are retained within the same bound. Only the known
+assignment credential is redacted by its value; operational IDs, paths, settings
+and error context remain visible. Up to 3 prior-generation reports survive a recipe
+replacement. A stopped worker cannot turn a missing collection into target evidence.
+
+A lost result acknowledgement retries only the identical sealed result under the
+same task/worker/generation; the recipe is never replayed. Missing server acknowledgement
+of the final stop remains uncertain and is recorded in stderr. New collectors are
+issued by the normal observer workflow; recipe edits cannot repair an unknown
+mailbox or provider-lifecycle problem. The original three live stop causes remain
+unknown; synthetic diagnostic regressions do not establish those causes.

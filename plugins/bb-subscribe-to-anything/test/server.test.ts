@@ -6,6 +6,7 @@ import {
   makePluginAgentConfigurationContext,
 } from "@get-bb/plugin-sdk/testing";
 import plugin from "../server.ts";
+import { collectorPolicy } from "../collector.ts";
 
 test("real SDK registration and provider tool discovery separate entry and observer tools", async () => {
   const host = createFakePluginHost({ pluginId: "bb-subscribe-to-anything" });
@@ -125,7 +126,20 @@ test("observer spawn and collector issuance retain the parent's environment and 
   assert.equal((await source()).exitCode, 0);
   observerEnvironment = "server-host-unrelated"; assert.equal((await source()).exitCode, 1);
   observerEnvironment = "parent-environment"; observerMode = "full"; assert.equal((await source()).exitCode, 1);
+  const deniedPoll=await host.harness.runCli(["collector-poll",r.id,r.collector!.token,"worker"],{threadId:"observer",projectId:r.project});
+  assert.equal(deniedPoll.exitCode,1);const refusal=JSON.parse(deniedPoll.stdout!);assert.equal(refusal.collectorFailure.refused,true);assert.match(deniedPoll.stderr!,/permission mode/);assert(!JSON.stringify(deniedPoll).includes(r.collector!.token));
   observerMode = "accept-edits"; ownerMode = "auto"; assert.equal((await source()).exitCode, 1);
   ownerMode = "accept-edits"; ownerEnvironment = null; assert.equal((await source()).exitCode, 1);
+  ownerEnvironment="parent-environment";
+  const report={version:1,worker:"worker",generation:r.generation,sequence:0,taskId:null,transport:"cli",phase:"stopped",startedAt:1,at:2,lastGoodAt:1,policy:collectorPolicy,events:[],stop:{reason:"signal",operation:"worker",failure:false,signal:"SIGTERM"}};
+  const stopped=await host.harness.runCli(["collector-stopped",r.id,r.collector!.token,"worker",Buffer.from(JSON.stringify(report)).toString("base64")],{threadId:"observer",projectId:r.project});
+  assert.equal(stopped.exitCode,0,stopped.stderr);
+  // Seed the ordinary review state, then exercise the actual registered replacement path.
+  const reviewing=store.get(r.id);reviewing.state="reviewing";store.save(reviewing);
+  const replacement=await host.harness.callAgentTool("subscription_install",{script:'printf false >> "$SUB_OUTPUT"',interpretation:"replacement",coverage:"snapshot",evaluation:{kind:"json_equals",path:[],value:true}},{threadId:"observer"});
+  assert.ok(typeof replacement!=="string"&&!replacement.isError);
+  const replaced=store.get(r.id);assert.notEqual(replaced.collector!.token,r.collector!.token);
+  assert.equal(replaced.collector_reports?.[0]?.stop?.reason,"signal");assert.equal(replaced.collector_reports?.[0]?.stop?.signal,"SIGTERM");
+  assert.equal(replaced.collector_reports?.[0]?.generation,r.generation);
   await host.harness.dispose();
 });

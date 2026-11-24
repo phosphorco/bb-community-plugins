@@ -8,7 +8,7 @@ import {
   subscriptionSummary,
 } from "./contracts.ts";
 import type { Record } from "./contracts.ts";
-import { Collectors, collectorCommand, collectorSource } from "./collector.ts";
+import { Collectors, collectorCommand, collectorSource, collectorRefusal, collectorDiagnostic } from "./collector.ts";
 import { EXAMPLES } from "./examples.ts";
 import { registerSubscriptionUi } from "./ui-server.ts";
 import { classify } from "./classifier.ts";
@@ -107,17 +107,17 @@ export default function plugin(bb: BbPluginApi) {
         observer.lifecycleOwnerThreadId !== r.owner || observer.parentThreadId !== null ||
         observer.originPluginId !== bb.pluginId || caller.archivedAt || caller.deletedAt ||
         observer.archivedAt || observer.deletedAt || !execution?.permissionMode)
-      throw new Error("Parent/observer authority unavailable or changed; retain the assigned environment and permissions");
+      throw collectorRefusal("Parent/observer authority unavailable or changed; retain the assigned environment and permissions");
     const observerExecution = await bb.sdk.threads.defaultExecutionOptions({ threadId: r.observer!, signal: AbortSignal.timeout(10000) });
     if (observerExecution?.permissionMode !== execution.permissionMode)
-      throw new Error("Observer permission mode differs from parent; do not elevate it");
+      throw collectorRefusal("Observer permission mode differs from parent; do not elevate it");
     const env = await bb.sdk.environments.get({ environmentId: r.environment, signal: AbortSignal.timeout(10000) });
     return { environment: r.environment, host: env.hostId, observer: r.observer!, permission_mode: execution.permissionMode };
   }
   async function checkCollectorAuthority(r: Record) {
     const actual = await authority(r);
     if (JSON.stringify(actual) !== JSON.stringify(r.collector?.authority))
-      throw new Error("Collector authority changed; stop and repair through the provider, without broadening access");
+      throw collectorRefusal("Collector authority changed; stop and repair through the provider, without broadening access");
   }
   const engine = new Engine(store, {
     now: Date.now,
@@ -595,17 +595,23 @@ export default function plugin(bb: BbPluginApi) {
         }
         if (["collector-poll", "collector-result", "collector-stopped"].includes(args[0] ?? "")) {
           const [op, id, token, worker, task, ...chunks] = args;
-          if (!id || !token || !worker) throw new Error("Missing collector assignment");
-          let value: unknown;
-          if (op === "collector-poll") {
-            const { r } = collectors.access(id, context.threadId, token, worker);
-            if (!["cancelled", "expired", "fulfilled", "failed"].includes(r.state) && (r.expires_at === null || r.expires_at > Date.now())) await checkCollectorAuthority(r);
-            value = await collectors.wait(id, context.threadId, token, worker, task, context.signal);
-          } else if (op === "collector-result") {
-            if (!task || chunks.join("").length > 1200000) throw new Error("Invalid result size");
-            value = collectors.submit(id, context.threadId, token, worker, task, JSON.parse(Buffer.from(chunks.join(""), "base64").toString("utf8")));
-          } else value = collectors.stopped(id, context.threadId, token, worker);
-          return { exitCode: 0, stdout: JSON.stringify(value) };
+          try {
+            if (!id || !token || !worker) throw collectorRefusal("Missing collector assignment");
+            const decode=(parts:string[])=>{const text=parts.join("");if(text.length>90000)throw collectorRefusal("Collector status exceeds64KiB");return text?JSON.parse(Buffer.from(text,"base64").toString("utf8")):undefined;};
+            let value: unknown;
+            if (op === "collector-poll") {
+              const { r } = collectors.access(id, context.threadId, token, worker);
+              if (!["cancelled", "expired", "fulfilled", "failed"].includes(r.state) && (r.expires_at === null || r.expires_at > Date.now())) await checkCollectorAuthority(r);
+              value = await collectors.wait(id, context.threadId, token, worker, task==="-"?undefined:task, context.signal,decode(chunks));
+            } else if (op === "collector-result") {
+              if (!task || chunks.join("").length > 1200000) throw collectorRefusal("Invalid result size");
+              value = collectors.submit(id, context.threadId, token, worker, task, JSON.parse(Buffer.from(chunks.join(""), "base64").toString("utf8")));
+            } else value = collectors.stopped(id, context.threadId, token, worker,decode([...(task?[task]:[]),...chunks]));
+            return { exitCode: 0, stdout: JSON.stringify(value) };
+          } catch(error) {
+            const value=collectorDiagnostic(error,token??""),raw=JSON.stringify(value);
+            return {exitCode:1,stdout:JSON.stringify({collectorFailure:{refused:(error as any)?.collectorRefused===true,error:raw.length<=64000?value:{excerpt:raw.slice(0,60000),originalDiagnosticBytes:Buffer.byteLength(raw),detailsOmitted:true}}}),stderr:(token?String(error).replaceAll(token,"[REDACTED collector credential]"):String(error))+"\n"};
+          }
         }
         if (args[0] === "until" || args[0] === "changes") {
           const input = JSON.parse(args[1] ?? "");

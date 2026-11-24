@@ -121,3 +121,16 @@ test("installed reviewed stock CLI selects native with exact context and no fall
     assert.equal(client.transport, "native");
   } finally { client.close(); server.closeAllConnections(); await new Promise<void>(r => server.close(() => r())); }
 });
+
+test("CLI refusal preserves complete in-bound stderr/context, and native HTTP failure retains its actual body",async()=>{
+ const root=await mkdtemp(join(tmpdir(),"mailbox-diagnostics-"));
+ const detail='Native拒绝 diagnostic with settings/path thr_kept '+ 'z'.repeat(5000);
+ const wrapper=join(root,'bb');
+ try{
+  await writeFile(wrapper,'#!/bin/sh\nprintf \'%s\' \'{"collectorFailure":{"refused":true}}\'\nprintf \'%s\' '+("'"+detail.replaceAll("'","'\\''")+"'")+' >&2\nexit 1\n',{mode:0o700});
+  const client=await createMailbox('sub','synthetic-token','worker',{...plain('http://127.0.0.1:1'),BB_CLI:wrapper});
+  assert.equal(client.transport,'cli');await assert.rejects(client.rpc('collector-poll'),(error:any)=>{assert.equal(error.collectorRefused,true);assert.equal(error.stderr,detail);assert.equal(error.omittedStderrBytes,0);assert.equal(error.timeoutMs,35000);assert.equal(error.operation,'collector-poll');assert.equal(error.cli,wrapper);return true;});client.close();
+  const server=createServer((_req,res)=>{res.writeHead(503,{'content-type':'application/json'});res.end(JSON.stringify({code:'actual_fixture_outage',details:{path:'/native/route',setting:'kept'}}));});await new Promise<void>(r=>server.listen(0,'127.0.0.1',r));
+  try{const addr=server.address() as {port:number};await assert.rejects(requestMailbox('http://127.0.0.1:'+addr.port,{},new AbortController().signal),(error:any)=>{assert.equal(error.httpStatus,503);assert.equal(error.collectorRefused,false);assert.equal(error.bodyTruncated,false);assert.equal(JSON.parse(error.body).details.setting,'kept');return true;});}finally{server.closeAllConnections();await new Promise<void>(r=>server.close(()=>r()));}
+ }finally{await rm(root,{recursive:true,force:true});}
+});

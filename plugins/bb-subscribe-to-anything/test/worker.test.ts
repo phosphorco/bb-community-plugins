@@ -16,7 +16,7 @@ const pause = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
 // Uses the installed read-only CLI against a loopback SDK transport fixture, not
 // a live BB subscription. Actual product worker/runner/mailbox cross processes.
-test("serialized provider worker uses inherited auth/cwd across quiet long polls and stops on revocation", { timeout: 40000 }, async () => {
+test("serialized provider worker uses inherited auth/cwd across quiet long polls beyond the old CLI deadline and stops on revocation", { timeout: 50000 }, async () => {
   const root = await mkdtemp(join(tmpdir(), "subscribe-worker-proof-"));
   const db = new Sqlite(":memory:"), store = new Store(db as unknown as Database), collectors = new Collectors(store);
   const counts: { [op: string]: number } = {};
@@ -37,12 +37,14 @@ test("serialized provider worker uses inherited auth/cwd across quiet long polls
       const [op, id, token, worker, task, ...chunks] = argv;
       counts[op] = (counts[op] || 0) + 1;
       let value;
-      if (op === "collector-poll") value = await collectors.wait(id, threadId, token, worker, task);
+      if (op === "collector-poll") value = await collectors.wait(id, threadId, token, worker, task==="-"?undefined:task, undefined,chunks.length?JSON.parse(Buffer.from(chunks.join(""),"base64").toString()):undefined);
       else if (op === "collector-result") {
         value = collectors.submit(id, threadId, token, worker, task, JSON.parse(Buffer.from(chunks.join(""), "base64").toString()));
         const r = store.get(id); r.state = "watching"; store.save(r);
-      } else if (op === "collector-stopped") value = collectors.stopped(id, threadId, token, worker);
+      } else if (op === "collector-stopped") value = collectors.stopped(id, threadId, token, worker,task?JSON.parse(Buffer.from([task,...chunks].join(""),"base64").toString()):undefined);
       else throw new Error("Unexpected operation");
+      // Controlled transport/admission margin:20s quiet wait +5.5s response delay exceeds the old25s CLI deadline.
+      if(op==="collector-poll"&&"stop" in value&&!value.stop&&!value.task)await pause(5500);
       res.end(JSON.stringify({ exitCode: 0, stdout: JSON.stringify(value), stderr: "" }));
     } catch (e) { res.end(JSON.stringify({ exitCode: 1, stdout: "", stderr: String(e) })); }
   });
@@ -97,8 +99,9 @@ test("serialized provider worker uses inherited auth/cwd across quiet long polls
     assert.deepEqual(evidence.check, { ready: false, authenticated: true });
     assert.equal(evidence.cwd, join(root, "parent-cwd")); assert.equal(evidence.home, root);
     assert.equal(evidence.serverCredentialVisible, false);
-    // Twenty-two quiet seconds distinguish a long poll from two-second CLI churn.
-    await pause(22000);
+    // An ordinary completed quiet poll must survive the real CLI boundary, not just an injected clock.
+    await pause(28000);
+    assert.equal(child.exitCode,null,"Collector must still be alive after a quiet poll exceeding the old25s deadline");
     async function treeRss(pid: number): Promise<number> {
       try {
         const pages = Number((await readFile(`/proc/${pid}/statm`, "utf8")).split(" ")[1]);
@@ -115,7 +118,10 @@ test("serialized provider worker uses inherited auth/cwd across quiet long polls
     assert.equal(await closed, 0, stderr);
     assert.ok(Date.now() - before < 4000);
     assert.ok(store.get(id).collector!.stopped_at);
-    console.log(JSON.stringify({ proof: process.env.SUBSCRIPTION_BUILT_PROOF === "1" ? "built-serialized-worker" : "serialized-worker", quiet_seconds: 22, selected_transport: discoveries === 0 ? "native" : "cli", cli_discoveries: discoveries, mailbox_operations: counts, resident_tree_bytes: rss, cancellation_ms: Date.now() - before }));
+    assert.equal(store.get(id).collector!.status!.stop!.reason,"subscription-cancelled");
+    assert.equal(store.get(id).collector!.status!.transport,discoveries===0?"native":"cli");
+    assert.ok(!JSON.stringify(store.get(id).collector!.status).includes(r.collector!.token));
+    console.log(JSON.stringify({ proof: process.env.SUBSCRIPTION_BUILT_PROOF === "1" ? "built-serialized-worker" : "serialized-worker", quiet_seconds: 28, fixture_response_margin_ms:5500, selected_transport: discoveries === 0 ? "native" : "cli", cli_discoveries: discoveries, mailbox_operations: counts, resident_tree_bytes: rss, cancellation_ms: Date.now() - before }));
   } finally {
     child?.kill("SIGKILL"); server.closeAllConnections();
     await new Promise<void>(resolve => server.close(() => resolve()));

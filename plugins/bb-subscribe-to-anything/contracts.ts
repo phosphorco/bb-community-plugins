@@ -87,6 +87,16 @@ export type Run = {
   classification?: string;
   provenance?: { environment: string; host: string; observer: string; permission_mode: string };
 };
+export const collectorStatusSchema = z.object({
+  version:z.literal(1), worker:z.string().min(1).max(200), generation:z.number().int(), sequence:z.number().int().nonnegative(),
+  taskId:z.string().max(200).nullable(), transport:z.string().max(40), phase:z.string().max(80),
+  startedAt:z.number().finite(), at:z.number().finite(), lastGoodAt:z.number().finite(),
+  policy:z.object({pollMs:z.number(),requestMs:z.number(),stopMs:z.number(),transportGraceMs:z.number(),resultAckMs:z.number(),heartbeatMs:z.number(),collectionGraceMs:z.number()}).strict(),
+  eventsOmitted:z.number().int().nonnegative().optional(),
+  events:z.array(z.object({at:z.number().finite(),operation:z.string().max(80),branch:z.string().max(100),elapsedMs:z.number().nonnegative().optional(),error:z.unknown().optional()}).strict()).max(8),
+  stop:z.object({reason:z.string().max(120),operation:z.string().max(80),failure:z.boolean(),signal:z.string().max(20).optional(),error:z.unknown().optional()}).strict().optional(),
+}).strict();
+export type CollectorStatus = z.infer<typeof collectorStatusSchema>;
 export type Collector = {
   token: string;
   generation: number;
@@ -94,6 +104,7 @@ export type Collector = {
   worker?: string;
   heartbeat?: number;
   stopped_at?: number;
+  status?: CollectorStatus;
   sequence?: number;
   task?: { id: string; sequence?: number; claimed?: string; result?: Run };
 };
@@ -130,6 +141,7 @@ export type Record = {
   problem?: string;
   recipe?: Recipe;
   collector?: Collector;
+  collector_reports?: CollectorStatus[];
   report_blocked?: boolean;
   revisions: Recipe[];
   runs: Run[];
@@ -170,7 +182,7 @@ export function validateRequest(mode: Mode, input: unknown): Request {
   return r;
 }
 export function publicRecord(r: Record, debug = false) {
-  const { observer, launch, review_wake, recipe, revisions, collector, ...visible } = r;
+  const { observer, launch, review_wake, recipe, revisions, collector, collector_reports, ...visible } = r;
   return {
     ...visible,
     runs: r.runs
@@ -180,6 +192,7 @@ export function publicRecord(r: Record, debug = false) {
           ? { ...run, stdout, stderr }
           : { ...run, provenance: run.provenance ? { ...run.provenance, observer: undefined } : undefined, output: run.output.slice(0, 4000) },
       ),
+    collector_health: collector ? { stopped_at:collector.stopped_at??null, transport:collector.status?.transport??"unreported", phase:collector.status?.phase??"unreported", last_mailbox_response_at:collector.status?.lastGoodAt??null, stop:collector.status?.stop?{reason:collector.status.stop.reason,operation:collector.status.stop.operation,failure:collector.status.stop.failure,...(collector.status.stop.signal?{signal:collector.status.stop.signal}:{})}:null } : null,
     interpretation: recipe?.interpretation,
     coverage: recipe?.coverage,
     ...(debug
@@ -190,6 +203,7 @@ export function publicRecord(r: Record, debug = false) {
             review_wake,
             recipe,
             revisions,
+            ...(collector_reports?{collector_reports}:{}),
             collector: collector ? { ...collector, token: undefined, task: collector.task ? { id: collector.task.id, sealed: !!collector.task.result } : undefined } : undefined,
           },
         }
