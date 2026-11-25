@@ -12,7 +12,6 @@ import { Collectors, collectorCommand, collectorSource, collectorRefusal, collec
 import { EXAMPLES } from "./examples.ts";
 import { registerSubscriptionUi } from "./ui-server.ts";
 import { classify } from "./classifier.ts";
-import { createAcceptedActivityReader } from "./accepted-activity.ts";
 
 async function bounded<T>(promise: Promise<T>, ms = 30000): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -93,7 +92,6 @@ export default function plugin(bb: BbPluginApi) {
     },
     jevModel: { type: "string", label: "Jev model", default: "jev-1.14.0" },
   });
-  const acceptedActivity = createAcceptedActivityReader(bb, store.db);
   const collectors = new Collectors(store);
   async function authority(r: Record) {
     const [caller, observer, execution] = await Promise.all([
@@ -129,8 +127,6 @@ export default function plugin(bb: BbPluginApi) {
         });
         if (t.archivedAt || t.deletedAt) return "closed";
         if ("trigger" in r.request && r.request.trigger.kind === "idle") {
-          const native = await acceptedActivity(r.id, r.owner, at => engine.activity(r.owner, at));
-          if (native !== "legacy") return native;
           const events = await bb.sdk.threads.events.list({
             threadId: r.owner,
             types: ["client/turn/requested"],
@@ -144,6 +140,8 @@ export default function plugin(bb: BbPluginApi) {
             if (
               event.type === "client/turn/requested" &&
               !event.data.senderThreadId &&
+              event.data.retryOfRequestId === undefined &&
+              event.data.initiator !== "system" &&
               !event.data.systemMessageKind &&
               event.data.input.some(
                 (block) => block.visibility !== "agent-only",

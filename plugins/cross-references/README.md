@@ -13,8 +13,7 @@ It is the shared navigation layer built from observed and authored references.
 
 `@phosphorco/bb-cross-references@0.3.0` provides the canonical resource/projection
 contract, explicit SDK client, conformance kit, and `LinkedReferences` React
-editor. This plugin owns the graph service and persistence; Machine Monitor and
-Prompt Rules own their local attachments and delivery. See the
+editor. This plugin owns the graph service and persistence; Machine Monitor owns its local attachments and delivery. See the
 [package contract](../../packages/bb-cross-references/CONTRACT.md).
 
 ## Product doctrine

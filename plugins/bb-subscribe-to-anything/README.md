@@ -178,12 +178,10 @@ following semantic distinctions are required:
   whichever occurs first. Record which branch fired. For recurring mode, the
   maximum-wait anchor advances after each accepted occurrence.
 
-Idle must be defined from authoritative thread state. A running turn, pending
-interaction, stopped thread, and lack of human messages are not interchangeable.
-The exact qualifying activity policy remains a release-blocking decision.
-Subscription-induced turns should not by default rearm their own idle episode.
-If activity provenance is unavailable, report the limitation rather than claim
-this protection. This prevents self-generated wake/idle/wake loops.
+Idle uses visible `client/turn/requested` events through the public thread events API.
+Requests from other threads, system messages and wholly agent-only input do not
+reset its clock. Reads catch up in bounded pages; read failures defer idle
+notification. This measures observed request activity, not queue acceptance.
 
 A trigger is distinct from delivery: `queue` waits for the caller to be ready;
 `steer` explicitly permits interrupting an active turn. Default to queue.

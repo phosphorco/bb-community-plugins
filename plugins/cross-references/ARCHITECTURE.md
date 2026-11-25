@@ -247,7 +247,7 @@ remain usable when they cannot. Renderers validate supported URL schemes and
 use BB's semantic navigation components where available.
 
 `@phosphorco/bb-cross-references/react` supplies `LinkedReferences`, the shared
-thread/URL attachment editor used by Machine Monitor and Prompt Rules. It takes
+thread/URL attachment editor used by Machine Monitor. It takes
 an explicit owner key, injected local APIs and navigation. General graph lists,
 dropdowns and counts remain future work. There is no runtime React registry and
 no plugin injects UI into another plugin's tree.
